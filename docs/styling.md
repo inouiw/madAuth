@@ -57,7 +57,8 @@ Use `::part()` to style an element directly.
 | Part | Element |
 | --- | --- |
 | `dialog` | The dialog box itself (`<dialog>`). |
-| `method` | Each sign-in method button: "Continue with Google", the "Sign in" button of the password form, and every row under "Other ways to sign in". |
+| `method` | Each sign-in method button: "Continue with Google", the "Sign in" button of the password form, and every row under "Other ways to sign in". With `GoogleFedcm`, the Google button is rendered by Google and can't be styled. |
+| `error` | The message shown when a sign-in fails. |
 
 ```css
 madauth-login::part(dialog) {

@@ -30,7 +30,12 @@ main {
   place-items: center;
 }
 
-#sign-in {
+[hidden] {
+  display: none !important;
+}
+
+#sign-in,
+#sign-out {
   font: inherit;
   font-weight: 600;
   padding: 12px 28px;
@@ -41,7 +46,8 @@ main {
   cursor: pointer;
 }
 
-#sign-in:hover {
+#sign-in:hover,
+#sign-out:hover {
   background: light-dark(#33353a, #d9dadc);
 }
 
@@ -65,7 +71,33 @@ main {
   background: light-dark(#f3f4f5, #2c2d32);
 }
 
+#account {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  color: light-dark(#17181a, #f1f2f3);
+  text-align: center;
+}
+
+#account p {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+#user-email {
+  font-size: 0.875rem;
+  color: light-dark(#5c6066, #a6a9af);
+}
+
+#avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+}
+
 #sign-in:focus-visible,
+#sign-out:focus-visible,
 #theme-toggle:focus-visible {
   outline: 2px solid light-dark(#17181a, #f1f2f3);
   outline-offset: 2px;

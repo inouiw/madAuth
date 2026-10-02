@@ -1,16 +1,24 @@
-import '@madauth/web';
+import { GoogleFedcm, GoogleRedirect, Madauth, type MadauthUser } from '@madauth/web';
 
-const login = document.querySelector('madauth-login')!;
+// VITE_GOOGLE_FLOW=redirect uses the server-side flow (needs GOOGLE_CLIENT_SECRET on the server).
+const google = import.meta.env.VITE_GOOGLE_FLOW === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();
 
-document.querySelector('#sign-in')!.addEventListener('click', () => login.open());
+// No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin.
+void Madauth.initialize({ providers: [google] });
+Madauth.onAuthStateChanged(handleAuthStateChanged);
 
-login.addEventListener('madauth-signed-in', (e) => {
-  console.log('Signed in', e.detail);
-});
+document.querySelector('#sign-in')!.addEventListener('click', () => void Madauth.signIn());
+document.querySelector('#sign-out')!.addEventListener('click', () => void Madauth.signOut());
 
-login.addEventListener('madauth-cancel', () => {
-  console.log('Sign-in cancelled');
-});
+function handleAuthStateChanged(user: MadauthUser | null): void {
+  document.querySelector<HTMLElement>('#sign-in')!.hidden = !!user;
+  document.querySelector<HTMLElement>('#account')!.hidden = !user;
+  document.querySelector('#user-name')!.textContent = user?.name ?? user?.id ?? '';
+  document.querySelector('#user-email')!.textContent = user?.email ?? '';
+  const avatar = document.querySelector<HTMLImageElement>('#avatar')!;
+  avatar.hidden = !user?.picture;
+  if (user?.picture) avatar.src = user.picture;
+}
 
 type Theme = 'light' | 'dark';
 

@@ -1,0 +1,68 @@
+{
+  "name": "@madauth/server",
+  "version": "0.0.1",
+  "description": "madAuth server: Google sign-in and madAuth sessions for Docker, AWS Lambda and Azure Functions.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./verify": {
+      "types": "./dist/verify.d.ts",
+      "import": "./dist/verify.js"
+    },
+    "./node": {
+      "types": "./dist/entry/node.d.ts",
+      "import": "./dist/entry/node.js"
+    },
+    "./lambda": {
+      "types": "./dist/entry/lambda.d.ts",
+      "import": "./dist/entry/lambda.js"
+    },
+    "./azure": {
+      "types": "./dist/entry/azure.d.ts",
+      "import": "./dist/entry/azure.js"
+    }
+  },
+  "bin": {
+    "madauth-server": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+    "start": "node --env-file-if-exists=.env dist/standalone/main.mjs",
+    "generate-key": "tsx src/bin.ts generate-key",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.3",
+    "hono": "^4.13.12",
+    "jose": "^6.2.12"
+  },
+  "peerDependencies": {
+    "@azure/functions": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@azure/functions": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@azure/functions": "^4.16.5",
+    "@types/aws-lambda": "^8.10.164",
+    "@types/node": "^26.6.4",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

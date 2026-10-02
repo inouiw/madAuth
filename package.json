@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "dev": "npm run dev -w apps/demo",
-    "build": "npm run build -w packages/web && npm run build -w apps/demo",
+    "dev:server": "npm run dev -w packages/server",
+    "build": "npm run build -w packages/server && npm run build -w packages/web && npm run build -w apps/demo",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm test --workspaces --if-present"
   }
