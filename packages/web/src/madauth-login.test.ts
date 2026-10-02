@@ -55,18 +55,49 @@ describe('<madauth-login>', () => {
   });
 
   it('lists every login method in registry order', () => {
-    const ids = [...login.shadowRoot!.querySelectorAll<HTMLButtonElement>('.method')].map(
+    const ids = [...login.shadowRoot!.querySelectorAll<HTMLButtonElement>('[data-method]')].map(
       (b) => b.dataset.method,
     );
     expect(ids).toEqual(loginMethods.map((m) => m.id));
   });
 
-  it('shows coming-soon methods as disabled with a badge', () => {
+  it('shows no notice until a method is chosen', () => {
+    expect($('.notice')).toBeNull();
+  });
+
+  it('tells the user that a coming-soon method is coming soon when it is chosen', async () => {
     for (const m of loginMethods.filter((m) => m.status === 'coming-soon')) {
       const button = $<HTMLButtonElement>(`[data-method="${m.id}"]`);
-      expect(button.disabled).toBe(true);
-      expect(button.textContent).toContain(m.label);
-      expect(button.querySelector('.badge')!.textContent).toBe('Coming soon');
+      expect(button.disabled).toBe(false);
+
+      button.click();
+      await login.updateComplete;
+
+      expect($('.notice span').textContent).toBe(`“${m.label}” is coming soon.`);
+    }
+  });
+
+  it('clears the notice when the dialog is closed', async () => {
+    await login.open();
+    $<HTMLButtonElement>('[data-method="google"]').click();
+    await login.updateComplete;
+
+    $<HTMLButtonElement>('.close').click();
+
+    await vi.waitFor(() => expect($('.notice')).toBeNull());
+  });
+
+  it('labels each method button', () => {
+    for (const m of loginMethods) {
+      const label = m.id === 'password' ? 'Sign in' : m.label;
+      expect($(`[data-method="${m.id}"] .label`).textContent).toBe(label);
+    }
+  });
+
+  it('offers a labelled username and password form', () => {
+    for (const id of ['username', 'password']) {
+      expect($(`form input#${id}`)).not.toBeNull();
+      expect($(`label[for="${id}"]`)).not.toBeNull();
     }
   });
 

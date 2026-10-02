@@ -15,15 +15,15 @@ export type LoginMethodId = 'password' | 'google' | 'totp' | 'email' | 'sms';
  */
 export const loginMethods: LoginMethod[] = [
   {
-    id: 'password',
-    label: 'Username & password',
-    description: 'Classic sign-in with your credentials',
-    status: 'coming-soon',
-  },
-  {
     id: 'google',
     label: 'Continue with Google',
     description: 'Use your Google account',
+    status: 'coming-soon',
+  },
+  {
+    id: 'password',
+    label: 'Username & password',
+    description: 'Classic sign-in with your credentials',
     status: 'coming-soon',
   },
   {
