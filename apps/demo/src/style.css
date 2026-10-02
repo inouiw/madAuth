@@ -1,18 +1,11 @@
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
-  --madauth-primary: #4f46e5;
 }
 
 body {
   margin: 0;
-  background: #f8fafc;
-}
-
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #0f172a;
-  }
+  background: #f5f5f4;
 }
 
 main {
@@ -26,12 +19,27 @@ main {
   font-weight: 600;
   padding: 12px 28px;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   color: #fff;
-  background: var(--madauth-primary);
+  background: #17181a;
   cursor: pointer;
 }
 
 #sign-in:hover {
-  filter: brightness(1.1);
+  background: #33353a;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #101113;
+  }
+
+  #sign-in {
+    color: #17181a;
+    background: #f1f2f3;
+  }
+
+  #sign-in:hover {
+    background: #d9dadc;
+  }
 }

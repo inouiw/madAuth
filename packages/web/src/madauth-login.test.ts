@@ -55,7 +55,7 @@ describe('<madauth-login>', () => {
   });
 
   it('lists every login method in registry order', () => {
-    const ids = [...login.shadowRoot!.querySelectorAll<HTMLButtonElement>('.method')].map(
+    const ids = [...login.shadowRoot!.querySelectorAll<HTMLButtonElement>('[data-method]')].map(
       (b) => b.dataset.method,
     );
     expect(ids).toEqual(loginMethods.map((m) => m.id));
@@ -65,8 +65,23 @@ describe('<madauth-login>', () => {
     for (const m of loginMethods.filter((m) => m.status === 'coming-soon')) {
       const button = $<HTMLButtonElement>(`[data-method="${m.id}"]`);
       expect(button.disabled).toBe(true);
-      expect(button.textContent).toContain(m.label);
-      expect(button.querySelector('.badge')!.textContent).toBe('Coming soon');
+      expect(button.querySelector('.badge')!.textContent).toBe('Soon');
+    }
+  });
+
+  it('labels each method button', () => {
+    for (const m of loginMethods) {
+      const label = m.id === 'password' ? 'Sign in' : m.label;
+      expect($(`[data-method="${m.id}"] .label`).textContent).toBe(label);
+    }
+  });
+
+  it('offers a username and password form whose fields are disabled while coming soon', () => {
+    const comingSoon = loginMethods.find((m) => m.id === 'password')!.status === 'coming-soon';
+    for (const id of ['username', 'password']) {
+      const input = $<HTMLInputElement>(`form input#${id}`);
+      expect($(`label[for="${id}"]`)).not.toBeNull();
+      expect(input.disabled).toBe(comingSoon);
     }
   });
 
