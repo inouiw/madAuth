@@ -1,11 +1,27 @@
+/* Public Sans, self-hosted: the font the login dialog is designed for. */
+@import '@fontsource-variable/public-sans/index.css';
+
 :root {
   color-scheme: light dark;
-  font-family: system-ui, sans-serif;
+  font-family: 'Public Sans Variable', system-ui, sans-serif;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
-  background: #f5f5f4;
+  background: light-dark(#f5f5f4, #101113);
+}
+
+/* Make the dialog follow the theme chosen on this page instead of the system preference. */
+madauth-login {
+  color-scheme: inherit;
 }
 
 main {
@@ -20,26 +36,53 @@ main {
   padding: 12px 28px;
   border: none;
   border-radius: 8px;
-  color: #fff;
-  background: #17181a;
+  color: light-dark(#fff, #17181a);
+  background: light-dark(#17181a, #f1f2f3);
   cursor: pointer;
 }
 
 #sign-in:hover {
-  background: #33353a;
+  background: light-dark(#33353a, #d9dadc);
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #101113;
-  }
+#theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid light-dark(#d0d2d6, #3d4045);
+  border-radius: 8px;
+  color: light-dark(#17181a, #f1f2f3);
+  background: light-dark(#fff, #232428);
+  cursor: pointer;
+}
 
-  #sign-in {
-    color: #17181a;
-    background: #f1f2f3;
-  }
+#theme-toggle:hover {
+  background: light-dark(#f3f4f5, #2c2d32);
+}
 
-  #sign-in:hover {
-    background: #d9dadc;
-  }
+#sign-in:focus-visible,
+#theme-toggle:focus-visible {
+  outline: 2px solid light-dark(#17181a, #f1f2f3);
+  outline-offset: 2px;
+}
+
+#theme-toggle svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The icon shows the theme the button switches to. */
+:root[data-theme='dark'] #theme-toggle .moon,
+:root:not([data-theme='dark']) #theme-toggle .sun {
+  display: none;
 }

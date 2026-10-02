@@ -19,6 +19,14 @@ const chevronIcon = html`
   </svg>
 `;
 
+const infoIcon = html`
+  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4" />
+    <path d="M12 8h.01" />
+  </svg>
+`;
+
 const googleLogo = html`
   <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
     <path
@@ -79,10 +87,14 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
 export class MadauthLogin extends LitElement {
   static override properties = {
     heading: { type: String },
+    notice: { state: true },
   };
 
   /** Title shown at the top of the dialog. */
   heading = 'Sign in';
+
+  /** Message shown below the heading, e.g. after picking a method that is not available yet. */
+  private notice = '';
 
   /** Opens the dialog as a modal. */
   async open(): Promise<void> {
@@ -104,11 +116,16 @@ export class MadauthLogin extends LitElement {
       this.dispatchEvent(new CustomEvent('madauth-cancel', { bubbles: true, composed: true }));
     }
     this.dialog.returnValue = '';
+    this.notice = '';
   }
 
   private onBackdropClick(e: MouseEvent): void {
     // Clicks on the backdrop target the <dialog> itself; clicks inside hit its children.
     if (e.target === this.dialog) this.dialog.close();
+  }
+
+  private onMethodChosen(m: LoginMethod): void {
+    if (m.status === 'coming-soon') this.notice = `“${m.label}” is coming soon.`;
   }
 
   override render() {
@@ -124,6 +141,9 @@ export class MadauthLogin extends LitElement {
               ${closeIcon}
             </button>
           </header>
+          ${this.notice
+            ? html`<p class="notice" role="status">${infoIcon}<span>${this.notice}</span></p>`
+            : null}
           ${google ? this.renderGoogle(google) : null}
           ${google && password ? html`<div class="divider">or</div>` : null}
           ${password ? this.renderPassword(password) : null}
@@ -143,92 +163,92 @@ export class MadauthLogin extends LitElement {
   }
 
   private renderGoogle(m: LoginMethod) {
-    const comingSoon = m.status === 'coming-soon';
     return html`
       <button
         part="method"
         class="google"
         type="button"
         title=${m.description}
-        ?disabled=${comingSoon}
         data-method=${m.id}
+        @click=${() => this.onMethodChosen(m)}
       >
         ${googleLogo}
         <span class="label">${m.label}</span>
-        ${comingSoon ? html`<span class="badge">Soon</span>` : null}
       </button>
     `;
   }
 
   private renderPassword(m: LoginMethod) {
-    const comingSoon = m.status === 'coming-soon';
+    const onSubmit = (e: Event) => {
+      e.preventDefault();
+      this.onMethodChosen(m);
+    };
     return html`
-      <form @submit=${(e: Event) => e.preventDefault()}>
+      <form @submit=${onSubmit}>
         <div class="field">
           <label for="username">Username</label>
-          <input id="username" name="username" type="text" autocomplete="username" ?disabled=${comingSoon} />
+          <input id="username" name="username" type="text" autocomplete="username" />
         </div>
         <div class="field">
           <label for="password">Password</label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autocomplete="current-password"
-            ?disabled=${comingSoon}
-          />
+          <input id="password" name="password" type="password" autocomplete="current-password" />
         </div>
-        <button part="method" class="submit" type="submit" ?disabled=${comingSoon} data-method=${m.id}>
+        <button part="method" class="submit" type="submit" data-method=${m.id}>
           <span class="label">Sign in</span>
-          ${comingSoon ? html`<span class="badge">Soon</span>` : null}
         </button>
       </form>
     `;
   }
 
   private renderRow(m: LoginMethod) {
-    const comingSoon = m.status === 'coming-soon';
     return html`
       <button
         part="method"
         class="row"
         type="button"
         title=${m.description}
-        ?disabled=${comingSoon}
         data-method=${m.id}
+        @click=${() => this.onMethodChosen(m)}
       >
         ${rowIcons[m.id]}
         <span class="label">${m.label}</span>
-        ${comingSoon ? html`<span class="badge">Soon</span>` : chevronIcon}
+        ${chevronIcon}
       </button>
     `;
   }
 
   static override styles = css`
     :host {
-      --_primary: var(--madauth-primary, #17181a);
-      --_on-primary: #fff;
+      /* Follows the user's preference; a page can force a theme by setting color-scheme on the element. */
+      color-scheme: light dark;
+      --_primary: var(--madauth-primary, light-dark(#17181a, #f1f2f3));
+      --_on-primary: light-dark(#fff, #17181a);
       --_radius: var(--madauth-radius, 14px);
       --_control-radius: max(0px, calc(var(--_radius) - 6px));
       --_group-radius: max(0px, calc(var(--_radius) - 4px));
       --_control-height: 44px;
-      --_surface: #fff;
-      --_text: #17181a;
-      --_muted: #5c6066;
-      --_subtle: #8f9298;
-      --_line: #dedfe2;
-      --_dialog-border: rgb(23 24 26 / 0.08);
-      --_button-bg: #fff;
-      --_button-border: #d0d2d6;
-      --_field-bg: #fff;
-      --_hover: #f3f4f5;
-      --_disabled-bg: #f7f7f8;
-      --_disabled-line: #e7e8ea;
-      --_disabled-fill: #e4e5e7;
-      --_badge-bg: #e7e8ea;
-      --_badge-text: #4a4d53;
-      --_shadow: 0 24px 64px -12px rgb(16 18 22 / 0.32), 0 2px 6px rgb(16 18 22 / 0.08);
-      font-family: var(--madauth-font, system-ui, sans-serif);
+      --_surface: light-dark(#fff, #1b1c1f);
+      --_text: light-dark(#17181a, #f1f2f3);
+      --_muted: light-dark(#5c6066, #a6a9af);
+      --_subtle: light-dark(#8f9298, #70747b);
+      --_line: light-dark(#dedfe2, #2e3034);
+      --_dialog-border: light-dark(rgb(23 24 26 / 0.08), #2e3034);
+      --_button-bg: light-dark(#fff, #232428);
+      --_button-border: light-dark(#d0d2d6, #3d4045);
+      --_field-bg: light-dark(#fff, #141517);
+      --_hover: light-dark(#f3f4f5, #26272b);
+      --_shadow:
+        0 24px 64px -12px light-dark(rgb(16 18 22 / 0.32), rgb(0 0 0 / 0.7)),
+        0 2px 6px light-dark(rgb(16 18 22 / 0.08), rgb(0 0 0 / 0.4));
+      /* Public Sans when the page has loaded it (see docs/styling.md), the system font otherwise. */
+      font-family: var(--madauth-font, 'Public Sans Variable', 'Public Sans', system-ui, sans-serif);
+    }
+
+    @supports (color: oklch(from red l c h)) {
+      :host {
+        /* Whatever the primary color is: near-black text on a light one, white on a dark one. */
+        --_on-primary: oklch(from var(--_primary) clamp(0.2, (0.6 - l) * 1000, 1) 0 0);
+      }
     }
 
     dialog {
@@ -244,7 +264,7 @@ export class MadauthLogin extends LitElement {
     }
 
     dialog::backdrop {
-      background: rgb(16 18 22 / 0.4);
+      background: light-dark(rgb(16 18 22 / 0.4), rgb(0 0 0 / 0.6));
     }
 
     .panel {
@@ -252,20 +272,18 @@ export class MadauthLogin extends LitElement {
       gap: 20px;
       padding: 32px;
       font-size: 0.9375rem;
+      letter-spacing: 0.02em;
     }
 
     button,
     input {
       font: inherit;
+      letter-spacing: inherit;
       color: inherit;
     }
 
     button {
       cursor: pointer;
-    }
-
-    button:disabled {
-      cursor: not-allowed;
     }
 
     button:focus-visible {
@@ -286,7 +304,7 @@ export class MadauthLogin extends LitElement {
       font-size: 1.375rem;
       font-weight: 600;
       line-height: 28px;
-      letter-spacing: -0.01em;
+      letter-spacing: normal;
     }
 
     .icon {
@@ -342,14 +360,24 @@ export class MadauthLogin extends LitElement {
       background: var(--_button-bg);
     }
 
-    .google:not(:disabled):hover {
-      border-color: var(--_subtle);
+    .notice {
+      display: flex;
+      gap: 8px;
+      margin: 0;
+      padding: 10px 12px;
+      font-size: 0.8125rem;
+      line-height: 18px;
+      border-radius: var(--_control-radius);
       background: var(--_hover);
     }
 
-    .google:disabled .logo {
-      filter: grayscale(1);
-      opacity: 0.6;
+    .notice .icon {
+      color: var(--_muted);
+    }
+
+    .google:hover {
+      border-color: var(--_subtle);
+      background: var(--_hover);
     }
 
     .divider {
@@ -400,12 +428,6 @@ export class MadauthLogin extends LitElement {
       outline-offset: -1px;
     }
 
-    input:disabled {
-      cursor: not-allowed;
-      border-color: var(--_disabled-line);
-      background: var(--_disabled-bg);
-    }
-
     .submit {
       display: flex;
       align-items: center;
@@ -421,17 +443,8 @@ export class MadauthLogin extends LitElement {
       background: var(--_primary);
     }
 
-    .submit:not(:disabled):hover {
+    .submit:hover {
       background: color-mix(in srgb, var(--_primary) 86%, var(--_surface));
-    }
-
-    .submit:disabled {
-      color: var(--_muted);
-      background: var(--_disabled-fill);
-    }
-
-    .submit .badge {
-      background: var(--_disabled-bg);
     }
 
     .others {
@@ -499,37 +512,12 @@ export class MadauthLogin extends LitElement {
       color: var(--_subtle);
     }
 
-    .row:not(:disabled):hover {
+    .row:hover {
       background: var(--_hover);
     }
 
-    .row:not(:disabled):hover .icon {
+    .row:hover .icon {
       color: var(--_text);
-    }
-
-    .google:disabled,
-    .row:disabled {
-      color: var(--_muted);
-      background: var(--_disabled-bg);
-    }
-
-    .google:disabled {
-      border-color: var(--_disabled-line);
-    }
-
-    .row:disabled .icon {
-      color: var(--_subtle);
-    }
-
-    .badge {
-      flex-shrink: 0;
-      font-size: 0.75rem;
-      font-weight: 500;
-      line-height: 16px;
-      padding: 2px 8px;
-      border-radius: 999px;
-      color: var(--_badge-text);
-      background: var(--_badge-bg);
     }
 
     @media (max-width: 480px) {
@@ -544,39 +532,6 @@ export class MadauthLogin extends LitElement {
       label,
       h3 {
         font-size: 0.875rem;
-      }
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :host {
-        --_primary: var(--madauth-primary, #f1f2f3);
-        --_on-primary: #17181a;
-        --_surface: #1b1c1f;
-        --_text: #f1f2f3;
-        --_muted: #a6a9af;
-        --_subtle: #70747b;
-        --_line: #2e3034;
-        --_dialog-border: #2e3034;
-        --_button-bg: #232428;
-        --_button-border: #3d4045;
-        --_field-bg: #141517;
-        --_hover: #26272b;
-        --_disabled-bg: #18191b;
-        --_disabled-line: #2a2c30;
-        --_disabled-fill: #2e3034;
-        --_badge-bg: #2e3034;
-        --_badge-text: #c9cbd0;
-        --_shadow: 0 24px 64px -12px rgb(0 0 0 / 0.7), 0 2px 6px rgb(0 0 0 / 0.4);
-      }
-      dialog::backdrop {
-        background: rgb(0 0 0 / 0.6);
-      }
-    }
-
-    @supports (color: oklch(from red l c h)) {
-      :host {
-        /* Whatever the primary color is: near-black text on a light one, white on a dark one. */
-        --_on-primary: oklch(from var(--_primary) clamp(0.2, (0.6 - l) * 1000, 1) 0 0);
       }
     }
   `;
