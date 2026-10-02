@@ -26,9 +26,8 @@ npm install
 npm run dev        # demo at http://localhost:5173
 npm run build      # build library + demo
 npm run typecheck
+npm test           # unit tests (Vitest + happy-dom)
 ```
-
-The demo imports the library source directly, so edits in `packages/web/src` hot-reload.
 
 ## Using the component
 
@@ -45,9 +44,20 @@ The demo imports the library source directly, so edits in `packages/web/src` hot
 </script>
 ```
 
-Theming: set `--madauth-primary`, `--madauth-radius`, `--madauth-font`, or style `madauth-login::part(dialog)` / `::part(method)`.
+### Styling
+
+The login form can be styled to match your app (colors, corner radius, font, and individual parts of the dialog). See [Styling the login form](docs/styling.md) for all available settings.
 
 ## Adding a sign-in method
 
 1. Add or update the entry in [`packages/web/src/methods.ts`](packages/web/src/methods.ts) (set `status: 'available'`).
 2. Handle its `id` in [`packages/web/src/madauth-login.ts`](packages/web/src/madauth-login.ts) and dispatch `madauth-signed-in` on success.
+3. Add tests next to the code (`*.test.ts`) and run `npm test`.
+
+## Contributing
+
+Contributions are welcome! Open an issue to discuss an idea or report a bug, or send a pull request. Please make sure `npm run typecheck` and `npm test` pass.
+
+## License
+
+madAuth is released under the [MIT License](LICENSE).
