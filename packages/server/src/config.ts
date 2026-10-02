@@ -57,7 +57,8 @@ function parseOrigin(name: string, value: string): string {
  * Throws a {@link ConfigError} naming the variable that is missing or invalid.
  */
 export async function loadConfig(env: Record<string, string | undefined>): Promise<MadauthConfig> {
-  const read = (name: keyof typeof envVars) => env[name]?.trim() || undefined;
+  // Docker's --env-file keeps quotes around values (NAME='value'); Node's --env-file removes them.
+  const read = (name: keyof typeof envVars) => env[name]?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
   const require = (name: keyof typeof envVars) => {
     const value = read(name);
     if (!value) throw new ConfigError(`${name} is not set. See docs/server.md.`);

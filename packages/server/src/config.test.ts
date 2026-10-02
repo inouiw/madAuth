@@ -23,6 +23,13 @@ describe('loadConfig', () => {
     });
   });
 
+  it('accepts values wrapped in quotes, as Docker’s --env-file passes them', async () => {
+    const config = await loadConfig({ ...env, MADAUTH_SIGNING_KEY: `'${JSON.stringify(signingKey)}'`, GOOGLE_CLIENT_ID: `"${CLIENT_ID}"` });
+
+    expect(config.signingKey).toEqual(signingKey);
+    expect(config.google.clientId).toBe(CLIENT_ID);
+  });
+
   it('X6: names a missing variable', async () => {
     await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: '' })).rejects.toThrow(
       new ConfigError('GOOGLE_CLIENT_ID is not set. See docs/server.md.'),
