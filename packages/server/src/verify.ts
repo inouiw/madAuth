@@ -1,4 +1,6 @@
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { SIGNING_ALG } from './keys.js';
+import { userFromClaims, type SessionClaims } from './tokens.js';
 import { SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 
 export type { MadauthUser } from './user.js';
@@ -44,16 +46,16 @@ export function createSessionVerifier(opts: SessionVerifierOptions): SessionVeri
   const issuer = opts.issuer.replace(/\/+$/, '');
   const keys = opts.jwks ?? createRemoteJWKSet(new URL(`${issuer}/.well-known/jwks.json`));
   return async (input) => {
-    const token = tokenFrom(input);
-    if (!token) return null;
     try {
-      const { payload } = await jwtVerify(token, keys, { issuer, typ: SESSION_TYP, algorithms: ['ES256'] });
+      const token = tokenFrom(input);
+      if (!token) return null;
+      const { payload } = await jwtVerify<SessionClaims>(token, keys, {
+        issuer,
+        typ: SESSION_TYP,
+        algorithms: [SIGNING_ALG],
+      });
       if (typeof payload.sub !== 'string') return null;
-      const user: MadauthUser = { id: payload.sub };
-      if (typeof payload.email === 'string') user.email = payload.email;
-      if (typeof payload.name === 'string') user.name = payload.name;
-      if (typeof payload.picture === 'string') user.picture = payload.picture;
-      return user;
+      return userFromClaims(payload);
     } catch {
       return null;
     }

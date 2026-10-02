@@ -50,6 +50,15 @@ describe('Madauth.initialize', () => {
     expect(errorLog).toHaveBeenCalledWith('[madauth]', 'network', expect.stringContaining(SERVER));
   });
 
+  it('I2: reports a server URL that answers with a page instead of JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<!doctype html>', { status: 200 })));
+
+    const result = await Madauth.initialize({ serverUrl: SERVER, providers: [] });
+
+    expect(result).toMatchObject({ isSuccess: false, error: { code: 'unknown', message: expect.stringContaining(SERVER) } });
+    expect(await Madauth.getSession()).toMatchObject({ isSuccess: false, error: { code: 'unknown' } });
+  });
+
   it('I3: uses the page origin when serverUrl is omitted', async () => {
     const server = fakeServer();
 
@@ -85,6 +94,20 @@ describe('Madauth.initialize', () => {
     await Madauth.getSession();
 
     expect(server.requests.at(-1)!.url).toBe('https://b.example.com/auth/session');
+  });
+
+  it('I6: an initialize that was replaced does not set up its providers', async () => {
+    fakeServer();
+    const replaced = stubProvider();
+    const current = stubProvider();
+
+    const first = Madauth.initialize({ serverUrl: SERVER, providers: [replaced] });
+    const second = Madauth.initialize({ serverUrl: SERVER, providers: [current] });
+
+    expect(await first).toMatchObject({ isSuccess: false, error: { code: 'cancelled' } });
+    expect(await second).toEqual({ isSuccess: true });
+    expect(replaced.setup).not.toHaveBeenCalled();
+    expect(current.setup).toHaveBeenCalledOnce();
   });
 
   it('I12: fails when a provider’s setup fails', async () => {

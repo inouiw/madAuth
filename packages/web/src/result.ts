@@ -7,28 +7,7 @@ export interface MadauthUser {
   picture?: string;
 }
 
-export type MadauthErrorCode =
-  | 'invalid_options'
-  | 'network'
-  | 'flow_not_enabled'
-  | 'gis_load_failed'
-  | 'not_initialized'
-  | 'cancelled'
-  | 'verification_failed'
-  | 'email_unverified'
-  | 'no_session'
-  | 'unknown';
-
-export interface MadauthError {
-  code: MadauthErrorCode;
-  /** Human-readable details, e.g. which option is invalid. */
-  message: string;
-}
-
-/** What every madAuth method resolves to. Expected failures are returned, never thrown. */
-export type Result<T extends object = {}> = ({ isSuccess: true } & T) | { isSuccess: false; error: MadauthError };
-
-const errorCodes: readonly MadauthErrorCode[] = [
+const errorCodes = [
   'invalid_options',
   'network',
   'flow_not_enabled',
@@ -39,10 +18,21 @@ const errorCodes: readonly MadauthErrorCode[] = [
   'email_unverified',
   'no_session',
   'unknown',
-];
+] as const;
+
+export type MadauthErrorCode = (typeof errorCodes)[number];
+
+export interface MadauthError {
+  code: MadauthErrorCode;
+  /** Human-readable details, e.g. which option is invalid. */
+  message: string;
+}
+
+/** What every madAuth method resolves to. Expected failures are returned, never thrown. */
+export type Result<T extends object = {}> = ({ isSuccess: true } & T) | { isSuccess: false; error: MadauthError };
 
 export function toErrorCode(value: unknown): MadauthErrorCode {
-  return errorCodes.includes(value as MadauthErrorCode) ? (value as MadauthErrorCode) : 'unknown';
+  return (errorCodes as readonly unknown[]).includes(value) ? (value as MadauthErrorCode) : 'unknown';
 }
 
 export function ok<T extends object = {}>(value?: T): Result<T> {

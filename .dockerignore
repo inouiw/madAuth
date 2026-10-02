@@ -1,0 +1,5 @@
+# The server image is built from the repository root (see packages/server/Dockerfile).
+.git
+**/node_modules
+**/dist
+**/.env
