@@ -7,6 +7,16 @@ export interface GoogleFedcmOptions {
   autoPrompt?: boolean;
 }
 
+/**
+ * Whether `el` is shown in dark mode: when its `color-scheme` allows only dark, or allows both and the
+ * user prefers dark (the dialog's default is `light dark`).
+ */
+function isDark(el: Element): boolean {
+  const schemes = getComputedStyle(el).colorScheme?.split(/\s+/) ?? [];
+  if (!schemes.includes('dark')) return false;
+  return !schemes.includes('light') || matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
 interface DialogMount {
   container: HTMLElement;
   onResult: (result: Result<{ user: MadauthUser }>) => void;
@@ -90,7 +100,8 @@ export class GoogleFedcm implements SignInProvider {
     mount.container.replaceChildren();
     this.#gis!.renderButton(mount.container, {
       type: 'standard',
-      theme: 'outline',
+      // The slot itself is forced to light (see .google-slot), so read the theme from its parent.
+      theme: isDark(mount.container.parentElement ?? mount.container) ? 'filled_black' : 'outline',
       size: 'large',
       text: 'continue_with',
       shape: 'rectangular',

@@ -114,6 +114,24 @@ describe('GoogleFedcm', () => {
     expect(gis.id.initialize.mock.lastCall![0].nonce).toBe('nonce-2');
   });
 
+  it('renders Google’s dark button when the dialog is dark', async () => {
+    fakeServer();
+    const gis = fakeGis();
+    let scheme = 'dark';
+    vi.spyOn(window, 'getComputedStyle').mockImplementation(() => ({ colorScheme: scheme }) as CSSStyleDeclaration);
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm({ autoPrompt: false })] });
+
+    void Madauth.signIn();
+    await settle();
+    expect(gis.id.renderButton.mock.lastCall![1].theme).toBe('filled_black');
+
+    dialogElement().close();
+    scheme = 'light';
+    void Madauth.signIn();
+    await settle();
+    expect(gis.id.renderButton.mock.lastCall![1].theme).toBe('outline');
+  });
+
   it('W4: a sign-in with the dialog’s button fires madauth-signed-in and closes the dialog', async () => {
     fakeServer();
     const gis = fakeGis();

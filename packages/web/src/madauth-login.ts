@@ -463,6 +463,9 @@ export class MadauthLogin extends LitElement {
     }
 
     .google-slot {
+      /* Google's button is an iframe with a light page. If the iframe's color-scheme differed, the
+         browser would paint it with an opaque background (a white box in dark mode). */
+      color-scheme: light;
       display: flex;
       justify-content: center;
       min-height: var(--_control-height);
