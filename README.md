@@ -21,12 +21,29 @@ The UI ships as a standard custom element, so it works in plain HTML, React, Ang
 
 ## Getting started
 
+Install dependencies:
+
 ```bash
 npm install
-npm run dev        # demo at http://localhost:5173
-npm run build      # build library + demo
+```
+
+Start the demo at http://localhost:5173:
+
+```bash
+npm run dev
+```
+
+Build the library and the demo:
+
+```bash
+npm run build
+```
+
+Run the type checker and the unit tests (Vitest + happy-dom):
+
+```bash
 npm run typecheck
-npm test           # unit tests (Vitest + happy-dom)
+npm test
 ```
 
 ## Using the component
