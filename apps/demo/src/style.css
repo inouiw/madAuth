@@ -1,18 +1,27 @@
+/* Public Sans, self-hosted: the font the login dialog is designed for. */
+@import '@fontsource-variable/public-sans/index.css';
+
 :root {
   color-scheme: light dark;
-  font-family: system-ui, sans-serif;
-  --madauth-primary: #4f46e5;
+  font-family: 'Public Sans Variable', system-ui, sans-serif;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
-  background: #f8fafc;
+  background: light-dark(#f5f5f4, #101113);
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #0f172a;
-  }
+/* Make the dialog follow the theme chosen on this page instead of the system preference. */
+madauth-login {
+  color-scheme: inherit;
 }
 
 main {
@@ -26,12 +35,54 @@ main {
   font-weight: 600;
   padding: 12px 28px;
   border: none;
-  border-radius: 10px;
-  color: #fff;
-  background: var(--madauth-primary);
+  border-radius: 8px;
+  color: light-dark(#fff, #17181a);
+  background: light-dark(#17181a, #f1f2f3);
   cursor: pointer;
 }
 
 #sign-in:hover {
-  filter: brightness(1.1);
+  background: light-dark(#33353a, #d9dadc);
+}
+
+#theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid light-dark(#d0d2d6, #3d4045);
+  border-radius: 8px;
+  color: light-dark(#17181a, #f1f2f3);
+  background: light-dark(#fff, #232428);
+  cursor: pointer;
+}
+
+#theme-toggle:hover {
+  background: light-dark(#f3f4f5, #2c2d32);
+}
+
+#sign-in:focus-visible,
+#theme-toggle:focus-visible {
+  outline: 2px solid light-dark(#17181a, #f1f2f3);
+  outline-offset: 2px;
+}
+
+#theme-toggle svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The icon shows the theme the button switches to. */
+:root[data-theme='dark'] #theme-toggle .moon,
+:root:not([data-theme='dark']) #theme-toggle .sun {
+  display: none;
 }

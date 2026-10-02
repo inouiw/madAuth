@@ -27,4 +27,22 @@ describe('demo page', () => {
 
     await expect.poll(() => dialog.open).toBe(true);
   });
+
+  it('switches between light and dark theme when the theme button is clicked', () => {
+    const root = document.documentElement;
+    const toggle = document.querySelector<HTMLButtonElement>('#theme-toggle')!;
+    const initial = root.dataset.theme!;
+    const other = initial === 'dark' ? 'light' : 'dark';
+    expect(['light', 'dark']).toContain(initial);
+    expect(toggle.getAttribute('aria-label')).toBe(`Switch to ${other} theme`);
+
+    toggle.click();
+
+    expect(root.dataset.theme).toBe(other);
+    expect(toggle.getAttribute('aria-label')).toBe(`Switch to ${initial} theme`);
+
+    toggle.click();
+
+    expect(root.dataset.theme).toBe(initial);
+  });
 });
