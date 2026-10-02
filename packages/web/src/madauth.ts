@@ -1,0 +1,260 @@
+import { request, type HttpResult, type RequestInit } from './http.js';
+import type { LoginMethodId } from './methods.js';
+import type { ProviderContext, ServerConfig, SignInProvider } from './providers/provider.js';
+import { fail, ok, type MadauthError, type MadauthUser, type Result } from './result.js';
+
+export interface MadauthOptions {
+  /** Base URL of the madAuth server. Default: the page's own origin (e.g. behind a reverse proxy). */
+  serverUrl?: string;
+  /** The sign-in methods to offer, e.g. `[new GoogleFedcm()]`. */
+  providers: SignInProvider[];
+}
+
+export type AuthStateListener = (user: MadauthUser | null) => void;
+
+interface State {
+  serverUrl: string;
+  providers: Map<LoginMethodId, SignInProvider>;
+  /** Settles when `initialize` is done; a failure here means madAuth is not usable. */
+  ready: Promise<Result>;
+}
+
+let state: State | undefined;
+let generation = 0;
+let user: MadauthUser | null = null;
+let userKnown = false;
+const listeners = new Set<AuthStateListener>();
+/** A sign-in error that happened outside the dialog (e.g. the redirect flow), shown when it next opens. */
+let pendingError: MadauthError | undefined;
+
+function sameUser(a: MadauthUser | null, b: MadauthUser | null): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function setUser(next: MadauthUser | null, notifyAlways = false): void {
+  const changed = notifyAlways || !userKnown || !sameUser(user, next);
+  user = next;
+  userKnown = true;
+  if (!changed) return;
+  for (const listener of [...listeners]) {
+    try {
+      listener(user);
+    } catch (e) {
+      console.error('[madauth] onAuthStateChanged listener failed', e);
+    }
+  }
+}
+
+function logError(result: Result): Result {
+  if (!result.isSuccess) console.error('[madauth]', result.error.code, result.error.message);
+  return result;
+}
+
+function validate(options: MadauthOptions | undefined): Result<{ serverUrl: string; providers: Map<LoginMethodId, SignInProvider> }> {
+  if (!options || !Array.isArray(options.providers)) {
+    return fail('invalid_options', 'Madauth.initialize needs { providers: [...] }, e.g. [new GoogleFedcm()].');
+  }
+  let serverUrl = location.origin;
+  if (options.serverUrl !== undefined) {
+    let url: URL;
+    try {
+      url = new URL(options.serverUrl);
+    } catch {
+      return fail('invalid_options', `serverUrl must be an absolute http(s) URL but is "${options.serverUrl}".`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return fail('invalid_options', `serverUrl must be an absolute http(s) URL but is "${options.serverUrl}".`);
+    }
+    serverUrl = `${url.origin}${url.pathname}`.replace(/\/+$/, '');
+  }
+  const providers = new Map<LoginMethodId, SignInProvider>();
+  for (const provider of options.providers) {
+    if (!provider || typeof provider.setup !== 'function') {
+      return fail('invalid_options', 'providers must contain sign-in providers such as new GoogleFedcm().');
+    }
+    if (providers.has(provider.method)) {
+      return fail('invalid_options', `Only one provider per sign-in method is allowed, but "${provider.method}" is registered twice.`);
+    }
+    providers.set(provider.method, provider);
+  }
+  return ok({ serverUrl, providers });
+}
+
+async function initialize(
+  serverUrl: string,
+  providers: Map<LoginMethodId, SignInProvider>,
+  run: number,
+): Promise<{ ready: Result; result: Result }> {
+  const call = <T>(path: string, init?: RequestInit): Promise<HttpResult<T>> => request<T>(serverUrl, path, init);
+
+  const failed = (result: Result) => ({ ready: result, result });
+
+  const [config, session] = await Promise.all([
+    call<ServerConfig>('/auth/config'),
+    call<{ user: MadauthUser }>('/auth/session'),
+  ]);
+  if (!config.ok) return failed({ isSuccess: false, error: config.error });
+  if (!session.ok && session.status !== 401) return failed({ isSuccess: false, error: session.error });
+  // A later initialize replaced this one: leave the user and the providers to it.
+  if (run !== generation) return failed(fail('cancelled', 'Replaced by a later Madauth.initialize call.'));
+  setUser(session.ok ? session.data.user : null, true);
+
+  let signInError: MadauthError | undefined;
+  const ctx: ProviderContext = {
+    serverUrl,
+    config: config.data,
+    get currentUser() {
+      return user;
+    },
+    request: call,
+    signedIn: (signedIn) => {
+      pendingError = undefined;
+      setUser(signedIn);
+    },
+    signInFailed: (error) => {
+      signInError ??= error;
+      pendingError = error;
+      console.error('[madauth]', error.code, error.message);
+    },
+  };
+  for (const provider of providers.values()) {
+    const result = await provider.setup(ctx);
+    if (!result.isSuccess) return failed(result);
+  }
+  // A failed redirect sign-in is reported by initialize, but madAuth itself is ready.
+  return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError } : ok() };
+}
+
+async function whenReady(): Promise<Result> {
+  if (!state) return fail('not_initialized', 'Call Madauth.initialize({ providers: [...] }) first.');
+  return state.ready;
+}
+
+/**
+ * The madAuth client. Call {@link Madauth.initialize} once (no need to await it); every other method
+ * waits for it. Methods resolve to a {@link Result} and never throw for expected failures.
+ */
+export const Madauth = {
+  /**
+   * Configures madAuth: checks the server, sets up the providers (e.g. shows Google One Tap) and loads
+   * the current session. Failures are returned and also logged to the console. Calling it again replaces
+   * the configuration.
+   */
+  initialize(options: MadauthOptions): Promise<Result> {
+    const run = ++generation;
+    pendingError = undefined;
+    const valid = validate(options);
+    if (!valid.isSuccess) {
+      state = { serverUrl: '', providers: new Map(), ready: Promise.resolve(valid) };
+      return Promise.resolve(logError(valid));
+    }
+    const done = initialize(valid.serverUrl, valid.providers, run);
+    state = { serverUrl: valid.serverUrl, providers: valid.providers, ready: done.then((d) => d.ready) };
+    return done.then((d) => logError(d.result));
+  },
+
+  /**
+   * Opens the sign-in dialog (creating a `<madauth-login>` if the page has none) and resolves with the
+   * signed-in user, or fails with `cancelled` when the dialog is closed. With `GoogleRedirect` the page
+   * navigates to Google; the user then arrives through {@link Madauth.onAuthStateChanged}.
+   */
+  async signIn(): Promise<Result<{ user: MadauthUser }>> {
+    const ready = await whenReady();
+    if (!ready.isSuccess) return ready;
+    let dialog = document.querySelector('madauth-login');
+    if (!dialog) {
+      dialog = document.createElement('madauth-login');
+      document.body.append(dialog);
+    }
+    const element = dialog;
+    return new Promise((resolve) => {
+      const finish = (result: Result<{ user: MadauthUser }>) => {
+        element.removeEventListener('madauth-signed-in', onSignedIn);
+        element.removeEventListener('madauth-cancel', onCancel);
+        resolve(result);
+      };
+      const onSignedIn = (e: CustomEvent<{ user: MadauthUser }>) => finish({ isSuccess: true, user: e.detail.user });
+      const onCancel = () => finish(fail('cancelled', 'The sign-in dialog was closed.'));
+      element.addEventListener('madauth-signed-in', onSignedIn);
+      element.addEventListener('madauth-cancel', onCancel);
+      void element.open();
+    });
+  },
+
+  /** Ends the session on the server and notifies {@link Madauth.onAuthStateChanged} listeners. */
+  async signOut(): Promise<Result> {
+    const ready = await whenReady();
+    if (!ready.isSuccess) return ready;
+    const res = await request(state!.serverUrl, '/auth/logout', { method: 'POST' });
+    if (!res.ok) return { isSuccess: false, error: res.error };
+    for (const provider of state!.providers.values()) provider.onSignedOut?.();
+    setUser(null);
+    return ok();
+  },
+
+  /** Asks the server for the current session. Fails with `no_session` when nobody is signed in. */
+  async getSession(): Promise<Result<{ user: MadauthUser }>> {
+    const ready = await whenReady();
+    if (!ready.isSuccess) return ready;
+    const res = await request<{ user: MadauthUser }>(state!.serverUrl, '/auth/session');
+    if (res.ok) {
+      setUser(res.data.user);
+      return { isSuccess: true, user: res.data.user };
+    }
+    if (res.status === 401) {
+      setUser(null);
+      return fail('no_session', 'Nobody is signed in.');
+    }
+    return { isSuccess: false, error: res.error };
+  },
+
+  /** The last known signed-in user, or null. */
+  get currentUser(): MadauthUser | null {
+    return user;
+  },
+
+  /**
+   * Calls `listener` with the current user once it is known, and again on every sign-in and sign-out.
+   * Returns a function that unsubscribes. Can be called before `initialize`.
+   */
+  onAuthStateChanged(listener: AuthStateListener): () => void {
+    listeners.add(listener);
+    if (userKnown) {
+      queueMicrotask(() => {
+        if (listeners.has(listener)) listener(user);
+      });
+    }
+    return () => {
+      listeners.delete(listener);
+    };
+  },
+};
+
+// --- Internal, for <madauth-login> ---
+
+/** The provider registered for a sign-in method, if any. */
+export function providerFor(method: LoginMethodId): SignInProvider | undefined {
+  return state?.providers.get(method);
+}
+
+/** Resolves when madAuth is usable (or why not). */
+export function readyForDialog(): Promise<Result> {
+  return whenReady();
+}
+
+/** Returns and clears an error from a sign-in that happened outside the dialog. */
+export function takePendingError(): MadauthError | undefined {
+  const error = pendingError;
+  pendingError = undefined;
+  return error;
+}
+
+/** Test hook: forgets all configuration, the user and the listeners. */
+export function resetMadauthForTests(): void {
+  state = undefined;
+  generation++;
+  user = null;
+  userKnown = false;
+  pendingError = undefined;
+  listeners.clear();
+}

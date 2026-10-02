@@ -66,7 +66,8 @@ describe('<madauth-login>', () => {
   });
 
   it('tells the user that a coming-soon method is coming soon when it is chosen', async () => {
-    for (const m of loginMethods.filter((m) => m.status === 'coming-soon')) {
+    // Without providers (madAuth not initialized) every method is coming soon.
+    for (const m of loginMethods) {
       const button = $<HTMLButtonElement>(`[data-method="${m.id}"]`);
       expect(button.disabled).toBe(false);
 

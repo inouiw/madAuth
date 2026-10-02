@@ -1,0 +1,241 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import '../index.js';
+import { Madauth } from '../madauth.js';
+import type { MadauthLogin } from '../madauth-login.js';
+import { CLIENT_ID, SERVER, ada, fakeGis, fakeServer, gisScripts, resetAll, settle } from '../test-helpers.js';
+import { GoogleFedcm } from './google-fedcm.js';
+import { GoogleRedirect } from './google-redirect.js';
+
+let errorLog: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  resetAll();
+  errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+afterEach(resetAll);
+
+function dialogElement(): MadauthLogin {
+  return document.querySelector('madauth-login')!;
+}
+
+function shadow<T extends Element>(selector: string): T | null {
+  return dialogElement().shadowRoot!.querySelector<T>(selector);
+}
+
+describe('GoogleFedcm', () => {
+  it('G1: initialize reports when Google Identity Services cannot be loaded', async () => {
+    fakeServer();
+    // No window.google: the script "loads" but provides nothing.
+
+    const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+
+    expect(result).toMatchObject({ isSuccess: false, error: { code: 'gis_load_failed' } });
+    expect(gisScripts()).toHaveLength(0);
+  });
+
+  it('G2: passes the server’s client ID and a fresh nonce to GIS, with the FedCM button', async () => {
+    fakeServer();
+    const gis = fakeGis();
+
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+    await settle();
+
+    expect(gis.id.initialize).toHaveBeenCalledWith(
+      expect.objectContaining({ client_id: CLIENT_ID, nonce: 'nonce-1', use_fedcm_for_button: true, context: 'signin' }),
+    );
+  });
+
+  it('G3: prompts One Tap on load only when nobody is signed in and autoPrompt is on', async () => {
+    const server = fakeServer();
+    const gis = fakeGis();
+
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+    await settle();
+    expect(gis.id.prompt).toHaveBeenCalledOnce();
+
+    server.user = ada;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+    await settle();
+    expect(gis.id.prompt).toHaveBeenCalledOnce();
+
+    server.user = null;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm({ autoPrompt: false })] });
+    await settle();
+    expect(gis.id.prompt).toHaveBeenCalledOnce();
+  });
+
+  it('G4: a One Tap sign-in signs the user in without the app doing anything', async () => {
+    const server = fakeServer();
+    const gis = fakeGis();
+    const listener = vi.fn();
+    Madauth.onAuthStateChanged(listener);
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+    await settle();
+
+    gis.signIn('one-tap-token');
+    await settle();
+
+    expect(server.requests.find((r) => r.path === '/auth/google/verify')?.body).toEqual({ credential: 'one-tap-token' });
+    expect(listener).toHaveBeenLastCalledWith(ada);
+    expect(Madauth.currentUser).toEqual(ada);
+  });
+
+  it('logs a failed One Tap sign-in and shows it when the dialog opens', async () => {
+    const server = fakeServer();
+    const gis = fakeGis();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+    await settle();
+    server.verifyError = 'verification_failed';
+
+    gis.signIn();
+    await settle();
+    expect(errorLog).toHaveBeenCalledWith('[madauth]', 'verification_failed', 'rejected in test');
+
+    void Madauth.signIn();
+    await settle();
+    expect(shadow('.error')?.getAttribute('data-code')).toBe('verification_failed');
+  });
+
+  it('G5 / W3: the dialog always offers the FedCM button, even while One Tap is held back', async () => {
+    fakeServer();
+    const gis = fakeGis();
+    gis.id.prompt.mockImplementation(() => {}); // Chrome's cooldown: nothing is shown.
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+
+    void Madauth.signIn();
+    await settle();
+
+    expect(gis.id.cancel).toHaveBeenCalled();
+    expect(gis.id.renderButton).toHaveBeenCalledOnce();
+    const [target, options] = gis.id.renderButton.mock.lastCall!;
+    expect(target).toBe(shadow('.google-slot'));
+    expect(options).toMatchObject({ text: 'continue_with', size: 'large' });
+    // The button got its own nonce.
+    expect(gis.id.initialize.mock.lastCall![0].nonce).toBe('nonce-2');
+  });
+
+  it('W4: a sign-in with the dialog’s button fires madauth-signed-in and closes the dialog', async () => {
+    fakeServer();
+    const gis = fakeGis();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm({ autoPrompt: false })] });
+    void Madauth.signIn();
+    await settle();
+    const onSignedIn = vi.fn();
+    dialogElement().addEventListener('madauth-signed-in', (e) => onSignedIn(e.detail));
+
+    gis.signIn();
+    await settle();
+
+    expect(onSignedIn).toHaveBeenCalledExactlyOnceWith({ method: 'google', user: ada });
+    expect(shadow<HTMLDialogElement>('dialog')!.open).toBe(false);
+  });
+
+  it('W5: a failed sign-in shows an error, keeps the dialog open and renders a fresh button', async () => {
+    const server = fakeServer();
+    const gis = fakeGis();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm({ autoPrompt: false })] });
+    void Madauth.signIn();
+    await settle();
+    const onError = vi.fn();
+    const onSignedIn = vi.fn();
+    dialogElement().addEventListener('madauth-error', (e) => onError(e.detail));
+    dialogElement().addEventListener('madauth-signed-in', onSignedIn);
+    server.verifyError = 'verification_failed';
+
+    gis.signIn();
+    await settle();
+
+    expect(onError).toHaveBeenCalledWith({ method: 'google', code: 'verification_failed', message: 'rejected in test' });
+    expect(onSignedIn).not.toHaveBeenCalled();
+    expect(shadow<HTMLDialogElement>('dialog')!.open).toBe(true);
+    expect(shadow('.error')!.textContent).toContain('could not be verified');
+    expect(gis.id.renderButton).toHaveBeenCalledTimes(2);
+    expect(gis.id.initialize.mock.lastCall![0].nonce).toBe('nonce-2');
+  });
+
+  it('W2: loads the GIS script only once', async () => {
+    fakeServer();
+    fakeGis();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+
+    void Madauth.signIn();
+    await settle();
+    dialogElement().close();
+    void Madauth.signIn();
+    await settle();
+
+    expect(gisScripts()).toHaveLength(1);
+  });
+
+  it('G6: signing out disables Google’s automatic sign-in', async () => {
+    fakeServer().user = ada;
+    const gis = fakeGis();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+
+    await Madauth.signOut();
+
+    expect(gis.id.disableAutoSelect).toHaveBeenCalledOnce();
+  });
+});
+
+describe('GoogleRedirect', () => {
+  it('D1: is reported as not enabled when the server has no client secret', async () => {
+    fakeServer().codeFlow = false;
+
+    const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
+
+    expect(result).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+  });
+
+  it('D2 / W6: the dialog’s Google button starts the code flow', async () => {
+    fakeServer().codeFlow = true;
+    const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+    history.replaceState(null, '', '/page?x=1#top');
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
+
+    void Madauth.signIn();
+    await settle();
+    shadow<HTMLButtonElement>('[data-method="google"]')!.click();
+
+    expect(assign).toHaveBeenCalledExactlyOnceWith(
+      `${SERVER}/auth/google/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}`,
+    );
+    expect(shadow('.notice')).toBeNull();
+  });
+
+  it('D3: reports a failed redirect sign-in, tidies the URL and shows it in the dialog', async () => {
+    fakeServer().codeFlow = true;
+    history.replaceState(null, '', '/page?x=1#madauth_error=verification_failed');
+
+    const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
+
+    expect(result).toMatchObject({ isSuccess: false, error: { code: 'verification_failed' } });
+    expect(location.href).toBe('https://app.example.com/page?x=1');
+    // madAuth stays usable: the dialog opens and shows the error.
+    void Madauth.signIn();
+    await settle();
+    expect(shadow('.error')?.getAttribute('data-code')).toBe('verification_failed');
+  });
+
+  it('D3: restores the session after a successful redirect sign-in', async () => {
+    const server = fakeServer();
+    server.codeFlow = true;
+    server.user = ada;
+    const listener = vi.fn();
+    Madauth.onAuthStateChanged(listener);
+
+    expect(await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] })).toEqual({ isSuccess: true });
+
+    expect(listener).toHaveBeenCalledWith(ada);
+  });
+
+  it('D4: never loads Google Identity Services', async () => {
+    fakeServer().codeFlow = true;
+
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
+    void Madauth.signIn();
+    await settle();
+
+    expect(gisScripts()).toHaveLength(0);
+  });
+});

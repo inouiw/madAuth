@@ -1,6 +1,11 @@
 import { MadauthLogin } from './madauth-login.js';
 
-export { MadauthLogin, type SignedInDetail } from './madauth-login.js';
+export { Madauth, type AuthStateListener, type MadauthOptions } from './madauth.js';
+export type { MadauthError, MadauthErrorCode, MadauthUser, Result } from './result.js';
+export { GoogleFedcm, type GoogleFedcmOptions } from './providers/google-fedcm.js';
+export { GoogleRedirect } from './providers/google-redirect.js';
+export type { SignInProvider } from './providers/provider.js';
+export { MadauthLogin, type ErrorDetail, type SignedInDetail } from './madauth-login.js';
 export { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
 
 if (!customElements.get('madauth-login')) {

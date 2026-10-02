@@ -1,10 +1,24 @@
 import { LitElement, css, html, type TemplateResult } from 'lit';
+import { providerFor, readyForDialog, takePendingError } from './madauth.js';
 import { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
+import type { MadauthError, MadauthErrorCode, MadauthUser, Result } from './result.js';
 
 export interface SignedInDetail {
   method: LoginMethodId;
-  user: { id: string; email?: string; name?: string };
+  user: MadauthUser;
 }
+
+export type ErrorDetail = { method?: LoginMethodId } & MadauthError;
+
+/** What the dialog tells the user; the technical details are in the `madauth-error` event and the console. */
+const errorTexts: Partial<Record<MadauthErrorCode, string>> = {
+  network: 'Could not reach the sign-in service. Please check your connection and try again.',
+  verification_failed: 'The sign-in could not be verified. Please try again.',
+  email_unverified: 'The e-mail address of this account is not verified.',
+  cancelled: 'The sign-in was cancelled.',
+  not_initialized: 'Sign-in is not set up on this page.',
+};
+const defaultErrorText = 'Sign-in is not available right now.';
 
 const closeIcon = html`
   <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -72,10 +86,12 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
 };
 
 /**
- * Modal sign-in dialog listing all madAuth login methods.
+ * Modal sign-in dialog listing all madAuth login methods. Usually opened with `Madauth.signIn()`, which
+ * creates it when the page has none; add it to your HTML yourself only to customize it.
  *
  * @fires madauth-signed-in - A user signed in. `detail` is a {@link SignedInDetail}.
  * @fires madauth-cancel - The dialog was closed without signing in.
+ * @fires madauth-error - A sign-in failed, or madAuth is not initialized. `detail` is an {@link ErrorDetail}.
  *
  * @cssprop --madauth-primary - Fill color of the primary "Sign in" button.
  * @cssprop --madauth-radius - Corner radius of the dialog, buttons and fields.
@@ -83,11 +99,14 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
  *
  * @csspart dialog - The `<dialog>` element.
  * @csspart method - Each sign-in method button.
+ * @csspart error - The error message.
  */
 export class MadauthLogin extends LitElement {
   static override properties = {
     heading: { type: String },
     notice: { state: true },
+    error: { state: true },
+    usable: { state: true },
   };
 
   /** Title shown at the top of the dialog. */
@@ -96,10 +115,26 @@ export class MadauthLogin extends LitElement {
   /** Message shown below the heading, e.g. after picking a method that is not available yet. */
   private notice = '';
 
+  /** Error shown below the heading. */
+  private error: MadauthError | null = null;
+
+  /** Whether madAuth is initialized, so providers can render their sign-in UI. */
+  private usable = false;
+
+  /** Removes the UI a provider rendered into the dialog. */
+  private unmountProvider?: () => void;
+
   /** Opens the dialog as a modal. */
   async open(): Promise<void> {
     await this.updateComplete;
     this.dialog.showModal();
+    const ready = await readyForDialog();
+    if (!this.dialog.open) return;
+    this.usable = ready.isSuccess;
+    const error = ready.isSuccess ? takePendingError() : ready.error;
+    if (error) this.showError(error);
+    await this.updateComplete;
+    this.mountProviders();
   }
 
   /** Closes the dialog without firing `madauth-cancel`. */
@@ -112,11 +147,39 @@ export class MadauthLogin extends LitElement {
   }
 
   private onDialogClose(): void {
+    this.unmountProvider?.();
+    this.unmountProvider = undefined;
     if (this.dialog.returnValue !== 'done') {
       this.dispatchEvent(new CustomEvent('madauth-cancel', { bubbles: true, composed: true }));
     }
     this.dialog.returnValue = '';
     this.notice = '';
+    this.error = null;
+  }
+
+  /** Lets providers with their own UI (e.g. Google's FedCM button) render into the dialog. */
+  private mountProviders(): void {
+    const slot = this.renderRoot.querySelector<HTMLElement>('.google-slot');
+    const provider = providerFor('google');
+    if (!slot || !provider?.renderInDialog || this.unmountProvider) return;
+    this.unmountProvider = provider.renderInDialog(slot, (result) => this.onProviderResult('google', result));
+  }
+
+  private onProviderResult(method: LoginMethodId, result: Result<{ user: MadauthUser }>): void {
+    if (!result.isSuccess) {
+      this.showError(result.error, method);
+      return;
+    }
+    const detail: SignedInDetail = { method, user: result.user };
+    this.dispatchEvent(new CustomEvent('madauth-signed-in', { detail, bubbles: true, composed: true }));
+    this.close();
+  }
+
+  private showError(error: MadauthError, method?: LoginMethodId): void {
+    this.notice = '';
+    this.error = error;
+    const detail: ErrorDetail = { method, ...error };
+    this.dispatchEvent(new CustomEvent('madauth-error', { detail, bubbles: true, composed: true }));
   }
 
   private onBackdropClick(e: MouseEvent): void {
@@ -125,7 +188,13 @@ export class MadauthLogin extends LitElement {
   }
 
   private onMethodChosen(m: LoginMethod): void {
-    if (m.status === 'coming-soon') this.notice = `“${m.label}” is coming soon.`;
+    const provider = providerFor(m.id);
+    if (!provider) {
+      this.error = null;
+      this.notice = `“${m.label}” is coming soon.`;
+    } else if (this.usable) {
+      provider.start?.();
+    }
   }
 
   override render() {
@@ -143,6 +212,11 @@ export class MadauthLogin extends LitElement {
           </header>
           ${this.notice
             ? html`<p class="notice" role="status">${infoIcon}<span>${this.notice}</span></p>`
+            : null}
+          ${this.error
+            ? html`<p class="notice error" part="error" role="alert" data-code=${this.error.code}>
+                ${infoIcon}<span>${errorTexts[this.error.code] ?? defaultErrorText}</span>
+              </p>`
             : null}
           ${google ? this.renderGoogle(google) : null}
           ${google && password ? html`<div class="divider">or</div>` : null}
@@ -163,6 +237,10 @@ export class MadauthLogin extends LitElement {
   }
 
   private renderGoogle(m: LoginMethod) {
+    if (this.usable && providerFor('google')?.renderInDialog) {
+      // Google renders its own (FedCM) button here; see GoogleFedcm.
+      return html`<div class="google-slot" title=${m.description}></div>`;
+    }
     return html`
       <button
         part="method"
@@ -375,6 +453,21 @@ export class MadauthLogin extends LitElement {
       color: var(--_muted);
     }
 
+    .error,
+    .error .icon {
+      color: light-dark(#b42318, #fda29b);
+    }
+
+    .error {
+      background: light-dark(#fef3f2, rgb(240 68 56 / 0.12));
+    }
+
+    .google-slot {
+      display: flex;
+      justify-content: center;
+      min-height: var(--_control-height);
+    }
+
     .google:hover {
       border-color: var(--_subtle);
       background: var(--_hover);
@@ -544,5 +637,6 @@ declare global {
   interface HTMLElementEventMap {
     'madauth-signed-in': CustomEvent<SignedInDetail>;
     'madauth-cancel': CustomEvent<void>;
+    'madauth-error': CustomEvent<ErrorDetail>;
   }
 }
