@@ -87,13 +87,17 @@ async function initialize(
 ): Promise<{ ready: Result; result: Result }> {
   const call = <T>(path: string, init?: RequestInit): Promise<HttpResult<T>> => request<T>(serverUrl, path, init);
 
-  const config = await call<ServerConfig>('/auth/config');
-  if (!config.ok) return { ready: { isSuccess: false, error: config.error }, result: { isSuccess: false, error: config.error } };
-  const session = await call<{ user: MadauthUser }>('/auth/session');
-  if (!session.ok && session.status !== 401) {
-    return { ready: { isSuccess: false, error: session.error }, result: { isSuccess: false, error: session.error } };
-  }
-  if (run === generation) setUser(session.ok ? session.data.user : null, true);
+  const failed = (result: Result) => ({ ready: result, result });
+
+  const [config, session] = await Promise.all([
+    call<ServerConfig>('/auth/config'),
+    call<{ user: MadauthUser }>('/auth/session'),
+  ]);
+  if (!config.ok) return failed({ isSuccess: false, error: config.error });
+  if (!session.ok && session.status !== 401) return failed({ isSuccess: false, error: session.error });
+  // A later initialize replaced this one: leave the user and the providers to it.
+  if (run !== generation) return failed(fail('cancelled', 'Replaced by a later Madauth.initialize call.'));
+  setUser(session.ok ? session.data.user : null, true);
 
   let signInError: MadauthError | undefined;
   const ctx: ProviderContext = {
@@ -115,7 +119,7 @@ async function initialize(
   };
   for (const provider of providers.values()) {
     const result = await provider.setup(ctx);
-    if (!result.isSuccess) return { ready: result, result };
+    if (!result.isSuccess) return failed(result);
   }
   // A failed redirect sign-in is reported by initialize, but madAuth itself is ready.
   return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError } : ok() };

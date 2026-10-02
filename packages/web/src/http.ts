@@ -25,7 +25,17 @@ export async function request<T>(serverUrl: string, path: string, init: RequestI
     };
   }
   const data = (await response.json().catch(() => undefined)) as (T & { error?: unknown; message?: unknown }) | undefined;
-  if (response.ok) return { ok: true, data: data as T };
+  if (response.ok) {
+    // E.g. an SPA fallback page answering for /auth/... because the server is not behind this URL.
+    if (data === undefined && response.status !== 204) {
+      return {
+        ok: false,
+        status: response.status,
+        error: { code: 'unknown', message: `${path} did not return JSON. Is the madAuth server at ${serverUrl}?` },
+      };
+    }
+    return { ok: true, data: data as T };
+  }
   return {
     ok: false,
     status: response.status,

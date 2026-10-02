@@ -38,6 +38,7 @@ describe('createSessionVerifier', () => {
     expect(await verifySession(wrongIssuer)).toBeNull();
     expect(await verifySession(new Request('https://api.example.com'))).toBeNull();
     expect(await verifySession('')).toBeNull();
+    expect(await verifySession('madauth_session=%E0%A4%A')).toBeNull();
     vi.setSystemTime(Date.now() + 3601 * 1000);
     expect(await verifySession(token)).toBeNull();
   });
