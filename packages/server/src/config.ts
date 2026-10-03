@@ -17,8 +17,10 @@ export interface MadauthConfig {
   signingKey: JWK;
   /** App origins allowed to call the server (ALLOWED_ORIGINS). */
   allowedOrigins: string[];
-  /** Session lifetime in seconds (SESSION_TTL). */
+  /** Lifetime of a session token in seconds (SESSION_TTL): how long backends accept it. */
   sessionTtlSeconds: number;
+  /** How long a session can be renewed without signing in again, counted from its last renewal (SESSION_RENEWAL_TTL). */
+  renewalTtlSeconds: number;
   /** Cookie domain, e.g. `.example.com` (COOKIE_DOMAIN). */
   cookieDomain?: string;
   /** Google sign-in; off when GOOGLE_CLIENT_ID is not set. */
@@ -55,6 +57,7 @@ export const envVars = {
   WEBHOOK_SECRET: false,
   WEBHOOK_EVENTS: false,
   SESSION_TTL: false,
+  SESSION_RENEWAL_TTL: false,
   COOKIE_DOMAIN: false,
 } as const;
 
@@ -81,6 +84,7 @@ export async function resolveEnv(source: EntryOptions['env'] = process.env): Pro
 }
 
 const DEFAULT_SESSION_TTL = 8 * 60 * 60;
+const DEFAULT_RENEWAL_TTL = 30 * 24 * 60 * 60;
 const DEFAULT_PASSWORD_MIN_LENGTH = 8;
 
 export class ConfigError extends Error {
@@ -180,12 +184,21 @@ export async function loadConfig(
   if (!Number.isInteger(sessionTtlSeconds) || sessionTtlSeconds < 60) {
     throw new ConfigError(`SESSION_TTL must be a whole number of seconds (at least 60) but is "${ttlValue}".`);
   }
+  const renewalValue = read('SESSION_RENEWAL_TTL');
+  // A session token that outlives the default renewal time is renewable for as long as it lives.
+  const renewalTtlSeconds = renewalValue ? Number(renewalValue) : Math.max(DEFAULT_RENEWAL_TTL, sessionTtlSeconds);
+  if (!Number.isInteger(renewalTtlSeconds) || renewalTtlSeconds < sessionTtlSeconds) {
+    throw new ConfigError(
+      `SESSION_RENEWAL_TTL must be a whole number of seconds, not less than SESSION_TTL (${sessionTtlSeconds}), but is "${renewalValue}".`,
+    );
+  }
 
   return {
     issuer,
     signingKey,
     allowedOrigins,
     sessionTtlSeconds,
+    renewalTtlSeconds,
     cookieDomain: read('COOKIE_DOMAIN'),
     google: clientId ? { clientId, clientSecret: read('GOOGLE_CLIENT_SECRET') } : undefined,
     password,

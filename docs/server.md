@@ -11,7 +11,7 @@ Google sign-in needs no database. E-mail & password sign-in stores its users thr
 1. The browser signs in:
    - with Google, either in the browser with FedCM / One Tap (`GoogleFedcm`) or through the server-side redirect flow (`GoogleRedirect`). The server verifies Google's ID token: signature, issuer, audience, expiry, nonce and a verified e-mail address.
    - or with an e-mail address and password (`Password`). The server checks the password against its scrypt hash; new accounts confirm their address first. See [Password security](password-security.md).
-2. The server sets its own session: an ES256-signed JWT in an HttpOnly cookie named `madauth_session`.
+2. The server sets its own session: an ES256-signed JWT in an HttpOnly cookie named `madauth_session`. It is short-lived and renewed without the user noticing; see [Sessions](#sessions).
 3. Your app backends verify that JWT with [`createSessionVerifier`](#verifying-the-session-in-your-backend) or any JWT library, using the public key at `/.well-known/jwks.json`.
 
 > **Same site required.** The session is a cookie, so the madAuth server must be on the same site as your app, for example `auth.example.com` and `app.example.com`, or the same origin behind a reverse proxy. Browsers block third-party cookies, so cross-site setups do not work.
@@ -32,7 +32,8 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
 | `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in needs `email.verify` and `email.reset`, e.g. `email.verify,email.reset,email.already_registered`. |
 | `PASSWORD_MIN_LENGTH` | no | Minimum password length. Default `8`. |
-| `SESSION_TTL` | no | Session lifetime in seconds. Default `28800` (8 hours). The session is renewed when the app checks it after half of this time. |
+| `SESSION_TTL` | no | Lifetime of a session token in seconds: how long your backends accept it. Default `28800` (8 hours). The web library renews it when needed, see [Sessions](#sessions). |
+| `SESSION_RENEWAL_TTL` | no | How long a user stays signed in without opening your app, in seconds: a session can be renewed this long after its last renewal. Default `2592000` (30 days). Not less than `SESSION_TTL`. |
 | `COOKIE_DOMAIN` | no | Cookie domain, e.g. `.example.com`, so backends on sibling subdomains receive the session cookie. By default the cookie belongs to the server's host only. |
 | `PORT` | no | Port for the Node / Docker server. Default `8787`. |
 
@@ -258,6 +259,33 @@ const { type, data } = JSON.parse(body);
 
 The calls contain e-mail links and codes, so `WEBHOOK_URL` must be https, except for a receiver on the same machine (`localhost`, `127.0.0.1`, or `host.docker.internal` from a Docker container). Calls with the same `webhook-id` are the same call; madAuth does not retry by itself.
 
+## Sessions
+
+A session has two lifetimes: how long your backends trust it, and how long the user stays signed in. They are separate, so the first can be short without making users sign in again.
+
+Signing in sets three cookies:
+
+| Cookie | Lifetime | What it is |
+| --- | --- | --- |
+| `madauth_session` | `SESSION_TTL` (8 hours) | The session token, a signed JWT. Your backends verify it without asking madAuth. HttpOnly. |
+| `madauth_renewal` | `SESSION_RENEWAL_TTL` (30 days) | The renewal token. It gets a new session token when the old one has expired or is about to. HttpOnly, and only sent to the madAuth server: its path is `/auth`, and it has no domain even with `COOKIE_DOMAIN`. Your backends never see it. |
+| `madauth_session_expires` | `SESSION_RENEWAL_TTL` | When the session token expires, in seconds since 1970, for the web library. Scripts can read it; it holds no secret. |
+
+**Renewal.** `GET /auth/session` renews the session when its token is missing, has expired or has passed half of its lifetime, if the request carries a valid renewal token. Before it does, the server checks again: the account still exists, no password reset happened since, and which [roles](#roles) the address has now. Then it sets all three cookies anew. So a password reset, a deleted account and a changed role reach your backends within `SESSION_TTL` at the latest, while an active user stays signed in.
+
+Each renewal starts the renewal time again: a user who opens your app at least every 30 days stays signed in. Without a visit in that time, they sign in again.
+
+**In the browser**, the web library renews the session when the page loads and when you call `Madauth.sessionReady()`. A page that has been open for hours, or is opened after hours, may hold an expired session token. Wait for the renewal before you call your own backend:
+
+```ts
+await Madauth.sessionReady(); // at once while the session is valid, or when nobody is signed in
+const response = await fetch('/api/orders');
+```
+
+A backend that answers 401 although the user is signed in met a session that expired in between: call `Madauth.sessionReady()` and send the request once more.
+
+**What renewal can't do.** Whoever has both cookies stays signed in until the renewal token expires or the password is reset. Google sign-in stores no account, so there is no way to end all sessions of a Google user at once. A session token issued by madAuth 0.1 has no renewal token: it lasts until it expires and then the user signs in again.
+
 ## Roles
 
 A role is a name such as `admin` or `editor` that madAuth puts into the session, so your app and your backends can tell what a user may do. What a role means is up to you; madAuth only knows `admin`, the role that may manage roles.
@@ -283,7 +311,7 @@ const result = await Madauth.admin.getRoles('ada@example.com'); // { isSuccess: 
 
 Whether the caller is an admin is asked from the store each time, not read from their session, so a removed `admin` role stops counting at once.
 
-**When a change shows.** The roles of a session are from the moment it was issued. The madAuth server reads them again whenever the app checks the session (`GET /auth/session`, e.g. on page load) and issues a new cookie if they changed. Your own backends, which verify the JWT offline, see the change from that moment; a session that is not checked again keeps its roles until it expires. A shorter `SESSION_TTL` shortens this.
+**When a change shows.** The roles of a session token are from the moment it was issued. The madAuth server reads them again whenever the app checks the session (`GET /auth/session`, e.g. on page load) and at every [renewal](#sessions), and issues a new session token if they changed. Your own backends, which verify the token offline, see the change from that moment, and after `SESSION_TTL` at the latest.
 
 Role names consist of lower-case letters, digits, `-` and `_`, start with a letter and have at most 32 characters. An address can hold up to 20.
 
@@ -445,6 +473,8 @@ if (!user) return new Response('Unauthorized', { status: 401 });
 console.log(user.id, user.email, user.roles); // roles: e.g. ['admin'], see "Roles"
 ```
 
+A session token is valid for `SESSION_TTL`. When `verifySession` finds none, answer 401: the web library then renews the session, and the app sends the request again (see [Sessions](#sessions)).
+
 Other languages can verify the JWT with any JOSE library:
 - algorithm `ES256`
 - issuer `MADAUTH_ISSUER`
@@ -468,8 +498,8 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/password/verify-email` | `{ token }` or `{ email, code }` → `{ user }` and the session cookie; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
 | `POST /auth/password/send-reset` | `{ email, redirectTo, locale? }` → 202, and the reset e-mail; 503 `temporarily_unavailable` |
 | `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie; ends all older sessions; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
-| `GET /auth/session` | `{ user }` for the current session, or 401 |
-| `POST /auth/logout` | Clears the session cookie |
+| `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
+| `POST /auth/logout` | Clears the cookies of the session |
 | `POST /auth/admin/roles/get` | `{ email }` → `{ email, roles }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`. See [Roles](#roles). |
 | `POST /auth/admin/roles/set` | `{ email, roles }` → `{ email, roles }`: replaces the roles of the address; also 400 `invalid_roles` |
 | `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; 401 `no_session`. See [Deleting an account](#deleting-an-account). |

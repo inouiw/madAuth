@@ -16,7 +16,7 @@ describe('@madauth/web', () => {
       ['GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'Password', 'loginMethods'].sort(),
     );
     expect(Object.keys(madauth.Madauth).sort()).toEqual(
-      ['admin', 'currentUser', 'deleteAccount', 'getSession', 'google', 'initialize', 'onAuthStateChanged', 'password', 'setLocale', 'signIn', 'signOut'].sort(),
+      ['admin', 'currentUser', 'deleteAccount', 'getSession', 'google', 'initialize', 'onAuthStateChanged', 'password', 'sessionReady', 'setLocale', 'signIn', 'signOut'].sort(),
     );
     expect('tryOneTapSignIn' in madauth.Madauth).toBe(false);
   });

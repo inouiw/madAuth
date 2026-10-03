@@ -1,6 +1,6 @@
 import { SignJWT, base64url, jwtVerify, type JWTPayload } from 'jose';
 import { SIGNING_ALG, type SigningKeys } from './keys.js';
-import { SESSION_TYP, type MadauthUser } from './user.js';
+import { RENEWAL_TYP, SESSION_TYP, type MadauthUser } from './user.js';
 
 /** A random URL-safe string (32 bytes by default). */
 export function randomString(bytes = 32): string {
@@ -75,6 +75,30 @@ export function signSession(
     amr,
   };
   return signToken(keys, issuer, SESSION_TYP, claims, ttlSeconds);
+}
+
+/**
+ * Signs the renewal token of a session: who the user is and how they signed in, but not their roles,
+ * which are read again at every renewal.
+ */
+export function signRenewal(
+  keys: SigningKeys,
+  issuer: string,
+  ttlSeconds: number,
+  user: MadauthUser,
+  amr: string[],
+  extra: { sv?: number } = {},
+): Promise<string> {
+  const claims: SessionClaims = {
+    ...extra,
+    sub: user.id,
+    email: user.email,
+    email_verified: user.email ? true : undefined,
+    name: user.name,
+    picture: user.picture,
+    amr,
+  };
+  return signToken(keys, issuer, RENEWAL_TYP, claims, ttlSeconds);
 }
 
 export function userFromClaims(claims: SessionClaims): MadauthUser {

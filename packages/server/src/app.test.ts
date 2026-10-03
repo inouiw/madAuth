@@ -4,10 +4,12 @@ import {
   APP_ORIGIN,
   CLIENT_ID,
   ISSUER,
+  cookieHeader,
   cookies,
   getNonce,
   googleIdToken,
   signIn,
+  signInResponse,
   testApp,
   verify,
 } from './test/helpers.js';
@@ -333,11 +335,12 @@ describe('session', () => {
     expect(res.status).toBe(401);
   });
 
-  it('X4: renews the session after half of its lifetime', async () => {
+  it('X4: renews the session after half of its lifetime, with the renewal token', async () => {
     const app = testApp();
     vi.useFakeTimers({ toFake: ['Date'] });
-    const session = await signIn(app);
-    const get = () => app.request('/auth/session', { headers: { Cookie: `madauth_session=${session}` } });
+    const signedIn = await signInResponse(app);
+    const session = cookies(signedIn).madauth_session.value;
+    const get = () => app.request('/auth/session', { headers: { Cookie: cookieHeader(signedIn) } });
 
     vi.setSystemTime(Date.now() + 1000 * 1000);
     expect(cookies(await get()).madauth_session).toBeUndefined();
@@ -349,13 +352,15 @@ describe('session', () => {
     expect(exp(renewed.value)).toBeGreaterThan(exp(session));
   });
 
-  it('X5: logout clears the session cookie', async () => {
+  it('X5: logout clears the cookies of the session', async () => {
     const app = testApp({ cookieDomain: '.example.com' });
 
     const res = await app.request('/auth/logout', { method: 'POST', headers: { Origin: APP_ORIGIN } });
 
     expect(res.status).toBe(204);
     expect(cookies(res).madauth_session).toMatchObject({ value: '', attrs: { 'max-age': '0', domain: '.example.com' } });
+    expect(cookies(res).madauth_renewal).toMatchObject({ value: '', attrs: { 'max-age': '0', path: '/auth' } });
+    expect(cookies(res).madauth_session_expires).toMatchObject({ value: '', attrs: { 'max-age': '0', domain: '.example.com' } });
   });
 });
 

@@ -1,3 +1,4 @@
+import { EXPIRY_COOKIE } from './constants.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
 import type { LoginMethodId } from './methods.js';
 import type { ProviderContext, ServerConfig, SignInProvider } from './providers/provider.js';
@@ -58,6 +59,25 @@ let langObserver: MutationObserver | undefined;
 
 function sameUser(a: MadauthUser | null, b: MadauthUser | null): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** How long before its expiry the session no longer counts as usable for a request, and is renewed first. */
+const RENEW_BEFORE_MS = 60_000;
+
+let renewing: Promise<boolean> | undefined;
+
+/** When the session expires (milliseconds since 1970), or undefined if the server's cookie is not there. */
+function sessionExpiry(): number | undefined {
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${EXPIRY_COOKIE}=(\\d+)`));
+  return match ? Number(match[1]) * 1000 : undefined;
+}
+
+/** Asks the server for the session, which renews it if needed. One request serves all callers that wait. */
+function renew(): Promise<boolean> {
+  renewing ??= Madauth.getSession()
+    .then((result) => result.isSuccess)
+    .finally(() => (renewing = undefined));
+  return renewing;
 }
 
 function setUser(next: MadauthUser | null, notifyAlways = false): void {
@@ -304,6 +324,27 @@ export const Madauth = {
     return { isSuccess: false, error: res.error };
   },
 
+  /**
+   * Resolves when the session cookie can be relied on for a request to your own backend, and to whether
+   * somebody is signed in. It resolves at once while the session is valid and when nobody is signed in;
+   * a session that has expired (e.g. the page was opened after hours) is renewed first.
+   *
+   * ```ts
+   * await Madauth.sessionReady();
+   * const response = await fetch('/api/orders'); // the backend finds a valid session cookie
+   * ```
+   */
+  async sessionReady(): Promise<boolean> {
+    if (!state?.serverUrl) return false;
+    const expiry = sessionExpiry();
+    if (expiry !== undefined) return expiry - Date.now() > RENEW_BEFORE_MS ? true : renew();
+    // No cookie from the server. On the server's own origin that means nobody is signed in. A server on
+    // another origin may have set a cookie this page can't see, so it is asked.
+    if (new URL(state.serverUrl).origin === location.origin) return user !== null;
+    await whenReady();
+    return user !== null;
+  },
+
   /** The last known signed-in user, or null. */
   get currentUser(): MadauthUser | null {
     return user;
@@ -378,6 +419,7 @@ export function takePendingError(): MadauthError | undefined {
 export function resetMadauthForTests(): void {
   state = undefined;
   generation++;
+  renewing = undefined;
   user = null;
   userKnown = false;
   pendingError = undefined;

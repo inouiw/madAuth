@@ -126,4 +126,4 @@ The locale is used for:
 
 ## Signing out and the session
 
-These work the same with or without the dialog: `Madauth.signOut()`, `Madauth.deleteAccount()`, `Madauth.getSession()`, `Madauth.currentUser`, `Madauth.onAuthStateChanged(listener)` and, for admins, `Madauth.admin`. See the [README](../README.md#using-madauth-in-your-app).
+These work the same with or without the dialog: `Madauth.signOut()`, `Madauth.deleteAccount()`, `Madauth.getSession()`, `Madauth.sessionReady()`, `Madauth.currentUser`, `Madauth.onAuthStateChanged(listener)` and, for admins, `Madauth.admin`. See the [README](../README.md#using-madauth-in-your-app).
