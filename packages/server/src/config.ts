@@ -181,8 +181,9 @@ export async function loadConfig(
 
   const ttlValue = read('SESSION_TTL');
   const sessionTtlSeconds = ttlValue ? Number(ttlValue) : DEFAULT_SESSION_TTL;
-  if (!Number.isInteger(sessionTtlSeconds) || sessionTtlSeconds < 60) {
-    throw new ConfigError(`SESSION_TTL must be a whole number of seconds (at least 60) but is "${ttlValue}".`);
+  // The web library renews a session in its last minute, which must be past half of its lifetime.
+  if (!Number.isInteger(sessionTtlSeconds) || sessionTtlSeconds < 300) {
+    throw new ConfigError(`SESSION_TTL must be a whole number of seconds (at least 300) but is "${ttlValue}".`);
   }
   const renewalValue = read('SESSION_RENEWAL_TTL');
   // A session token that outlives the default renewal time is renewable for as long as it lives.

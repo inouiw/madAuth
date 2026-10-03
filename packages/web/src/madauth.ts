@@ -61,16 +61,10 @@ function sameUser(a: MadauthUser | null, b: MadauthUser | null): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-/** How long before its expiry the session is renewed, and no longer counts as usable for a request. */
+/** How long before its expiry the session no longer counts as usable for a request, and is renewed first. */
 const RENEW_BEFORE_MS = 60_000;
-/** The longest delay setTimeout takes. */
-const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
-let renewalTimer: ReturnType<typeof setTimeout> | undefined;
 let renewing: Promise<boolean> | undefined;
-let watchingVisibility = false;
-/** The expiry time the timer last tried to renew, so a session that can't be renewed is not asked for again and again. */
-let triedExpiry: number | undefined;
 
 /** When the session expires (milliseconds since 1970), or undefined if the server's cookie is not there. */
 function sessionExpiry(): number | undefined {
@@ -86,40 +80,11 @@ function renew(): Promise<boolean> {
   return renewing;
 }
 
-/** A page that comes back into view catches up on a renewal it skipped while hidden, or that failed. */
-function onVisibilityChange(): void {
-  triedExpiry = undefined;
-  scheduleRenewal();
-}
-
-/** Renews the session shortly before it expires, but only while the page is looked at. */
-function scheduleRenewal(): void {
-  clearTimeout(renewalTimer);
-  renewalTimer = undefined;
-  const expiry = sessionExpiry();
-  if (!state || expiry === undefined || expiry === triedExpiry) return;
-  if (!watchingVisibility) {
-    watchingVisibility = true;
-    document.addEventListener('visibilitychange', onVisibilityChange);
-  }
-  // A hidden page does not renew: the session lasts for a time after the user last looked at the app,
-  // not for as long as a tab stays open.
-  if (document.visibilityState === 'hidden') return;
-  const delay = Math.max(expiry - RENEW_BEFORE_MS - Date.now(), 0);
-  renewalTimer = setTimeout(() => {
-    // setTimeout can't wait that long at once: wait for the rest without counting it as a try.
-    if (delay > MAX_TIMEOUT_MS) return scheduleRenewal();
-    triedExpiry = expiry;
-    void renew();
-  }, Math.min(delay, MAX_TIMEOUT_MS));
-}
-
 function setUser(next: MadauthUser | null, notifyAlways = false): void {
   const changed = notifyAlways || !userKnown || !sameUser(user, next);
   const signedIn = next !== null && !sameUser(user, next);
   user = next;
   userKnown = true;
-  scheduleRenewal();
   if (signedIn) for (const provider of state?.providers.values() ?? []) provider.onSignedIn?.();
   if (!changed) return;
   for (const listener of [...listeners]) {
@@ -454,12 +419,7 @@ export function takePendingError(): MadauthError | undefined {
 export function resetMadauthForTests(): void {
   state = undefined;
   generation++;
-  clearTimeout(renewalTimer);
-  renewalTimer = undefined;
   renewing = undefined;
-  if (watchingVisibility) document.removeEventListener('visibilitychange', onVisibilityChange);
-  watchingVisibility = false;
-  triedExpiry = undefined;
   user = null;
   userKnown = false;
   pendingError = undefined;

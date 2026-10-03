@@ -32,7 +32,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
 | `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in needs `email.verify` and `email.reset`, e.g. `email.verify,email.reset,email.already_registered`. |
 | `PASSWORD_MIN_LENGTH` | no | Minimum password length. Default `8`. |
-| `SESSION_TTL` | no | Lifetime of a session token in seconds: how long your backends accept it. Default `28800` (8 hours). The web library renews it in time, see [Sessions](#sessions). |
+| `SESSION_TTL` | no | Lifetime of a session token in seconds: how long your backends accept it. Default `28800` (8 hours), at least `300`. The web library renews it when needed, see [Sessions](#sessions). |
 | `SESSION_RENEWAL_TTL` | no | How long a user stays signed in without opening your app, in seconds: a session can be renewed this long after its last renewal. Default `2592000` (30 days). Not less than `SESSION_TTL`. |
 | `COOKIE_DOMAIN` | no | Cookie domain, e.g. `.example.com`, so backends on sibling subdomains receive the session cookie. By default the cookie belongs to the server's host only. |
 | `PORT` | no | Port for the Node / Docker server. Default `8787`. |
@@ -275,9 +275,7 @@ Signing in sets three cookies:
 
 Each renewal starts the renewal time again: a user who opens your app at least every 30 days stays signed in. Without a visit in that time, they sign in again.
 
-**In the browser**, the web library does this by itself: it renews the session a minute before it expires while the page is looked at, and when a page comes back into view. A hidden tab does not renew.
-
-A page that is opened after hours has an expired session token until the renewal has finished. Wait for it before you call your own backend, with `Madauth.sessionReady()`:
+**In the browser**, the web library renews the session when the page loads and when you call `Madauth.sessionReady()`. A page that has been open for hours, or is opened after hours, may hold an expired session token. Wait for the renewal before you call your own backend:
 
 ```ts
 await Madauth.sessionReady(); // at once while the session is valid, or when nobody is signed in

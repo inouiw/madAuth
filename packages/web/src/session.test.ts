@@ -1,4 +1,4 @@
-// Keeping the session fresh: Madauth.sessionReady and the renewal before the session expires.
+// Keeping the session fresh: Madauth.sessionReady renews an expired session before the app uses it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './index.js';
 import { Madauth } from './madauth.js';
@@ -7,18 +7,11 @@ import { SERVER, ada, fakeServer, resetAll, setExpiryCookie } from './test-helpe
 const HERE = 'https://app.example.com';
 const sessionRequests = (server: ReturnType<typeof fakeServer>) => server.requests.filter((r) => r.path === '/auth/session').length;
 
-function setVisibility(state: 'visible' | 'hidden') {
-  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
-  document.dispatchEvent(new Event('visibilitychange'));
-}
-
 beforeEach(() => {
   resetAll();
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 afterEach(() => {
-  vi.useRealTimers();
-  setVisibility('visible');
   resetAll();
 });
 
@@ -86,77 +79,5 @@ describe('Madauth.sessionReady', () => {
 
   it('is false before initialize', async () => {
     expect(await Madauth.sessionReady()).toBe(false);
-  });
-});
-
-describe('renewal while the page is open', () => {
-  it('renews the session a minute before it expires', async () => {
-    vi.useFakeTimers();
-    const server = fakeServer();
-    server.user = ada;
-    await Madauth.initialize({ serverUrl: HERE, providers: [] });
-    const before = sessionRequests(server);
-
-    await vi.advanceTimersByTimeAsync(58 * 60 * 1000);
-    expect(sessionRequests(server)).toBe(before);
-
-    await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
-    expect(sessionRequests(server)).toBe(before + 1);
-
-    // And again before the renewed session expires.
-    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-    expect(sessionRequests(server)).toBe(before + 2);
-  });
-
-  it('a hidden page does not renew; it catches up when it comes back into view', async () => {
-    vi.useFakeTimers();
-    const server = fakeServer();
-    server.user = ada;
-    await Madauth.initialize({ serverUrl: HERE, providers: [] });
-    const before = sessionRequests(server);
-
-    setVisibility('hidden');
-    await vi.advanceTimersByTimeAsync(3 * 60 * 60 * 1000);
-    expect(sessionRequests(server)).toBe(before);
-
-    setVisibility('visible');
-    await vi.advanceTimersByTimeAsync(0);
-    expect(sessionRequests(server)).toBe(before + 1);
-    expect(Madauth.currentUser).toEqual(ada);
-  });
-
-  it('asks only once for a session that the server does not renew', async () => {
-    vi.useFakeTimers();
-    const server = fakeServer();
-    server.user = ada;
-    await Madauth.initialize({ serverUrl: HERE, providers: [] });
-    // E.g. the renewal cookie is gone: the server still knows the user but issues nothing new.
-    const expiry = Date.now() + 30_000;
-    const realFetch = globalThis.fetch;
-    vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
-      const response = await realFetch(...args);
-      setExpiryCookie(expiry);
-      return response;
-    });
-    setExpiryCookie(expiry);
-    await Madauth.getSession();
-    const before = sessionRequests(server);
-
-    await vi.advanceTimersByTimeAsync(20_000);
-
-    expect(sessionRequests(server)).toBe(before + 1);
-  });
-
-  it('stops after sign-out', async () => {
-    vi.useFakeTimers();
-    const server = fakeServer();
-    server.user = ada;
-    await Madauth.initialize({ serverUrl: HERE, providers: [] });
-    await Madauth.signOut();
-    const before = sessionRequests(server);
-
-    await vi.advanceTimersByTimeAsync(3 * 60 * 60 * 1000);
-
-    expect(sessionRequests(server)).toBe(before);
   });
 });

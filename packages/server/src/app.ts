@@ -14,8 +14,6 @@ import { createWebhookClient, type WebhookClient, type WebhookType } from './web
 
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
-/** A session token that expires within this time is renewed: the web library renews a minute before expiry. */
-const RENEW_BEFORE_SECONDS = 60;
 
 export { REDIRECT_ERROR_PARAM } from './routes/google.js';
 
@@ -198,14 +196,8 @@ export function createApp(config: MadauthConfig): Hono {
     const session = await tokenClaims(c, SESSION_COOKIE, SESSION_TYP);
     // The roles are read again, so a change shows the next time the app checks the session.
     const user = session ? await checked(session) : null;
-    const now = Date.now() / 1000;
-    // The web library renews a minute before expiry; with a short SESSION_TTL that is before half of it.
     const upToDate =
-      session &&
-      user &&
-      sameRoles(user.roles ?? [], session.roles ?? []) &&
-      now - session.iat <= sessionTtlSeconds / 2 &&
-      session.exp - now > RENEW_BEFORE_SECONDS;
+      session && user && sameRoles(user.roles ?? [], session.roles ?? []) && Date.now() / 1000 - session.iat <= sessionTtlSeconds / 2;
     if (upToDate) return user;
 
     const renewal = await tokenClaims(c, RENEWAL_COOKIE, RENEWAL_TYP);
