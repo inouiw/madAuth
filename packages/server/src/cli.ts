@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 import { parseArgs, parseEnv } from 'node:util';
-import { ConfigError, loadConfig, loadUserStoreConfig } from './config.js';
+import { loadConfig, loadUserStoreConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
 import type { StoreAdapter } from './store/schema.js';
@@ -169,6 +169,10 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
   }
   const { values: options, positionals } = parsed;
   const [command, ...rest] = positionals;
+  // Only create-user takes an argument; anything else is likely a mistyped option, e.g. `init .env.local`.
+  if (rest.length > (command === 'create-user' ? 1 : 0)) {
+    return { output: `Unexpected argument: ${rest.at(-1)}\n\n${usage}`, exitCode: 1 };
+  }
   try {
     const envFile = options['env-file'];
     if (envFile !== undefined) {
@@ -200,7 +204,7 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
       return await createUser(rest[0], io, env);
     }
   } catch (e) {
-    return { output: e instanceof ConfigError ? e.message : String(e), exitCode: 1 };
+    return { output: e instanceof Error ? e.message : String(e), exitCode: 1 };
   }
   return { output: usage, exitCode: command ? 1 : 0 };
 }
@@ -239,14 +243,20 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
 
   const clientId = await answer(options['google-client-id'], 'Google client ID (empty: no Google sign-in)');
   const askClientSecret = () => (options.yes ? '' : io.askSecret('Google client secret (empty: no redirect flow): '));
+  if (!clientId && options['google-client-secret'] !== undefined) {
+    return fail('--google-client-secret needs a Google client ID.');
+  }
   const clientSecret = clientId ? (options['google-client-secret'] ?? (await askClientSecret())).trim() : '';
 
   const password = options.password ?? /^y/i.test(await answer(undefined, 'E-mail & password sign-in? (yes/no)', 'yes'));
+  if (!password && (options.database !== undefined || options['webhook-url'] !== undefined)) {
+    return fail('--database and --webhook-url are for e-mail & password sign-in, which is turned off.');
+  }
   if (!clientId && !password) {
     return fail('No sign-in method is chosen. Give a Google client ID, turn on e-mail & password sign-in, or both.');
   }
   const database = password ? await answer(options.database, 'Database for the users', 'sqlite:./madauth.db') : '';
-  if (password && !/^(sqlite|dynamodb):/.test(database)) {
+  if (password && !/^(sqlite|dynamodb):./.test(database)) {
     return fail(`The database must be sqlite:<path> or dynamodb:<table> but is "${database}".`);
   }
   const webhookUrl = password
@@ -256,7 +266,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   // The comments have no quotes in them: some env file parsers trip over those.
   const variable = (name: string, value: string, comment: string) => `# ${comment}\n${name}=${value}\n`;
   const content = [
-    '# Configuration of the madAuth server, written by madauth-server init. It holds secrets: never commit it.\n',
+    '# Configuration of the madAuth server, written by npx @madauth/server init. It holds secrets: never commit it.\n',
     '# All settings: https://github.com/inouiw/madAuth/blob/main/docs/server.md#configuration\n\n',
     variable(
       'MADAUTH_ISSUER',
@@ -302,11 +312,13 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
 /** What to do after `init`, for the chosen sign-in methods: numbered steps with commands and snippets to copy. */
 function nextSteps(file: string, origin: string, google: 'GoogleFedcm' | 'GoogleRedirect' | undefined, password: boolean): string {
   const server = `http://localhost:${PORT}`;
+  // Quoted when needed, so the command can be pasted as it is.
+  const envFile = /[^\w./-]/.test(file) ? `'${file.replaceAll("'", `'\\''`)}'` : file;
   const providers = [google, password && 'Password'].filter(Boolean);
   // For development, Google wants http://localhost next to the origin with its port.
   const googleOrigins = new Set([origin, ...(new URL(origin).hostname === 'localhost' ? ['http://localhost'] : [])]);
   const steps = [
-    ['Start the madAuth server:', '', `  npx @madauth/server start --env-file ${file}`],
+    ['Start the madAuth server:', '', `  npx @madauth/server start --env-file ${envFile}`],
     password && [
       'madAuth hands its e-mails to your webhook receiver. For development, start the example receiver,',
       `which prints them, with the same WEBHOOK_URL and WEBHOOK_SECRET as in ${file}:`,
