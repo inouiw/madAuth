@@ -11,6 +11,8 @@ export interface StoredUser {
   name: string | null;
   sessionVersion: number;
   lastMailAt: number;
+  /** Wrong e-mail codes in a row. Empty in records that a store keeps from before schema version 2. */
+  wrongCodes: number | null;
   createdAt: number;
 }
 
@@ -37,6 +39,18 @@ export type VerificationPurpose = 'verify' | 'reset';
 
 /** Wrong codes allowed per e-mail before the code (and its link) stop working. */
 export const MAX_CODE_ATTEMPTS = 5;
+/**
+ * Wrong codes in a row allowed per user, counted across e-mails. After that the user's codes stop working
+ * until one of their e-mail links is used. Without this limit, asking for a new e-mail every minute would
+ * buy five new guesses each time.
+ */
+export const MAX_WRONG_CODES = 10;
+
+/** `userId` is null if the code was wrong, expired or used; `locked` if the user's codes no longer work at all. */
+export interface CodeResult {
+  userId: string | null;
+  locked: boolean;
+}
 
 const newId = (prefix: string) => `${prefix}_${randomBytes(16).toString('base64url')}`;
 
@@ -85,6 +99,7 @@ export class Users {
       name: data.name,
       sessionVersion: 0,
       lastMailAt: 0,
+      wrongCodes: 0,
       createdAt: now,
     };
     if (!(await this.store.create('user', user as unknown as Row))) return null;
@@ -153,19 +168,44 @@ export class Users {
     return record ? this.consume(record) : null;
   }
 
-  /** Uses up the user's verification if `code` matches. Too many wrong codes delete it. */
-  async consumeCode(userId: string, purpose: VerificationPurpose, code: string): Promise<string | null> {
-    const record = (await this.store.findOne('verification', { userId, purpose })) as StoredVerification | null;
-    if (!record) return null;
+  /**
+   * Uses up the user's verification if `code` matches. Too many wrong codes delete it, and after
+   * MAX_WRONG_CODES wrong codes in a row the user's codes stop working until an e-mail link is used.
+   */
+  async consumeCode(user: StoredUser, purpose: VerificationPurpose, code: string): Promise<CodeResult> {
+    // A locked user's verification is left alone, so the link in the e-mail keeps working.
+    if ((user.wrongCodes ?? 0) >= MAX_WRONG_CODES) return { userId: null, locked: true };
+    const record = (await this.store.findOne('verification', { userId: user.id, purpose })) as StoredVerification | null;
+    if (!record) return { userId: null, locked: false };
     // The attempt is counted before the code is compared, and only if no other request counted one
     // meanwhile. So requests sent at the same time can't try more codes than allowed.
     const attempts = record.attempts + 1;
-    if ((await this.store.update('verification', { id: record.id, attempts: record.attempts }, { attempts })) !== 1) return null;
+    if ((await this.store.update('verification', { id: record.id, attempts: record.attempts }, { attempts })) !== 1) {
+      return { userId: null, locked: false };
+    }
+    // The code is also counted as wrong for the user before it is compared, so codes for confirming and
+    // for resetting tried at the same time can't get past the limit either. A right code sets it back.
+    const wrongCodes = await this.countWrongCode(user);
+    if (wrongCodes === null) return { userId: null, locked: false };
+    if (wrongCodes > MAX_WRONG_CODES) return { userId: null, locked: true };
     if (!safeEqual(hashCode(this.key, code), record.codeHash)) {
       if (attempts >= MAX_CODE_ATTEMPTS) await this.store.delete('verification', { id: record.id });
-      return null;
+      return { userId: null, locked: wrongCodes >= MAX_WRONG_CODES };
     }
-    return this.consume(record);
+    return { userId: await this.consume(record), locked: false };
+  }
+
+  /** Counts a code for the user and resolves to the new count; null if other requests kept changing it. */
+  private async countWrongCode(user: StoredUser): Promise<number | null> {
+    let current: StoredUser | null = user;
+    for (let attempt = 0; attempt < 3 && current; attempt++) {
+      const wrongCodes = (current.wrongCodes ?? 0) + 1;
+      if ((await this.store.update('user', { id: user.id, wrongCodes: current.wrongCodes ?? null }, { wrongCodes })) === 1) {
+        return wrongCodes;
+      }
+      current = await this.findById(user.id);
+    }
+    return null;
   }
 
   private async consume(record: StoredVerification): Promise<string | null> {

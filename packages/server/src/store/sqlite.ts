@@ -2,7 +2,7 @@
 // Published as `@madauth/server/sqlite`; read it as the reference when writing your own.
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { madauthSchema, type FieldDef, type Row, type StoreAdapter, type Value, type Where } from './schema.js';
-import { columnName, createTablesSql, tableName } from './sql.js';
+import { columnName, createTablesSql, tableName, upgradeTablesSql } from './sql.js';
 
 /**
  * Stores madAuth's records in a SQLite file using Node's built-in `node:sqlite` (Node 22.13 or newer).
@@ -97,7 +97,7 @@ export function createSqliteAdapter(path: string): StoreAdapter {
   };
 }
 
-/** Creates the tables in a new database; refuses a database written by a newer madAuth. */
+/** Creates the tables in a new database and upgrades an older one; refuses a database written by a newer madAuth. */
 function migrate(db: DatabaseSync): void {
   const { user_version: version } = db.prepare('PRAGMA user_version').get() as { user_version: number };
   if (version > madauthSchema.version) {
@@ -109,8 +109,8 @@ function migrate(db: DatabaseSync): void {
   if (version === madauthSchema.version) return;
   db.exec('BEGIN');
   try {
-    // Version 0 is an empty database. Later schema versions add their migration steps here.
-    db.exec(createTablesSql('sqlite'));
+    // Version 0 is an empty database.
+    db.exec(version === 0 ? createTablesSql('sqlite') : upgradeTablesSql('sqlite', version));
     db.exec(`PRAGMA user_version = ${madauthSchema.version}`);
     db.exec('COMMIT');
   } catch (e) {

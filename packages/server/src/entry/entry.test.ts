@@ -150,11 +150,11 @@ describe('deployment entry points', () => {
   it('A17: create-user asks for a password and creates a verified user, without needing the webhook', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
     const env = { DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}` };
-    const io = { askSecret: async () => 'correct horse battery' };
+    const io = { ask: async () => '', askSecret: async () => 'correct horse battery' };
 
     const created = await runCli(['create-user', 'Ada@Example.com'], io, env);
     const duplicate = await runCli(['create-user', 'ada@example.com'], io, env);
-    const short = await runCli(['create-user', 'grace@example.com'], { askSecret: async () => 'short' }, env);
+    const short = await runCli(['create-user', 'grace@example.com'], { ...io, askSecret: async () => 'short' }, env);
 
     expect(created).toMatchObject({ exitCode: 0, output: expect.stringMatching(/^Created user usr_\S+ \(Ada@Example.com\)/) });
     expect(duplicate).toMatchObject({ exitCode: 1, output: expect.stringContaining('already exists') });
@@ -170,6 +170,17 @@ describe('deployment entry points', () => {
     expect(await runCli(['schema', '--dialect', 'mysql'])).toEqual({ exitCode: 0, output: createTablesSql('mysql') });
     expect(await runCli(['schema'])).toEqual({ exitCode: 0, output: createTablesSql('postgres') });
     expect(await runCli(['schema', '--dialect', 'oracle'])).toMatchObject({ exitCode: 1 });
+  });
+
+  it('schema --from prints only the changes since a schema version', async () => {
+    expect(await runCli(['schema', '--dialect', 'sqlite', '--from', '1'])).toEqual({
+      exitCode: 0,
+      output: 'ALTER TABLE madauth_user ADD COLUMN wrong_codes INTEGER NOT NULL DEFAULT 0;',
+    });
+    expect(await runCli(['schema', '--from', '1'])).toMatchObject({ output: expect.stringContaining('wrong_codes DOUBLE PRECISION NOT NULL DEFAULT 0') });
+    expect(await runCli(['schema', '--from', '2'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
+    expect(await runCli(['schema', '--from', 'x'])).toMatchObject({ exitCode: 1 });
+    expect(await runCli(['schema', '--from', '3'])).toMatchObject({ exitCode: 1 });
   });
 
   it('generate-webhook-secret prints a usable secret', async () => {

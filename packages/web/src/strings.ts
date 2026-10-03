@@ -67,6 +67,7 @@ export const en = {
     invalid_email: 'Please enter a valid e-mail address.',
     link_invalid: 'This link is invalid or has expired. Please ask for a new e-mail.',
     code_invalid: 'The code is wrong or has expired.',
+    codes_locked: 'Too many wrong codes. Please ask for a new e-mail and use the link in it.',
   } satisfies Partial<Record<MadauthErrorCode, string>>,
   /** For every other error code. */
   errorFallback: 'Sign-in is not available right now.',
@@ -145,6 +146,7 @@ export const de: Strings = {
     invalid_email: 'Bitte geben Sie eine gültige E-Mail-Adresse ein.',
     link_invalid: 'Dieser Link ist ungültig oder abgelaufen. Bitte fordern Sie eine neue E-Mail an.',
     code_invalid: 'Der Bestätigungscode ist falsch oder abgelaufen.',
+    codes_locked: 'Zu viele falsche Bestätigungscodes. Bitte fordern Sie eine neue E-Mail an und öffnen Sie den Link darin.',
   },
   errorFallback: 'Die Anmeldung ist derzeit nicht möglich.',
   confirmEmailFirst:
