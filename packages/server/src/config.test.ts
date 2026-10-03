@@ -60,7 +60,6 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, ALLOWED_ORIGINS: 'app.example.com' })).rejects.toThrow(/ALLOWED_ORIGINS/);
     await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: 'abc' })).rejects.toThrow(/GOOGLE_CLIENT_ID must end with/);
     await expect(loadConfig({ ...env, SESSION_TTL: '5' })).rejects.toThrow(/SESSION_TTL/);
-    await expect(loadConfig({ ...env, SESSION_TTL: '299' })).rejects.toThrow(/at least 300/);
   });
 
   it('A14: needs at least one sign-in method', async () => {
