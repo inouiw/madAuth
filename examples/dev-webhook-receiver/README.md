@@ -8,6 +8,12 @@ It reads `WEBHOOK_URL` and `WEBHOOK_SECRET` from `packages/server/.env` (the sam
 npm run dev:webhooks
 ```
 
+For a madAuth server outside this repository, e.g. one set up with `madauth-server init`, pass it the two settings from that server's `.env`:
+
+```bash
+WEBHOOK_URL=http://localhost:8790/webhook WEBHOOK_SECRET=whsec_... npm run dev:webhooks
+```
+
 To try the sign-up check, start it with `ALLOWED_EMAIL_DOMAINS`. Sign-ups from other domains are then refused with a message:
 
 ```bash
