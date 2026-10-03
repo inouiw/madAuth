@@ -1,8 +1,30 @@
 {
   "name": "@madauth/server",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "madAuth server: Google and e-mail & password sign-in with madAuth sessions, for Docker, AWS Lambda and Azure Functions.",
   "license": "MIT",
+  "author": "David Neuy",
+  "homepage": "https://github.com/inouiw/madAuth#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inouiw/madAuth.git",
+    "directory": "packages/server"
+  },
+  "bugs": {
+    "url": "https://github.com/inouiw/madAuth/issues"
+  },
+  "keywords": [
+    "auth",
+    "authentication",
+    "login",
+    "sign-in",
+    "google-sign-in",
+    "session",
+    "jwt",
+    "hono",
+    "aws-lambda",
+    "azure-functions"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22.13"
@@ -80,5 +102,8 @@
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^5.0.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

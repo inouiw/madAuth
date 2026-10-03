@@ -1,8 +1,28 @@
 {
   "name": "@madauth/web",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "madAuth sign-in UI as framework-agnostic web components.",
   "license": "MIT",
+  "author": "David Neuy",
+  "homepage": "https://github.com/inouiw/madAuth#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inouiw/madAuth.git",
+    "directory": "packages/web"
+  },
+  "bugs": {
+    "url": "https://github.com/inouiw/madAuth/issues"
+  },
+  "keywords": [
+    "auth",
+    "authentication",
+    "login",
+    "sign-in",
+    "google-sign-in",
+    "fedcm",
+    "web-components",
+    "lit"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -31,5 +51,8 @@
     "typescript": "^5.9.2",
     "vite": "^7.1.7",
     "vitest": "^5.0.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
