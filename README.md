@@ -84,11 +84,11 @@ npm install @madauth/server
 ```
 
 ```bash
-npx madauth-server init
+npx @madauth/server init
 ```
 
 ```bash
-npx madauth-server start --env-file .env
+npx @madauth/server start --env-file .env
 ```
 
 Or with Docker (see [Running the madAuth server](docs/server.md) for the configuration and other hosting options):

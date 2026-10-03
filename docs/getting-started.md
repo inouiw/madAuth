@@ -15,7 +15,7 @@ npm install @madauth/web @madauth/server
 ## 2. Create the configuration
 
 ```bash
-npx madauth-server init
+npx @madauth/server init
 ```
 
 `init` asks a few questions and writes the configuration to `.env`, with a new signing key:
@@ -36,7 +36,7 @@ Never commit `.env`: it holds the signing key and your secrets.
 Every question is also an option, so a script needs no prompts. `--yes` takes the default for everything you don't pass:
 
 ```bash
-npx madauth-server init --yes --app-url http://localhost:3000
+npx @madauth/server init --yes --app-url http://localhost:3000
 ```
 
 The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--password` or `--no-password`, `--database` and `--webhook-url`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
@@ -44,7 +44,7 @@ The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--
 ## 3. Start the server
 
 ```bash
-npx madauth-server start --env-file .env
+npx @madauth/server start --env-file .env
 ```
 
 The server listens on port 8787. All its settings are in `.env`; see [Configuration](server.md#configuration) for what each one does.
@@ -107,7 +107,7 @@ Open your app and click your sign-in button. In the dialog, choose "Create accou
 To create a user without the e-mail, e.g. a first admin:
 
 ```bash
-npx madauth-server create-user admin@example.com --env-file .env
+npx @madauth/server create-user admin@example.com --env-file .env
 ```
 
 ## Next

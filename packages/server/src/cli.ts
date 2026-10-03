@@ -280,7 +280,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
       variable(
         'WEBHOOK_EVENTS',
         'email.verify,email.reset,email.already_registered',
-        'What the webhook gets: only the e-mails. Add e.g. signup.before or user.created, or remove the line to get all.',
+        'The types your webhook receiver handles; only these are sent. Add e.g. signup.before or user.created.',
       ),
     variable('PORT', String(PORT), 'Port the server listens on.'),
   ]
@@ -306,7 +306,7 @@ function nextSteps(file: string, origin: string, google: 'GoogleFedcm' | 'Google
   // For development, Google wants http://localhost next to the origin with its port.
   const googleOrigins = new Set([origin, ...(new URL(origin).hostname === 'localhost' ? ['http://localhost'] : [])]);
   const steps = [
-    ['Start the madAuth server:', '', `  npx madauth-server start --env-file ${file}`],
+    ['Start the madAuth server:', '', `  npx @madauth/server start --env-file ${file}`],
     password && [
       'madAuth hands its e-mails to your webhook receiver. For development, start the example receiver,',
       `which prints them, with the same WEBHOOK_URL and WEBHOOK_SECRET as in ${file}:`,

@@ -18,7 +18,7 @@ Google sign-in needs no database. E-mail & password sign-in stores its users thr
 
 ## Configuration
 
-All settings are environment variables. `npx madauth-server init` asks for the main ones and writes them to a `.env` file, with a new signing key and webhook secret (see [Getting started](getting-started.md)).
+All settings are environment variables. `npx @madauth/server init` asks for the main ones and writes them to a `.env` file, with a new signing key and webhook secret (see [Getting started](getting-started.md)).
 
 | Variable | Required | Description |
 | --- | --- | --- |
@@ -84,12 +84,12 @@ npm install @madauth/server
 ```
 
 ```bash
-npx madauth-server start --env-file .env
+npx @madauth/server start --env-file .env
 ```
 
-`--env-file` reads the settings from a file. A variable that is already set in the environment wins, so `PORT=9000 npx madauth-server start --env-file .env` listens on another port. Every command takes it. Without it, the server reads the environment only.
+`--env-file` reads the settings from a file. A variable that is already set in the environment wins, so `PORT=9000 npx @madauth/server start --env-file .env` listens on another port. Every command takes it. Without it, the server reads the environment only.
 
-`npx madauth-server init` writes such a file. It asks for your app's URL and the sign-in methods, and every question is also an option (`--yes` takes the defaults); see [Getting started](getting-started.md). Run `npx madauth-server` for all commands.
+`npx @madauth/server init` writes such a file. It asks for your app's URL and the sign-in methods, and every question is also an option (`--yes` takes the defaults); see [Getting started](getting-started.md). Run `npx @madauth/server` for all commands.
 
 ### Docker
 

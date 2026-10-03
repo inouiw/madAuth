@@ -13,11 +13,11 @@ npm install @madauth/server
 ```
 
 ```bash
-npx madauth-server init
+npx @madauth/server init
 ```
 
 ```bash
-npx madauth-server start --env-file .env
+npx @madauth/server start --env-file .env
 ```
 
 `init` asks a few questions and writes the configuration to `.env`, with a new signing key, then prints the next steps. `start` runs the server on port 8787. See [Getting started](https://github.com/inouiw/madAuth/blob/main/docs/getting-started.md).
