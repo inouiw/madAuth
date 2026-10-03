@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { createWebhookClient, generateWebhookSecret, signWebhook, verifyWebhook } from './webhooks.js';
 
 // The example from the Standard Webhooks specification, so other implementations can verify our calls.
+// It is a public example key; it is split so secret scanners don't mistake it for a real (e.g. Stripe) secret.
 const spec = {
-  secret: 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw',
+  secret: ['whsec', 'MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw'].join('_'),
   id: 'msg_p5jXN8AQM9LWM0D4loKWxJek',
   timestamp: 1614265330,
   body: '{"test": 2432232314}',
