@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import * as madauth from './index.js';
 import { Madauth } from './madauth.js';
 import { GoogleRedirect } from './providers/google-redirect.js';
@@ -13,12 +13,21 @@ afterEach(resetAll);
 describe('@madauth/web', () => {
   it('W7: exports exactly the public API', () => {
     expect(Object.keys(madauth).sort()).toEqual(
-      ['GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'loginMethods'].sort(),
+      ['GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'Password', 'loginMethods'].sort(),
     );
     expect(Object.keys(madauth.Madauth).sort()).toEqual(
-      ['currentUser', 'getSession', 'initialize', 'onAuthStateChanged', 'signIn', 'signOut'].sort(),
+      ['currentUser', 'getSession', 'google', 'initialize', 'onAuthStateChanged', 'password', 'signIn', 'signOut'].sort(),
     );
     expect('tryOneTapSignIn' in madauth.Madauth).toBe(false);
+  });
+
+  it('H12: scopes each sign-in method’s actions', () => {
+    expect(Object.keys(madauth.Madauth.password).sort()).toEqual(
+      ['confirmReset', 'pendingReset', 'policy', 'sendResetEmail', 'sendVerificationEmail', 'signIn', 'signUp', 'verifyEmail'].sort(),
+    );
+    expect(Object.keys(madauth.Madauth.google)).toEqual(['renderButton']);
+    expectTypeOf(madauth.Madauth.password).toEqualTypeOf<madauth.PasswordApi>();
+    expectTypeOf(madauth.Madauth.google).toEqualTypeOf<madauth.GoogleApi>();
   });
 });
 
@@ -43,7 +52,7 @@ describe('<madauth-login> with madAuth', () => {
     vi.spyOn(window.location, 'assign').mockImplementation(() => {});
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
     login = await open();
-    login.shadowRoot!.querySelector<HTMLButtonElement>('[data-method="google"]')!.click();
+    login.shadowRoot!.querySelector<HTMLButtonElement>('.google-slot button')!.click();
     await login.updateComplete;
     expect(login.shadowRoot!.querySelector('.notice')).toBeNull();
     expect(window.location.assign).toHaveBeenCalledOnce();

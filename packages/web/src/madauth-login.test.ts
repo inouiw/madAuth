@@ -95,8 +95,8 @@ describe('<madauth-login>', () => {
     }
   });
 
-  it('offers a labelled username and password form', () => {
-    for (const id of ['username', 'password']) {
+  it('offers a labelled e-mail and password form', () => {
+    for (const id of ['email', 'password']) {
       expect($(`form input#${id}`)).not.toBeNull();
       expect($(`label[for="${id}"]`)).not.toBeNull();
     }

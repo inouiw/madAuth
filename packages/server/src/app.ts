@@ -1,54 +1,85 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
-import { base64url } from 'jose';
 import type { MadauthConfig } from './config.js';
-import { verifyGoogleIdToken } from './google.js';
 import { importSigningKeys, type SigningKeys } from './keys.js';
-import { readToken, signSession, signToken, userFromClaims, type SessionClaims } from './tokens.js';
+import { deriveCodeKey } from './password.js';
+import { googleRoutes } from './routes/google.js';
+import { passwordRoutes } from './routes/password.js';
+import { readToken, signSession, userFromClaims, type SessionClaims } from './tokens.js';
 import { SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
+import { Users } from './users.js';
+import { createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
-const NONCE_COOKIE = 'madauth_nonce';
-const NONCE_TYP = 'madauth-nonce+jwt';
-const NONCE_TTL = 5 * 60;
+/** How long madAuth waits for an event call; events never make a request fail. */
+export const EVENT_TIMEOUT_MS = 5_000;
 
-const OAUTH_COOKIE = 'madauth_oauth';
-const OAUTH_TYP = 'madauth-oauth-state+jwt';
-const OAUTH_TTL = 10 * 60;
+export { REDIRECT_ERROR_PARAM } from './routes/google.js';
 
-const GOOGLE_AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
-const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
-
-/** Hash parameter that carries a sign-in error back to the app after the code flow. */
-export const REDIRECT_ERROR_PARAM = 'madauth_error';
-
-interface OAuthState {
-  state: string;
-  nonce: string;
-  verifier: string;
-  returnTo: string;
-}
-
-function randomString(bytes = 32): string {
-  return base64url.encode(crypto.getRandomValues(new Uint8Array(bytes)));
-}
-
-async function pkceChallenge(verifier: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
-  return base64url.encode(new Uint8Array(digest));
+/** What the route modules share. */
+export interface AppContext {
+  config: MadauthConfig;
+  keys: Promise<SigningKeys>;
+  /** Whether cookies get the Secure attribute (only when the issuer is https). */
+  secure: boolean;
+  isAllowedOrigin(origin: string | undefined): boolean;
+  /** Parses an absolute URL whose origin is in ALLOWED_ORIGINS, without its hash; null otherwise. */
+  allowedUrl(value: unknown): URL | null;
+  startSession(c: Context, user: MadauthUser, amr: string[], extra?: { sv?: number }): Promise<void>;
+  /** Present when e-mail & password sign-in is configured. */
+  users?: Users;
+  /** Present when WEBHOOK_URL is configured. */
+  webhook?: WebhookClient;
+  /** Tells the webhook that something happened. Awaited (Lambda stops after the answer), but never fails. */
+  emit(type: WebhookType, data: Record<string, unknown>): Promise<void>;
 }
 
 /**
- * Creates the madAuth HTTP app. It uses only Web Standard APIs, so the same app runs on Node (Docker),
- * AWS Lambda and Azure Functions (see `src/entry/`).
+ * Creates the madAuth HTTP app. It is built on Hono's Web Standard Request/Response, so the same app runs
+ * on Node (Docker), AWS Lambda and Azure Functions (see `src/entry/`).
  */
 export function createApp(config: MadauthConfig): Hono {
-  const { issuer, allowedOrigins, sessionTtlSeconds, cookieDomain, google } = config;
-  const keysPromise: Promise<SigningKeys> = importSigningKeys(config.signingKey);
+  const { issuer, allowedOrigins, sessionTtlSeconds, cookieDomain } = config;
+  const keys = importSigningKeys(config.signingKey);
   // Browsers treat http://localhost as secure, but only mark cookies Secure when served over https.
   const secure = issuer.startsWith('https:');
-  const callbackUrl = `${issuer}/auth/google/callback`;
   const isAllowedOrigin = (origin: string | undefined) => !!origin && allowedOrigins.includes(origin);
+
+  const ctx: AppContext = {
+    config,
+    keys,
+    secure,
+    isAllowedOrigin,
+    allowedUrl(value) {
+      let url: URL;
+      try {
+        url = new URL(typeof value === 'string' ? value : '');
+      } catch {
+        return null;
+      }
+      if (!isAllowedOrigin(url.origin)) return null;
+      url.hash = '';
+      return url;
+    },
+    async startSession(c, user, amr, extra) {
+      const token = await signSession(await keys, issuer, sessionTtlSeconds, user, amr, extra);
+      setCookie(c, SESSION_COOKIE, token, {
+        path: '/',
+        domain: cookieDomain,
+        httpOnly: true,
+        secure,
+        sameSite: 'Lax',
+        maxAge: sessionTtlSeconds,
+      });
+    },
+    users: config.password ? new Users(config.password.store, deriveCodeKey(config.signingKey.d!)) : undefined,
+    webhook: config.webhook ? createWebhookClient(config.webhook, config.webhookFetch) : undefined,
+    async emit(type, data) {
+      if (!this.webhook?.wants(type)) return;
+      const result = await this.webhook.call(type, data, EVENT_TIMEOUT_MS);
+      if (!result.ok) console.error(`[madauth] Webhook "${type}" failed: ${result.reason}`);
+    },
+  };
 
   const app = new Hono();
 
@@ -71,177 +102,37 @@ export function createApp(config: MadauthConfig): Hono {
     await next();
   });
 
-  async function startSession(c: Context, user: MadauthUser, amr: string[]): Promise<void> {
-    const token = await signSession(await keysPromise, issuer, sessionTtlSeconds, user, amr);
-    setCookie(c, SESSION_COOKIE, token, {
-      path: '/',
-      domain: cookieDomain,
-      httpOnly: true,
-      secure,
-      sameSite: 'Lax',
-      maxAge: sessionTtlSeconds,
-    });
-  }
-
   app.get('/health', (c) => c.text('ok'));
 
   app.get('/.well-known/jwks.json', async (c) => {
-    const { publicJwk } = await keysPromise;
+    const { publicJwk } = await keys;
     c.header('Cache-Control', 'public, max-age=3600');
     return c.json({ keys: [publicJwk] });
   });
 
-  app.get('/auth/config', (c) => c.json({ google: { clientId: google.clientId, codeFlow: !!google.clientSecret } }));
+  app.get('/auth/config', (c) =>
+    c.json({
+      google: config.google ? { clientId: config.google.clientId, codeFlow: !!config.google.clientSecret } : null,
+      password: config.password ? { minLength: config.password.minLength } : null,
+    }),
+  );
 
-  // --- Google: FedCM / One Tap (the ID token is issued in the browser and verified here) ---
-
-  app.post('/auth/google/nonce', async (c) => {
-    const nonce = randomString();
-    const token = await signToken(await keysPromise, issuer, NONCE_TYP, { nonce }, NONCE_TTL);
-    setCookie(c, NONCE_COOKIE, token, {
-      path: '/auth/google',
-      httpOnly: true,
-      secure,
-      sameSite: 'Strict',
-      maxAge: NONCE_TTL,
-    });
-    return c.json({ nonce });
-  });
-
-  app.post('/auth/google/verify', async (c) => {
-    const body = await c.req.json<{ credential?: unknown }>().catch(() => ({}) as { credential?: unknown });
-    if (typeof body.credential !== 'string' || !body.credential) {
-      return c.json({ error: 'verification_failed', message: 'credential is missing' }, 400);
-    }
-    const nonceClaims = await readToken<{ nonce: string }>(
-      await keysPromise,
-      issuer,
-      NONCE_TYP,
-      getCookie(c, NONCE_COOKIE),
-    );
-    if (!nonceClaims) {
-      return c.json({ error: 'verification_failed', message: 'nonce cookie missing or expired' }, 401);
-    }
-    const result = await verifyGoogleIdToken(body.credential, {
-      clientId: google.clientId,
-      nonce: nonceClaims.nonce,
-      keys: config.jwksResolver,
-    });
-    if (!result.ok) {
-      return c.json({ error: result.error, message: result.reason }, result.error === 'email_unverified' ? 403 : 401);
-    }
-    deleteCookie(c, NONCE_COOKIE, { path: '/auth/google', secure });
-    await startSession(c, result.user, ['google']);
-    return c.json({ user: result.user });
-  });
-
-  // --- Google: server-side authorization-code flow with PKCE (only with GOOGLE_CLIENT_SECRET) ---
-
-  const requireCodeFlow = async (c: Context, next: () => Promise<void>) => {
-    if (!google.clientSecret) return c.json({ error: 'not_found' }, 404);
-    await next();
-  };
-
-  app.get('/auth/google/start', requireCodeFlow, async (c) => {
-    const returnTo = c.req.query('return_to');
-    let returnUrl: URL;
-    try {
-      returnUrl = new URL(returnTo ?? '');
-    } catch {
-      return c.text('return_to must be an absolute URL', 400);
-    }
-    if (!isAllowedOrigin(returnUrl.origin)) return c.text('return_to is not in ALLOWED_ORIGINS', 400);
-    returnUrl.hash = '';
-
-    const oauth: OAuthState = {
-      state: randomString(),
-      nonce: randomString(),
-      verifier: randomString(),
-      returnTo: returnUrl.href,
-    };
-    const token = await signToken(await keysPromise, issuer, OAUTH_TYP, { ...oauth }, OAUTH_TTL);
-    // Lax: the cookie must come back on the top-level redirect from Google to /callback.
-    setCookie(c, OAUTH_COOKIE, token, {
-      path: '/auth/google',
-      httpOnly: true,
-      secure,
-      sameSite: 'Lax',
-      maxAge: OAUTH_TTL,
-    });
-
-    const url = new URL(GOOGLE_AUTH_ENDPOINT);
-    url.search = new URLSearchParams({
-      client_id: google.clientId,
-      redirect_uri: callbackUrl,
-      response_type: 'code',
-      scope: 'openid email profile',
-      state: oauth.state,
-      nonce: oauth.nonce,
-      code_challenge: await pkceChallenge(oauth.verifier),
-      code_challenge_method: 'S256',
-    }).toString();
-    return c.redirect(url.href, 302);
-  });
-
-  app.get('/auth/google/callback', requireCodeFlow, async (c) => {
-    const oauth = await readToken<OAuthState & Record<string, unknown>>(
-      await keysPromise,
-      issuer,
-      OAUTH_TYP,
-      getCookie(c, OAUTH_COOKIE),
-    );
-    if (!oauth) return c.text('Sign-in expired or was started in another browser. Please try again.', 400);
-    deleteCookie(c, OAUTH_COOKIE, { path: '/auth/google', secure });
-
-    const back = (error?: string) => {
-      const url = new URL(oauth.returnTo);
-      if (error) url.hash = `${REDIRECT_ERROR_PARAM}=${error}`;
-      return c.redirect(url.href, 302);
-    };
-
-    if (c.req.query('error')) return back(c.req.query('error') === 'access_denied' ? 'cancelled' : 'verification_failed');
-    const code = c.req.query('code');
-    if (!code || c.req.query('state') !== oauth.state) return back('verification_failed');
-
-    let idToken: unknown;
-    try {
-      const res = await fetch(GOOGLE_TOKEN_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          code,
-          client_id: google.clientId,
-          client_secret: google.clientSecret!,
-          redirect_uri: callbackUrl,
-          grant_type: 'authorization_code',
-          code_verifier: oauth.verifier,
-        }),
-      });
-      if (!res.ok) return back('verification_failed');
-      ({ id_token: idToken } = (await res.json()) as { id_token?: unknown });
-    } catch {
-      return back('verification_failed');
-    }
-    if (typeof idToken !== 'string') return back('verification_failed');
-
-    const result = await verifyGoogleIdToken(idToken, {
-      clientId: google.clientId,
-      nonce: oauth.nonce,
-      keys: config.jwksResolver,
-    });
-    if (!result.ok) return back(result.error);
-    await startSession(c, result.user, ['google']);
-    return back();
-  });
+  if (config.google) googleRoutes(app, ctx, config.google);
+  if (config.password && ctx.users && ctx.webhook) passwordRoutes(app, ctx, config.password, ctx.users, ctx.webhook);
 
   // --- Session ---
 
   app.get('/auth/session', async (c) => {
-    const claims = await readToken<SessionClaims>(await keysPromise, issuer, SESSION_TYP, getCookie(c, SESSION_COOKIE));
+    const claims = await readToken<SessionClaims>(await keys, issuer, SESSION_TYP, getCookie(c, SESSION_COOKIE));
     if (!claims) return c.json({ error: 'no_session' }, 401);
+    // Users from the store: a password reset increments the session version and so ends older sessions.
+    if (claims.sub.startsWith('usr_')) {
+      const stored = await ctx.users?.findById(claims.sub);
+      if (!stored || stored.sessionVersion !== claims.sv) return c.json({ error: 'no_session' }, 401);
+    }
     const user = userFromClaims(claims);
     // Sliding session: renew once half of the lifetime has passed.
-    if (Date.now() / 1000 - claims.iat > sessionTtlSeconds / 2) await startSession(c, user, claims.amr);
+    if (Date.now() / 1000 - claims.iat > sessionTtlSeconds / 2) await ctx.startSession(c, user, claims.amr, { sv: claims.sv });
     return c.json({ user });
   });
 

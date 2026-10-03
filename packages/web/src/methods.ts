@@ -20,8 +20,8 @@ export const loginMethods: LoginMethod[] = [
   },
   {
     id: 'password',
-    label: 'Username & password',
-    description: 'Classic sign-in with your credentials',
+    label: 'E-mail & password',
+    description: 'Sign in with your e-mail address and password',
   },
   {
     id: 'totp',

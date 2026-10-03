@@ -267,7 +267,7 @@ describe('code (redirect) flow', () => {
 
     expect((await app.request(`/auth/google/start?return_to=${APP_ORIGIN}/`)).status).toBe(404);
     expect((await app.request('/auth/google/callback')).status).toBe(404);
-    expect(await (await app.request('/auth/config')).json()).toEqual({ google: { clientId: CLIENT_ID, codeFlow: false } });
+    expect(await (await app.request('/auth/config')).json()).toEqual({ google: { clientId: CLIENT_ID, codeFlow: false }, password: null });
     // The FedCM flow still works.
     expect((await getNonce(app)).nonce).toBeTruthy();
   });
@@ -363,7 +363,7 @@ describe('public endpoints', () => {
   it('C1: /auth/config exposes only public information', async () => {
     const res = await testApp().request('/auth/config');
 
-    expect(await res.json()).toEqual({ google: { clientId: CLIENT_ID, codeFlow: true } });
+    expect(await res.json()).toEqual({ google: { clientId: CLIENT_ID, codeFlow: true }, password: null });
   });
 
   it('H5: /health returns 200', async () => {

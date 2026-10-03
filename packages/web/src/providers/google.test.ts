@@ -108,7 +108,7 @@ describe('GoogleFedcm', () => {
     expect(gis.id.cancel).toHaveBeenCalled();
     expect(gis.id.renderButton).toHaveBeenCalledOnce();
     const [target, options] = gis.id.renderButton.mock.lastCall!;
-    expect(target).toBe(shadow('.google-slot'));
+    expect(target.parentElement).toBe(shadow('.google-slot'));
     expect(options).toMatchObject({ text: 'continue_with', size: 'large' });
     // The button got its own nonce.
     expect(gis.id.initialize.mock.lastCall![0].nonce).toBe('nonce-2');
@@ -213,7 +213,7 @@ describe('GoogleRedirect', () => {
 
     void Madauth.signIn();
     await settle();
-    shadow<HTMLButtonElement>('[data-method="google"]')!.click();
+    shadow<HTMLButtonElement>('.google-slot button')!.click();
 
     expect(assign).toHaveBeenCalledExactlyOnceWith(
       `${SERVER}/auth/google/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}`,

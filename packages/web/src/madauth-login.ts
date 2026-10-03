@@ -1,5 +1,5 @@
 import { LitElement, css, html, type TemplateResult } from 'lit';
-import { providerFor, readyForDialog, takePendingError } from './madauth.js';
+import { Madauth, providerFor, readyForDialog, takePendingError } from './madauth.js';
 import { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
 import type { MadauthError, MadauthErrorCode, MadauthUser, Result } from './result.js';
 
@@ -10,6 +10,9 @@ export interface SignedInDetail {
 
 export type ErrorDetail = { method?: LoginMethodId } & MadauthError;
 
+/** The screens of the dialog. */
+type View = 'signin' | 'signup' | 'check-inbox' | 'forgot' | 'reset';
+
 /** What the dialog tells the user; the technical details are in the `madauth-error` event and the console. */
 const errorTexts: Partial<Record<MadauthErrorCode, string>> = {
   network: 'Could not reach the sign-in service. Please check your connection and try again.',
@@ -17,8 +20,28 @@ const errorTexts: Partial<Record<MadauthErrorCode, string>> = {
   email_unverified: 'The e-mail address of this account is not verified.',
   cancelled: 'The sign-in was cancelled.',
   not_initialized: 'Sign-in is not set up on this page.',
+  invalid_credentials: 'E-mail or password is wrong.',
+  invalid_email: 'Please enter a valid e-mail address.',
+  link_invalid: 'This link is invalid or has expired. Please ask for a new e-mail.',
+  code_invalid: 'The code is wrong or has expired.',
 };
 const defaultErrorText = 'Sign-in is not available right now.';
+
+/** Errors whose server message is written for the user (it contains the details, e.g. the minimum length). */
+const userFacingMessages: MadauthErrorCode[] = ['weak_password', 'too_many_attempts', 'signup_rejected'];
+
+function errorText(error: MadauthError, method?: LoginMethodId, view?: View): string {
+  if (userFacingMessages.includes(error.code)) return error.message;
+  if (error.code === 'temporarily_unavailable') {
+    return view === 'signup'
+      ? 'E-mail & password sign-up is not available right now. Please try again later.'
+      : 'Sending e-mails is not available right now. Please try again later.';
+  }
+  if (error.code === 'email_unverified' && method === 'password') {
+    return 'Please confirm your e-mail address first: open the link in the e-mail we sent you.';
+  }
+  return errorTexts[error.code] ?? defaultErrorText;
+}
 
 const closeIcon = html`
   <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -89,17 +112,22 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
  * Modal sign-in dialog listing all madAuth login methods. Usually opened with `Madauth.signIn()`, which
  * creates it when the page has none; add it to your HTML yourself only to customize it.
  *
+ * It is built only on the public `Madauth` API, so a custom login screen can do everything it does.
+ *
  * @fires madauth-signed-in - A user signed in. `detail` is a {@link SignedInDetail}.
  * @fires madauth-cancel - The dialog was closed without signing in.
  * @fires madauth-error - A sign-in failed, or madAuth is not initialized. `detail` is an {@link ErrorDetail}.
  *
- * @cssprop --madauth-primary - Fill color of the primary "Sign in" button.
+ * @cssprop --madauth-primary - Fill color of the primary buttons.
  * @cssprop --madauth-radius - Corner radius of the dialog, buttons and fields.
  * @cssprop --madauth-font - Font family.
  *
  * @csspart dialog - The `<dialog>` element.
  * @csspart method - Each sign-in method button.
  * @csspart error - The error message.
+ * @csspart form - Each form (sign-in, create account, code, new password).
+ * @csspart input - Each text field.
+ * @csspart link - The text buttons, e.g. "Forgot password?".
  */
 export class MadauthLogin extends LitElement {
   static override properties = {
@@ -107,6 +135,9 @@ export class MadauthLogin extends LitElement {
     notice: { state: true },
     error: { state: true },
     usable: { state: true },
+    view: { state: true },
+    busy: { state: true },
+    email: { state: true },
   };
 
   /** Title shown at the top of the dialog. */
@@ -116,25 +147,41 @@ export class MadauthLogin extends LitElement {
   private notice = '';
 
   /** Error shown below the heading. */
-  private error: MadauthError | null = null;
+  private error: (MadauthError & { method?: LoginMethodId }) | null = null;
 
   /** Whether madAuth is initialized, so providers can render their sign-in UI. */
   private usable = false;
 
-  /** Removes the UI a provider rendered into the dialog. */
-  private unmountProvider?: () => void;
+  private view: View = 'signin';
 
-  /** Opens the dialog as a modal. */
+  /** A request is running; the buttons are disabled meanwhile. */
+  private busy = false;
+
+  /** The e-mail address last entered, kept across the views. */
+  private email = '';
+
+  /** What the e-mail in the check-inbox view is for. */
+  private inboxPurpose: 'verify' | 'reset' = 'verify';
+
+  /** The reset code entered in the check-inbox view, used with the new password. */
+  private resetCode?: string;
+
+  /** Google's button, rendered into the slot of the sign-in view. */
+  private googleButton?: { slot: Element; remove(): void };
+
+  /** Opens the dialog as a modal. Opens on the "new password" form when the page came from a reset link. */
   async open(): Promise<void> {
     await this.updateComplete;
     this.dialog.showModal();
     const ready = await readyForDialog();
     if (!this.dialog.open) return;
     this.usable = ready.isSuccess;
+    if (ready.isSuccess && Madauth.password.pendingReset) this.view = 'reset';
     const error = ready.isSuccess ? takePendingError() : ready.error;
     if (error) this.showError(error);
+    // Reopened with nothing changed there is no re-render, so render Google's button here.
     await this.updateComplete;
-    this.mountProviders();
+    this.syncGoogleButton();
   }
 
   /** Closes the dialog without firing `madauth-cancel`. */
@@ -146,26 +193,39 @@ export class MadauthLogin extends LitElement {
     return this.renderRoot.querySelector('dialog')!;
   }
 
+  override updated(): void {
+    this.syncGoogleButton();
+  }
+
+  /** Renders Google's button while the sign-in view is shown, and removes it otherwise. */
+  private syncGoogleButton(): void {
+    const slot = this.dialog.open ? this.renderRoot.querySelector('.google-slot') : null;
+    if (this.googleButton && this.googleButton.slot !== slot) {
+      this.googleButton.remove();
+      this.googleButton = undefined;
+    }
+    if (slot instanceof HTMLElement && !this.googleButton) {
+      const rendered = Madauth.google.renderButton(slot, { onResult: (result) => this.finish('google', result) });
+      if (rendered.isSuccess) this.googleButton = { slot, remove: rendered.remove };
+    }
+  }
+
   private onDialogClose(): void {
-    this.unmountProvider?.();
-    this.unmountProvider = undefined;
+    this.googleButton?.remove();
+    this.googleButton = undefined;
     if (this.dialog.returnValue !== 'done') {
       this.dispatchEvent(new CustomEvent('madauth-cancel', { bubbles: true, composed: true }));
     }
     this.dialog.returnValue = '';
     this.notice = '';
     this.error = null;
+    this.view = 'signin';
+    this.busy = false;
+    this.resetCode = undefined;
   }
 
-  /** Lets providers with their own UI (e.g. Google's FedCM button) render into the dialog. */
-  private mountProviders(): void {
-    const slot = this.renderRoot.querySelector<HTMLElement>('.google-slot');
-    const provider = providerFor('google');
-    if (!slot || !provider?.renderInDialog || this.unmountProvider) return;
-    this.unmountProvider = provider.renderInDialog(slot, (result) => this.onProviderResult('google', result));
-  }
-
-  private onProviderResult(method: LoginMethodId, result: Result<{ user: MadauthUser }>): void {
+  /** Ends a sign-in attempt: closes on success, shows the error otherwise. */
+  private finish(method: LoginMethodId, result: Result<{ user: MadauthUser }>): void {
     if (!result.isSuccess) {
       this.showError(result.error, method);
       return;
@@ -177,7 +237,7 @@ export class MadauthLogin extends LitElement {
 
   private showError(error: MadauthError, method?: LoginMethodId): void {
     this.notice = '';
-    this.error = error;
+    this.error = { ...error, method };
     const detail: ErrorDetail = { method, ...error };
     this.dispatchEvent(new CustomEvent('madauth-error', { detail, bubbles: true, composed: true }));
   }
@@ -188,24 +248,144 @@ export class MadauthLogin extends LitElement {
   }
 
   private onMethodChosen(m: LoginMethod): void {
-    const provider = providerFor(m.id);
-    if (!provider) {
+    if (!providerFor(m.id)) {
       this.error = null;
       this.notice = `“${m.label}” is coming soon.`;
-    } else if (this.usable) {
-      provider.start?.();
+    }
+  }
+
+  private get passwordAvailable(): boolean {
+    return this.usable && !!providerFor('password');
+  }
+
+  /** Switches the view, keeping the e-mail address typed so far. */
+  private goTo(view: View): void {
+    const typed = this.renderRoot.querySelector<HTMLInputElement>('input[name="email"]')?.value;
+    if (typed !== undefined) this.email = typed.trim();
+    this.notice = '';
+    this.error = null;
+    this.view = view;
+  }
+
+  /** Runs one request at a time, with the buttons disabled. */
+  private async run<T>(task: () => Promise<T>): Promise<T | undefined> {
+    if (this.busy) return undefined;
+    this.busy = true;
+    this.notice = '';
+    this.error = null;
+    try {
+      return await task();
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private fields(e: Event): Record<string, string> {
+    e.preventDefault();
+    const data = new FormData(e.target as HTMLFormElement);
+    return Object.fromEntries([...data.entries()].map(([k, v]) => [k, String(v)]));
+  }
+
+  private async onSignIn(e: Event, m: LoginMethod): Promise<void> {
+    const { email = '', password = '' } = this.fields(e);
+    if (!this.passwordAvailable) {
+      this.onMethodChosen(m);
+      return;
+    }
+    this.email = email.trim();
+    const result = await this.run(() => Madauth.password.signIn({ email, password }));
+    if (result) this.finish('password', result);
+  }
+
+  private async onSignUp(e: Event): Promise<void> {
+    const { email = '', password = '', name = '' } = this.fields(e);
+    this.email = email.trim();
+    const result = await this.run(() => Madauth.password.signUp({ email, password, name: name.trim() || undefined }));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, 'password');
+      return;
+    }
+    this.inboxPurpose = 'verify';
+    this.view = 'check-inbox';
+  }
+
+  private async onForgot(e: Event): Promise<void> {
+    const { email = '' } = this.fields(e);
+    this.email = email.trim();
+    const result = await this.run(() => Madauth.password.sendResetEmail({ email }));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, 'password');
+      return;
+    }
+    this.inboxPurpose = 'reset';
+    this.view = 'check-inbox';
+  }
+
+  private async onCode(e: Event): Promise<void> {
+    const code = (this.fields(e).code ?? '').replace(/\s/g, '');
+    if (this.inboxPurpose === 'reset') {
+      // The code is checked together with the new password.
+      this.resetCode = code;
+      this.goTo('reset');
+      return;
+    }
+    const result = await this.run(() => Madauth.password.verifyEmail({ email: this.email, code }));
+    if (result) this.finish('password', result);
+  }
+
+  private async onReset(e: Event): Promise<void> {
+    const { password = '' } = this.fields(e);
+    const code = this.resetCode;
+    const result = await this.run(() =>
+      Madauth.password.confirmReset(code ? { newPassword: password, email: this.email, code } : { newPassword: password }),
+    );
+    if (!result) return;
+    if (!result.isSuccess && result.error.code === 'code_invalid') {
+      // Back to the code field, so it can be corrected.
+      this.resetCode = undefined;
+      this.view = 'check-inbox';
+    }
+    this.finish('password', result);
+  }
+
+  private async resend(purpose: 'verify' | 'reset'): Promise<void> {
+    const email = this.email;
+    const result = await this.run(() =>
+      purpose === 'verify' ? Madauth.password.sendVerificationEmail({ email }) : Madauth.password.sendResetEmail({ email }),
+    );
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, 'password');
+      return;
+    }
+    this.inboxPurpose = purpose;
+    this.view = 'check-inbox';
+    this.notice = 'We sent the e-mail again.';
+  }
+
+  private get viewTitle(): string {
+    switch (this.view) {
+      case 'signup':
+        return 'Create account';
+      case 'check-inbox':
+        return 'Check your inbox';
+      case 'forgot':
+        return 'Reset password';
+      case 'reset':
+        return 'Choose a new password';
+      default:
+        return this.heading;
     }
   }
 
   override render() {
-    const google = loginMethods.find((m) => m.id === 'google');
-    const password = loginMethods.find((m) => m.id === 'password');
-    const others = loginMethods.filter((m) => m !== google && m !== password);
     return html`
       <dialog part="dialog" @close=${this.onDialogClose} @click=${this.onBackdropClick}>
         <div class="panel">
           <header>
-            <h2>${this.heading}</h2>
+            <h2>${this.viewTitle}</h2>
             <button class="close" type="button" aria-label="Close" @click=${() => this.dialog.close()}>
               ${closeIcon}
             </button>
@@ -213,32 +393,68 @@ export class MadauthLogin extends LitElement {
           ${this.notice
             ? html`<p class="notice" role="status">${infoIcon}<span>${this.notice}</span></p>`
             : null}
-          ${this.error
-            ? html`<p class="notice error" part="error" role="alert" data-code=${this.error.code}>
-                ${infoIcon}<span>${errorTexts[this.error.code] ?? defaultErrorText}</span>
-              </p>`
-            : null}
-          ${google ? this.renderGoogle(google) : null}
-          ${google && password ? html`<div class="divider">or</div>` : null}
-          ${password ? this.renderPassword(password) : null}
-          ${others.length
-            ? html`
-                <section class="others">
-                  <h3>Other ways to sign in</h3>
-                  <ul>
-                    ${others.map((m) => html`<li>${this.renderRow(m)}</li>`)}
-                  </ul>
-                </section>
-              `
-            : null}
+          ${this.error ? this.renderError(this.error) : null}
+          ${this.renderView()}
         </div>
       </dialog>
     `;
   }
 
+  private renderError(error: MadauthError & { method?: LoginMethodId }) {
+    const resend = error.code === 'email_unverified' && error.method === 'password' && this.view === 'signin';
+    return html`
+      <div class="notice error" part="error" role="alert" data-code=${error.code}>
+        ${infoIcon}
+        <span>
+          ${errorText(error, error.method, this.view)}
+          ${resend
+            ? html`<button class="link" part="link" type="button" data-action="resend-verification" ?disabled=${this.busy}
+                @click=${() => this.resend('verify')}>Send the e-mail again</button>`
+            : null}
+        </span>
+      </div>
+    `;
+  }
+
+  private renderView() {
+    switch (this.view) {
+      case 'signup':
+        return this.renderSignUp();
+      case 'check-inbox':
+        return this.renderCheckInbox();
+      case 'forgot':
+        return this.renderForgot();
+      case 'reset':
+        return this.renderReset();
+      default:
+        return this.renderSignInView();
+    }
+  }
+
+  private renderSignInView() {
+    const google = loginMethods.find((m) => m.id === 'google');
+    const password = loginMethods.find((m) => m.id === 'password');
+    const others = loginMethods.filter((m) => m !== google && m !== password);
+    return html`
+      ${google ? this.renderGoogle(google) : null}
+      ${google && password ? html`<div class="divider">or</div>` : null}
+      ${password ? this.renderPassword(password) : null}
+      ${others.length
+        ? html`
+            <section class="others">
+              <h3>Other ways to sign in</h3>
+              <ul>
+                ${others.map((m) => html`<li>${this.renderRow(m)}</li>`)}
+              </ul>
+            </section>
+          `
+        : null}
+    `;
+  }
+
   private renderGoogle(m: LoginMethod) {
-    if (this.usable && providerFor('google')?.renderInDialog) {
-      // Google renders its own (FedCM) button here; see GoogleFedcm.
+    if (this.usable && providerFor('google')) {
+      // Google's button is rendered here through Madauth.google.renderButton.
       return html`<div class="google-slot" title=${m.description}></div>`;
     }
     return html`
@@ -257,24 +473,124 @@ export class MadauthLogin extends LitElement {
   }
 
   private renderPassword(m: LoginMethod) {
-    const onSubmit = (e: Event) => {
-      e.preventDefault();
-      this.onMethodChosen(m);
-    };
     return html`
-      <form @submit=${onSubmit}>
-        <div class="field">
-          <label for="username">Username</label>
-          <input id="username" name="username" type="text" autocomplete="username" />
-        </div>
+      <form part="form" class="signin" @submit=${(e: Event) => this.onSignIn(e, m)}>
+        ${this.emailField('email')}
         <div class="field">
           <label for="password">Password</label>
-          <input id="password" name="password" type="password" autocomplete="current-password" />
+          <input part="input" id="password" name="password" type="password" autocomplete="current-password" />
         </div>
-        <button part="method" class="submit" type="submit" data-method=${m.id}>
+        <button part="method" class="submit" type="submit" data-method=${m.id} ?disabled=${this.busy}>
           <span class="label">Sign in</span>
         </button>
       </form>
+      ${this.passwordAvailable
+        ? html`
+            <p class="links">
+              <button class="link" part="link" type="button" data-action="forgot" @click=${() => this.goTo('forgot')}>
+                Forgot password?
+              </button>
+              <button class="link" part="link" type="button" data-action="signup" @click=${() => this.goTo('signup')}>
+                Create account
+              </button>
+            </p>
+          `
+        : null}
+    `;
+  }
+
+  private renderSignUp() {
+    const minLength = Madauth.password.policy?.minLength;
+    return html`
+      <form part="form" class="signup" @submit=${this.onSignUp}>
+        <div class="field">
+          <label for="name">Name <span class="optional">(optional)</span></label>
+          <input part="input" id="name" name="name" type="text" autocomplete="name" />
+        </div>
+        ${this.emailField('email')}
+        <div class="field">
+          <label for="new-password">Password</label>
+          <input part="input" id="new-password" name="password" type="password" autocomplete="new-password" />
+          ${minLength ? html`<p class="hint">At least ${minLength} characters.</p>` : null}
+        </div>
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">Create account</span>
+        </button>
+      </form>
+      ${this.backLink('Already have an account? Sign in')}
+    `;
+  }
+
+  private renderForgot() {
+    return html`
+      <p class="lead">Enter your e-mail address. We will send you a link and a code to choose a new password.</p>
+      <form part="form" class="forgot" @submit=${this.onForgot}>
+        ${this.emailField('email')}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">Send e-mail</span>
+        </button>
+      </form>
+      ${this.backLink()}
+    `;
+  }
+
+  private renderCheckInbox() {
+    return html`
+      <p class="lead">
+        We sent an e-mail to <strong>${this.email}</strong>. Open the link in it, or enter the 6-digit code from
+        the e-mail.
+      </p>
+      <form part="form" class="code" @submit=${this.onCode}>
+        <div class="field">
+          <label for="code">Code</label>
+          <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" />
+        </div>
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">Continue</span>
+        </button>
+      </form>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="resend" ?disabled=${this.busy}
+          @click=${() => this.resend(this.inboxPurpose)}>Send the e-mail again</button>
+        <button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>Back to sign in</button>
+      </p>
+    `;
+  }
+
+  private renderReset() {
+    const minLength = Madauth.password.policy?.minLength;
+    return html`
+      <form part="form" class="reset" @submit=${this.onReset}>
+        ${this.email
+          ? html`<input type="email" name="username" autocomplete="username" .value=${this.email} hidden />`
+          : null}
+        <div class="field">
+          <label for="new-password">New password</label>
+          <input part="input" id="new-password" name="password" type="password" autocomplete="new-password" />
+          ${minLength ? html`<p class="hint">At least ${minLength} characters.</p>` : null}
+        </div>
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">Set password</span>
+        </button>
+      </form>
+      ${this.backLink()}
+    `;
+  }
+
+  private emailField(id: string) {
+    return html`
+      <div class="field">
+        <label for=${id}>E-mail</label>
+        <input part="input" id=${id} name="email" type="email" autocomplete="email" .value=${this.email} />
+      </div>
+    `;
+  }
+
+  private backLink(label = 'Back to sign in') {
+    return html`
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${label}</button>
+      </p>
     `;
   }
 
@@ -463,9 +779,6 @@ export class MadauthLogin extends LitElement {
     }
 
     .google-slot {
-      /* Google's button is an iframe with a light page. If the iframe's color-scheme differed, the
-         browser would paint it with an opaque background (a white box in dark mode). */
-      color-scheme: light;
       display: flex;
       justify-content: center;
       min-height: var(--_control-height);
@@ -614,6 +927,58 @@ export class MadauthLogin extends LitElement {
 
     .row:hover .icon {
       color: var(--_text);
+    }
+
+    .submit:disabled,
+    .link:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .lead {
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    .hint {
+      margin: 0;
+      font-size: 0.8125rem;
+      line-height: 18px;
+      color: var(--_muted);
+    }
+
+    .optional {
+      font-weight: 400;
+      color: var(--_muted);
+    }
+
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px 16px;
+      margin: -4px 0 0;
+    }
+
+    .link {
+      padding: 0;
+      border: none;
+      background: none;
+      font-size: 0.8125rem;
+      line-height: 18px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      color: var(--_muted);
+    }
+
+    .link:hover:not(:disabled) {
+      color: var(--_text);
+    }
+
+    .error .link {
+      display: block;
+      margin-top: 4px;
+      color: inherit;
     }
 
     @media (max-width: 480px) {

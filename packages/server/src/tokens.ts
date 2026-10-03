@@ -1,6 +1,11 @@
-import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
+import { SignJWT, base64url, jwtVerify, type JWTPayload } from 'jose';
 import { SIGNING_ALG, type SigningKeys } from './keys.js';
 import { SESSION_TYP, type MadauthUser } from './user.js';
+
+/** A random URL-safe string (32 bytes by default). */
+export function randomString(bytes = 32): string {
+  return base64url.encode(crypto.getRandomValues(new Uint8Array(bytes)));
+}
 
 /**
  * Signs a short-lived madAuth token. `typ` keeps the token kinds (session, nonce, OAuth state) apart,
@@ -45,6 +50,8 @@ export interface SessionClaims extends JWTPayload {
   name?: string;
   picture?: string;
   amr: string[];
+  /** Session version of users from the store; a password reset increments it and so ends older sessions. */
+  sv?: number;
 }
 
 export function signSession(
@@ -53,8 +60,10 @@ export function signSession(
   ttlSeconds: number,
   user: MadauthUser,
   amr: string[],
+  extra: { sv?: number } = {},
 ): Promise<string> {
   const claims: SessionClaims = {
+    ...extra,
     sub: user.id,
     email: user.email,
     email_verified: user.email ? true : undefined,
