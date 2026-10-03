@@ -114,11 +114,13 @@ const secret = async (name: string) =>
   (await ssm.send(new GetParameterCommand({ Name: name, WithDecryption: true }))).Parameter?.Value;
 
 export const handler = createHandler({
-  env: async () => ({
-    ...process.env,
-    MADAUTH_SIGNING_KEY: await secret('/madauth/signing-key'),
-    WEBHOOK_SECRET: await secret('/madauth/webhook-secret'),
-  }),
+  env: async () => {
+    const [signingKey, webhookSecret] = await Promise.all([
+      secret('/madauth/signing-key'),
+      secret('/madauth/webhook-secret'),
+    ]);
+    return { ...process.env, MADAUTH_SIGNING_KEY: signingKey, WEBHOOK_SECRET: webhookSecret };
+  },
 });
 ```
 

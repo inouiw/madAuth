@@ -152,19 +152,20 @@ export async function loadConfig(
     throw new ConfigError(`GOOGLE_CLIENT_ID must end with ".apps.googleusercontent.com" but is "${clientId}".`);
   }
 
-  const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
-  const webhook = webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_EVENTS'), !!store);
-  let password: MadauthConfig['password'];
-  if (store) {
-    if (!webhook) {
-      throw new ConfigError(
-        'WEBHOOK_URL is not set. E-mail & password sign-in sends its e-mails through your webhook. For ' +
-          'development, run the example receiver (npm run dev:webhooks) and set ' +
-          'WEBHOOK_URL=http://localhost:8790/webhook. See "Webhooks" in docs/server.md.',
-      );
-    }
-    password = { minLength: passwordMinLength(read('PASSWORD_MIN_LENGTH')), store };
+  // Validate the webhook before opening the store, so a configuration error doesn't leave a database open.
+  const sendsEmails = !!(overrides.store || read('DATABASE_URL'));
+  const webhook = webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_EVENTS'), sendsEmails);
+  if (sendsEmails && !webhook) {
+    throw new ConfigError(
+      'WEBHOOK_URL is not set. E-mail & password sign-in sends its e-mails through your webhook. For ' +
+        'development, run the example receiver (npm run dev:webhooks) and set ' +
+        'WEBHOOK_URL=http://localhost:8790/webhook and ' +
+        `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.already_registered. See "Webhooks" in docs/server.md.`,
+    );
   }
+  const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
+  let password: MadauthConfig['password'];
+  if (store) password = { minLength: passwordMinLength(read('PASSWORD_MIN_LENGTH')), store };
 
   if (!clientId && !password) {
     throw new ConfigError(
