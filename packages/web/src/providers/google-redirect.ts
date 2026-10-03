@@ -1,6 +1,6 @@
 import { REDIRECT_ERROR_PARAM } from '../constants.js';
 import { fail, ok, toErrorCode, type Result } from '../result.js';
-import { stringsFor } from '../strings.js';
+import { stringsFor, type Strings } from '../strings.js';
 import type { ButtonOptions, ProviderContext, SignInProvider } from './provider.js';
 
 const GOOGLE_LOGO = `<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
@@ -41,10 +41,9 @@ export class GoogleRedirect implements SignInProvider {
       history.replaceState(history.state, '', `${location.pathname}${location.search}${hash ? `#${hash}` : ''}`);
       const code = toErrorCode(error);
       const strings = stringsFor(ctx.locale);
-      const message =
-        code === 'cancelled' || code === 'verification_failed' || code === 'email_unverified'
-          ? strings.googleErrors[code]
-          : strings.googleFailed(error);
+      const message = Object.hasOwn(strings.googleErrors, code)
+        ? strings.googleErrors[code as keyof Strings['googleErrors']]
+        : strings.googleFailed(error);
       ctx.signInFailed({ code, message });
     }
     return ok();

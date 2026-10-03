@@ -371,6 +371,28 @@ describe('Madauth.setLocale', () => {
     expect(text('h2')).toBe('Anmelden');
   });
 
+  it('ignores a value that is not a language tag', async () => {
+    fakeServer();
+    await openDialog({ locale: 'de' });
+
+    Madauth.setLocale(['en'] as unknown as string);
+    await login().updateComplete;
+
+    expect(text('h2')).toBe('Anmelden');
+    expect(console.error).toHaveBeenCalledWith('[madauth]', 'invalid_options', expect.stringContaining('locale must be'));
+  });
+
+  it('is not needed to follow a page that changes its <html lang>', async () => {
+    fakeServer();
+    await openDialog();
+    expect(text('h2')).toBe('Sign in');
+
+    document.documentElement.lang = 'de';
+    await settle();
+
+    expect(text('h2')).toBe('Anmelden');
+  });
+
   it('is replaced by the locale of a later initialize', async () => {
     fakeServer();
     Madauth.setLocale('de');

@@ -201,9 +201,11 @@ export class MadauthLogin extends LitElement {
     return this.renderRoot.querySelector('dialog')!;
   }
 
-  /** The texts in the dialog's language. */
-  private get strings(): Strings {
-    return stringsFor(currentLocale());
+  /** The texts in the dialog's language, looked up once per update. */
+  private strings: Strings = stringsFor(currentLocale());
+
+  override willUpdate(): void {
+    this.strings = stringsFor(currentLocale());
   }
 
   override updated(): void {

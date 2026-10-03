@@ -52,6 +52,8 @@ let pendingError: MadauthError | undefined;
 /** The locale from `initialize` or `setLocale`; without one the page's or the browser's language counts. */
 let configuredLocale: string | undefined;
 const localeListeners = new Set<() => void>();
+/** Watches `<html lang>` once something follows the locale. */
+let langObserver: MutationObserver | undefined;
 
 function sameUser(a: MadauthUser | null, b: MadauthUser | null): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
@@ -252,6 +254,10 @@ export const Madauth = {
    * your app. An open dialog shows the new language at once. See {@link MadauthOptions.locale}.
    */
   setLocale(locale: string): void {
+    if (typeof locale !== 'string') {
+      console.error('[madauth]', 'invalid_options', `locale must be a language tag such as 'de' or 'de-CH' but is "${String(locale)}".`);
+      return;
+    }
     changeLocale(locale);
   },
 
@@ -330,6 +336,13 @@ export function currentLocale(): string | undefined {
 /** Calls `listener` when the configured locale changes. Returns a function that unsubscribes. */
 export function onLocaleChanged(listener: () => void): () => void {
   localeListeners.add(listener);
+  // Without a configured locale the page's <html lang> counts, so a page that changes it is followed too.
+  if (!langObserver && typeof MutationObserver !== 'undefined') {
+    langObserver = new MutationObserver(() => {
+      if (!configuredLocale) for (const l of [...localeListeners]) l();
+    });
+    langObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+  }
   return () => {
     localeListeners.delete(listener);
   };
@@ -352,4 +365,6 @@ export function resetMadauthForTests(): void {
   configuredLocale = undefined;
   listeners.clear();
   localeListeners.clear();
+  langObserver?.disconnect();
+  langObserver = undefined;
 }
