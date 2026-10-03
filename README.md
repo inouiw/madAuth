@@ -69,13 +69,29 @@ npm test
 
 madAuth has two parts: the sign-in library for your web app, and the madAuth server it talks to.
 
+New to madAuth? [Getting started](docs/getting-started.md) walks you through both on your machine: install, create the configuration, start the server and sign up.
+
 Install the library:
 
 ```bash
 npm install @madauth/web
 ```
 
-Run the server, for example with Docker (see [Running the madAuth server](docs/server.md) for the configuration and other hosting options):
+Run the server with Node. `init` asks a few questions and writes the configuration to `.env`:
+
+```bash
+npm install @madauth/server
+```
+
+```bash
+npx @madauth/server init
+```
+
+```bash
+npx @madauth/server start --env-file .env
+```
+
+Or with Docker (see [Running the madAuth server](docs/server.md) for the configuration and other hosting options):
 
 ```bash
 docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data ghcr.io/inouiw/madauth-server
@@ -105,7 +121,7 @@ See [Running the madAuth server](docs/server.md) for:
 - the configuration
 - Google Cloud Console setup
 - e-mail & password sign-in: the database (SQLite or Amazon DynamoDB), and webhooks for sending e-mails (with an [Amazon SES example](examples/aws-ses-mailer)), checking sign-ups and receiving events
-- Docker, AWS Lambda and Azure Functions
+- Node, Docker, AWS Lambda and Azure Functions
 - storing users in your own database (custom store adapter)
 - verifying the session in your own backend
 
