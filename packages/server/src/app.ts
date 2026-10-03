@@ -138,23 +138,30 @@ export function createApp(config: MadauthConfig): Hono {
 
   // --- Session ---
 
+  /** The claims of the request's session cookie, or null if there is none. Does not check whether it has ended. */
+  const sessionClaims = async (c: Context) =>
+    readToken<SessionClaims>(await keys, issuer, SESSION_TYP, getCookie(c, SESSION_COOKIE));
+
+  /** Users from the store: a password reset increments the session version and so ends older sessions. */
+  const hasEnded = async (claims: SessionClaims) => {
+    if (!claims.sub.startsWith('usr_')) return false;
+    const stored = await ctx.users?.findById(claims.sub);
+    return !stored || stored.sessionVersion !== claims.sv;
+  };
+
   /** The claims of the request's session, or null if there is none or it has ended. */
   const currentSession = async (c: Context) => {
-    const claims = await readToken<SessionClaims>(await keys, issuer, SESSION_TYP, getCookie(c, SESSION_COOKIE));
-    if (!claims) return null;
-    // Users from the store: a password reset increments the session version and so ends older sessions.
-    if (claims.sub.startsWith('usr_')) {
-      const stored = await ctx.users?.findById(claims.sub);
-      if (!stored || stored.sessionVersion !== claims.sv) return null;
-    }
-    return claims;
+    const claims = await sessionClaims(c);
+    return claims && !(await hasEnded(claims)) ? claims : null;
   };
 
   app.get('/auth/session', async (c) => {
-    const claims = await currentSession(c);
+    const claims = await sessionClaims(c);
     if (!claims) return c.json({ error: 'no_session' }, 401);
-    // The roles are read again, so a change shows the next time the app checks the session.
-    const user = await withRoles(userFromClaims(claims));
+    // The roles are read again, so a change shows the next time the app checks the session. They need only
+    // the address from the token, so they are read alongside the session version.
+    const [ended, user] = await Promise.all([hasEnded(claims), withRoles(userFromClaims(claims))]);
+    if (ended) return c.json({ error: 'no_session' }, 401);
     const rolesChanged = !sameRoles(user.roles ?? [], claims.roles ?? []);
     // Sliding session: renew once half of the lifetime has passed.
     if (rolesChanged || Date.now() / 1000 - claims.iat > sessionTtlSeconds / 2) {
