@@ -155,9 +155,10 @@ export function createApp(config: MadauthConfig): Hono {
     if (!claims) return c.json({ error: 'no_session' }, 401);
     // The session proves who owns the address, so its e-mail & password account goes as well when the
     // user signed in with Google. Google sign-in itself stores nothing.
-    if (ctx.users && claims.email) await ctx.users.deleteByEmail(normalizeEmail(claims.email));
+    const passwordUserId = ctx.users && claims.email ? await ctx.users.deleteByEmail(normalizeEmail(claims.email)) : null;
     deleteCookie(c, SESSION_COOKIE, { path: '/', domain: cookieDomain, secure });
-    await ctx.emit('user.deleted', { user: userFromClaims(claims) });
+    // passwordUserId tells the receiver which e-mail & password user went, also when the session is Google's.
+    await ctx.emit('user.deleted', { user: userFromClaims(claims), passwordUserId: passwordUserId ?? undefined });
     return c.body(null, 204);
   });
 

@@ -29,6 +29,7 @@ describe('deleting the account', () => {
     advance(61_000);
     await sendReset(app);
     expect(await store.findMany('verification', {})).toHaveLength(1);
+    const [{ id: userId }] = await store.findMany('user', {});
 
     const res = await deleteAccount(app, session);
 
@@ -37,7 +38,7 @@ describe('deleting the account', () => {
     for (const model of ['user', 'account', 'verification']) expect(await store.findMany(model, {})).toEqual([]);
     expect(hook.calls.at(-1)).toEqual({
       type: 'user.deleted',
-      data: { user: { id: expect.stringMatching(/^usr_/), email: 'grace@example.com', name: 'Grace Hopper' } },
+      data: { user: { id: userId, email: 'grace@example.com', name: 'Grace Hopper' }, passwordUserId: userId },
     });
     // The cookie of another device no longer counts, and the password no longer signs in.
     expect((await app.request('/auth/session', { headers: { Cookie: `madauth_session=${session}` } })).status).toBe(401);
@@ -60,12 +61,16 @@ describe('deleting the account', () => {
   it('a Google session deletes the e-mail & password account of the same address', async () => {
     const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook, 'Ada@Example.com');
+    const [{ id: passwordUserId }] = await store.findMany('user', {});
     const google = await signIn(app);
 
     expect((await deleteAccount(app, google)).status).toBe(204);
 
     expect(await store.findMany('user', {})).toEqual([]);
-    expect(hook.calls.at(-1)).toMatchObject({ type: 'user.deleted', data: { user: { id: 'google:1001', email: 'ada@example.com' } } });
+    expect(hook.calls.at(-1)).toMatchObject({
+      type: 'user.deleted',
+      data: { user: { id: 'google:1001', email: 'ada@example.com' }, passwordUserId },
+    });
   });
 
   it('without a store there is nothing to delete: the user is signed out', async () => {

@@ -173,7 +173,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `email.verified` | An address was confirmed | `user`, `via` (`link` or `code`) | the same | the same |
 | `password.reset` | A password was reset (older sessions end) | `user` | the same | the same |
 | `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password` or `google`) | the same | the same |
-| `user.deleted` | A user deleted their account | `user` | the same | the same |
+| `user.deleted` | A user deleted their account | `user` (the session's), `passwordUserId` (the deleted e-mail & password user, if there was one; differs from `user.id` after a Google sign-in) | the same | the same |
 
 - `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's browser language (e.g. `de-CH`) if known.
 - Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. With e-mail & password sign-in, `email.verify` and `email.reset` must be in the list: the server does not start without them.
@@ -201,7 +201,7 @@ The calls contain e-mail links and codes, so `WEBHOOK_URL` must be https, except
 `Madauth.deleteAccount()` in the web library (`POST /auth/account/delete`) lets a signed-in user delete their account:
 
 - The e-mail & password account of the session's e-mail address is deleted, with its pending confirmation and reset links. This also happens when the user signed in with Google: the session proves that the address is theirs. Google sign-in itself stores nothing.
-- The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`.
+- The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`. Its `passwordUserId` is the ID of the deleted e-mail & password user: after a Google sign-in it differs from `user.id`, so delete what your backend stored under either ID.
 
 Delete the user's data in your own backend first, while the user is still signed in. Sessions on other devices end when the app next checks them; your own backends accept them until they expire (see [Password security](password-security.md#sessions)).
 
