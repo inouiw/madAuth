@@ -150,11 +150,11 @@ describe('deployment entry points', () => {
   it('A17: create-user asks for a password and creates a verified user, without needing the webhook', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
     const env = { DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}` };
-    const io = { askSecret: async () => 'correct horse battery' };
+    const io = { ask: async () => '', askSecret: async () => 'correct horse battery' };
 
     const created = await runCli(['create-user', 'Ada@Example.com'], io, env);
     const duplicate = await runCli(['create-user', 'ada@example.com'], io, env);
-    const short = await runCli(['create-user', 'grace@example.com'], { askSecret: async () => 'short' }, env);
+    const short = await runCli(['create-user', 'grace@example.com'], { ...io, askSecret: async () => 'short' }, env);
 
     expect(created).toMatchObject({ exitCode: 0, output: expect.stringMatching(/^Created user usr_\S+ \(Ada@Example.com\)/) });
     expect(duplicate).toMatchObject({ exitCode: 1, output: expect.stringContaining('already exists') });

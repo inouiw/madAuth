@@ -1,6 +1,8 @@
 # Running the madAuth server
 
-`@madauth/server` signs users in with Google or with e-mail & password, and issues the madAuth session. You can run it as a Docker container, an AWS Lambda function or an Azure Function.
+`@madauth/server` signs users in with Google or with e-mail & password, and issues the madAuth session. You can run it with Node, as a Docker container, an AWS Lambda function or an Azure Function.
+
+To set it up on your machine step by step, see [Getting started](getting-started.md).
 
 Google sign-in needs no database. E-mail & password sign-in stores its users through a [store adapter](#custom-store-adapter): SQLite is built in, and other databases need a small adapter of your own.
 
@@ -16,7 +18,7 @@ Google sign-in needs no database. E-mail & password sign-in stores its users thr
 
 ## Configuration
 
-All settings are environment variables.
+All settings are environment variables. `npx @madauth/server init` asks for the main ones and writes them to a `.env` file, with a new signing key and webhook secret (see [Getting started](getting-started.md)).
 
 | Variable | Required | Description |
 | --- | --- | --- |
@@ -38,7 +40,7 @@ At least one sign-in method must be configured: `GOOGLE_CLIENT_ID`, `DATABASE_UR
 
 ### Signing key
 
-Start the server without `MADAUTH_SIGNING_KEY` and the error message contains a freshly generated key to copy. You can also generate one directly:
+`init` writes a new key into `.env`. Otherwise, start the server without `MADAUTH_SIGNING_KEY` and the error message contains a freshly generated key to copy. You can also generate one directly:
 
 ```bash
 npx @madauth/server generate-key
@@ -61,7 +63,7 @@ Two receivers are included:
 - [`examples/dev-webhook-receiver`](../examples/dev-webhook-receiver) prints the e-mails in the terminal, for development: `npm run dev:webhooks`.
 - [`examples/aws-ses-mailer`](../examples/aws-ses-mailer) sends them with Amazon SES from an AWS Lambda function, with a step-by-step AWS setup.
 
-To create a user without e-mail, e.g. the first admin or for testing, run on a machine with the same environment variables:
+To create a user without e-mail, e.g. the first admin or for testing, run on a machine with the same environment variables (or add `--env-file .env`):
 
 ```bash
 npx @madauth/server create-user admin@example.com
@@ -72,6 +74,22 @@ In this repository, `npm run cli -w packages/server -- create-user you@example.c
 Brute-force protection is per account. Limit requests per IP address in your reverse proxy, load balancer or WAF as well. See [Password security](password-security.md) for all rules.
 
 ## Hosting
+
+### Node
+
+With Node.js 22.13 or newer, install the package and start the server:
+
+```bash
+npm install @madauth/server
+```
+
+```bash
+npx @madauth/server start --env-file .env
+```
+
+`--env-file` reads the settings from a file. A variable that is already set in the environment wins, so `PORT=9000 npx @madauth/server start --env-file .env` listens on another port. Every command takes it. Without it, the server reads the environment only.
+
+`npx @madauth/server init` writes such a file. It asks for your app's URL and the sign-in methods, and every question is also an option (`--yes` takes the defaults); see [Getting started](getting-started.md). Run `npx @madauth/server` for all commands.
 
 ### Docker
 
@@ -127,6 +145,8 @@ Set the environment variables as application settings.
 For e-mail & password sign-in on Lambda or Azure, use a [custom store adapter](#custom-store-adapter): their file system is not persistent, so SQLite does not fit. Password hashing needs about 32 MB per sign-in; give a Lambda function at least 256 MB.
 
 ### Your own Node server
+
+`start` runs madAuth as a server of its own. To serve it from your own Node server instead, create the app:
 
 ```ts
 import { createApp, loadConfig } from '@madauth/server';
