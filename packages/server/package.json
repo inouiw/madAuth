@@ -66,7 +66,7 @@
     }
   },
   "bin": {
-    "madauth-server": "./dist/bin.js"
+    "madauth-server": "dist/bin.js"
   },
   "files": [
     "dist"
