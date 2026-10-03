@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { storeAdapterContract } from '../testing.js';
-import { createTablesSql, madauthSchema, columnName } from './schema.js';
+import { madauthSchema } from './schema.js';
+import { columnName, createTablesSql } from './sql.js';
 import { createSqliteAdapter } from './sqlite.js';
 
 // P4: the built-in adapter is checked with the same contract as a custom one.
@@ -59,9 +60,18 @@ describe('SQLite adapter', () => {
     const source = readFileSync(new URL('./sqlite.ts', import.meta.url), 'utf8');
     const imports = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
 
-    expect(imports.sort()).toEqual(['./schema.js', 'node:sqlite']);
+    expect(imports.sort()).toEqual(['./schema.js', './sql.js', 'node:sqlite']);
     // Only type imports from node:sqlite: the module is loaded lazily.
     expect(source).toMatch(/import type \{[^}]*\} from 'node:sqlite'/);
+  });
+});
+
+describe('schema', () => {
+  it('is independent of how the records are stored', () => {
+    const source = readFileSync(new URL('./schema.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toMatch(/^import /m);
+    expect(source).not.toMatch(/sql/i);
   });
 });
 

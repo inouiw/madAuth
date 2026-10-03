@@ -1,17 +1,8 @@
 // A store adapter built only on madAuth's public API, exactly as a custom adapter would be.
 // Published as `@madauth/server/sqlite`; read it as the reference when writing your own.
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import {
-  columnName,
-  createTablesSql,
-  madauthSchema,
-  tableName,
-  type FieldDef,
-  type Row,
-  type StoreAdapter,
-  type Value,
-  type Where,
-} from './schema.js';
+import { madauthSchema, type FieldDef, type Row, type StoreAdapter, type Value, type Where } from './schema.js';
+import { columnName, createTablesSql, tableName } from './sql.js';
 
 /**
  * Stores madAuth's records in a SQLite file using Node's built-in `node:sqlite` (Node 22.13 or newer).

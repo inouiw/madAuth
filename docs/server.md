@@ -184,7 +184,7 @@ interface StoreAdapter {
 // Row: { field: string | number | boolean | null }. Where: every field equals the value (null: is empty).
 ```
 
-The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` and `verification`. Rows use the schema's camelCase field names; the SQL tables use `madauth_<model>` and snake_case columns (`tableName()` and `columnName()` convert). Print the SQL to create the tables:
+The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` and `verification`. The schema says nothing about how records are stored, so it fits any database. For SQL databases there are helpers: rows use the schema's camelCase field names, while the SQL tables use `madauth_<model>` and snake_case columns (`tableName()` and `columnName()` convert), and `createTablesSql()` creates them. Print the SQL to create the tables:
 
 ```bash
 npx @madauth/server schema --dialect postgres

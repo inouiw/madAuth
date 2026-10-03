@@ -2,7 +2,7 @@ import { createInterface } from 'node:readline';
 import { ConfigError, loadUserStoreConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
-import { createTablesSql, type SqlDialect } from './store/schema.js';
+import { createTablesSql, type SqlDialect } from './store/sql.js';
 import { Users } from './users.js';
 import { generateWebhookSecret } from './webhooks.js';
 
