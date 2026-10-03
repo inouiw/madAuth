@@ -3,7 +3,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import type { MadauthConfig } from './config.js';
 import { importSigningKeys, type SigningKeys } from './keys.js';
-import { deriveCodeKey } from './password.js';
+import { deriveCodeKey, normalizeEmail } from './password.js';
 import { googleRoutes } from './routes/google.js';
 import { passwordRoutes } from './routes/password.js';
 import { readToken, signSession, userFromClaims, type SessionClaims } from './tokens.js';
@@ -122,14 +122,21 @@ export function createApp(config: MadauthConfig): Hono {
 
   // --- Session ---
 
-  app.get('/auth/session', async (c) => {
+  /** The claims of the request's session, or null if there is none or it has ended. */
+  const currentSession = async (c: Context) => {
     const claims = await readToken<SessionClaims>(await keys, issuer, SESSION_TYP, getCookie(c, SESSION_COOKIE));
-    if (!claims) return c.json({ error: 'no_session' }, 401);
+    if (!claims) return null;
     // Users from the store: a password reset increments the session version and so ends older sessions.
     if (claims.sub.startsWith('usr_')) {
       const stored = await ctx.users?.findById(claims.sub);
-      if (!stored || stored.sessionVersion !== claims.sv) return c.json({ error: 'no_session' }, 401);
+      if (!stored || stored.sessionVersion !== claims.sv) return null;
     }
+    return claims;
+  };
+
+  app.get('/auth/session', async (c) => {
+    const claims = await currentSession(c);
+    if (!claims) return c.json({ error: 'no_session' }, 401);
     const user = userFromClaims(claims);
     // Sliding session: renew once half of the lifetime has passed.
     if (Date.now() / 1000 - claims.iat > sessionTtlSeconds / 2) await ctx.startSession(c, user, claims.amr, { sv: claims.sv });
@@ -138,6 +145,19 @@ export function createApp(config: MadauthConfig): Hono {
 
   app.post('/auth/logout', (c) => {
     deleteCookie(c, SESSION_COOKIE, { path: '/', domain: cookieDomain, secure });
+    return c.body(null, 204);
+  });
+
+  // --- Account ---
+
+  app.post('/auth/account/delete', async (c) => {
+    const claims = await currentSession(c);
+    if (!claims) return c.json({ error: 'no_session' }, 401);
+    // The session proves who owns the address, so its e-mail & password account goes as well when the
+    // user signed in with Google. Google sign-in itself stores nothing.
+    if (ctx.users && claims.email) await ctx.users.deleteByEmail(normalizeEmail(claims.email));
+    deleteCookie(c, SESSION_COOKIE, { path: '/', domain: cookieDomain, secure });
+    await ctx.emit('user.deleted', { user: userFromClaims(claims) });
     return c.body(null, 204);
   });
 

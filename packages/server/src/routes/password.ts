@@ -198,6 +198,8 @@ export function passwordRoutes(
     const existing = await users.findByEmail(normalizeEmail(email));
 
     if (existing?.emailVerified) {
+      // The note to the owner is optional; the answer is the same either way.
+      if (!webhook.wants('email.already_registered')) return accepted(c);
       const sent = await sendEmail(existing, 'email.already_registered', { link: target.href, site: target.host, locale });
       return sent ? accepted(c) : unavailable(c);
     }

@@ -96,7 +96,7 @@ signInButton.onclick = () => Madauth.signIn();
 - **E-mail & password:** `new Password()` adds the form to the dialog, with "Create account" and "Forgot password?". New accounts confirm their address with a link or a code from an e-mail. The links in the e-mails lead back to your page: `initialize` handles them, and opens the dialog to choose a new password after a reset link. See [Password security](docs/password-security.md).
 - **The dialog:** `signIn()` adds a `<madauth-login>` to the page; put one in your HTML only to customize it.
 - **Your own login screen:** pass `ui: 'custom'` and use `Madauth.password` and `Madauth.google` instead of the dialog. See [Building your own login screen](docs/custom-ui.md).
-- **Other methods:** `signOut()`, `getSession()` and `currentUser`. All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
+- **Other methods:** `signOut()`, `getSession()`, `currentUser`, and `deleteAccount()` to [delete the signed-in user's account](docs/server.md#deleting-an-account). All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
 - **Server URL:** the server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 'https://auth.example.com'` to `initialize` if it runs elsewhere on the same site.
 
 ### Running the server

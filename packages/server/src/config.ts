@@ -1,7 +1,13 @@
 import type { JWK, JWTVerifyGetKey } from 'jose';
 import { assertPrivateSigningJwk, generateSigningKey } from './keys.js';
 import type { StoreAdapter } from './store/schema.js';
-import { WEBHOOK_TYPES, checkWebhookSecret, generateWebhookSecret, type WebhookSettings } from './webhooks.js';
+import {
+  REQUIRED_EMAIL_TYPES,
+  WEBHOOK_TYPES,
+  checkWebhookSecret,
+  generateWebhookSecret,
+  type WebhookSettings,
+} from './webhooks.js';
 
 export interface MadauthConfig {
   /** Public base URL of the server (MADAUTH_ISSUER). */
@@ -55,6 +61,22 @@ export const envVars = {
 export interface ConfigOverrides {
   /** Stores users; replaces DATABASE_URL. */
   store?: StoreAdapter;
+}
+
+type Env = Record<string, string | undefined>;
+
+/** Options of the hosting entry points: `start` (Node), `createHandler` (AWS Lambda) and `register` (Azure). */
+export interface EntryOptions extends ConfigOverrides {
+  /**
+   * The environment variables to read, or a function that loads them, e.g. to add secrets from a
+   * parameter store. The function runs once, before the first request. Default: `process.env`.
+   */
+  env?: Env | (() => Env | Promise<Env>);
+}
+
+/** The environment variables an entry point reads its configuration from. */
+export async function resolveEnv(source: EntryOptions['env'] = process.env): Promise<Env> {
+  return typeof source === 'function' ? source() : source;
 }
 
 const DEFAULT_SESSION_TTL = 8 * 60 * 60;
@@ -130,9 +152,8 @@ export async function loadConfig(
     throw new ConfigError(`GOOGLE_CLIENT_ID must end with ".apps.googleusercontent.com" but is "${clientId}".`);
   }
 
-  const webhook = webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_EVENTS'));
-
   const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
+  const webhook = webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_EVENTS'), !!store);
   let password: MadauthConfig['password'];
   if (store) {
     if (!webhook) {
@@ -214,6 +235,8 @@ function webhookFromEnv(
   url: string | undefined,
   secret: string | undefined,
   events: string | undefined,
+  /** E-mail & password sign-in is on, so its e-mails must be among the events. */
+  sendsEmails: boolean,
 ): WebhookSettings | undefined {
   if (!url) {
     if (secret || events) throw new ConfigError('WEBHOOK_SECRET and WEBHOOK_EVENTS need WEBHOOK_URL.');
@@ -239,13 +262,30 @@ function webhookFromEnv(
   if (problem) {
     throw new ConfigError(`WEBHOOK_SECRET ${problem}. Generate one with: npx @madauth/server generate-webhook-secret`);
   }
-  let selected: Set<string> | null = null;
-  if (events) {
-    selected = new Set(events.split(',').map((e) => e.trim()).filter(Boolean));
-    const unknown = [...selected].filter((e) => !(WEBHOOK_TYPES as readonly string[]).includes(e));
-    if (unknown.length) {
-      throw new ConfigError(`WEBHOOK_EVENTS: unknown type ${unknown.join(', ')}. Known types: ${WEBHOOK_TYPES.join(', ')}.`);
-    }
+  // Nothing is sent that the receiver did not ask for: a type it does not know could make it answer with an
+  // error, and an unanswered signup.before refuses every sign-up.
+  const selected = new Set((events ?? '').split(',').map((e) => e.trim()).filter(Boolean));
+  const allTypes = `All types: ${WEBHOOK_TYPES.join(', ')}. See "Webhooks" in docs/server.md.`;
+  if (!selected.size) {
+    throw new ConfigError(
+      'WEBHOOK_EVENTS is not set. List the types your webhook receiver handles; only these are sent. ' +
+        (sendsEmails
+          ? `E-mail & password sign-in needs ${REQUIRED_EMAIL_TYPES.join(' and ')}. For a receiver that sends the e-mails:` +
+            '\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.already_registered\n\n'
+          : 'For example:\n\nWEBHOOK_EVENTS=user.signed_in\n\n') +
+        allTypes,
+    );
+  }
+  const unknown = [...selected].filter((e) => !(WEBHOOK_TYPES as readonly string[]).includes(e));
+  if (unknown.length) {
+    throw new ConfigError(`WEBHOOK_EVENTS: unknown type ${unknown.join(', ')}. Known types: ${WEBHOOK_TYPES.join(', ')}.`);
+  }
+  const missing = sendsEmails ? REQUIRED_EMAIL_TYPES.filter((type) => !selected.has(type)) : [];
+  if (missing.length) {
+    throw new ConfigError(
+      `WEBHOOK_EVENTS lacks ${missing.join(' and ')}. E-mail & password sign-in can't work without these e-mails, ` +
+        `so your webhook receiver must send them:\n\nWEBHOOK_EVENTS=${[...selected, ...missing].join(',')}\n`,
+    );
   }
   return { url: parsed.href, secret, events: selected };
 }

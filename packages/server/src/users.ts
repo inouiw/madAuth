@@ -104,6 +104,20 @@ export class Users {
     return user;
   }
 
+  /**
+   * Deletes the user with this e-mail address and everything stored for them. Resolves to false if there
+   * is no such user (any more).
+   */
+  async deleteByEmail(emailNormalized: string): Promise<boolean> {
+    const user = await this.findByEmail(emailNormalized);
+    if (!user) return false;
+    // The user record goes first: from then on nobody can sign in, and a sign-up with the address starts afresh.
+    if ((await this.store.delete('user', { id: user.id })) !== 1) return false;
+    await this.store.delete('account', { userId: user.id });
+    await this.store.delete('verification', { userId: user.id });
+    return true;
+  }
+
   async updateUser(id: string, patch: Partial<Omit<StoredUser, 'id'>>): Promise<void> {
     await this.store.update('user', { id }, patch as Row);
   }

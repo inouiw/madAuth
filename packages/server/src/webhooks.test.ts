@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createWebhookClient, generateWebhookSecret, signWebhook, verifyWebhook } from './webhooks.js';
+import { WEBHOOK_TYPES, createWebhookClient, generateWebhookSecret, signWebhook, verifyWebhook } from './webhooks.js';
 
 // The example from the Standard Webhooks specification, so other implementations can verify our calls.
 // It is a public example key; it is split so secret scanners don't mistake it for a real (e.g. Stripe) secret.
@@ -38,7 +38,7 @@ describe('webhook signatures', () => {
 });
 
 describe('webhook client', () => {
-  const settings = { url: 'https://hooks.example.com/x', secret: generateWebhookSecret(), events: null };
+  const settings = { url: 'https://hooks.example.com/x', secret: generateWebhookSecret(), events: new Set<string>(WEBHOOK_TYPES) };
 
   it('finds the headers of a plain object whatever their casing', async () => {
     const now = Date.now();
@@ -80,9 +80,9 @@ describe('webhook client', () => {
     expect(await createWebhookClient(settings, slow).call('email.verify', {}, 20)).toEqual({ ok: false, reason: 'no answer within 20 ms' });
   });
 
-  it('K6: sends only the selected events, but always the e-mails', async () => {
+  it('K6: sends only the selected types, e-mails included', async () => {
     const sent: string[] = [];
-    const client = createWebhookClient({ ...settings, events: new Set(['email.verified']) }, (async (_url: string, init: RequestInit) => {
+    const client = createWebhookClient({ ...settings, events: new Set(['email.verify', 'email.verified']) }, (async (_url: string, init: RequestInit) => {
       sent.push(JSON.parse(String(init.body)).type);
       return new Response(null, { status: 204 });
     }) as typeof fetch);
@@ -91,6 +91,7 @@ describe('webhook client', () => {
       await client.call(type, {}, 1000);
     }
 
-    expect(sent).toEqual(['email.verify', 'email.reset', 'email.already_registered', 'email.verified']);
+    expect(sent).toEqual(['email.verify', 'email.verified']);
+    expect(client.wants('email.reset')).toBe(false);
   });
 });

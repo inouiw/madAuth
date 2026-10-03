@@ -35,7 +35,7 @@ Nobody should be able to find out through madAuth whether an address has an acco
 
 - Sign-in answers `invalid_credentials` both for an unknown address and for a wrong password. For an unknown address the password is still hashed against a dummy hash, so the answer takes as long.
 - Sign-up, "send the confirmation e-mail again" and "send a reset e-mail" always answer `202`. The address is hashed before it is looked up, so sign-up takes as long for new and existing addresses.
-- Signing up with an address that already has a confirmed account sends its owner a "you already have an account" e-mail instead of revealing anything to the person signing up.
+- Signing up with an address that already has a confirmed account sends its owner a "you already have an account" e-mail instead of revealing anything to the person signing up. This needs `email.already_registered` in `WEBHOOK_EVENTS`. Without it no e-mail is sent, so the answer comes faster than for a new address and the two can be told apart: keep it in the list unless your receiver can't send this e-mail.
 - An address that signed up but never confirmed can sign up again: the latest sign-up sets the password, and only the latest e-mail works. This prevents someone from blocking an address by signing it up first.
 
 Two things are still visible:

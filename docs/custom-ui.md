@@ -108,4 +108,4 @@ One Tap (`GoogleFedcm` with its default `autoPrompt: true`) works on custom scre
 
 ## Signing out and the session
 
-These work the same with or without the dialog: `Madauth.signOut()`, `Madauth.getSession()`, `Madauth.currentUser` and `Madauth.onAuthStateChanged(listener)`. See the [README](../README.md#using-madauth-in-your-app).
+These work the same with or without the dialog: `Madauth.signOut()`, `Madauth.deleteAccount()`, `Madauth.getSession()`, `Madauth.currentUser` and `Madauth.onAuthStateChanged(listener)`. See the [README](../README.md#using-madauth-in-your-app).
