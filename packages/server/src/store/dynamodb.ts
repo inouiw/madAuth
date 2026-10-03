@@ -234,18 +234,12 @@ export function createDynamoDbAdapter(options: DynamoDbAdapterOptions): StoreAda
       const unused = 'attribute_not_exists(pk)';
       return transact([
         { Put: { TableName: tableName, Item: record, ConditionExpression: unused } },
-        ...Object.keys(fields)
-          .filter((name) => fields[name].unique && data[name] !== undefined && data[name] !== null)
-          .map((name) => ({
-            Put: {
-              TableName: tableName,
-              Item: { ...uniqueKey(model, name, data[name]), ref: { S: id } },
-              ConditionExpression: unused,
-            },
-          })),
-        ...Object.keys(fields)
-          .filter((name) => fields[name].index && data[name] !== undefined && data[name] !== null)
-          .map((name) => ({ Put: { TableName: tableName, Item: indexKey(model, name, data[name], id) } })),
+        ...derivedKeys(model, fields, data, id).map((key) =>
+          // A unique value refers to its record and may not be taken yet; an index entry is only a key.
+          key.pk.S!.startsWith('u|')
+            ? { Put: { TableName: tableName, Item: { ...key, ref: { S: id } }, ConditionExpression: unused } }
+            : { Put: { TableName: tableName, Item: key } },
+        ),
       ]);
     },
 
@@ -261,7 +255,7 @@ export function createDynamoDbAdapter(options: DynamoDbAdapterOptions): StoreAda
     async update(model, where, patch) {
       const fields = fieldsOf(model);
       const changes = Object.entries(patch);
-      checkFields(fields, Object.keys(patch));
+      checkFields(fields, [...Object.keys(where), ...Object.keys(patch)]);
       for (const [field] of changes) {
         if (fields[field].primaryKey || fields[field].unique || fields[field].index) {
           throw new Error(`The DynamoDB adapter can't change "${field}" of a "${model}" record: it is a key.`);
@@ -278,21 +272,28 @@ export function createDynamoDbAdapter(options: DynamoDbAdapterOptions): StoreAda
         values[`:p${i}`] = toAttribute(value);
         return `#p${i} = :p${i}`;
       });
-      const { sdk, client } = await aws();
+      // With the id in the filter, the condition alone decides; there is nothing to look up first.
+      const byId = where[primaryKey];
+      const ids =
+        byId !== undefined && byId !== null
+          ? [String(byId)]
+          : (await find(model, where)).map((row) => String(row[primaryKey]));
+      // A transaction, not an UpdateItem: its idempotency token makes the SDK's retry after a lost response
+      // succeed again instead of failing its own condition, so the count stays exact.
       const written = await Promise.all(
-        (await find(model, where)).map((row) =>
-          write(() =>
-            client.send(
-              new sdk.UpdateItemCommand({
+        ids.map((id) =>
+          transact([
+            {
+              Update: {
                 TableName: tableName,
-                Key: recordKey(model, String(row[primaryKey])),
+                Key: recordKey(model, id),
                 UpdateExpression: `SET ${assignments.join(', ')}`,
                 ConditionExpression: condition.text,
                 ExpressionAttributeNames: names,
                 ExpressionAttributeValues: values,
-              }),
-            ),
-          ),
+              },
+            },
+          ]),
         ),
       );
       return written.filter(Boolean).length;

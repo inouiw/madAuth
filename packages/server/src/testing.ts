@@ -171,6 +171,11 @@ export function storeAdapterContract(t: ContractRunner, createAdapter: () => Sto
 
       expect(await store.update('user', { id: user.id }, { name: null })).toBe(1);
       expect(await store.findOne('user', { id: user.id })).toEqual({ ...user, name: null });
+
+      // `null` in a filter matches the emptied field.
+      expect(await store.update('user', { id: user.id, name: null }, { name: 'Ada' })).toBe(1);
+      expect(await store.update('user', { id: user.id, name: null }, { name: 'Grace' })).toBe(0);
+      expect((await store.findOne('user', { id: user.id }))?.name).toBe('Ada');
     });
 
     it('updates a record only while it still matches every field of the filter', async () => {

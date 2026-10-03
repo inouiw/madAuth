@@ -214,6 +214,11 @@ async function storeFromDatabaseUrl(url: string | undefined): Promise<StoreAdapt
 
 async function dynamoDbStore(tableName: string): Promise<StoreAdapter> {
   if (!tableName) throw new ConfigError('DATABASE_URL needs a table name, e.g. dynamodb:madauth');
+  if (!/^[\w.-]{3,255}$/.test(tableName)) {
+    throw new ConfigError(
+      `DATABASE_URL=dynamodb: needs a DynamoDB table name (3 to 255 letters, digits, _ . -) but has "${tableName}"`,
+    );
+  }
   // The adapter loads the AWS SDK on first use; check here that it is installed, so a missing package
   // stops the start-up instead of the first sign-in.
   try {

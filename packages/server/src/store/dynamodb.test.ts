@@ -134,9 +134,11 @@ describe('DynamoDB adapter', () => {
     ]);
     expect(sent[1].input.TransactItems.map((item: any) => item.Put.Item.pk.S + ' ' + item.Put.Item.sk.S)).toEqual([
       'r|account|acc_1 #',
-      'u|account|key|password:usr_1 #',
       'i|account|userId|usr_1 acc_1',
+      'u|account|key|password:usr_1 #',
     ]);
+    expect(sent[1].input.TransactItems[1].Put.ConditionExpression).toBeUndefined();
+    expect(sent[1].input.TransactItems[2].Put).toMatchObject({ Item: { ref: { S: 'acc_1' } }, ConditionExpression: 'attribute_not_exists(pk)' });
   });
 
   it('reads with strong consistency and returns only the schema fields', async () => {
@@ -192,17 +194,18 @@ describe('DynamoDB adapter', () => {
   it('an update whose filter no longer matches counts 0, and a clash with a transaction is tried again', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     const { client, sent } = scriptedClient([
-      { Item: userItem },
-      awsError('TransactionConflictException'),
-      awsError('ConditionalCheckFailedException'),
+      awsError('TransactionCanceledException', ['TransactionConflict']),
+      awsError('TransactionCanceledException', ['ConditionalCheckFailed']),
     ]);
     const store = createDynamoDbAdapter({ tableName: 'madauth', client });
 
     expect(await store.update('user', { id: 'usr_1', sessionVersion: 0 }, { name: 'Ada', sessionVersion: 1 })).toBe(0);
 
-    expect(sent.map((s) => s.command)).toEqual(['GetItemCommand', 'UpdateItemCommand', 'UpdateItemCommand']);
+    // With the id in the filter, the update's condition decides without reading the record first.
+    expect(sent.map((s) => s.command)).toEqual(['TransactWriteItemsCommand', 'TransactWriteItemsCommand']);
     // Field names only appear as placeholders: `name` is a reserved word in DynamoDB.
-    expect(sent[1].input).toMatchObject({
+    expect(sent[0].input.TransactItems[0].Update).toMatchObject({
+      Key: { pk: { S: 'r|user|usr_1' }, sk: { S: '#' } },
       UpdateExpression: 'SET #p0 = :p0, #p1 = :p1',
       ConditionExpression: 'attribute_exists(pk) AND #w0 = :w0 AND #w1 = :w1',
       ExpressionAttributeNames: { '#w0': 'id', '#w1': 'sessionVersion', '#p0': 'name', '#p1': 'sessionVersion' },
