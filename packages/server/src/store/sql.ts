@@ -21,6 +21,26 @@ const columnTypes: Record<SqlDialect, Record<FieldType, string>> = {
   mysql: { string: 'TEXT', number: 'DOUBLE', boolean: 'BOOLEAN' },
 };
 
+/** What each schema version after the first one added, as SQL for tables created by an older version. */
+const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
+  {
+    version: 2,
+    sql: (dialect) =>
+      `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('wrongCodes')} ${columnTypes[dialect].number} NOT NULL DEFAULT 0;`,
+  },
+];
+
+/**
+ * The SQL that brings tables created for schema version `fromVersion` up to date. Empty if they are.
+ * Run it before you start the madAuth version that needs it; older madAuth versions ignore the additions.
+ */
+export function upgradeTablesSql(dialect: SqlDialect, fromVersion: number): string {
+  return upgrades
+    .filter((step) => step.version > fromVersion)
+    .map((step) => step.sql(dialect))
+    .join('\n');
+}
+
 /** The SQL that creates madAuth's tables and indexes in an empty database. */
 export function createTablesSql(dialect: SqlDialect, schema: Schema = madauthSchema): string {
   const statements: string[] = [];

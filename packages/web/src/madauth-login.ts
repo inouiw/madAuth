@@ -24,6 +24,7 @@ const errorTexts: Partial<Record<MadauthErrorCode, string>> = {
   invalid_email: 'Please enter a valid e-mail address.',
   link_invalid: 'This link is invalid or has expired. Please ask for a new e-mail.',
   code_invalid: 'The code is wrong or has expired.',
+  codes_locked: 'Too many wrong codes. Please ask for a new e-mail and use the link in it.',
 };
 const defaultErrorText = 'Sign-in is not available right now.';
 

@@ -4,8 +4,8 @@ import { parseArgs, parseEnv } from 'node:util';
 import { loadConfig, loadUserStoreConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
-import type { StoreAdapter } from './store/schema.js';
-import { createTablesSql, type SqlDialect } from './store/sql.js';
+import { madauthSchema, type StoreAdapter } from './store/schema.js';
+import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
 import { Users } from './users.js';
 import { generateWebhookSecret } from './webhooks.js';
 
@@ -28,8 +28,10 @@ Commands:
   generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
   create-user <email>          Create a user with a password (asks for it), already verified.
                                Uses DATABASE_URL and PASSWORD_MIN_LENGTH from the environment.
-  schema [--dialect <name>]    Print the SQL that creates madAuth's tables for a custom store adapter.
-                               Dialects: postgres (default), mysql, sqlite
+  schema [--dialect <name>] [--from <version>]
+                               Print the SQL that creates madAuth's tables for a custom store adapter.
+                               Dialects: postgres (default), mysql, sqlite. With --from, print only the
+                               changes since that schema version, to upgrade existing tables.
 
 Options:
   --env-file <path>            Read environment variables from this file, for any command. A variable
@@ -139,6 +141,8 @@ function parseCliArgs(args: string[]) {
     options: {
       'env-file': { type: 'string' },
       dialect: { type: 'string' },
+      // schema: print only the changes since this schema version.
+      from: { type: 'string' },
       // init: an answer for each question, then where and how to write the file.
       'app-url': { type: 'string' },
       'google-client-id': { type: 'string' },
@@ -198,7 +202,10 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     if (command === 'schema') {
       const dialect = (options.dialect ?? 'postgres') as SqlDialect;
       if (!['postgres', 'mysql', 'sqlite'].includes(dialect)) return { output: usage, exitCode: 1 };
-      return { output: createTablesSql(dialect), exitCode: 0 };
+      if (options.from === undefined) return { output: createTablesSql(dialect), exitCode: 0 };
+      const from = Number(options.from);
+      if (!Number.isInteger(from) || from < 1 || from > madauthSchema.version) return { output: usage, exitCode: 1 };
+      return { output: upgradeTablesSql(dialect, from) || '-- The tables are up to date.', exitCode: 0 };
     }
     if (command === 'create-user') {
       return await createUser(rest[0], io, env);
