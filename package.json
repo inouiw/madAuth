@@ -5,13 +5,11 @@
   "license": "MIT",
   "workspaces": [
     "packages/*",
-    "apps/*",
-    "examples/*"
+    "apps/*"
   ],
   "scripts": {
     "dev": "npm run dev -w apps/demo",
     "dev:server": "npm run dev -w packages/server",
-    "dev:webhooks": "npm run dev -w examples/dev-webhook-receiver",
     "build": "npm run build -w packages/server && npm run build -w packages/web && npm run build -w apps/demo",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm test --workspaces --if-present"

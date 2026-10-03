@@ -228,7 +228,7 @@ Next steps:
 
      npx @madauth/server start --env-file ${file}
 
-2. madAuth hands its e-mails to your webhook receiver. For development, start the example receiver,
+2. madAuth hands its e-mails to your webhook receiver. For development, start the development receiver,
    which prints them, with the same WEBHOOK_URL and WEBHOOK_SECRET as in ${file}:
 
      ${DEV_WEBHOOK_RECEIVER_URL}

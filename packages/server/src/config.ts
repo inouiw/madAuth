@@ -158,7 +158,7 @@ export async function loadConfig(
   if (sendsEmails && !webhook) {
     throw new ConfigError(
       'WEBHOOK_URL is not set. E-mail & password sign-in sends its e-mails through your webhook. For ' +
-        'development, run the example receiver (npm run dev:webhooks) and set ' +
+        'development, run the dev-receiver of https://github.com/inouiw/madAuth-webhooks and set ' +
         'WEBHOOK_URL=http://localhost:8790/webhook and ' +
         `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.already_registered. See "Webhooks" in docs/server.md.`,
     );

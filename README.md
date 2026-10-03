@@ -40,10 +40,14 @@ Start the madAuth server. The first start prints a signing key, then a webhook s
 npm run dev:server
 ```
 
-In a second terminal, start the webhook receiver. The confirmation and reset e-mails appear there, with their links and codes:
+In a second terminal, start the development receiver from the [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks) repository. The confirmation and reset e-mails appear there, with their links and codes. Get it once, next to this repository, and give it the `WEBHOOK_URL` and `WEBHOOK_SECRET` from `packages/server/.env` (in its own `.env`, see its [README](https://github.com/inouiw/madAuth-webhooks/tree/main/dev-receiver)):
 
 ```bash
-npm run dev:webhooks
+git clone https://github.com/inouiw/madAuth-webhooks.git ../madAuth-webhooks && npm install --prefix ../madAuth-webhooks/dev-receiver
+```
+
+```bash
+npm run dev --prefix ../madAuth-webhooks/dev-receiver
 ```
 
 In a third terminal, start the demo at http://localhost:3000 (it proxies `/auth` to the server). http://localhost:3000/custom.html shows a custom login screen built with the same library:
@@ -121,7 +125,7 @@ signInButton.onclick = () => Madauth.signIn();
 See [Running the madAuth server](docs/server.md) for:
 - the configuration
 - Google Cloud Console setup
-- e-mail & password sign-in: the database (SQLite or Amazon DynamoDB), and webhooks for sending e-mails (with an [Amazon SES example](examples/aws-ses-mailer)), checking sign-ups and receiving events
+- e-mail & password sign-in: the database (SQLite or Amazon DynamoDB), and webhooks for sending e-mails (with ready-made receivers in [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks), e.g. for Amazon SES), checking sign-ups and receiving events
 - Node, Docker, AWS Lambda and Azure Functions
 - storing users in your own database (custom store adapter)
 - verifying the session in your own backend

@@ -23,8 +23,10 @@
       "name": "webhooks",
       "runtimeExecutable": "npm",
       "runtimeArgs": [
+        "--prefix",
+        "../madAuth-webhooks/dev-receiver",
         "run",
-        "dev:webhooks"
+        "dev"
       ],
       "port": 8790
     }

@@ -10,7 +10,7 @@ import { Users } from './users.js';
 import { generateWebhookSecret } from './webhooks.js';
 
 /** Where the example webhook receiver for development is. Named only here: it will move to its own repository. */
-export const DEV_WEBHOOK_RECEIVER_URL = 'https://github.com/inouiw/madAuth/tree/main/examples/dev-webhook-receiver';
+export const DEV_WEBHOOK_RECEIVER_URL = 'https://github.com/inouiw/madAuth-webhooks/tree/main/dev-receiver';
 
 /** The server's default port, which `init` writes as PORT. */
 const PORT = 8787;
@@ -327,7 +327,7 @@ function nextSteps(file: string, origin: string, google: 'GoogleFedcm' | 'Google
   const steps = [
     ['Start the madAuth server:', '', `  npx @madauth/server start --env-file ${envFile}`],
     password && [
-      'madAuth hands its e-mails to your webhook receiver. For development, start the example receiver,',
+      'madAuth hands its e-mails to your webhook receiver. For development, start the development receiver,',
       `which prints them, with the same WEBHOOK_URL and WEBHOOK_SECRET as in ${file}:`,
       '',
       `  ${DEV_WEBHOOK_RECEIVER_URL}`,

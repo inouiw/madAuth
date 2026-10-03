@@ -53,18 +53,18 @@ The server listens on port 8787. All its settings are in `.env`; see [Configurat
 
 Skip this step without e-mail & password sign-in.
 
-madAuth does not send e-mails itself: it hands each one to your [webhook](server.md#webhooks) receiver. For development, run the [example receiver](https://github.com/inouiw/madAuth/tree/main/examples/dev-webhook-receiver). It prints each e-mail in the terminal, with its link and code.
+madAuth does not send e-mails itself: it hands each one to your [webhook](server.md#webhooks) receiver. For development, run the [development receiver](https://github.com/inouiw/madAuth-webhooks/tree/main/dev-receiver) from the madAuth-webhooks repository. It prints each e-mail in the terminal, with its link and code.
 
 Get it once, in a folder of its own:
 
 ```bash
-git clone https://github.com/inouiw/madAuth.git && cd madAuth && npm install
+git clone https://github.com/inouiw/madAuth-webhooks.git && cd madAuth-webhooks/dev-receiver && npm install
 ```
 
 Start it in a second terminal, with the `WEBHOOK_URL` and `WEBHOOK_SECRET` from your `.env`:
 
 ```bash
-WEBHOOK_URL=http://localhost:8790/webhook WEBHOOK_SECRET=whsec_... npm run dev:webhooks
+WEBHOOK_URL=http://localhost:8790/webhook WEBHOOK_SECRET=whsec_... npm run dev
 ```
 
 ## 5. Proxy madAuth through your app
