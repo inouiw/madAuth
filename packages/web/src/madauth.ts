@@ -105,11 +105,13 @@ function scheduleRenewal(): void {
   // A hidden page does not renew: the session lasts for a time after the user last looked at the app,
   // not for as long as a tab stays open.
   if (document.visibilityState === 'hidden') return;
-  const delay = Math.min(Math.max(expiry - RENEW_BEFORE_MS - Date.now(), 0), MAX_TIMEOUT_MS);
+  const delay = Math.max(expiry - RENEW_BEFORE_MS - Date.now(), 0);
   renewalTimer = setTimeout(() => {
+    // setTimeout can't wait that long at once: wait for the rest without counting it as a try.
+    if (delay > MAX_TIMEOUT_MS) return scheduleRenewal();
     triedExpiry = expiry;
     void renew();
-  }, delay);
+  }, Math.min(delay, MAX_TIMEOUT_MS));
 }
 
 function setUser(next: MadauthUser | null, notifyAlways = false): void {

@@ -14,6 +14,8 @@ import { createWebhookClient, type WebhookClient, type WebhookType } from './web
 
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
+/** A session token that expires within this time is renewed: the web library renews a minute before expiry. */
+const RENEW_BEFORE_SECONDS = 60;
 
 export { REDIRECT_ERROR_PARAM } from './routes/google.js';
 
@@ -61,7 +63,11 @@ export function createApp(config: MadauthConfig): Hono {
    */
   const issueSession = async (c: Context, user: MadauthUser, amr: string[], extra?: { sv?: number }) => {
     const signingKeys = await keys;
-    setCookie(c, SESSION_COOKIE, await signSession(signingKeys, issuer, sessionTtlSeconds, user, amr, extra), {
+    const [sessionToken, renewalToken] = await Promise.all([
+      signSession(signingKeys, issuer, sessionTtlSeconds, user, amr, extra),
+      signRenewal(signingKeys, issuer, renewalTtlSeconds, user, amr, extra),
+    ]);
+    setCookie(c, SESSION_COOKIE, sessionToken, {
       path: '/',
       domain: cookieDomain,
       httpOnly: true,
@@ -70,7 +76,7 @@ export function createApp(config: MadauthConfig): Hono {
       maxAge: sessionTtlSeconds,
     });
     // Without a Domain, so sibling hosts that get the session cookie through COOKIE_DOMAIN never get this one.
-    setCookie(c, RENEWAL_COOKIE, await signRenewal(signingKeys, issuer, renewalTtlSeconds, user, amr, extra), {
+    setCookie(c, RENEWAL_COOKIE, renewalToken, {
       path: '/auth',
       httpOnly: true,
       secure,
@@ -192,12 +198,21 @@ export function createApp(config: MadauthConfig): Hono {
     const session = await tokenClaims(c, SESSION_COOKIE, SESSION_TYP);
     // The roles are read again, so a change shows the next time the app checks the session.
     const user = session ? await checked(session) : null;
+    const now = Date.now() / 1000;
+    // The web library renews a minute before expiry; with a short SESSION_TTL that is before half of it.
     const upToDate =
-      session && user && sameRoles(user.roles ?? [], session.roles ?? []) && Date.now() / 1000 - session.iat <= sessionTtlSeconds / 2;
+      session &&
+      user &&
+      sameRoles(user.roles ?? [], session.roles ?? []) &&
+      now - session.iat <= sessionTtlSeconds / 2 &&
+      session.exp - now > RENEW_BEFORE_SECONDS;
     if (upToDate) return user;
 
     const renewal = await tokenClaims(c, RENEWAL_COOKIE, RENEWAL_TYP);
-    const renewed = renewal ? await checked(renewal) : null;
+    // Both tokens of one sign-in: the check of the session token holds for the renewal token as well.
+    const sameSignIn =
+      session && user && renewal && renewal.sub === session.sub && renewal.sv === session.sv && renewal.email === session.email;
+    const renewed = sameSignIn ? user : renewal ? await checked(renewal) : null;
     if (renewal && renewed) {
       await issueSession(c, renewed, renewal.amr, { sv: renewal.sv });
       return renewed;
