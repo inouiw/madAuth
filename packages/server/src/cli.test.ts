@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEV_WEBHOOK_RECEIVER_URL, runCli, type CliIo } from './cli.js';
+import { runCli, type CliIo } from './cli.js';
 import { loadConfig } from './config.js';
-import { checkWebhookSecret } from './webhooks.js';
+import { DEV_WEBHOOK_RECEIVER_URL, checkWebhookSecret } from './webhooks.js';
 
 const CLIENT_ID = '123-test.apps.googleusercontent.com';
 const EMAIL_TYPES = 'email.verify,email.reset,email.already_registered';

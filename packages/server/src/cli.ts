@@ -7,10 +7,7 @@ import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from 
 import { madauthSchema, type StoreAdapter } from './store/schema.js';
 import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
 import { Users } from './users.js';
-import { generateWebhookSecret } from './webhooks.js';
-
-/** Where the example webhook receiver for development is. Named only here: it will move to its own repository. */
-export const DEV_WEBHOOK_RECEIVER_URL = 'https://github.com/inouiw/madAuth-webhooks/tree/main/dev-receiver';
+import { DEV_WEBHOOK_RECEIVER_URL, generateWebhookSecret } from './webhooks.js';
 
 /** The server's default port, which `init` writes as PORT. */
 const PORT = 8787;
