@@ -2,7 +2,7 @@ import { createInterface } from 'node:readline';
 import { ConfigError, loadUserStoreConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
-import { createTablesSql, type SqlDialect } from './store/sql.js';
+import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
 import { Users } from './users.js';
 import { generateWebhookSecret } from './webhooks.js';
 
@@ -13,8 +13,10 @@ Commands:
   generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
   create-user <email>          Create a user with a password (asks for it), already verified.
                                Uses DATABASE_URL and PASSWORD_MIN_LENGTH from the environment.
-  schema [--dialect <name>]    Print the SQL that creates madAuth's tables for a custom store adapter.
-                               Dialects: postgres (default), mysql, sqlite`;
+  schema [--dialect <name>] [--from <version>]
+                               Print the SQL that creates madAuth's tables for a custom store adapter.
+                               Dialects: postgres (default), mysql, sqlite. With --from, print only the
+                               changes since that schema version, to upgrade existing tables.`;
 
 export interface CliIo {
   /** Asks for a secret without echoing it. */
@@ -85,7 +87,11 @@ export async function runCli(
       const i = rest.indexOf('--dialect');
       const dialect = (i >= 0 ? rest[i + 1] : 'postgres') as SqlDialect;
       if (!['postgres', 'mysql', 'sqlite'].includes(dialect)) return { output: usage, exitCode: 1 };
-      return { output: createTablesSql(dialect), exitCode: 0 };
+      const f = rest.indexOf('--from');
+      if (f < 0) return { output: createTablesSql(dialect), exitCode: 0 };
+      const from = Number(rest[f + 1]);
+      if (!Number.isInteger(from) || from < 1) return { output: usage, exitCode: 1 };
+      return { output: upgradeTablesSql(dialect, from) || '-- The tables are up to date.', exitCode: 0 };
     }
     if (command === 'create-user') {
       return await createUser(rest[0], io, env);

@@ -104,23 +104,29 @@ export function passwordRoutes(
   const localeOf = (data: Body): string | undefined =>
     typeof data.locale === 'string' && data.locale.length <= MAX_LOCALE_LENGTH ? data.locale : undefined;
 
+  type Consumed = { userId: string | null; via: 'link' | 'code'; locked?: boolean };
+
   /** Resolves the user from `{ token }` (an e-mail link) or `{ email, code }`; null if invalid, expired or used. */
-  const consume = async (data: Body, purpose: VerificationPurpose): Promise<{ userId: string | null; via: 'link' | 'code' }> => {
+  const consume = async (data: Body, purpose: VerificationPurpose): Promise<Consumed> => {
     if (typeof data.token === 'string' && data.token) {
       return { userId: await users.consumeLinkToken(data.token, purpose), via: 'link' };
     }
     if (isValidEmail(data.email) && typeof data.code === 'string') {
       const user = await users.findByEmail(normalizeEmail(data.email));
-      const code = data.code.replace(/\s/g, '');
-      return { userId: user ? await users.consumeCode(user.id, purpose, code) : null, via: 'code' };
+      if (!user) return { userId: null, via: 'code' };
+      return { ...(await users.consumeCode(user, purpose, data.code.replace(/\s/g, ''))), via: 'code' };
     }
     return { userId: null, via: 'code' };
   };
 
-  const invalidVerification = (c: Context, via: 'link' | 'code') =>
-    via === 'link'
+  const invalidVerification = (c: Context, { via, locked }: Consumed) => {
+    if (locked) {
+      return error(c, 429, 'codes_locked', 'Too many wrong codes. Please ask for a new e-mail and use the link in it.');
+    }
+    return via === 'link'
       ? error(c, 400, 'link_invalid', 'The link is invalid, expired or was already used.')
       : error(c, 400, 'code_invalid', 'The code is wrong or expired.');
+  };
 
   app.post('/auth/password/signin', async (c) => {
     const data = await body(c);
@@ -236,10 +242,12 @@ export function passwordRoutes(
   });
 
   app.post('/auth/password/verify-email', async (c) => {
-    const { userId, via } = await consume(await body(c), 'verify');
+    const consumed = await consume(await body(c), 'verify');
+    const { userId, via } = consumed;
     const user = userId ? await users.findById(userId) : null;
-    if (!user) return invalidVerification(c, via);
-    await users.updateUser(user.id, { emailVerified: true });
+    if (!user) return invalidVerification(c, consumed);
+    // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.
+    await users.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
     const result = toMadauthUser(user);
     await ctx.startSession(c, result, ['pwd'], { sv: user.sessionVersion });
     await ctx.emit('email.verified', { user: result, via });
@@ -264,15 +272,15 @@ export function passwordRoutes(
     // Checked first, so a weak password doesn't use up the link.
     const policy = checkPasswordPolicy(data.password, minLength);
     if (policy) return error(c, 400, 'weak_password', policy);
-    const { userId, via } = await consume(data, 'reset');
-    const user = userId ? await users.findById(userId) : null;
+    const consumed = await consume(data, 'reset');
+    const user = consumed.userId ? await users.findById(consumed.userId) : null;
     const account = user ? await users.passwordAccount(user.id) : null;
-    if (!user || !account) return invalidVerification(c, via);
+    if (!user || !account) return invalidVerification(c, consumed);
 
     await users.updateAccount(account.id, { secret: await hashPassword(data.password as string), failedAttempts: 0, lockedUntil: 0 });
     // The reset proves access to the inbox, and the new session version ends all older sessions.
     const sessionVersion = user.sessionVersion + 1;
-    await users.updateUser(user.id, { emailVerified: true, sessionVersion });
+    await users.updateUser(user.id, { emailVerified: true, sessionVersion, wrongCodes: 0 });
     // An unused confirmation link would otherwise still sign in.
     await users.clearVerifications(user.id);
     const result = toMadauthUser(user);

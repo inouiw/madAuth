@@ -46,7 +46,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 1,
+  version: 2,
   models: {
     user: {
       fields: {
@@ -57,6 +57,8 @@ export const madauthSchema = {
         name: { type: 'string', nullable: true },
         sessionVersion: { type: 'number' },
         lastMailAt: { type: 'number' },
+        /** Wrong e-mail codes in a row, counted across e-mails (since version 2). */
+        wrongCodes: { type: 'number' },
         createdAt: { type: 'number' },
       },
     },

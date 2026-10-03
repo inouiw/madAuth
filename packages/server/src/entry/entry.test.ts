@@ -172,6 +172,16 @@ describe('deployment entry points', () => {
     expect(await runCli(['schema', '--dialect', 'oracle'])).toMatchObject({ exitCode: 1 });
   });
 
+  it('schema --from prints only the changes since a schema version', async () => {
+    expect(await runCli(['schema', '--dialect', 'sqlite', '--from', '1'])).toEqual({
+      exitCode: 0,
+      output: 'ALTER TABLE madauth_user ADD COLUMN wrong_codes INTEGER NOT NULL DEFAULT 0;',
+    });
+    expect(await runCli(['schema', '--from', '1'])).toMatchObject({ output: expect.stringContaining('wrong_codes DOUBLE PRECISION NOT NULL DEFAULT 0') });
+    expect(await runCli(['schema', '--from', '2'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
+    expect(await runCli(['schema', '--from', 'x'])).toMatchObject({ exitCode: 1 });
+  });
+
   it('generate-webhook-secret prints a usable secret', async () => {
     const { output, exitCode } = await runCli(['generate-webhook-secret']);
 

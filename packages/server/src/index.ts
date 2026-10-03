@@ -11,5 +11,5 @@ export {
   type Value,
   type Where,
 } from './store/schema.js';
-export { columnName, createTablesSql, tableName, type SqlDialect } from './store/sql.js';
+export { columnName, createTablesSql, tableName, upgradeTablesSql, type SqlDialect } from './store/sql.js';
 export type { MadauthUser } from './user.js';

@@ -194,6 +194,20 @@ npx @madauth/server schema --dialect postgres
 
 `mysql` and `sqlite` work as well. The built-in SQLite adapter ([`packages/server/src/store/sqlite.ts`](../packages/server/src/store/sqlite.ts)) uses only this public API, so it is a complete example.
 
+### Schema versions
+
+`madauthSchema.version` increases when a madAuth release adds a model or a field. The built-in SQLite adapter upgrades its database by itself. For your own SQL tables, print the changes since the version they were created for and run them before you deploy the new madAuth version:
+
+```bash
+npx @madauth/server schema --dialect postgres --from 1
+```
+
+| Version | Change |
+| --- | --- |
+| 2 | `user.wrongCodes`: wrong e-mail codes in a row, see [Password security](password-security.md#links-and-codes-in-e-mails). Number, starts at 0. |
+
+Stores without fixed columns need no change: madAuth reads a missing `wrongCodes` as 0.
+
 ### Example: Postgres
 
 With the [`postgres`](https://github.com/porsager/postgres) package:
@@ -323,9 +337,9 @@ Other languages can verify the JWT with any JOSE library:
 | `POST /auth/password/signin` | `{ email, password }` → `{ user }` and the session cookie; 401 `invalid_credentials`, 403 `email_unverified`, 429 `too_many_attempts` |
 | `POST /auth/password/signup` | `{ email, password, name?, redirectTo, locale? }` → 202, and the confirmation e-mail; 400 `invalid_email` or `weak_password`, 403 `signup_rejected`, 503 `temporarily_unavailable` |
 | `POST /auth/password/send-verification` | `{ email, redirectTo, locale? }` → 202, and the confirmation e-mail again; 503 `temporarily_unavailable` |
-| `POST /auth/password/verify-email` | `{ token }` or `{ email, code }` → `{ user }` and the session cookie; 400 `link_invalid` or `code_invalid` |
+| `POST /auth/password/verify-email` | `{ token }` or `{ email, code }` → `{ user }` and the session cookie; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
 | `POST /auth/password/send-reset` | `{ email, redirectTo, locale? }` → 202, and the reset e-mail; 503 `temporarily_unavailable` |
-| `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie; ends all older sessions |
+| `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie; ends all older sessions; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
 | `GET /auth/session` | `{ user }` for the current session, or 401 |
 | `POST /auth/logout` | Clears the session cookie |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |

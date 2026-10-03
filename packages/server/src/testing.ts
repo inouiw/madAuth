@@ -23,6 +23,7 @@ function testUser(overrides: Row = {}): Row {
     name: null,
     sessionVersion: 0,
     lastMailAt: 0,
+    wrongCodes: 0,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };

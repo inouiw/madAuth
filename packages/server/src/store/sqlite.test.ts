@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { storeAdapterContract } from '../testing.js';
 import { madauthSchema } from './schema.js';
-import { columnName, createTablesSql } from './sql.js';
+import { columnName, createTablesSql, upgradeTablesSql } from './sql.js';
 import { createSqliteAdapter } from './sqlite.js';
 
 // P4: the built-in adapter is checked with the same contract as a custom one.
@@ -25,6 +25,7 @@ const user = {
   name: 'Ada',
   sessionVersion: 0,
   lastMailAt: 0,
+  wrongCodes: 0,
   createdAt: 1,
 };
 
@@ -47,6 +48,26 @@ describe('SQLite adapter', () => {
     db.close();
 
     expect(() => createSqliteAdapter(path)).toThrow(/newer|Update madAuth/);
+  });
+
+  it('upgrades a database written by an older madAuth and keeps its records', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'madauth-'));
+    const path = join(dir, 'madauth.db');
+    // Schema version 1: users had no count of wrong codes.
+    const { wrongCodes: _, ...v1Fields } = madauthSchema.models.user.fields;
+    const v1 = { version: 1, models: { ...madauthSchema.models, user: { fields: v1Fields } } };
+    const db = new DatabaseSync(path);
+    db.exec(createTablesSql('sqlite', v1));
+    db.exec("INSERT INTO madauth_user VALUES ('usr_1', 'Ada@example.com', 'ada@example.com', 1, 'Ada', 0, 0, 1)");
+    db.exec('PRAGMA user_version = 1');
+    db.close();
+
+    const store = createSqliteAdapter(path);
+
+    expect(await store.findOne('user', { id: 'usr_1' })).toEqual(user);
+    expect(await store.update('user', { id: 'usr_1', wrongCodes: 0 }, { wrongCodes: 1 })).toBe(1);
+    // Opening it again changes nothing more.
+    expect((await createSqliteAdapter(path).findOne('user', { id: 'usr_1' }))?.wrongCodes).toBe(1);
   });
 
   it('rejects models and fields that are not in the schema', async () => {
@@ -88,6 +109,12 @@ describe('createTablesSql', () => {
     }
     expect(createTablesSql('mysql')).toContain('email_normalized VARCHAR(255) NOT NULL UNIQUE');
     expect(createTablesSql('postgres')).toContain('email_verified BOOLEAN NOT NULL');
+  });
+
+  it('upgradeTablesSql lists what newer schema versions added, per dialect', () => {
+    expect(upgradeTablesSql('postgres', 1)).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE PRECISION NOT NULL DEFAULT 0;');
+    expect(upgradeTablesSql('mysql', 1)).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE NOT NULL DEFAULT 0;');
+    expect(upgradeTablesSql('sqlite', madauthSchema.version)).toBe('');
   });
 
   it('P8: the SQLite output runs', () => {
