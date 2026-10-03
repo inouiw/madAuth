@@ -113,6 +113,20 @@ export class Users {
   }
 
   /**
+   * Counts a sign-in attempt: writes `patch` only if the account's `failedAttempts` is still the value that
+   * was read. Resolves to false if another request counted an attempt meanwhile.
+   */
+  async countAttempt(account: StoredAccount, patch: Pick<StoredAccount, 'failedAttempts' | 'lockedUntil'>): Promise<boolean> {
+    const changed = await this.store.update('account', { id: account.id, failedAttempts: account.failedAttempts }, patch);
+    return changed === 1;
+  }
+
+  /** Deletes the user's pending verifications and password resets; their links and codes stop working. */
+  async clearVerifications(userId: string): Promise<void> {
+    await this.store.delete('verification', { userId });
+  }
+
+  /**
    * Starts a verification or password reset: replaces the user's earlier one for the same purpose and
    * returns the link token and the code for the e-mail. Only their hashes are stored.
    */
@@ -143,12 +157,12 @@ export class Users {
   async consumeCode(userId: string, purpose: VerificationPurpose, code: string): Promise<string | null> {
     const record = (await this.store.findOne('verification', { userId, purpose })) as StoredVerification | null;
     if (!record) return null;
+    // The attempt is counted before the code is compared, and only if no other request counted one
+    // meanwhile. So requests sent at the same time can't try more codes than allowed.
+    const attempts = record.attempts + 1;
+    if ((await this.store.update('verification', { id: record.id, attempts: record.attempts }, { attempts })) !== 1) return null;
     if (!safeEqual(hashCode(this.key, code), record.codeHash)) {
-      if (record.attempts + 1 >= MAX_CODE_ATTEMPTS) {
-        await this.store.delete('verification', { id: record.id });
-      } else {
-        await this.store.update('verification', { id: record.id }, { attempts: record.attempts + 1 });
-      }
+      if (attempts >= MAX_CODE_ATTEMPTS) await this.store.delete('verification', { id: record.id });
       return null;
     }
     return this.consume(record);

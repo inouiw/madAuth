@@ -77,6 +77,11 @@ function parseOrigin(name: string, value: string): string {
   return url.origin;
 }
 
+/** Docker's --env-file keeps quotes around values (NAME='value'); Node's --env-file removes them. */
+function readEnv(env: Record<string, string | undefined>, name: keyof typeof envVars): string | undefined {
+  return env[name]?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
+}
+
 /**
  * Reads and validates the madAuth configuration from environment variables.
  * Throws a {@link ConfigError} naming the variable that is missing or invalid.
@@ -85,8 +90,7 @@ export async function loadConfig(
   env: Record<string, string | undefined>,
   overrides: ConfigOverrides = {},
 ): Promise<MadauthConfig> {
-  // Docker's --env-file keeps quotes around values (NAME='value'); Node's --env-file removes them.
-  const read = (name: keyof typeof envVars) => env[name]?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
+  const read = (name: keyof typeof envVars) => readEnv(env, name);
   const require = (name: keyof typeof envVars) => {
     const value = read(name);
     if (!value) throw new ConfigError(`${name} is not set. See docs/server.md.`);
@@ -171,10 +175,9 @@ export async function loadConfig(
  * `create-user` works without a running webhook receiver.
  */
 export async function loadUserStoreConfig(env: Record<string, string | undefined>): Promise<NonNullable<MadauthConfig['password']>> {
-  const read = (name: string) => env[name]?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
-  const store = await storeFromDatabaseUrl(read('DATABASE_URL'));
+  const store = await storeFromDatabaseUrl(readEnv(env, 'DATABASE_URL'));
   if (!store) throw new ConfigError('Set DATABASE_URL to manage users.');
-  return { store, minLength: passwordMinLength(read('PASSWORD_MIN_LENGTH')) };
+  return { store, minLength: passwordMinLength(readEnv(env, 'PASSWORD_MIN_LENGTH')) };
 }
 
 function passwordMinLength(value: string | undefined): number {

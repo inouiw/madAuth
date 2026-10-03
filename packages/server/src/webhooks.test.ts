@@ -40,6 +40,18 @@ describe('webhook signatures', () => {
 describe('webhook client', () => {
   const settings = { url: 'https://hooks.example.com/x', secret: generateWebhookSecret(), events: null };
 
+  it('finds the headers of a plain object whatever their casing', async () => {
+    const now = Date.now();
+    const timestamp = Math.floor(now / 1000);
+    const headers = {
+      'Webhook-Id': 'msg_1',
+      'Webhook-Timestamp': String(timestamp),
+      'Webhook-Signature': signWebhook(settings.secret, 'msg_1', timestamp, '{}'),
+    };
+
+    expect(verifyWebhook(settings.secret, headers, '{}', { now })).toBe(true);
+  });
+
   it('sends a signed JSON call and returns the answer', async () => {
     let received: { headers: Headers; body: string } | undefined;
     const client = createWebhookClient(settings, (async (_url: string, init: RequestInit) => {

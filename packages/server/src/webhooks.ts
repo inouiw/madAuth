@@ -50,7 +50,9 @@ type HeaderSource = Headers | Record<string, string | string[] | undefined>;
 
 function header(headers: HeaderSource, name: string): string | undefined {
   if (headers instanceof Headers) return headers.get(name) ?? undefined;
-  const value = headers[name] ?? headers[name.toLowerCase()];
+  // Some hosts keep the sender's casing (e.g. `Webhook-Id` in an API Gateway event).
+  const key = Object.keys(headers).find((k) => k.toLowerCase() === name);
+  const value = key === undefined ? undefined : headers[key];
   return Array.isArray(value) ? value[0] : value;
 }
 

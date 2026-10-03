@@ -143,13 +143,16 @@ export function passwordRoutes(
       return error(c, 429, 'too_many_attempts', `Too many failed attempts. Try again in ${seconds} seconds.`);
     }
 
-    const { ok, needsRehash } = await verifyPassword(pw, account.secret);
-    if (!ok) {
-      const failed = account.failedAttempts + 1;
-      const lockedUntil = failed >= FREE_ATTEMPTS ? now + Math.min(2 ** (failed - FREE_ATTEMPTS) * 1000, MAX_LOCK_MS) : 0;
-      await users.updateAccount(account.id, { failedAttempts: failed, lockedUntil });
-      return wrong();
+    // The attempt is counted before the slow password check, and only if no other request counted one
+    // meanwhile. So requests sent at the same time can't all get past the lock.
+    const failed = account.failedAttempts + 1;
+    const lockedUntil = failed >= FREE_ATTEMPTS ? now + Math.min(2 ** (failed - FREE_ATTEMPTS) * 1000, MAX_LOCK_MS) : 0;
+    if (!(await users.countAttempt(account, { failedAttempts: failed, lockedUntil }))) {
+      return error(c, 429, 'too_many_attempts', 'Too many attempts at once. Please try again.');
     }
+
+    const { ok, needsRehash } = await verifyPassword(pw, account.secret);
+    if (!ok) return wrong();
     await users.updateAccount(account.id, {
       failedAttempts: 0,
       lockedUntil: 0,
@@ -270,6 +273,8 @@ export function passwordRoutes(
     // The reset proves access to the inbox, and the new session version ends all older sessions.
     const sessionVersion = user.sessionVersion + 1;
     await users.updateUser(user.id, { emailVerified: true, sessionVersion });
+    // An unused confirmation link would otherwise still sign in.
+    await users.clearVerifications(user.id);
     const result = toMadauthUser(user);
     await ctx.startSession(c, result, ['pwd'], { sv: sessionVersion });
     await ctx.emit('password.reset', { user: result });

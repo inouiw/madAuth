@@ -51,7 +51,7 @@ Code: [`packages/server/src/routes/password.ts`](../packages/server/src/routes/p
 
 ## Brute force
 
-- Failed sign-ins are counted per account. From the fifth failure on, each further attempt must wait: 1 second, then 2, 4, 8 … up to 15 minutes. Meanwhile the answer is `429 too_many_attempts`, even with the right password. A successful sign-in resets the count.
+- Failed sign-ins are counted per account. From the fifth failure on, each further attempt must wait: 1 second, then 2, 4, 8 … up to 15 minutes. Meanwhile the answer is `429 too_many_attempts`, even with the right password. A successful sign-in resets the count. An attempt is counted before the password is checked, so attempts sent at the same time can't get around the wait; all but one of them are answered `429`.
 - Each account gets at most one e-mail per minute, so nobody can flood an inbox through madAuth. The answer is the same whether or not an e-mail was sent.
 - Absurdly long passwords (over 1024 characters) are rejected before hashing.
 
@@ -65,7 +65,7 @@ The confirmation and reset e-mails contain a link and a 6-digit code. The link i
 - The code is stored as an HMAC-SHA256 with a key derived (HKDF) from the server's signing key. A plain hash of a 6-digit number could be reversed by trying all million values; without the signing key this is not possible.
 - The link and the code share one record. It expires after 24 hours for a confirmation and after 30 minutes for a reset.
 - They work once. The record is deleted when it is used, and the number of deleted records decides, so two requests with the same link can't both succeed.
-- After 5 wrong codes the record is deleted, and the link stops working too.
+- After 5 wrong codes the record is deleted, and the link stops working too. Attempts sent at the same time count one by one.
 - A new e-mail replaces the previous one for the same purpose; older links and codes stop working.
 - The link points to the app page that asked for it (`redirectTo`), which must be on an origin in `ALLOWED_ORIGINS`. The token is in the URL's **hash** (`#madauth_reset=…`). Browsers never send the hash to servers or in the `Referer` header, and `Madauth.initialize` removes it from the address bar right away.
 
@@ -79,7 +79,7 @@ A new account can't sign in until its address is confirmed (`403 email_unverifie
 
 Password users get the same madAuth session as Google users: a signed JWT in an HttpOnly cookie, with `sub` = `usr_<id>` and `amr: ["pwd"]`. It also carries `sv`, the user's session version.
 
-A password reset increases the session version. The madAuth server then rejects older sessions when the app checks them (`GET /auth/session`, e.g. on page load), and doesn't renew them.
+A password reset increases the session version and deletes the user's unused confirmation link and code. The madAuth server then rejects older sessions when the app checks them (`GET /auth/session`, e.g. on page load), and doesn't renew them.
 
 **Limit:** your own backends usually check the JWT offline with [`createSessionVerifier`](server.md#verifying-the-session-in-your-backend), without asking madAuth. They accept an older session until it expires. A shorter `SESSION_TTL` shortens this window; the session is renewed when the app checks it after half of that time.
 

@@ -185,6 +185,19 @@ describe('sign-in', () => {
     expect((await signIn(app)).status).toBe(200);
   });
 
+  it('A6: wrong passwords sent at the same time can not get around the wait', async () => {
+    const { app, hook, store } = passwordApp();
+    await signUpVerified(app, hook);
+    await store.update('account', {}, { failedAttempts: 10 });
+
+    const answers = await Promise.all(Array.from({ length: 5 }, () => signIn(app, { password: 'wrong password' })));
+
+    expect(answers.map((res) => res.status).sort()).toEqual([401, 429, 429, 429, 429]);
+    const [account] = await store.findMany('account', {});
+    expect(account.failedAttempts).toBe(11);
+    expect(account.lockedUntil as number).toBeGreaterThan(Date.now());
+  });
+
   it('A6: the wait doubles with every further failure, up to 15 minutes', async () => {
     const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook);
@@ -256,6 +269,20 @@ describe('password reset', () => {
 
     expect(res.status).toBe(200);
     expect((await signIn(app, { password: 'new password!' })).status).toBe(200);
+  });
+
+  it('a reset ends an unused confirmation link', async () => {
+    const { app, hook } = passwordApp();
+    await signUp(app);
+    const { token: verifyToken } = linkAndCode(hook.lastEmail());
+    advance(61_000);
+    await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
+    const { token } = linkAndCode(hook.lastEmail());
+
+    expect((await post(app, '/auth/password/reset', { token, password: 'new password!' })).status).toBe(200);
+
+    const res = await post(app, '/auth/password/verify-email', { token: verifyToken });
+    expect(await res.json()).toMatchObject({ error: 'link_invalid' });
   });
 
   it('a weak new password does not use up the link', async () => {
