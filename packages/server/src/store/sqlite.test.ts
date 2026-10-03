@@ -53,9 +53,10 @@ describe('SQLite adapter', () => {
   it('upgrades a database written by an older madAuth and keeps its records', async () => {
     dir = mkdtempSync(join(tmpdir(), 'madauth-'));
     const path = join(dir, 'madauth.db');
-    // Schema version 1: users had no count of wrong codes.
+    // Schema version 1: users had no count of wrong codes, and there were no roles.
     const { wrongCodes: _, ...v1Fields } = madauthSchema.models.user.fields;
-    const v1 = { version: 1, models: { ...madauthSchema.models, user: { fields: v1Fields } } };
+    const { role: __, ...v1Models } = madauthSchema.models;
+    const v1 = { version: 1, models: { ...v1Models, user: { fields: v1Fields } } };
     const db = new DatabaseSync(path);
     db.exec(createTablesSql('sqlite', v1));
     db.exec("INSERT INTO madauth_user VALUES ('usr_1', 'Ada@example.com', 'ada@example.com', 1, 'Ada', 0, 0, 1)");
@@ -66,8 +67,11 @@ describe('SQLite adapter', () => {
 
     expect(await store.findOne('user', { id: 'usr_1' })).toEqual(user);
     expect(await store.update('user', { id: 'usr_1', wrongCodes: 0 }, { wrongCodes: 1 })).toBe(1);
+    expect(await store.create('role', { id: 'ada@example.com', roles: 'admin', updatedAt: 1, updatedBy: null })).toBe(true);
     // Opening it again changes nothing more.
-    expect((await createSqliteAdapter(path).findOne('user', { id: 'usr_1' }))?.wrongCodes).toBe(1);
+    const reopened = createSqliteAdapter(path);
+    expect((await reopened.findOne('user', { id: 'usr_1' }))?.wrongCodes).toBe(1);
+    expect((await reopened.findOne('role', { id: 'ada@example.com' }))?.roles).toBe('admin');
   });
 
   it('rejects models and fields that are not in the schema', async () => {
@@ -112,8 +116,11 @@ describe('createTablesSql', () => {
   });
 
   it('upgradeTablesSql lists what newer schema versions added, per dialect', () => {
-    expect(upgradeTablesSql('postgres', 1)).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE PRECISION NOT NULL DEFAULT 0;');
-    expect(upgradeTablesSql('mysql', 1)).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE NOT NULL DEFAULT 0;');
+    expect(upgradeTablesSql('postgres', 1).split('\n')[0]).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE PRECISION NOT NULL DEFAULT 0;');
+    expect(upgradeTablesSql('mysql', 1).split('\n')[0]).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE NOT NULL DEFAULT 0;');
+    expect(upgradeTablesSql('mysql', 2)).toBe(
+      'CREATE TABLE madauth_role (\n  id VARCHAR(255) PRIMARY KEY,\n  roles TEXT NOT NULL,\n  updated_at DOUBLE NOT NULL,\n  updated_by TEXT\n);',
+    );
     expect(upgradeTablesSql('sqlite', madauthSchema.version)).toBe('');
   });
 
@@ -122,6 +129,6 @@ describe('createTablesSql', () => {
     db.exec(createTablesSql('sqlite'));
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((r) => r.name);
-    expect(tables).toEqual(['madauth_account', 'madauth_user', 'madauth_verification']);
+    expect(tables).toEqual(['madauth_account', 'madauth_role', 'madauth_user', 'madauth_verification']);
   });
 });

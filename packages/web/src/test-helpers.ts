@@ -53,6 +53,8 @@ export interface FakeServer {
   down: boolean;
   nonces: number;
   requests: RecordedRequest[];
+  /** Roles by e-mail address, as set through the admin API. */
+  roles: Map<string, string[]>;
 }
 
 /** Replaces fetch with an in-memory madAuth server. Change its fields to change its answers. */
@@ -71,6 +73,7 @@ export function fakeServer(): FakeServer {
     down: false,
     nonces: 0,
     requests: [],
+    roles: new Map(),
   };
   const userFor = (email: string): MadauthUser => {
     const account = server.accounts.get(email);
@@ -164,6 +167,18 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/logout':
         server.user = null;
         return new Response(null, { status: 204 });
+      case 'POST /auth/admin/roles/get':
+      case 'POST /auth/admin/roles/set': {
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        if (!server.user.roles?.includes('admin')) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
+        if (url.pathname.endsWith('/set')) {
+          const roles = (body as { roles?: unknown }).roles;
+          if (!Array.isArray(roles)) return json({ error: 'invalid_roles', message: 'invalid' }, 400);
+          server.roles.set(email, [...roles].sort());
+        }
+        return json({ email, roles: server.roles.get(email) ?? [] });
+      }
       case 'POST /auth/account/delete':
         if (!server.user) return json({ error: 'no_session' }, 401);
         if (server.user.email) server.accounts.delete(server.user.email);

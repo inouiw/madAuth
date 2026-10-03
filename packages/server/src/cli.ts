@@ -1,9 +1,10 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 import { parseArgs, parseEnv } from 'node:util';
-import { loadConfig, loadUserStoreConfig } from './config.js';
+import { loadConfig, loadStore, loadUserStoreConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
+import { Roles, parseRoles } from './roles.js';
 import { madauthSchema, type StoreAdapter } from './store/schema.js';
 import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
 import { Users } from './users.js';
@@ -25,6 +26,10 @@ Commands:
   generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
   create-user <email>          Create a user with a password (asks for it), already verified.
                                Uses DATABASE_URL and PASSWORD_MIN_LENGTH from the environment.
+  set-roles <email> [role...]  Set the roles of an e-mail address, e.g. to make the first admin:
+                               set-roles you@example.com admin. Without roles, removes them all.
+                               Uses DATABASE_URL from the environment.
+  get-roles <email>            Print the roles of an e-mail address.
   schema [--dialect <name>] [--from <version>]
                                Print the SQL that creates madAuth's tables for a custom store adapter.
                                Dialects: postgres (default), mysql, sqlite. With --from, print only the
@@ -170,8 +175,9 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
   }
   const { values: options, positionals } = parsed;
   const [command, ...rest] = positionals;
-  // Only create-user takes an argument; anything else is likely a mistyped option, e.g. `init .env.local`.
-  if (rest.length > (command === 'create-user' ? 1 : 0)) {
+  // Few commands take arguments; anywhere else one is likely a mistyped option, e.g. `init .env.local`.
+  const maxArguments = command === 'set-roles' ? Infinity : command === 'create-user' || command === 'get-roles' ? 1 : 0;
+  if (rest.length > maxArguments) {
     return { output: `Unexpected argument: ${rest.at(-1)}\n\n${usage}`, exitCode: 1 };
   }
   try {
@@ -206,6 +212,9 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     }
     if (command === 'create-user') {
       return await createUser(rest[0], io, env);
+    }
+    if (command === 'set-roles' || command === 'get-roles') {
+      return await roles(command, rest[0], rest.slice(1), env);
     }
   } catch (e) {
     return { output: e instanceof Error ? e.message : String(e), exitCode: 1 };
@@ -362,6 +371,26 @@ function nextSteps(file: string, origin: string, google: 'GoogleFedcm' | 'Google
   ].filter((step) => !!step);
   // The lines after the first are indented under the step's text.
   return steps.map((lines, i) => `${i + 1}. ${lines.map((line, j) => (j && line ? `   ${line}` : line)).join('\n')}`).join('\n\n');
+}
+
+async function roles(command: 'set-roles' | 'get-roles', email: string | undefined, names: string[], env: Env) {
+  if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
+  const store = await loadStore(env);
+  const address = normalizeEmail(email);
+  const assignments = new Roles(store);
+  if (command === 'set-roles') {
+    const parsed = parseRoles(names);
+    if (!parsed) {
+      return {
+        output: 'Role names consist of lower-case letters, digits, "-" and "_", and start with a letter, e.g. admin.',
+        exitCode: 1,
+      };
+    }
+    // Whoever can reach the database decides: this is how the first admin gets the role.
+    await assignments.set(address, parsed, null);
+  }
+  const current = await assignments.get(address);
+  return { output: current.length ? `${address}: ${current.join(' ')}` : `${address} has no roles.`, exitCode: 0 };
 }
 
 async function createUser(email: string | undefined, io: CliIo, env: Env) {

@@ -52,6 +52,8 @@ export interface SessionClaims extends JWTPayload {
   amr: string[];
   /** Session version of users from the store; a password reset increments it and so ends older sessions. */
   sv?: number;
+  /** The roles of the e-mail address when the session was issued. */
+  roles?: string[];
 }
 
 export function signSession(
@@ -69,6 +71,7 @@ export function signSession(
     email_verified: user.email ? true : undefined,
     name: user.name,
     picture: user.picture,
+    roles: user.roles?.length ? user.roles : undefined,
     amr,
   };
   return signToken(keys, issuer, SESSION_TYP, claims, ttlSeconds);
@@ -79,5 +82,6 @@ export function userFromClaims(claims: SessionClaims): MadauthUser {
   if (claims.email) user.email = claims.email;
   if (claims.name) user.name = claims.name;
   if (claims.picture) user.picture = claims.picture;
+  if (Array.isArray(claims.roles) && claims.roles.length) user.roles = claims.roles;
   return user;
 }

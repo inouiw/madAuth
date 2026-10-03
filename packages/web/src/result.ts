@@ -5,6 +5,8 @@ export interface MadauthUser {
   email?: string;
   name?: string;
   picture?: string;
+  /** The roles of the user's e-mail address, e.g. `['admin']`. Absent without roles. */
+  roles?: string[];
 }
 
 const errorCodes = [
@@ -26,6 +28,8 @@ const errorCodes = [
   'codes_locked',
   'temporarily_unavailable',
   'signup_rejected',
+  'forbidden',
+  'invalid_roles',
   'unknown',
 ] as const;
 

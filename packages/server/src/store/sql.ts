@@ -28,6 +28,10 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
     sql: (dialect) =>
       `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('wrongCodes')} ${columnTypes[dialect].number} NOT NULL DEFAULT 0;`,
   },
+  {
+    version: 3,
+    sql: (dialect) => createTablesSql(dialect, { version: 3, models: { role: madauthSchema.models.role } }),
+  },
 ];
 
 /**

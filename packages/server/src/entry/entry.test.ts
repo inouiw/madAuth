@@ -193,14 +193,38 @@ describe('deployment entry points', () => {
   });
 
   it('schema --from prints only the changes since a schema version', async () => {
-    expect(await runCli(['schema', '--dialect', 'sqlite', '--from', '1'])).toEqual({
-      exitCode: 0,
-      output: 'ALTER TABLE madauth_user ADD COLUMN wrong_codes INTEGER NOT NULL DEFAULT 0;',
-    });
+    const fromOne = await runCli(['schema', '--dialect', 'sqlite', '--from', '1']);
+    expect(fromOne.exitCode).toBe(0);
+    expect(fromOne.output.split('\n')[0]).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes INTEGER NOT NULL DEFAULT 0;');
+    expect(fromOne.output).toContain('CREATE TABLE madauth_role (');
     expect(await runCli(['schema', '--from', '1'])).toMatchObject({ output: expect.stringContaining('wrong_codes DOUBLE PRECISION NOT NULL DEFAULT 0') });
-    expect(await runCli(['schema', '--from', '2'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
+    const fromTwo = await runCli(['schema', '--from', '2']);
+    expect(fromTwo.output).toMatch(/^CREATE TABLE madauth_role \(/);
+    expect(fromTwo.output).not.toContain('wrong_codes');
+    expect(await runCli(['schema', '--from', '3'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
     expect(await runCli(['schema', '--from', 'x'])).toMatchObject({ exitCode: 1 });
-    expect(await runCli(['schema', '--from', '3'])).toMatchObject({ exitCode: 1 });
+    // A version this madAuth does not know yet.
+    expect(await runCli(['schema', '--from', '4'])).toMatchObject({ exitCode: 1 });
+  });
+
+  it('set-roles makes the first admin without a running server, and get-roles prints the roles', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
+    const env = { DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}` };
+    const io = { ask: async () => '', askSecret: async () => '' };
+
+    expect(await runCli(['get-roles', 'ada@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com has no roles.' });
+    // The address needs no account yet: the roles apply as soon as its owner signs in, also with Google.
+    expect(await runCli(['set-roles', 'Ada@Example.com', 'editor', 'admin'], io, env)).toEqual({
+      exitCode: 0,
+      output: 'ada@example.com: admin editor',
+    });
+    expect(await runCli(['get-roles', 'ADA@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com: admin editor' });
+
+    expect(await runCli(['set-roles', 'ada@example.com', 'Admin!'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('lower-case') });
+    expect(await runCli(['set-roles', 'not-an-address', 'admin'], io, env)).toMatchObject({ exitCode: 1 });
+    expect(await runCli(['set-roles', 'ada@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com has no roles.' });
+    expect(await runCli(['set-roles', 'ada@example.com', 'admin'], io, {})).toMatchObject({ exitCode: 1, output: expect.stringContaining('DATABASE_URL') });
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it('generate-webhook-secret prints a usable secret', async () => {

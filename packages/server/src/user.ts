@@ -5,6 +5,8 @@ export interface MadauthUser {
   email?: string;
   name?: string;
   picture?: string;
+  /** The roles of the user's e-mail address, e.g. `['admin']`. Absent without roles. */
+  roles?: string[];
 }
 
 /** Name of the cookie that holds the madAuth session JWT. */

@@ -13,6 +13,7 @@ export const WEBHOOK_TYPES = [
   'password.reset',
   'user.signed_in',
   'user.deleted',
+  'roles.changed',
 ] as const;
 
 export type WebhookType = (typeof WEBHOOK_TYPES)[number];

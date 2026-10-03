@@ -168,8 +168,7 @@ export function passwordRoutes(
     if (!user.emailVerified) {
       return error(c, 403, 'email_unverified', 'Please confirm your e-mail address first. We can send the e-mail again.');
     }
-    const result = toMadauthUser(user);
-    await ctx.startSession(c, result, ['pwd'], { sv: user.sessionVersion });
+    const result = await ctx.startSession(c, toMadauthUser(user), ['pwd'], { sv: user.sessionVersion });
     await ctx.emit('user.signed_in', { user: result, method: 'password' });
     return c.json({ user: result });
   });
@@ -250,8 +249,7 @@ export function passwordRoutes(
     if (!user) return invalidVerification(c, consumed);
     // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.
     await users.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
-    const result = toMadauthUser(user);
-    await ctx.startSession(c, result, ['pwd'], { sv: user.sessionVersion });
+    const result = await ctx.startSession(c, toMadauthUser(user), ['pwd'], { sv: user.sessionVersion });
     await ctx.emit('email.verified', { user: result, via });
     await ctx.emit('user.signed_in', { user: result, method: 'password' });
     return c.json({ user: result });
@@ -285,8 +283,7 @@ export function passwordRoutes(
     await users.updateUser(user.id, { emailVerified: true, sessionVersion, wrongCodes: 0 });
     // An unused confirmation link would otherwise still sign in.
     await users.clearVerifications(user.id);
-    const result = toMadauthUser(user);
-    await ctx.startSession(c, result, ['pwd'], { sv: sessionVersion });
+    const result = await ctx.startSession(c, toMadauthUser(user), ['pwd'], { sv: sessionVersion });
     await ctx.emit('password.reset', { user: result });
     await ctx.emit('user.signed_in', { user: result, method: 'password' });
     return c.json({ user: result });
