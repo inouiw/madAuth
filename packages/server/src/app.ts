@@ -7,8 +7,8 @@ import { deriveCodeKey, isValidEmail, normalizeEmail } from './password.js';
 import { ADMIN_ROLE, Roles, parseRoles, sameRoles } from './roles.js';
 import { googleRoutes } from './routes/google.js';
 import { passwordRoutes } from './routes/password.js';
-import { readToken, signSession, userFromClaims, type SessionClaims } from './tokens.js';
-import { SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
+import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims } from './tokens.js';
+import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 import { Users } from './users.js';
 import { createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
@@ -41,7 +41,7 @@ export interface AppContext {
  * on Node (Docker), AWS Lambda and Azure Functions (see `src/entry/`).
  */
 export function createApp(config: MadauthConfig): Hono {
-  const { issuer, allowedOrigins, sessionTtlSeconds, cookieDomain } = config;
+  const { issuer, allowedOrigins, sessionTtlSeconds, renewalTtlSeconds, cookieDomain } = config;
   const keys = importSigningKeys(config.signingKey);
   // Browsers treat http://localhost as secure, but only mark cookies Secure when served over https.
   const secure = issuer.startsWith('https:');
@@ -55,9 +55,13 @@ export function createApp(config: MadauthConfig): Hono {
     const current = roles && user.email ? await roles.get(normalizeEmail(user.email)) : [];
     return current.length ? { ...rest, roles: current } : rest;
   };
+  /**
+   * Sets the cookies of a session: the session token for app backends, the renewal token for this server
+   * only, and the expiry time for the web library.
+   */
   const issueSession = async (c: Context, user: MadauthUser, amr: string[], extra?: { sv?: number }) => {
-    const token = await signSession(await keys, issuer, sessionTtlSeconds, user, amr, extra);
-    setCookie(c, SESSION_COOKIE, token, {
+    const signingKeys = await keys;
+    setCookie(c, SESSION_COOKIE, await signSession(signingKeys, issuer, sessionTtlSeconds, user, amr, extra), {
       path: '/',
       domain: cookieDomain,
       httpOnly: true,
@@ -65,6 +69,27 @@ export function createApp(config: MadauthConfig): Hono {
       sameSite: 'Lax',
       maxAge: sessionTtlSeconds,
     });
+    // Without a Domain, so sibling hosts that get the session cookie through COOKIE_DOMAIN never get this one.
+    setCookie(c, RENEWAL_COOKIE, await signRenewal(signingKeys, issuer, renewalTtlSeconds, user, amr, extra), {
+      path: '/auth',
+      httpOnly: true,
+      secure,
+      sameSite: 'Lax',
+      maxAge: renewalTtlSeconds,
+    });
+    // Kept as long as the session can be renewed: an expiry time in the past means "renew before use".
+    setCookie(c, EXPIRY_COOKIE, String(Math.floor(Date.now() / 1000) + sessionTtlSeconds), {
+      path: '/',
+      domain: cookieDomain,
+      secure,
+      sameSite: 'Lax',
+      maxAge: renewalTtlSeconds,
+    });
+  };
+  const clearSession = (c: Context) => {
+    deleteCookie(c, SESSION_COOKIE, { path: '/', domain: cookieDomain, secure });
+    deleteCookie(c, RENEWAL_COOKIE, { path: '/auth', secure });
+    deleteCookie(c, EXPIRY_COOKIE, { path: '/', domain: cookieDomain, secure });
   };
 
   const ctx: AppContext = {
@@ -138,9 +163,9 @@ export function createApp(config: MadauthConfig): Hono {
 
   // --- Session ---
 
-  /** The claims of the request's session cookie, or null if there is none. Does not check whether it has ended. */
-  const sessionClaims = async (c: Context) =>
-    readToken<SessionClaims>(await keys, issuer, SESSION_TYP, getCookie(c, SESSION_COOKIE));
+  /** The claims of a token in one of the request's cookies, or null if it is missing, expired or of another kind. */
+  const tokenClaims = async (c: Context, cookie: string, typ: string) =>
+    readToken<SessionClaims>(await keys, issuer, typ, getCookie(c, cookie));
 
   /** Users from the store: a password reset increments the session version and so ends older sessions. */
   const hasEnded = async (claims: SessionClaims) => {
@@ -149,46 +174,67 @@ export function createApp(config: MadauthConfig): Hono {
     return !stored || stored.sessionVersion !== claims.sv;
   };
 
-  /** The claims of the request's session, or null if there is none or it has ended. */
-  const currentSession = async (c: Context) => {
-    const claims = await sessionClaims(c);
-    return claims && !(await hasEnded(claims)) ? claims : null;
+  /**
+   * Whether the session of these claims has ended, and its user with the roles of now. The roles need only
+   * the address from the token, so they are read alongside the session version.
+   */
+  const checked = async (claims: SessionClaims): Promise<MadauthUser | null> => {
+    const [ended, user] = await Promise.all([hasEnded(claims), withRoles(userFromClaims(claims))]);
+    return ended ? null : user;
+  };
+
+  /**
+   * The user of the request's session, or null if there is none or it has ended. A session token that is
+   * missing, expired, past half of its lifetime or carries outdated roles is replaced on the way, if the
+   * request has a valid renewal token: the user and their roles are checked again, and new cookies are set.
+   */
+  const currentSession = async (c: Context): Promise<MadauthUser | null> => {
+    const session = await tokenClaims(c, SESSION_COOKIE, SESSION_TYP);
+    // The roles are read again, so a change shows the next time the app checks the session.
+    const user = session ? await checked(session) : null;
+    const upToDate =
+      session && user && sameRoles(user.roles ?? [], session.roles ?? []) && Date.now() / 1000 - session.iat <= sessionTtlSeconds / 2;
+    if (upToDate) return user;
+
+    const renewal = await tokenClaims(c, RENEWAL_COOKIE, RENEWAL_TYP);
+    const renewed = renewal ? await checked(renewal) : null;
+    if (renewal && renewed) {
+      await issueSession(c, renewed, renewal.amr, { sv: renewal.sv });
+      return renewed;
+    }
+    // Still valid, but not renewable (e.g. the renewal cookie is gone): it lasts until it expires.
+    return user;
   };
 
   app.get('/auth/session', async (c) => {
-    const claims = await sessionClaims(c);
-    if (!claims) return c.json({ error: 'no_session' }, 401);
-    // The roles are read again, so a change shows the next time the app checks the session. They need only
-    // the address from the token, so they are read alongside the session version.
-    const [ended, user] = await Promise.all([hasEnded(claims), withRoles(userFromClaims(claims))]);
-    if (ended) return c.json({ error: 'no_session' }, 401);
-    const rolesChanged = !sameRoles(user.roles ?? [], claims.roles ?? []);
-    // Sliding session: renew once half of the lifetime has passed.
-    if (rolesChanged || Date.now() / 1000 - claims.iat > sessionTtlSeconds / 2) {
-      await issueSession(c, user, claims.amr, { sv: claims.sv });
+    const user = await currentSession(c);
+    if (!user) {
+      // Also tells the web library that nobody is signed in any more.
+      clearSession(c);
+      return c.json({ error: 'no_session' }, 401);
     }
     return c.json({ user });
   });
 
   app.post('/auth/logout', (c) => {
-    deleteCookie(c, SESSION_COOKIE, { path: '/', domain: cookieDomain, secure });
+    clearSession(c);
     return c.body(null, 204);
   });
 
   // --- Account ---
 
   app.post('/auth/account/delete', async (c) => {
-    const claims = await currentSession(c);
-    if (!claims) return c.json({ error: 'no_session' }, 401);
+    const user = await currentSession(c);
+    if (!user) return c.json({ error: 'no_session' }, 401);
     // The session proves who owns the address, so its e-mail & password account goes as well when the
     // user signed in with Google. Google sign-in itself stores nothing.
     // The roles go first: once the account is gone its session no longer counts, so a failure after that
     // could not be retried.
-    if (roles && claims.email) await roles.remove(normalizeEmail(claims.email));
-    const passwordUserId = ctx.users && claims.email ? await ctx.users.deleteByEmail(normalizeEmail(claims.email)) : null;
-    deleteCookie(c, SESSION_COOKIE, { path: '/', domain: cookieDomain, secure });
+    if (roles && user.email) await roles.remove(normalizeEmail(user.email));
+    const passwordUserId = ctx.users && user.email ? await ctx.users.deleteByEmail(normalizeEmail(user.email)) : null;
+    clearSession(c);
     // passwordUserId tells the receiver which e-mail & password user went, also when the session is Google's.
-    await ctx.emit('user.deleted', { user: userFromClaims(claims), passwordUserId: passwordUserId ?? undefined });
+    await ctx.emit('user.deleted', { user, passwordUserId: passwordUserId ?? undefined });
     return c.body(null, 204);
   });
 
@@ -197,11 +243,12 @@ export function createApp(config: MadauthConfig): Hono {
   if (roles) {
     /** The admin's address if the request comes from one; otherwise the answer to send. */
     const admin = async (c: Context): Promise<{ email: string } | { answer: Response }> => {
-      const claims = await currentSession(c);
-      if (!claims) return { answer: c.json({ error: 'no_session' }, 401) };
-      // Asked from the store, not from the session: a removed admin role stops counting at once.
-      const email = claims.email ? normalizeEmail(claims.email) : undefined;
-      if (!email || !(await roles.get(email)).includes(ADMIN_ROLE)) {
+      // currentSession reads the roles from the store, not from the session token: a removed admin role
+      // stops counting at once.
+      const user = await currentSession(c);
+      if (!user) return { answer: c.json({ error: 'no_session' }, 401) };
+      const email = user.email ? normalizeEmail(user.email) : undefined;
+      if (!email || !user.roles?.includes(ADMIN_ROLE)) {
         return { answer: c.json({ error: 'forbidden', message: `Only users with the role "${ADMIN_ROLE}" can manage roles.` }, 403) };
       }
       return { email };

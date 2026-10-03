@@ -55,6 +55,16 @@ export interface FakeServer {
   requests: RecordedRequest[];
   /** Roles by e-mail address, as set through the admin API. */
   roles: Map<string, string[]>;
+  /** Lifetime of a session in seconds; the server's expiry cookie is set from it. */
+  sessionTtl: number;
+}
+
+/** Sets or clears the cookie in which the real server tells when the session expires. */
+export function setExpiryCookie(expiresAt: number | null): void {
+  document.cookie =
+    expiresAt === null
+      ? 'madauth_session_expires=; path=/; max-age=0'
+      : `madauth_session_expires=${Math.floor(expiresAt / 1000)}; path=/; max-age=2592000`;
 }
 
 /** Replaces fetch with an in-memory madAuth server. Change its fields to change its answers. */
@@ -74,14 +84,18 @@ export function fakeServer(): FakeServer {
     nonces: 0,
     requests: [],
     roles: new Map(),
+    sessionTtl: 3600,
   };
   const userFor = (email: string): MadauthUser => {
     const account = server.accounts.get(email);
     return email === grace.email ? grace : { id: `usr_${email.split('@')[0]}`, email, ...(account?.name ? { name: account.name } : {}) };
   };
   const lastMailTo = (purpose: 'verify' | 'reset') => [...server.mails].reverse().find((m) => m.purpose === purpose)?.to;
+  /** What the real server does with every session it issues or renews. */
+  const issued = () => setExpiryCookie(Date.now() + server.sessionTtl * 1000);
   const signedIn = (email: string) => {
     server.user = userFor(email);
+    issued();
     return json({ user: server.user });
   };
   /** Why the server refuses a password, like its length-only policy. */
@@ -157,7 +171,12 @@ export function fakeServer(): FakeServer {
         return signedIn(target);
       }
       case 'GET /auth/session':
-        return server.user ? json({ user: server.user }) : json({ error: 'no_session' }, 401);
+        if (!server.user) {
+          setExpiryCookie(null);
+          return json({ error: 'no_session' }, 401);
+        }
+        issued();
+        return json({ user: server.user });
       case 'POST /auth/google/nonce':
         return json({ nonce: `nonce-${++server.nonces}` });
       case 'POST /auth/google/verify':
@@ -166,6 +185,7 @@ export function fakeServer(): FakeServer {
         return json({ user: ada });
       case 'POST /auth/logout':
         server.user = null;
+        setExpiryCookie(null);
         return new Response(null, { status: 204 });
       case 'POST /auth/admin/roles/get':
       case 'POST /auth/admin/roles/set': {
@@ -220,6 +240,7 @@ export function resetAll(): void {
   delete window.google;
   document.body.replaceChildren();
   document.documentElement.removeAttribute('lang');
+  setExpiryCookie(null);
   history.replaceState(null, '', '/page');
   vi.unstubAllGlobals();
   vi.restoreAllMocks();

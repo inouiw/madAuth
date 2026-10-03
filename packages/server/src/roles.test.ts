@@ -7,6 +7,7 @@ import {
   APP_ORIGIN,
   ISSUER,
   REDIRECT_TO,
+  cookieHeader,
   cookies,
   getNonce,
   googleIdToken,
@@ -88,24 +89,36 @@ describe('roles in the session', () => {
     expect((await (await session(app, cookie)).json()).user).toEqual({ id: expect.any(String), email: 'grace@example.com', name: 'Grace Hopper' });
   });
 
-  it('a change shows the next time the app checks the session, which gets a new cookie', async () => {
+  it('a change shows the next time the app checks the session, which gets a new session token', async () => {
     const { app, hook, store } = passwordApp();
-    const cookie = await signUpVerified(app, hook);
+    await signUpVerified(app, hook);
+    const signedIn = await post(app, '/auth/password/signin', grace);
+    const check = (cookie: string) => app.request('/auth/session', { headers: { Cookie: cookie } });
     const roles = new Roles(store);
 
     await roles.set('grace@example.com', ['admin'], null);
-    const granted = await session(app, cookie);
+    const granted = await check(cookieHeader(signedIn));
     expect((await granted.json()).user.roles).toEqual(['admin']);
-    const renewed = cookies(granted).madauth_session.value;
-    expect(renewed).toBeTruthy();
+    expect(cookies(granted).madauth_session.value).toBeTruthy();
 
-    // Unchanged roles leave the cookie alone.
-    expect(cookies(await session(app, renewed)).madauth_session).toBeUndefined();
+    // Unchanged roles leave the cookies alone.
+    expect(cookies(await check(cookieHeader(granted))).madauth_session).toBeUndefined();
 
     await roles.set('grace@example.com', [], null);
-    const revoked = await session(app, renewed);
+    const revoked = await check(cookieHeader(granted));
     expect((await revoked.json()).user.roles).toBeUndefined();
     expect(cookies(revoked).madauth_session.value).toBeTruthy();
+  });
+
+  it('a session without its renewal token shows the new roles but keeps its token', async () => {
+    const { app, hook, store } = passwordApp();
+    const cookie = await signUpVerified(app, hook);
+    await new Roles(store).set('grace@example.com', ['admin'], null);
+
+    const res = await session(app, cookie);
+
+    expect((await res.json()).user.roles).toEqual(['admin']);
+    expect(cookies(res).madauth_session).toBeUndefined();
   });
 
   it('without a store there are no roles and no admin routes', async () => {

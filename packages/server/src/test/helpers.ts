@@ -43,6 +43,7 @@ export function testConfig(overrides: Partial<MadauthConfig> = {}): MadauthConfi
     signingKey,
     allowedOrigins: [APP_ORIGIN],
     sessionTtlSeconds: 3600,
+    renewalTtlSeconds: 30 * 24 * 3600,
     google: { clientId: CLIENT_ID, clientSecret: 'test-secret' },
     jwksResolver: googleJwks,
     ...overrides,
@@ -72,6 +73,14 @@ export function cookies(res: Response): Record<string, { value: string; attrs: R
   return result;
 }
 
+/** The Cookie header a browser would send after this response: every cookie it set, e.g. session and renewal. */
+export function cookieHeader(res: Response): string {
+  return Object.entries(cookies(res))
+    .filter(([, cookie]) => cookie.value)
+    .map(([name, cookie]) => `${name}=${cookie.value}`)
+    .join('; ');
+}
+
 type App = ReturnType<typeof testApp>;
 
 /** Gets a nonce from the app as the allowed browser would; returns the nonce and its cookie. */
@@ -89,6 +98,12 @@ export function verify(app: App, credential: string, cookie?: string): Promise<R
       body: JSON.stringify({ credential }),
     }),
   );
+}
+
+/** Signs in through the FedCM flow and returns the sign-in response, with all its cookies. */
+export async function signInResponse(app: App): Promise<Response> {
+  const { nonce, cookie } = await getNonce(app);
+  return verify(app, await googleIdToken({ nonce }), cookie);
 }
 
 /** Signs in through the FedCM flow and returns the session cookie value. */

@@ -1,3 +1,4 @@
+import { EXPIRY_COOKIE } from './constants.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
 import type { LoginMethodId } from './methods.js';
 import type { ProviderContext, ServerConfig, SignInProvider } from './providers/provider.js';
@@ -60,11 +61,63 @@ function sameUser(a: MadauthUser | null, b: MadauthUser | null): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/** How long before its expiry the session is renewed, and no longer counts as usable for a request. */
+const RENEW_BEFORE_MS = 60_000;
+/** The longest delay setTimeout takes. */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+let renewalTimer: ReturnType<typeof setTimeout> | undefined;
+let renewing: Promise<boolean> | undefined;
+let watchingVisibility = false;
+/** The expiry time the timer last tried to renew, so a session that can't be renewed is not asked for again and again. */
+let triedExpiry: number | undefined;
+
+/** When the session expires (milliseconds since 1970), or undefined if the server's cookie is not there. */
+function sessionExpiry(): number | undefined {
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${EXPIRY_COOKIE}=(\\d+)`));
+  return match ? Number(match[1]) * 1000 : undefined;
+}
+
+/** Asks the server for the session, which renews it if needed. One request serves all callers that wait. */
+function renew(): Promise<boolean> {
+  renewing ??= Madauth.getSession()
+    .then((result) => result.isSuccess)
+    .finally(() => (renewing = undefined));
+  return renewing;
+}
+
+/** A page that comes back into view catches up on a renewal it skipped while hidden, or that failed. */
+function onVisibilityChange(): void {
+  triedExpiry = undefined;
+  scheduleRenewal();
+}
+
+/** Renews the session shortly before it expires, but only while the page is looked at. */
+function scheduleRenewal(): void {
+  clearTimeout(renewalTimer);
+  renewalTimer = undefined;
+  const expiry = sessionExpiry();
+  if (!state || expiry === undefined || expiry === triedExpiry) return;
+  if (!watchingVisibility) {
+    watchingVisibility = true;
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  }
+  // A hidden page does not renew: the session lasts for a time after the user last looked at the app,
+  // not for as long as a tab stays open.
+  if (document.visibilityState === 'hidden') return;
+  const delay = Math.min(Math.max(expiry - RENEW_BEFORE_MS - Date.now(), 0), MAX_TIMEOUT_MS);
+  renewalTimer = setTimeout(() => {
+    triedExpiry = expiry;
+    void renew();
+  }, delay);
+}
+
 function setUser(next: MadauthUser | null, notifyAlways = false): void {
   const changed = notifyAlways || !userKnown || !sameUser(user, next);
   const signedIn = next !== null && !sameUser(user, next);
   user = next;
   userKnown = true;
+  scheduleRenewal();
   if (signedIn) for (const provider of state?.providers.values() ?? []) provider.onSignedIn?.();
   if (!changed) return;
   for (const listener of [...listeners]) {
@@ -304,6 +357,27 @@ export const Madauth = {
     return { isSuccess: false, error: res.error };
   },
 
+  /**
+   * Resolves when the session cookie can be relied on for a request to your own backend, and to whether
+   * somebody is signed in. It resolves at once while the session is valid and when nobody is signed in;
+   * a session that has expired (e.g. the page was opened after hours) is renewed first.
+   *
+   * ```ts
+   * await Madauth.sessionReady();
+   * const response = await fetch('/api/orders'); // the backend finds a valid session cookie
+   * ```
+   */
+  async sessionReady(): Promise<boolean> {
+    if (!state?.serverUrl) return false;
+    const expiry = sessionExpiry();
+    if (expiry !== undefined) return expiry - Date.now() > RENEW_BEFORE_MS ? true : renew();
+    // No cookie from the server. On the server's own origin that means nobody is signed in. A server on
+    // another origin may have set a cookie this page can't see, so it is asked.
+    if (new URL(state.serverUrl).origin === location.origin) return user !== null;
+    await whenReady();
+    return user !== null;
+  },
+
   /** The last known signed-in user, or null. */
   get currentUser(): MadauthUser | null {
     return user;
@@ -378,6 +452,12 @@ export function takePendingError(): MadauthError | undefined {
 export function resetMadauthForTests(): void {
   state = undefined;
   generation++;
+  clearTimeout(renewalTimer);
+  renewalTimer = undefined;
+  renewing = undefined;
+  if (watchingVisibility) document.removeEventListener('visibilitychange', onVisibilityChange);
+  watchingVisibility = false;
+  triedExpiry = undefined;
   user = null;
   userKnown = false;
   pendingError = undefined;

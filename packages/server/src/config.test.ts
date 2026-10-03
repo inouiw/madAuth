@@ -20,6 +20,7 @@ describe('loadConfig', () => {
       signingKey,
       allowedOrigins: ['https://app.example.com', 'https://admin.example.com'],
       sessionTtlSeconds: 28800,
+      renewalTtlSeconds: 2592000,
       cookieDomain: undefined,
       google: { clientId: CLIENT_ID, clientSecret: undefined },
     });
@@ -142,6 +143,16 @@ describe('loadConfig', () => {
     );
     await expect(loadConfig({ ...withDb, WEBHOOK_EVENTS: 'signup.before' })).rejects.toThrow(/lacks email.verify and email.reset/);
     expect((await loadConfig({ ...withDb, WEBHOOK_EVENTS: 'email.reset,email.verify' })).password).toBeDefined();
+  });
+
+  it('SESSION_RENEWAL_TTL is 30 days by default and never shorter than SESSION_TTL', async () => {
+    expect((await loadConfig({ ...env, SESSION_TTL: '900', SESSION_RENEWAL_TTL: '86400' })).renewalTtlSeconds).toBe(86400);
+    // A session token that lives longer than 30 days can be renewed for as long as it lives.
+    expect((await loadConfig({ ...env, SESSION_TTL: '5184000' })).renewalTtlSeconds).toBe(5184000);
+    await expect(loadConfig({ ...env, SESSION_TTL: '3600', SESSION_RENEWAL_TTL: '600' })).rejects.toThrow(
+      /SESSION_RENEWAL_TTL must be .* not less than SESSION_TTL \(3600\)/,
+    );
+    await expect(loadConfig({ ...env, SESSION_RENEWAL_TTL: 'soon' })).rejects.toThrow(/SESSION_RENEWAL_TTL/);
   });
 
   it('A16: a store passed in replaces DATABASE_URL', async () => {
