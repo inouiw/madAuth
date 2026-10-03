@@ -12,6 +12,11 @@ export interface Core {
   provider(method: LoginMethodId): SignInProvider | undefined;
   /** The server's public settings, once `initialize` has fetched them. */
   config(): ServerConfig | undefined;
+  /**
+   * The user's locale, so the webhook can send the e-mail in it: the one from `initialize` or `setLocale`,
+   * else the page's, else the browser's.
+   */
+  locale(): string | undefined;
   request<T>(path: string, init?: RequestInit): Promise<HttpResult<T>>;
   signedIn(user: MadauthUser): void;
 }

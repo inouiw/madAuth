@@ -42,6 +42,8 @@ export interface FakeServer {
   emailsDown: boolean;
   /** The sign-up check (signup.before) refuses with this message. */
   rejectSignUp: string | undefined;
+  /** Sign-in is locked after too many failed attempts: it answers 429. */
+  locked: boolean;
   /** E-mails "sent": what for, to whom and the link's page. */
   mails: { purpose: 'verify' | 'reset' | 'registered'; to: string; redirectTo: unknown }[];
   user: MadauthUser | null;
@@ -63,6 +65,7 @@ export function fakeServer(): FakeServer {
     mails: [],
     emailsDown: false,
     rejectSignUp: undefined,
+    locked: false,
     user: null,
     verifyError: undefined,
     down: false,
@@ -77,6 +80,12 @@ export function fakeServer(): FakeServer {
   const signedIn = (email: string) => {
     server.user = userFor(email);
     return json({ user: server.user });
+  };
+  /** Why the server refuses a password, like its length-only policy. */
+  const weakPassword = (password = ''): string | undefined => {
+    if (password.length < 8) return 'The password must have at least 8 characters.';
+    if (password.length > 256) return 'The password must have at most 256 characters.';
+    return undefined;
   };
   const fetchMock = vi.fn(async (input: string | URL, init: RequestInit = {}) => {
     const url = new URL(input);
@@ -98,6 +107,7 @@ export function fakeServer(): FakeServer {
           password: server.password ? { minLength: 8 } : null,
         });
       case 'POST /auth/password/signin': {
+        if (server.locked) return json({ error: 'too_many_attempts', message: 'Too many failed attempts. Try again in 30 seconds.' }, 429);
         const account = server.accounts.get(email);
         if (!account || account.password !== body.password) return json({ error: 'invalid_credentials', message: 'wrong' }, 401);
         if (!account.verified) return json({ error: 'email_unverified', message: 'unverified' }, 403);
@@ -107,7 +117,7 @@ export function fakeServer(): FakeServer {
         if (server.rejectSignUp) return json({ error: 'signup_rejected', message: server.rejectSignUp }, 403);
         if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
         if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
-        if ((body.password ?? '').length < 8) return json({ error: 'weak_password', message: 'The password must have at least 8 characters.' }, 400);
+        if (weakPassword(body.password)) return json({ error: 'weak_password', message: weakPassword(body.password) }, 400);
         if (server.accounts.get(email)?.verified) {
           server.mails.push({ purpose: 'registered', to: email, redirectTo: body.redirectTo });
         } else {
@@ -133,7 +143,7 @@ export function fakeServer(): FakeServer {
         return signedIn(target);
       }
       case 'POST /auth/password/reset': {
-        if ((body.password ?? '').length < 8) return json({ error: 'weak_password', message: 'The password must have at least 8 characters.' }, 400);
+        if (weakPassword(body.password)) return json({ error: 'weak_password', message: weakPassword(body.password) }, 400);
         const target = body.token === RESET_TOKEN ? (lastMailTo('reset') ?? grace.email) : body.code === CODE ? email : undefined;
         const account = target && server.accounts.get(target);
         if (!account) {
@@ -189,6 +199,7 @@ export function resetAll(): void {
   resetGisForTests();
   delete window.google;
   document.body.replaceChildren();
+  document.documentElement.removeAttribute('lang');
   history.replaceState(null, '', '/page');
   vi.unstubAllGlobals();
   vi.restoreAllMocks();

@@ -17,6 +17,17 @@ export interface MadauthOptions {
    * `'custom'`: your own login screen, built with `Madauth.password` and `Madauth.google`; the dialog never opens.
    */
   ui?: 'dialog' | 'custom';
+  /**
+   * Language of the dialog and of the e-mails, as a BCP 47 tag such as `de` or `de-CH`. The dialog has
+   * English and German texts; every other language shows English. Default: the page's `<html lang>`, then
+   * the browser's language. Change it later with `Madauth.setLocale`.
+   */
+  locale?: string;
+}
+
+export interface SignInOptions {
+  /** Fills the dialog's e-mail field, e.g. with the address from a link to your page. */
+  email?: string;
 }
 
 export type AuthStateListener = (user: MadauthUser | null) => void;
@@ -38,6 +49,9 @@ let userKnown = false;
 const listeners = new Set<AuthStateListener>();
 /** A sign-in error that happened outside the dialog (e.g. the redirect flow), shown when it next opens. */
 let pendingError: MadauthError | undefined;
+/** The locale from `initialize` or `setLocale`; without one the page's or the browser's language counts. */
+let configuredLocale: string | undefined;
+const localeListeners = new Set<() => void>();
 
 function sameUser(a: MadauthUser | null, b: MadauthUser | null): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
@@ -59,6 +73,11 @@ function setUser(next: MadauthUser | null, notifyAlways = false): void {
   }
 }
 
+function changeLocale(locale: string | undefined): void {
+  configuredLocale = locale;
+  for (const listener of [...localeListeners]) listener();
+}
+
 function logError(result: Result): Result {
   if (!result.isSuccess) console.error('[madauth]', result.error.code, result.error.message);
   return result;
@@ -66,13 +85,16 @@ function logError(result: Result): Result {
 
 function validate(
   options: MadauthOptions | undefined,
-): Result<{ serverUrl: string; providers: Map<LoginMethodId, SignInProvider>; ui: 'dialog' | 'custom' }> {
+): Result<{ serverUrl: string; providers: Map<LoginMethodId, SignInProvider>; ui: 'dialog' | 'custom'; locale?: string }> {
   if (!options || !Array.isArray(options.providers)) {
     return fail('invalid_options', 'Madauth.initialize needs { providers: [...] }, e.g. [new GoogleFedcm()].');
   }
   const ui = options.ui ?? 'dialog';
   if (ui !== 'dialog' && ui !== 'custom') {
     return fail('invalid_options', `ui must be 'dialog' or 'custom' but is "${String(options.ui)}".`);
+  }
+  if (options.locale !== undefined && typeof options.locale !== 'string') {
+    return fail('invalid_options', `locale must be a language tag such as 'de' or 'de-CH' but is "${String(options.locale)}".`);
   }
   let serverUrl = location.origin;
   if (options.serverUrl !== undefined) {
@@ -97,7 +119,7 @@ function validate(
     }
     providers.set(provider.method, provider);
   }
-  return ok({ serverUrl, providers, ui });
+  return ok({ serverUrl, providers, ui, locale: options.locale });
 }
 
 async function initialize(target: State, run: number): Promise<{ ready: Result; result: Result }> {
@@ -124,6 +146,10 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
     get currentUser() {
       return user;
     },
+    get locale() {
+      return currentLocale();
+    },
+    onLocaleChanged,
     request: call,
     signedIn: (signedIn) => {
       pendingError = undefined;
@@ -155,6 +181,7 @@ const core: Core = {
   whenReady,
   provider: (method) => state?.providers.get(method),
   config: () => state?.config,
+  locale: currentLocale,
   request: (path, init) => request(state!.serverUrl, path, init),
   signedIn: (signedIn) => {
     pendingError = undefined;
@@ -176,6 +203,7 @@ export const Madauth = {
     const run = ++generation;
     pendingError = undefined;
     const valid = validate(options);
+    changeLocale(valid.isSuccess ? valid.locale : undefined);
     if (!valid.isSuccess) {
       state = { serverUrl: '', providers: new Map(), ui: 'dialog', ready: Promise.resolve(valid) };
       return Promise.resolve(logError(valid));
@@ -191,8 +219,9 @@ export const Madauth = {
    * Opens the sign-in dialog (creating a `<madauth-login>` if the page has none) and resolves with the
    * signed-in user, or fails with `cancelled` when the dialog is closed. With `GoogleRedirect` the page
    * navigates to Google; the user then arrives through {@link Madauth.onAuthStateChanged}.
+   * `email` fills the e-mail field, so the user only has to type the password.
    */
-  async signIn(): Promise<Result<{ user: MadauthUser }>> {
+  async signIn(options: SignInOptions = {}): Promise<Result<{ user: MadauthUser }>> {
     const ready = await whenReady();
     if (!ready.isSuccess) return ready;
     if (state!.ui === 'custom') {
@@ -214,8 +243,16 @@ export const Madauth = {
       const onCancel = () => finish(fail('cancelled', 'The sign-in dialog was closed.'));
       element.addEventListener('madauth-signed-in', onSignedIn);
       element.addEventListener('madauth-cancel', onCancel);
-      void element.open();
+      void element.open(options);
     });
+  },
+
+  /**
+   * Changes the language of the dialog and of the e-mails, e.g. when the user switches the language of
+   * your app. An open dialog shows the new language at once. See {@link MadauthOptions.locale}.
+   */
+  setLocale(locale: string): void {
+    changeLocale(locale);
   },
 
   /** Ends the session on the server and notifies {@link Madauth.onAuthStateChanged} listeners. */
@@ -285,6 +322,19 @@ export function readyForDialog(): Promise<Result> {
   return whenReady();
 }
 
+/** The locale of the dialog's texts and of the e-mails: the configured one, else the page's, else the browser's. */
+export function currentLocale(): string | undefined {
+  return configuredLocale || document.documentElement.lang || navigator.language || undefined;
+}
+
+/** Calls `listener` when the configured locale changes. Returns a function that unsubscribes. */
+export function onLocaleChanged(listener: () => void): () => void {
+  localeListeners.add(listener);
+  return () => {
+    localeListeners.delete(listener);
+  };
+}
+
 /** Returns and clears an error from a sign-in that happened outside the dialog. */
 export function takePendingError(): MadauthError | undefined {
   const error = pendingError;
@@ -299,5 +349,7 @@ export function resetMadauthForTests(): void {
   user = null;
   userKnown = false;
   pendingError = undefined;
+  configuredLocale = undefined;
   listeners.clear();
+  localeListeners.clear();
 }

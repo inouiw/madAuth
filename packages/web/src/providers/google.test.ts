@@ -235,6 +235,47 @@ describe('GoogleRedirect', () => {
     expect(shadow('.error')?.getAttribute('data-code')).toBe('verification_failed');
   });
 
+  it('labels the dialog’s button in the dialog’s language and follows setLocale', async () => {
+    fakeServer().codeFlow = true;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()], locale: 'de' });
+
+    void Madauth.signIn();
+    await settle();
+    const button = shadow<HTMLButtonElement>('.google-slot button')!;
+    expect(button.textContent).toBe('Weiter mit Google');
+
+    Madauth.setLocale('en');
+    expect(button.textContent).toBe('Continue with Google');
+    // The same button: it was not rendered again.
+    expect(shadow('.google-slot button')).toBe(button);
+  });
+
+  it('reports a failed redirect sign-in in the configured language', async () => {
+    fakeServer().codeFlow = true;
+    history.replaceState(null, '', '/page#madauth_error=verification_failed');
+
+    const german = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()], locale: 'de' });
+
+    expect(german).toEqual({
+      isSuccess: false,
+      error: { code: 'verification_failed', message: 'Die Anmeldung mit Google konnte nicht überprüft werden. Bitte versuchen Sie es erneut.' },
+    });
+    void Madauth.signIn();
+    await settle();
+    expect(shadow('.error')!.textContent).toContain('Die Anmeldung konnte nicht überprüft werden. Bitte versuchen Sie es erneut.');
+
+    history.replaceState(null, '', '/page#madauth_error=server_error');
+    const unknown = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()], locale: 'de-AT' });
+    expect(unknown).toEqual({
+      isSuccess: false,
+      error: { code: 'unknown', message: 'Die Anmeldung mit Google ist fehlgeschlagen (server_error).' },
+    });
+
+    history.replaceState(null, '', '/page#madauth_error=cancelled');
+    const english = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
+    expect(english).toEqual({ isSuccess: false, error: { code: 'cancelled', message: 'The Google sign-in was cancelled.' } });
+  });
+
   it('D3: restores the session after a successful redirect sign-in', async () => {
     const server = fakeServer();
     server.codeFlow = true;

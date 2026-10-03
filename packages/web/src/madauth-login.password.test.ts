@@ -273,6 +273,97 @@ describe('<madauth-login> with e-mail & password', () => {
     expect(autocomplete('code')).toBe('one-time-code');
   });
 
+  it('signIn({ email }) fills the e-mail field and focuses the password field', async () => {
+    const server = fakeServer();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+
+    const result = Madauth.signIn({ email: ' grace@example.com ' });
+    await settle();
+
+    expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('grace@example.com');
+    expect(login().shadowRoot!.activeElement).toBe($('form.signin input[name="password"]'));
+
+    await fill({ password: 'correct horse battery' });
+    await submit('signin');
+    expect(await result).toEqual({ isSuccess: true, user: grace });
+    expect(server.requests.at(-1)!.body).toEqual({ email: 'grace@example.com', password: 'correct horse battery' });
+  });
+
+  it('signIn({ email }) keeps the address on the other views', async () => {
+    fakeServer();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    void Madauth.signIn({ email: 'new@example.com' });
+    await settle();
+
+    await click('[data-action="signup"]');
+    expect($<HTMLInputElement>('form.signup input[name="email"]')!.value).toBe('new@example.com');
+
+    await click('[data-action="back"]');
+    await click('[data-action="forgot"]');
+    expect($<HTMLInputElement>('form.forgot input[name="email"]')!.value).toBe('new@example.com');
+  });
+
+  it('signIn({ email }) replaces an address from an earlier visit', async () => {
+    fakeServer();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    void Madauth.signIn({ email: 'grace@example.com' });
+    await settle();
+    // Typed over the prefilled address, then closed without sending the form.
+    await fill({ email: 'typed@example.com' });
+    login().close();
+
+    void Madauth.signIn({ email: 'grace@example.com' });
+    await settle();
+    expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('grace@example.com');
+    login().close();
+
+    void Madauth.signIn({ email: 'ada@example.com' });
+    await settle();
+    expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('ada@example.com');
+  });
+
+  it('open({ email }) on the element fills the e-mail field too', async () => {
+    fakeServer();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    const element = document.createElement('madauth-login');
+    document.body.append(element);
+
+    await element.open({ email: 'grace@example.com' });
+
+    expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('grace@example.com');
+    expect(element.shadowRoot!.activeElement).toBe($('form.signin input[name="password"]'));
+  });
+
+  it('signIn({ email }) fills the field without the Password provider, but leaves the focus alone', async () => {
+    fakeServer();
+    fakeGis();
+
+    void openDialog([new GoogleFedcm({ autoPrompt: false })]);
+    await settle();
+    login().close();
+    void Madauth.signIn({ email: 'grace@example.com' });
+    await settle();
+
+    expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('grace@example.com');
+    expect(login().shadowRoot!.activeElement).not.toBe($('form.signin input[name="password"]'));
+  });
+
+  it('signIn() without an e-mail leaves the field and the focus alone', async () => {
+    fakeServer();
+    void openDialog();
+    await settle();
+
+    expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('');
+    expect(login().shadowRoot!.activeElement).not.toBe($('form.signin input[name="password"]'));
+
+    await fill({ email: 'typed@example.com' });
+    login().close();
+    void Madauth.signIn({});
+    await settle();
+    expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('typed@example.com');
+    expect(login().shadowRoot!.activeElement).not.toBe($('form.signin input[name="password"]'));
+  });
+
   it('starts over on the sign-in view when reopened', async () => {
     fakeServer();
     void openDialog();

@@ -85,8 +85,19 @@ To change more than the look, e.g. the layout or the texts, build your own scree
 
 | Attribute | Default | Description |
 | --- | --- | --- |
-| `heading` | `Sign in` | Title shown at the top of the dialog. |
+| `heading` | `Sign in`, in the dialog's language | Title shown at the top of the dialog. A heading you set is shown as it is in every language. |
 
 ```html
 <madauth-login heading="Log in to projectmatch"></madauth-login>
 ```
+
+## Language
+
+The dialog has English and German texts. It follows the page's `<html lang>`, then the browser's language, and shows English for every other language. To set the language yourself, pass `locale` to `Madauth.initialize` and call `Madauth.setLocale` when it changes:
+
+```ts
+Madauth.initialize({ providers: [new Password()], locale: 'de' }); // or e.g. 'de-CH'
+Madauth.setLocale('en'); // an open dialog changes at once
+```
+
+Google's own button (with `GoogleFedcm`) is not affected: Google picks its language.

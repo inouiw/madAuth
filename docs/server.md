@@ -151,7 +151,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `password.reset` | A password was reset (older sessions end) | `user` | the same | the same |
 | `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password` or `google`) | the same | the same |
 
-- `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's browser language (e.g. `de-CH`) if known.
+- `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
 - `WEBHOOK_EVENTS` limits the types besides the e-mails, which are always sent. Without `signup.before` in the list, every sign-up is allowed.
 - madAuth waits for each call before it answers the browser, because AWS Lambda stops a function as soon as it has answered. Keep receivers fast.
 
