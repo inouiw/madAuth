@@ -191,6 +191,36 @@ describe('auth state', () => {
   });
 });
 
+describe('Madauth.deleteAccount', () => {
+  it('deletes the account on the server and signs the user out', async () => {
+    const server = fakeServer();
+    server.user = ada;
+    const provider = stubProvider();
+    const listener = vi.fn();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [provider] });
+    Madauth.onAuthStateChanged(listener);
+
+    expect(await Madauth.deleteAccount()).toEqual({ isSuccess: true });
+
+    expect(server.requests.at(-1)).toMatchObject({ method: 'POST', url: `${SERVER}/auth/account/delete`, credentials: 'include' });
+    expect(Madauth.currentUser).toBeNull();
+    expect(listener).toHaveBeenLastCalledWith(null);
+    expect(provider.onSignedOut).toHaveBeenCalledOnce();
+  });
+
+  it('reports no_session when nobody is signed in, and keeps the user when the server can not be reached', async () => {
+    const server = fakeServer();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [] });
+    expect(await Madauth.deleteAccount()).toMatchObject({ isSuccess: false, error: { code: 'no_session' } });
+
+    server.user = ada;
+    await Madauth.getSession();
+    server.down = true;
+    expect(await Madauth.deleteAccount()).toMatchObject({ isSuccess: false, error: { code: 'network' } });
+    expect(Madauth.currentUser).toEqual(ada);
+  });
+});
+
 describe('Madauth.signIn', () => {
   it('I9: creates the dialog when the page has none, and reuses it', async () => {
     fakeServer();

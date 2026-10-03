@@ -3,7 +3,7 @@ import { createApp } from '../app.js';
 import type { MadauthConfig } from '../config.js';
 import { generateSigningKey } from '../keys.js';
 import { createSqliteAdapter } from '../store/sqlite.js';
-import { generateWebhookSecret, verifyWebhook } from '../webhooks.js';
+import { WEBHOOK_TYPES, generateWebhookSecret, verifyWebhook } from '../webhooks.js';
 
 export const ISSUER = 'https://auth.example.com';
 export const APP_ORIGIN = 'https://app.example.com';
@@ -102,6 +102,8 @@ export async function signIn(app: App): Promise<string> {
 
 export const WEBHOOK_URL = 'https://hooks.example.com/madauth';
 export const WEBHOOK_SECRET = generateWebhookSecret();
+/** A receiver that asks for every type. */
+export const ALL_EVENTS: ReadonlySet<string> = new Set(WEBHOOK_TYPES);
 
 export interface WebhookCall {
   type: string;
@@ -153,7 +155,7 @@ export function passwordApp(overrides: Partial<MadauthConfig> = {}) {
   const store = createSqliteAdapter(':memory:');
   const app = testApp({
     password: { minLength: 8, store },
-    webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: null },
+    webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: ALL_EVENTS },
     webhookFetch: hook.fetch,
     ...overrides,
   });

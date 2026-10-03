@@ -113,7 +113,7 @@ signInButton.onclick = () => Madauth.signIn();
 - **The dialog:** `signIn()` adds a `<madauth-login>` to the page; put one in your HTML only to customize it. `signIn({ email })` opens it with the e-mail address filled in, e.g. from a link like `/?email=…`, so the user only types the password.
 - **Language:** the dialog has English and German texts. It follows the page's `<html lang>`, then the browser's language. To set the language yourself, pass `locale: 'de'` (or e.g. `'de-CH'`) to `initialize`, and call `Madauth.setLocale('en')` when the user switches the language of your app; an open dialog changes at once. Every other language shows English. The same locale goes to your e-mail webhook, so the e-mails can match the dialog.
 - **Your own login screen:** pass `ui: 'custom'` and use `Madauth.password` and `Madauth.google` instead of the dialog. See [Building your own login screen](docs/custom-ui.md).
-- **Other methods:** `signOut()`, `getSession()` and `currentUser`. All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
+- **Other methods:** `signOut()`, `getSession()`, `currentUser`, and `deleteAccount()` to [delete the signed-in user's account](docs/server.md#deleting-an-account). All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
 - **Server URL:** the server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 'https://auth.example.com'` to `initialize` if it runs elsewhere on the same site.
 
 ### Running the server

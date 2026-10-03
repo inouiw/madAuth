@@ -18,6 +18,7 @@ vi.stubEnv('ALLOWED_ORIGINS', APP_ORIGIN);
 vi.stubEnv('GOOGLE_CLIENT_ID', CLIENT_ID);
 vi.stubEnv('WEBHOOK_URL', WEBHOOK_URL);
 vi.stubEnv('WEBHOOK_SECRET', WEBHOOK_SECRET);
+vi.stubEnv('WEBHOOK_EVENTS', 'email.verify,email.reset');
 
 /** A store adapter that records which models are read. */
 function recordingAdapter(): StoreAdapter & { models: string[] } {
@@ -83,6 +84,25 @@ describe('deployment entry points', () => {
 
     expect(res).toMatchObject({ statusCode: 401 });
     expect(store.models).toContain('user');
+  });
+
+  it('env can be a function that loads the settings; it runs once, and again after a failure', async () => {
+    const { createHandler } = await import('./lambda.js');
+    const settings = { MADAUTH_ISSUER: 'https://login.example.com', MADAUTH_SIGNING_KEY: JSON.stringify(signingKey), ALLOWED_ORIGINS: APP_ORIGIN, GOOGLE_CLIENT_ID: CLIENT_ID };
+    const env = vi.fn(async () => settings);
+    const handler = createHandler({ env });
+
+    const first = await handler(apiGatewayV2Event('GET', '/auth/config'), {} as LambdaContext);
+    await handler(apiGatewayV2Event('GET', '/auth/config'), {} as LambdaContext);
+
+    expect(first).toMatchObject({ statusCode: 200 });
+    expect(env).toHaveBeenCalledTimes(1);
+
+    // E.g. the parameter store could not be reached: the next invocation tries again.
+    const flaky = vi.fn().mockRejectedValueOnce(new Error('parameter store unreachable')).mockResolvedValue(settings);
+    const recovering = createHandler({ env: flaky });
+    await expect(recovering(apiGatewayV2Event('GET', '/auth/config'), {} as LambdaContext)).rejects.toThrow('parameter store unreachable');
+    expect(await recovering(apiGatewayV2Event('GET', '/auth/config'), {} as LambdaContext)).toMatchObject({ statusCode: 200 });
   });
 
   it('A16: a store passed to the Azure registration is used', async () => {

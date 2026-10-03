@@ -30,7 +30,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `DATABASE_URL` | for e-mail & password | `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). Turns on e-mail & password sign-in. For other databases pass your own [store adapter](#custom-store-adapter) instead. |
 | `WEBHOOK_URL` | for e-mail & password | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
-| `WEBHOOK_EVENTS` | no | Comma-separated [types](#webhooks) to send besides the e-mails, e.g. `signup.before,user.created`. Default: all. |
+| `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in needs `email.verify` and `email.reset`, e.g. `email.verify,email.reset,email.already_registered`. |
 | `PASSWORD_MIN_LENGTH` | no | Minimum password length. Default `8`. |
 | `SESSION_TTL` | no | Session lifetime in seconds. Default `28800` (8 hours). The session is renewed when the app checks it after half of this time. |
 | `COOKIE_DOMAIN` | no | Cookie domain, e.g. `.example.com`, so backends on sibling subdomains receive the session cookie. By default the cookie belongs to the server's host only. |
@@ -55,7 +55,7 @@ npx @madauth/server generate-key
 
 ## E-mail & password sign-in
 
-Set `DATABASE_URL`, `WEBHOOK_URL` and `WEBHOOK_SECRET`. With `sqlite:<path>`, users are stored in that SQLite file; with Docker, keep it on a volume (the `docker-compose.yml` does this). With `dynamodb:<table>`, they are stored in a [DynamoDB table](#dynamodb).
+Set `DATABASE_URL`, `WEBHOOK_URL`, `WEBHOOK_SECRET` and `WEBHOOK_EVENTS`. With `sqlite:<path>`, users are stored in that SQLite file; with Docker, keep it on a volume (the `docker-compose.yml` does this). With `dynamodb:<table>`, they are stored in a [DynamoDB table](#dynamodb).
 
 madAuth does not send e-mails itself: it hands each one to your [webhook](#webhooks) receiver. There are three: the address confirmation, the password reset, and a note to the owner when someone tries to sign up with an address that already has an account. The confirmation and reset e-mails contain a link to the app page that asked for them (its origin must be in `ALLOWED_ORIGINS`) and a 6-digit code, for when the e-mail is read on another device.
 
@@ -162,6 +162,29 @@ npm run build -w packages/server
 
 Deploy the bundle, as `lambda.mjs`, with the handler `lambda.handler` on a Node.js 22 or newer runtime. Put it behind a Function URL, API Gateway (HTTP API) or an ALB, and set the environment variables on the function.
 
+Environment variables of a function can be read by everyone who may view its configuration. To keep `MADAUTH_SIGNING_KEY` and the other secrets in the Parameter Store or Secrets Manager instead, write a small entry file and pass `env`: a function that loads the settings. It runs once, before the first request:
+
+```ts
+import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { createHandler } from '@madauth/server/lambda';
+
+const ssm = new SSMClient({});
+const secret = async (name: string) =>
+  (await ssm.send(new GetParameterCommand({ Name: name, WithDecryption: true }))).Parameter?.Value;
+
+export const handler = createHandler({
+  env: async () => {
+    const [signingKey, webhookSecret] = await Promise.all([
+      secret('/madauth/signing-key'),
+      secret('/madauth/webhook-secret'),
+    ]);
+    return { ...process.env, MADAUTH_SIGNING_KEY: signingKey, WEBHOOK_SECRET: webhookSecret };
+  },
+});
+```
+
+`register` (Azure Functions) and `start` (Node) take the same `env` option.
+
 ### Azure Functions
 
 Get `madauth-server-azure.mjs` (or `dist/standalone/azure.mjs`) as above, then deploy it as `azure.mjs`, the main file of a Node.js (v4 programming model) function app. It registers one HTTP function for all routes.
@@ -211,9 +234,11 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `email.verified` | An address was confirmed | `user`, `via` (`link` or `code`) | the same | the same |
 | `password.reset` | A password was reset (older sessions end) | `user` | the same | the same |
 | `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password` or `google`) | the same | the same |
+| `user.deleted` | A user deleted their account | `user` (the session's), `passwordUserId` (the deleted e-mail & password user, if there was one; differs from `user.id` after a Google sign-in) | the same | the same |
 
 - `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
-- `WEBHOOK_EVENTS` limits the types besides the e-mails, which are always sent. Without `signup.before` in the list, every sign-up is allowed.
+- Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. With e-mail & password sign-in, `email.verify` and `email.reset` must be in the list: the server does not start without them.
+- Without `email.already_registered` in the list, a sign-up with an address that already has a confirmed account is answered like any other and no e-mail is sent. Without `signup.before`, every sign-up is allowed.
 - madAuth waits for each call before it answers the browser, because AWS Lambda stops a function as soon as it has answered. Keep receivers fast.
 
 ### Signatures
@@ -231,6 +256,15 @@ const { type, data } = JSON.parse(body);
 ```
 
 The calls contain e-mail links and codes, so `WEBHOOK_URL` must be https, except for a receiver on the same machine (`localhost`, `127.0.0.1`, or `host.docker.internal` from a Docker container). Calls with the same `webhook-id` are the same call; madAuth does not retry by itself.
+
+## Deleting an account
+
+`Madauth.deleteAccount()` in the web library (`POST /auth/account/delete`) lets a signed-in user delete their account:
+
+- The e-mail & password account of the session's e-mail address is deleted, with its pending confirmation and reset links. This also happens when the user signed in with Google: the session proves that the address is theirs. Google sign-in itself stores nothing.
+- The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`. Its `passwordUserId` is the ID of the deleted e-mail & password user: after a Google sign-in it differs from `user.id`, so delete what your backend stored under either ID.
+
+Delete the user's data in your own backend first, while the user is still signed in. Sessions on other devices end when the app next checks them; your own backends accept them until they expire (see [Password security](password-security.md#sessions)).
 
 ## Custom store adapter
 
@@ -403,6 +437,7 @@ Other languages can verify the JWT with any JOSE library:
 | `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie; ends all older sessions; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
 | `GET /auth/session` | `{ user }` for the current session, or 401 |
 | `POST /auth/logout` | Clears the session cookie |
+| `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; 401 `no_session`. See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
 | `GET /health` | `ok` |
 

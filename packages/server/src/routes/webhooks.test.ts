@@ -2,6 +2,7 @@
 // and events never fail a request. See "Webhooks" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  ALL_EVENTS,
   APP_ORIGIN,
   REDIRECT_TO,
   WEBHOOK_SECRET,
@@ -108,7 +109,7 @@ describe('e-mails through the webhook', () => {
 
   it('signs its calls with WEBHOOK_SECRET to WEBHOOK_URL', async () => {
     // The recording receiver answers 401 to anything else, which would make the sign-up fail.
-    const { app } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: generateWebhookSecret(), events: null } });
+    const { app } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: generateWebhookSecret(), events: ALL_EVENTS } });
     quietErrors();
 
     expect((await signUp(app)).status).toBe(503);
@@ -150,11 +151,39 @@ describe('the sign-up guard (signup.before)', () => {
   });
 
   it('K6: is skipped when WEBHOOK_EVENTS does not select it', async () => {
-    const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['user.created']) } });
+    const events = new Set(['email.verify', 'email.reset', 'user.created']);
+    const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events } });
 
     expect((await signUp(app)).status).toBe(202);
 
     expect(hook.types()).toEqual(['user.created', 'email.verify']);
+  });
+});
+
+describe('a receiver that sends only the two required e-mails', () => {
+  const events = new Set(['email.verify', 'email.reset']);
+
+  it('K6: gets nothing else, so a sign-in makes no call', async () => {
+    const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events } });
+    await signUpVerified(app, hook);
+    await post(app, '/auth/password/signin', grace);
+
+    expect(hook.types()).toEqual(['email.verify']);
+  });
+
+  it('K6: a sign-up with a confirmed address answers like any other and sends nothing', async () => {
+    const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events } });
+    await signUpVerified(app, hook);
+    advance(61_000);
+
+    const res = await signUp(app, { password: 'another password' });
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({});
+    expect(hook.types()).toEqual(['email.verify']);
+    // No e-mail was counted either: the reset e-mail goes out right away.
+    await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
+    expect(hook.types()).toEqual(['email.verify', 'email.reset']);
   });
 });
 

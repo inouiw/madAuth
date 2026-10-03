@@ -164,6 +164,11 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/logout':
         server.user = null;
         return new Response(null, { status: 204 });
+      case 'POST /auth/account/delete':
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        if (server.user.email) server.accounts.delete(server.user.email);
+        server.user = null;
+        return new Response(null, { status: 204 });
     }
     return json({ error: 'not_found' }, 404);
   });

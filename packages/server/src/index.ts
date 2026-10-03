@@ -1,5 +1,5 @@
 export { createApp, REDIRECT_ERROR_PARAM } from './app.js';
-export { ConfigError, envVars, loadConfig, type ConfigOverrides, type MadauthConfig } from './config.js';
+export { ConfigError, envVars, loadConfig, type ConfigOverrides, type EntryOptions, type MadauthConfig } from './config.js';
 export { generateSigningKey } from './keys.js';
 export {
   madauthSchema,

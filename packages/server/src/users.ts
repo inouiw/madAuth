@@ -119,6 +119,26 @@ export class Users {
     return user;
   }
 
+  /**
+   * Deletes the user with this e-mail address and everything stored for them. Resolves to the deleted
+   * user's ID, or null if there is no such user (any more).
+   */
+  async deleteByEmail(emailNormalized: string): Promise<string | null> {
+    const user = await this.findByEmail(emailNormalized);
+    if (!user) return null;
+    // The user record goes first: from then on nobody can sign in, and a sign-up with the address starts afresh.
+    if ((await this.store.delete('user', { id: user.id })) !== 1) return null;
+    // The user is gone now, so the deletion has to finish: a retry would find no session and send no event.
+    // Records left behind belong to a user ID that no longer exists and are never read again.
+    try {
+      await this.store.delete('account', { userId: user.id });
+      await this.store.delete('verification', { userId: user.id });
+    } catch (e) {
+      console.error(`[madauth] Deleted user ${user.id}, but not all of their records: ${(e as Error).message}`);
+    }
+    return user.id;
+  }
+
   async updateUser(id: string, patch: Partial<Omit<StoredUser, 'id'>>): Promise<void> {
     await this.store.update('user', { id }, patch as Row);
   }

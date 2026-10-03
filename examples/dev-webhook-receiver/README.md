@@ -2,7 +2,7 @@
 
 Receives madAuth's [webhook](../../docs/server.md#webhooks) calls during development and prints them instead of sending e-mails: each confirmation and reset e-mail appears in the terminal with its link and 6-digit code.
 
-It reads `WEBHOOK_URL` and `WEBHOOK_SECRET` from `packages/server/.env` (the same settings the madAuth server uses), and listens on `WEBHOOK_URL`'s port. Start it from the repository root:
+It reads `WEBHOOK_URL` and `WEBHOOK_SECRET` from `packages/server/.env` (the same settings the madAuth server uses), and listens on `WEBHOOK_URL`'s port. The server only sends the types listed in `WEBHOOK_EVENTS`; the `.env.example` lists all of them, so every e-mail and event appears. Start it from the repository root:
 
 ```bash
 npm run dev:webhooks

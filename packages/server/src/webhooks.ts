@@ -12,12 +12,13 @@ export const WEBHOOK_TYPES = [
   'email.verified',
   'password.reset',
   'user.signed_in',
+  'user.deleted',
 ] as const;
 
 export type WebhookType = (typeof WEBHOOK_TYPES)[number];
 
-/** E-mails are always sent, whatever WEBHOOK_EVENTS says: without them nobody could confirm an address. */
-export const isEmailType = (type: string): boolean => type.startsWith('email.') && type !== 'email.verified';
+/** The e-mails that e-mail & password sign-in can't work without: WEBHOOK_EVENTS must contain them. */
+export const REQUIRED_EMAIL_TYPES = ['email.verify', 'email.reset'] as const satisfies readonly WebhookType[];
 
 const SECRET_PREFIX = 'whsec_';
 /** How old a call may be before receivers reject it, so a captured call can't be replayed. */
@@ -89,8 +90,8 @@ export function verifyWebhook(
 export interface WebhookSettings {
   url: string;
   secret: string;
-  /** Types to send besides the e-mails (WEBHOOK_EVENTS); null sends every type. */
-  events: ReadonlySet<string> | null;
+  /** The types that are sent (WEBHOOK_EVENTS); all others are skipped. */
+  events: ReadonlySet<string>;
 }
 
 export type WebhookResult = { ok: true; body: unknown } | { ok: false; reason: string };
@@ -103,7 +104,7 @@ export interface WebhookClient {
 }
 
 export function createWebhookClient(settings: WebhookSettings, fetchImpl: typeof fetch = fetch): WebhookClient {
-  const wants = (type: WebhookType) => isEmailType(type) || !settings.events || settings.events.has(type);
+  const wants = (type: WebhookType) => settings.events.has(type);
   return {
     wants,
     async call(type, data, timeoutMs) {
