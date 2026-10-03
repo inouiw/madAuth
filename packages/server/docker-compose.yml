@@ -7,6 +7,8 @@ services:
     environment:
       # E-mail & password users are stored in this SQLite file, on the volume below.
       DATABASE_URL: sqlite:/data/madauth.db
+      # The webhook receiver must be reachable from the container. A receiver on your machine (npm run dev:webhooks):
+      # WEBHOOK_URL: http://host.docker.internal:8790/webhook
     ports:
       - '8787:8787'
     volumes:

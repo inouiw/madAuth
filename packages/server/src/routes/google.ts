@@ -72,6 +72,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     }
     deleteCookie(c, NONCE_COOKIE, { path: '/auth/google', secure });
     await ctx.startSession(c, result.user, ['google']);
+    await ctx.emit('user.signed_in', { user: result.user, method: 'google' });
     return c.json({ user: result.user });
   });
 
@@ -159,6 +160,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     });
     if (!result.ok) return back(result.error);
     await ctx.startSession(c, result.user, ['google']);
+    await ctx.emit('user.signed_in', { user: result.user, method: 'google' });
     return back();
   });
 }

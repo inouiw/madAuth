@@ -26,8 +26,9 @@ All settings are environment variables.
 | `GOOGLE_CLIENT_ID` | for Google | OAuth client ID of type "Web application", ending in `.apps.googleusercontent.com`. Turns on Google sign-in. |
 | `GOOGLE_CLIENT_SECRET` | no | Client secret of the same client. Enables the server-side redirect flow (`GoogleRedirect`); without it those routes return 404. |
 | `DATABASE_URL` | for e-mail & password | `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`. Turns on e-mail & password sign-in. For other databases pass your own [store adapter](#custom-store-adapter) instead. |
-| `SMTP_URL` | for e-mail & password | Mail server for the verification and reset e-mails, e.g. `smtps://user:password@smtp.example.com:465`. `console` prints the e-mails to the log instead (development only). |
-| `MAIL_FROM` | with `SMTP_URL` | Sender of the e-mails, e.g. `"Example" <no-reply@example.com>`. |
+| `WEBHOOK_URL` | for e-mail & password | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
+| `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
+| `WEBHOOK_EVENTS` | no | Comma-separated [types](#webhooks) to send besides the e-mails, e.g. `signup.before,user.created`. Default: all. |
 | `PASSWORD_MIN_LENGTH` | no | Minimum password length. Default `8`. |
 | `SESSION_TTL` | no | Session lifetime in seconds. Default `28800` (8 hours). The session is renewed when the app checks it after half of this time. |
 | `COOKIE_DOMAIN` | no | Cookie domain, e.g. `.example.com`, so backends on sibling subdomains receive the session cookie. By default the cookie belongs to the server's host only. |
@@ -52,19 +53,13 @@ npx @madauth/server generate-key
 
 ## E-mail & password sign-in
 
-Set `DATABASE_URL` and `SMTP_URL`. Users are stored in the SQLite file; with Docker, keep it on a volume (the `docker-compose.yml` does this).
+Set `DATABASE_URL`, `WEBHOOK_URL` and `WEBHOOK_SECRET`. Users are stored in the SQLite file; with Docker, keep it on a volume (the `docker-compose.yml` does this).
 
-madAuth sends three e-mails: the address confirmation, the password reset, and a note to the owner when someone tries to sign up with an address that already has an account. The confirmation and reset e-mails contain a link to the app page that asked for them (its origin must be in `ALLOWED_ORIGINS`) and a 6-digit code, for when the e-mail is read on another device.
+madAuth does not send e-mails itself: it hands each one to your [webhook](#webhooks) receiver. There are three: the address confirmation, the password reset, and a note to the owner when someone tries to sign up with an address that already has an account. The confirmation and reset e-mails contain a link to the app page that asked for them (its origin must be in `ALLOWED_ORIGINS`) and a 6-digit code, for when the e-mail is read on another device.
 
-Examples for `SMTP_URL`:
-
-| Service | `SMTP_URL` |
-| --- | --- |
-| Amazon SES | `smtps://<SMTP user>:<SMTP password>@email-smtp.eu-central-1.amazonaws.com:465` |
-| Postmark | `smtps://<server token>:<server token>@smtp.postmarkapp.com:465` |
-| Gmail (app password) | `smtps://you%40gmail.com:<app password>@smtp.gmail.com:465` |
-
-URL-encode special characters in the user name and password (`@` → `%40`). To send through an HTTP API instead of SMTP, pass your own `mailer` (an object with `send({ to, subject, text, html })`) the same way as a [custom store adapter](#registering-your-adapter).
+Two receivers are included:
+- [`examples/dev-webhook-receiver`](../examples/dev-webhook-receiver) prints the e-mails in the terminal, for development: `npm run dev:webhooks`.
+- [`examples/aws-ses-mailer`](../examples/aws-ses-mailer) sends them with Amazon SES from an AWS Lambda function, with a step-by-step AWS setup.
 
 To create a user without e-mail, e.g. the first admin or for testing, run on a machine with the same environment variables:
 
@@ -93,6 +88,8 @@ docker run --rm -p 8787:8787 --env-file packages/server/.env madauth-server
 ```
 
 There is also a `docker-compose.yml` in `packages/server`. The container exposes `GET /health` for health checks.
+
+With e-mail & password sign-in, the container must reach your webhook receiver. A receiver on your own machine, e.g. the development receiver, is `http://host.docker.internal:8790/webhook` from inside the container.
 
 ### AWS Lambda
 
@@ -134,6 +131,43 @@ import { createApp, loadConfig } from '@madauth/server';
 
 const app = createApp(await loadConfig(process.env)); // a Hono app: app.fetch(request) → response
 ```
+
+## Webhooks
+
+madAuth calls one URL of yours, `WEBHOOK_URL`, to send e-mails, to let you decide on sign-ups, and to tell you what happened. This works the same in Docker, Lambda and Azure, and the receiver can be written in any language.
+
+Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
+
+| `type` | When | `data` | Your answer | If it fails (no 2xx within the time, or unreachable) |
+| --- | --- | --- | --- | --- |
+| `email.verify` | Sign-up, or "send the e-mail again" | `to`, `link`, `code`, `expiresAt`, `site`, `locale`, `user { id, name }` | 2xx within 10 s, once you have taken over the e-mail (e.g. your mail service accepted it) | The request fails with `503 temporarily_unavailable`, and the user sees that e-mails can't be sent right now. They can retry at once. |
+| `email.reset` | "Forgot password?" | the same | the same | the same |
+| `email.already_registered` | Sign-up with an address that already has a confirmed account | `to`, `link` (the sign-in page), `site`, `locale`, `user` | the same | the same |
+| `signup.before` | Before an account is created | `email`, `name`, `locale` | 2xx within 10 s. `{ "allow": false, "message": "…" }` refuses the sign-up and the user sees your message (`403 signup_rejected`); any other 2xx allows it. | The sign-up is refused with `503 temporarily_unavailable`: without your answer, nobody signs up. |
+| `user.created` | An account was created (not yet confirmed) | `user { id, email, name }` | 2xx within 5 s | Logged; the request still succeeds. |
+| `email.verified` | An address was confirmed | `user`, `via` (`link` or `code`) | the same | the same |
+| `password.reset` | A password was reset (older sessions end) | `user` | the same | the same |
+| `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password` or `google`) | the same | the same |
+
+- `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's browser language (e.g. `de-CH`) if known.
+- `WEBHOOK_EVENTS` limits the types besides the e-mails, which are always sent. Without `signup.before` in the list, every sign-up is allowed.
+- madAuth waits for each call before it answers the browser, because AWS Lambda stops a function as soon as it has answered. Keep receivers fast.
+
+### Signatures
+
+Every call is signed in the [Standard Webhooks](https://www.standardwebhooks.com/) format, so you can use their libraries in many languages. The headers are `webhook-id`, `webhook-timestamp` and `webhook-signature` (`v1,` and the base64 HMAC-SHA256 of `<id>.<timestamp>.<body>`, keyed with the base64 part of `WEBHOOK_SECRET` after `whsec_`).
+
+Verify each call against the **raw** body before you trust it, and reject calls older than five minutes. In JavaScript:
+
+```ts
+import { verifyWebhook } from '@madauth/server/webhook';
+
+const body = await request.text();
+if (!verifyWebhook(process.env.WEBHOOK_SECRET!, request.headers, body)) return new Response(null, { status: 401 });
+const { type, data } = JSON.parse(body);
+```
+
+The calls contain e-mail links and codes, so `WEBHOOK_URL` must be https, except for a receiver on the same machine (`localhost`, `127.0.0.1`, or `host.docker.internal` from a Docker container). Calls with the same `webhook-id` are the same call; madAuth does not retry by itself.
 
 ## Custom store adapter
 
@@ -224,7 +258,7 @@ storeAdapterContract({ describe, it, expect }, () => createPostgresAdapter(proce
 
 ### Registering your adapter
 
-Every entry point takes a `store` (and a `mailer`) instead of `DATABASE_URL` (and `SMTP_URL`). Build and deploy your entry file like any Lambda function, Azure Function or Node app.
+Every entry point takes a `store` instead of `DATABASE_URL`. Build and deploy your entry file like any Lambda function, Azure Function or Node app.
 
 AWS Lambda:
 
@@ -285,10 +319,10 @@ Other languages can verify the JWT with any JOSE library:
 | `GET /auth/google/start?return_to=` | Starts the redirect flow (needs `GOOGLE_CLIENT_SECRET`) |
 | `GET /auth/google/callback` | Google redirects here; redirects back to `return_to`, or to `return_to#madauth_error=<code>` |
 | `POST /auth/password/signin` | `{ email, password }` → `{ user }` and the session cookie; 401 `invalid_credentials`, 403 `email_unverified`, 429 `too_many_attempts` |
-| `POST /auth/password/signup` | `{ email, password, name?, redirectTo }` → 202, and the confirmation e-mail; 400 `invalid_email` or `weak_password` |
-| `POST /auth/password/send-verification` | `{ email, redirectTo }` → 202, and the confirmation e-mail again |
+| `POST /auth/password/signup` | `{ email, password, name?, redirectTo, locale? }` → 202, and the confirmation e-mail; 400 `invalid_email` or `weak_password`, 403 `signup_rejected`, 503 `temporarily_unavailable` |
+| `POST /auth/password/send-verification` | `{ email, redirectTo, locale? }` → 202, and the confirmation e-mail again; 503 `temporarily_unavailable` |
 | `POST /auth/password/verify-email` | `{ token }` or `{ email, code }` → `{ user }` and the session cookie; 400 `link_invalid` or `code_invalid` |
-| `POST /auth/password/send-reset` | `{ email, redirectTo }` → 202, and the reset e-mail |
+| `POST /auth/password/send-reset` | `{ email, redirectTo, locale? }` → 202, and the reset e-mail; 503 `temporarily_unavailable` |
 | `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie; ends all older sessions |
 | `GET /auth/session` | `{ user }` for the current session, or 401 |
 | `POST /auth/logout` | Clears the session cookie |

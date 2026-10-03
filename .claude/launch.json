@@ -18,6 +18,15 @@
         "dev:server"
       ],
       "port": 8787
+    },
+    {
+      "name": "webhooks",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:webhooks"
+      ],
+      "port": 8790
     }
   ]
 }

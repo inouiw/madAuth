@@ -5,8 +5,8 @@ import { loadConfig, type ConfigOverrides } from '../config.js';
 import { handleAzureRequest } from './azure-handler.js';
 
 /**
- * Registers madAuth as an Azure Functions v4 HTTP function that handles every route. Pass `store` or
- * `mailer` to use your own store adapter or mail service.
+ * Registers madAuth as an Azure Functions v4 HTTP function that handles every route. Pass `store` to use your
+ * own store adapter.
  * Set `"routePrefix": ""` in host.json so the routes are served at /auth/... (see docs/server.md).
  */
 export function register(overrides: ConfigOverrides = {}): void {

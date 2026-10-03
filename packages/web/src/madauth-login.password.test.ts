@@ -129,6 +129,40 @@ describe('<madauth-login> with e-mail & password', () => {
     expect($('h2')!.textContent).toBe('Create account');
   });
 
+  it('K8: tells the user when sign-up or e-mails are not available', async () => {
+    const server = fakeServer();
+    server.emailsDown = true;
+    void openDialog();
+    await settle();
+    await click('[data-action="signup"]');
+
+    await fill({ email: 'new@example.com', password: 'long enough' });
+    await submit('signup');
+
+    expect($('[part="error"]')!.dataset.code).toBe('temporarily_unavailable');
+    expect($('[part="error"]')!.textContent).toContain('E-mail & password sign-up is not available right now. Please try again later.');
+    expect($('h2')!.textContent).toBe('Create account');
+
+    await click('[data-action="back"]');
+    await click('[data-action="forgot"]');
+    await fill({ email: 'grace@example.com' });
+    await submit('forgot');
+    expect($('[part="error"]')!.textContent).toContain('Sending e-mails is not available right now.');
+  });
+
+  it('K8: shows the message of a refused sign-up', async () => {
+    fakeServer().rejectSignUp = 'Only addresses at example.org can sign up.';
+    void openDialog();
+    await settle();
+    await click('[data-action="signup"]');
+
+    await fill({ email: 'new@example.com', password: 'long enough' });
+    await submit('signup');
+
+    expect($('[part="error"]')!.dataset.code).toBe('signup_rejected');
+    expect($('[part="error"]')!.textContent).toContain('Only addresses at example.org can sign up.');
+  });
+
   it('D4: the code from the e-mail confirms the address and signs in', async () => {
     fakeServer();
     const result = openDialog();

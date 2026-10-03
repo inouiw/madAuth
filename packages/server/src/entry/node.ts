@@ -9,7 +9,7 @@ export interface StartOptions extends ConfigOverrides {
 
 /**
  * Starts the madAuth server on Node, listening on PORT (default 8787). Used by the Docker image.
- * Pass `store` or `mailer` to use your own store adapter or mail service.
+ * Pass `store` to use your own store adapter.
  */
 export async function start(opts: StartOptions = {}): Promise<void> {
   const { env = process.env, ...overrides } = opts;

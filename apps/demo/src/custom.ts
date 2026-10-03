@@ -64,6 +64,9 @@ function messageFor(error: MadauthError): string {
       return 'The code is wrong or has expired.';
     case 'link_invalid':
       return 'The link has expired. Please ask for a new e-mail.';
+    case 'temporarily_unavailable':
+      return 'Sending e-mails is not available right now. Please try again later.';
+    // signup_rejected: the message comes from your sign-up check and is shown as it is.
     default:
       return error.message;
   }

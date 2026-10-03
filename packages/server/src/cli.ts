@@ -1,16 +1,18 @@
 import { createInterface } from 'node:readline';
-import { ConfigError, loadConfig } from './config.js';
+import { ConfigError, loadUserStoreConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
-import { checkPasswordPolicy, deriveCodeKey, hashPassword, isValidEmail, normalizeEmail } from './password.js';
+import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
 import { createTablesSql, type SqlDialect } from './store/schema.js';
 import { Users } from './users.js';
+import { generateWebhookSecret } from './webhooks.js';
 
 const usage = `Usage: npx @madauth/server <command>
 
 Commands:
   generate-key                 Print a new private ES256 key to use as MADAUTH_SIGNING_KEY
+  generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
   create-user <email>          Create a user with a password (asks for it), already verified.
-                               Uses DATABASE_URL and the other settings from the environment.
+                               Uses DATABASE_URL and PASSWORD_MIN_LENGTH from the environment.
   schema [--dialect <name>]    Print the SQL that creates madAuth's tables for a custom store adapter.
                                Dialects: postgres (default), mysql, sqlite`;
 
@@ -76,6 +78,9 @@ export async function runCli(
     if (command === 'generate-key') {
       return { output: JSON.stringify(await generateSigningKey()), exitCode: 0 };
     }
+    if (command === 'generate-webhook-secret') {
+      return { output: generateWebhookSecret(), exitCode: 0 };
+    }
     if (command === 'schema') {
       const i = rest.indexOf('--dialect');
       const dialect = (i >= 0 ? rest[i + 1] : 'postgres') as SqlDialect;
@@ -93,12 +98,11 @@ export async function runCli(
 
 async function createUser(email: string | undefined, io: CliIo, env: Record<string, string | undefined>) {
   if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const config = await loadConfig(env);
-  if (!config.password) return { output: 'Set DATABASE_URL to create users.', exitCode: 1 };
+  const { store, minLength } = await loadUserStoreConfig(env);
   const password = await io.askSecret(`Password for ${email}: `);
-  const policy = checkPasswordPolicy(password, config.password.minLength);
+  const policy = checkPasswordPolicy(password, minLength);
   if (policy) return { output: policy, exitCode: 1 };
-  const users = new Users(config.password.store, deriveCodeKey(config.signingKey.d!));
+  const users = new Users(store);
   const user = await users.createPasswordUser({
     email: email.trim(),
     emailNormalized: normalizeEmail(email),

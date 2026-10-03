@@ -38,7 +38,14 @@ Nobody should be able to find out through madAuth whether an address has an acco
 - Signing up with an address that already has a confirmed account sends its owner a "you already have an account" e-mail instead of revealing anything to the person signing up.
 - An address that signed up but never confirmed can sign up again: the latest sign-up sets the password, and only the latest e-mail works. This prevents someone from blocking an address by signing it up first.
 
-One thing is still visible: after five wrong passwords for an address, the answer becomes `too_many_attempts`, which only happens for existing accounts. Per-IP limits in front of madAuth (see below) make this slow to use.
+Two things are still visible:
+
+- After five wrong passwords for an address, the answer becomes `too_many_attempts`, which only happens for existing accounts. Per-IP limits in front of madAuth (see below) make this slow to use.
+- While your [webhook](server.md#webhooks) receiver is down, "send a reset e-mail" and "send the confirmation e-mail again" fail with `temporarily_unavailable` for existing accounts, but answer `202` for unknown addresses, which get no e-mail. Answering `202` for existing accounts too would leave users waiting for an e-mail that never comes. Sign-up is not affected: every sign-up sends an e-mail, so it fails the same way for every address.
+
+## Sign-up check
+
+Your webhook receiver can refuse sign-ups, e.g. to allow only company addresses or to block disposable ones (`signup.before`). It runs before anything is stored, and it fails closed: if the receiver does not answer, nobody can sign up. Its refusal message is shown to the user as it is, so don't put anything in it that the user shouldn't see.
 
 Code: [`packages/server/src/routes/password.ts`](../packages/server/src/routes/password.ts).
 

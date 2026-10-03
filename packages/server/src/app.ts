@@ -9,6 +9,10 @@ import { passwordRoutes } from './routes/password.js';
 import { readToken, signSession, userFromClaims, type SessionClaims } from './tokens.js';
 import { SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 import { Users } from './users.js';
+import { createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
+
+/** How long madAuth waits for an event call; events never make a request fail. */
+export const EVENT_TIMEOUT_MS = 5_000;
 
 export { REDIRECT_ERROR_PARAM } from './routes/google.js';
 
@@ -24,6 +28,10 @@ export interface AppContext {
   startSession(c: Context, user: MadauthUser, amr: string[], extra?: { sv?: number }): Promise<void>;
   /** Present when e-mail & password sign-in is configured. */
   users?: Users;
+  /** Present when WEBHOOK_URL is configured. */
+  webhook?: WebhookClient;
+  /** Tells the webhook that something happened. Awaited (Lambda stops after the answer), but never fails. */
+  emit(type: WebhookType, data: Record<string, unknown>): Promise<void>;
 }
 
 /**
@@ -65,6 +73,12 @@ export function createApp(config: MadauthConfig): Hono {
       });
     },
     users: config.password ? new Users(config.password.store, deriveCodeKey(config.signingKey.d!)) : undefined,
+    webhook: config.webhook ? createWebhookClient(config.webhook, config.webhookFetch) : undefined,
+    async emit(type, data) {
+      if (!this.webhook?.wants(type)) return;
+      const result = await this.webhook.call(type, data, EVENT_TIMEOUT_MS);
+      if (!result.ok) console.error(`[madauth] Webhook "${type}" failed: ${result.reason}`);
+    },
   };
 
   const app = new Hono();
@@ -104,7 +118,7 @@ export function createApp(config: MadauthConfig): Hono {
   );
 
   if (config.google) googleRoutes(app, ctx, config.google);
-  if (config.password && ctx.users) passwordRoutes(app, ctx, config.password, ctx.users);
+  if (config.password && ctx.users && ctx.webhook) passwordRoutes(app, ctx, config.password, ctx.users, ctx.webhook);
 
   // --- Session ---
 

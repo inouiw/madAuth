@@ -45,10 +45,16 @@ export function passwordAccountKey(userId: string): string {
 }
 
 export class Users {
+  /** `codeKey` keys the e-mail codes (see deriveCodeKey); only needed to issue and check them. */
   constructor(
     private readonly store: StoreAdapter,
-    private readonly codeKey: Buffer,
+    private readonly codeKey?: Buffer,
   ) {}
+
+  private get key(): Buffer {
+    if (!this.codeKey) throw new Error('Users needs a code key to issue or check e-mail codes.');
+    return this.codeKey;
+  }
 
   async findByEmail(emailNormalized: string): Promise<StoredUser | null> {
     return (await this.store.findOne('user', { emailNormalized })) as StoredUser | null;
@@ -118,7 +124,7 @@ export class Users {
       id: hashLinkToken(token),
       userId,
       purpose,
-      codeHash: hashCode(this.codeKey, code),
+      codeHash: hashCode(this.key, code),
       attempts: 0,
       expiresAt: Date.now() + ttlMs,
     };
@@ -137,7 +143,7 @@ export class Users {
   async consumeCode(userId: string, purpose: VerificationPurpose, code: string): Promise<string | null> {
     const record = (await this.store.findOne('verification', { userId, purpose })) as StoredVerification | null;
     if (!record) return null;
-    if (!safeEqual(hashCode(this.codeKey, code), record.codeHash)) {
+    if (!safeEqual(hashCode(this.key, code), record.codeHash)) {
       if (record.attempts + 1 >= MAX_CODE_ATTEMPTS) {
         await this.store.delete('verification', { id: record.id });
       } else {

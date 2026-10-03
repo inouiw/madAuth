@@ -80,6 +80,24 @@ describe('Madauth.password', () => {
       { purpose: 'reset', to: 'grace@example.com', redirectTo: 'https://app.example.com/a?b=1' },
       { purpose: 'verify', to: 'new@example.com', redirectTo: 'https://app.example.com/welcome' },
     ]);
+    // The user's language goes along, so the e-mail can be written in it.
+    expect(server.requests.at(-1)!.body).toMatchObject({ locale: navigator.language });
+  });
+
+  it('reports a refused sign-up and e-mails that can not be sent', async () => {
+    const server = fakeServer();
+    await init();
+
+    server.emailsDown = true;
+    expect(await Madauth.password.signUp({ email: 'new@example.com', password: 'long enough' })).toMatchObject({
+      error: { code: 'temporarily_unavailable' },
+    });
+    expect(await Madauth.password.sendResetEmail({ email: 'grace@example.com' })).toMatchObject({ error: { code: 'temporarily_unavailable' } });
+    server.rejectSignUp = 'Company addresses only';
+    expect(await Madauth.password.signUp({ email: 'new@example.com', password: 'long enough' })).toEqual({
+      isSuccess: false,
+      error: { code: 'signup_rejected', message: 'Company addresses only' },
+    });
   });
 
   it('signUp reports an invalid address or a short password', async () => {

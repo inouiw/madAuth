@@ -35,17 +35,21 @@ export interface PasswordApi {
   /**
    * Creates an account and sends an e-mail with a link and a code to confirm the address. Succeeds even if
    * the address is already registered (its owner gets an e-mail instead), so nobody can probe for accounts.
-   * Fails with `invalid_email` or `weak_password`.
+   * Fails with `invalid_email`, `weak_password`, `signup_rejected` (the operator's sign-up check refused; the
+   * message says why) or `temporarily_unavailable` (the e-mail could not be sent).
    */
   signUp(options: SignUpOptions): Promise<Result>;
-  /** Sends the confirmation e-mail again. */
+  /** Sends the confirmation e-mail again. Fails with `temporarily_unavailable` if it could not be sent. */
   sendVerificationEmail(options: SendEmailOptions): Promise<Result>;
   /**
    * Confirms the address with the code from the e-mail and signs in. Fails with `code_invalid`.
    * Links are handled by `Madauth.initialize` when the page opens.
    */
   verifyEmail(options: { email: string; code: string }): Promise<Result<{ user: MadauthUser }>>;
-  /** Sends an e-mail with a link and a code to choose a new password. Succeeds for unknown addresses too. */
+  /**
+   * Sends an e-mail with a link and a code to choose a new password. Succeeds for unknown addresses too.
+   * Fails with `temporarily_unavailable` if it could not be sent.
+   */
   sendResetEmail(options: SendEmailOptions): Promise<Result>;
   /** True when the page was opened from a reset link; then ask for a new password and call {@link confirmReset}. */
   readonly pendingReset: boolean;
@@ -59,6 +63,8 @@ export interface PasswordApi {
 }
 
 const currentPage = () => location.href.split('#')[0];
+/** The user's language, so the webhook can send the e-mail in it. */
+const locale = () => (typeof navigator !== 'undefined' ? navigator.language : undefined);
 
 const notRegistered = () => fail('flow_not_enabled', 'Pass new Password() to Madauth.initialize to use Madauth.password.');
 
@@ -91,12 +97,18 @@ export function createPasswordApi(core: Core): PasswordApi {
     },
 
     async signUp({ email, password, name, redirectTo }) {
-      const result = await call('/auth/password/signup', { email, password, name, redirectTo: redirectTo ?? currentPage() });
+      const result = await call('/auth/password/signup', {
+        email,
+        password,
+        name,
+        redirectTo: redirectTo ?? currentPage(),
+        locale: locale(),
+      });
       return result.isSuccess ? ok() : result;
     },
 
     async sendVerificationEmail({ email, redirectTo }) {
-      const result = await call('/auth/password/send-verification', { email, redirectTo: redirectTo ?? currentPage() });
+      const result = await call('/auth/password/send-verification', { email, redirectTo: redirectTo ?? currentPage(), locale: locale() });
       return result.isSuccess ? ok() : result;
     },
 
@@ -105,7 +117,7 @@ export function createPasswordApi(core: Core): PasswordApi {
     },
 
     async sendResetEmail({ email, redirectTo }) {
-      const result = await call('/auth/password/send-reset', { email, redirectTo: redirectTo ?? currentPage() });
+      const result = await call('/auth/password/send-reset', { email, redirectTo: redirectTo ?? currentPage(), locale: locale() });
       return result.isSuccess ? ok() : result;
     },
 

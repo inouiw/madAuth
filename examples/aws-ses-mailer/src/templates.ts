@@ -1,4 +1,4 @@
-import { createTransport } from 'nodemailer';
+// The e-mails madAuth asks for, as plain text and HTML. Edit the wording here, or use `locale` to translate.
 
 export interface Mail {
   to: string;
@@ -6,30 +6,6 @@ export interface Mail {
   text: string;
   html: string;
 }
-
-/** Sends madAuth's e-mails (verification, password reset). */
-export interface Mailer {
-  send(mail: Mail): Promise<void>;
-}
-
-/** Sends mail through an SMTP server, e.g. `smtps://user:password@smtp.example.com:465`. */
-export function createSmtpMailer(url: string, from: string): Mailer {
-  const transport = createTransport(url);
-  return {
-    async send(mail) {
-      await transport.sendMail({ from, ...mail });
-    },
-  };
-}
-
-/** Prints mails to the console instead of sending them. For development only (`SMTP_URL=console`). */
-export const consoleMailer: Mailer = {
-  async send(mail) {
-    console.log(`[madauth] E-mail to ${mail.to}: ${mail.subject}\n${mail.text}\n`);
-  },
-};
-
-// --- Templates ---
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);

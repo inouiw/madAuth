@@ -38,6 +38,10 @@ export interface FakeServer {
   codeFlow: boolean;
   /** E-mail & password accounts by e-mail address; grace@example.com (verified) exists. */
   accounts: Map<string, FakeAccount>;
+  /** The webhook can't take e-mails over: sign-up and the e-mail requests answer 503. */
+  emailsDown: boolean;
+  /** The sign-up check (signup.before) refuses with this message. */
+  rejectSignUp: string | undefined;
   /** E-mails "sent": what for, to whom and the link's page. */
   mails: { purpose: 'verify' | 'reset' | 'registered'; to: string; redirectTo: unknown }[];
   user: MadauthUser | null;
@@ -57,6 +61,8 @@ export function fakeServer(): FakeServer {
     codeFlow: false,
     accounts: new Map([['grace@example.com', { password: 'correct horse battery', verified: true, name: 'Grace Hopper' }]]),
     mails: [],
+    emailsDown: false,
+    rejectSignUp: undefined,
     user: null,
     verifyError: undefined,
     down: false,
@@ -98,6 +104,8 @@ export function fakeServer(): FakeServer {
         return signedIn(email);
       }
       case 'POST /auth/password/signup':
+        if (server.rejectSignUp) return json({ error: 'signup_rejected', message: server.rejectSignUp }, 403);
+        if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
         if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
         if ((body.password ?? '').length < 8) return json({ error: 'weak_password', message: 'The password must have at least 8 characters.' }, 400);
         if (server.accounts.get(email)?.verified) {
@@ -108,9 +116,11 @@ export function fakeServer(): FakeServer {
         }
         return json({}, 202);
       case 'POST /auth/password/send-verification':
+        if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
         server.mails.push({ purpose: 'verify', to: email, redirectTo: body.redirectTo });
         return json({}, 202);
       case 'POST /auth/password/send-reset':
+        if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
         server.mails.push({ purpose: 'reset', to: email, redirectTo: body.redirectTo });
         return json({}, 202);
       case 'POST /auth/password/verify-email': {

@@ -8,13 +8,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { runCli } from '../cli.js';
 import { createTablesSql, type StoreAdapter } from '../store/schema.js';
 import { createSqliteAdapter } from '../store/sqlite.js';
-import { APP_ORIGIN, CLIENT_ID, passwordApp, post, recordingMailer, signingKey, testApp } from '../test/helpers.js';
+import { APP_ORIGIN, CLIENT_ID, WEBHOOK_SECRET, WEBHOOK_URL, passwordApp, post, signingKey, testApp } from '../test/helpers.js';
 import { handleAzureRequest, parseSetCookie } from './azure-handler.js';
 
 vi.stubEnv('MADAUTH_ISSUER', 'https://auth.example.com');
 vi.stubEnv('MADAUTH_SIGNING_KEY', JSON.stringify(signingKey));
 vi.stubEnv('ALLOWED_ORIGINS', APP_ORIGIN);
 vi.stubEnv('GOOGLE_CLIENT_ID', CLIENT_ID);
+vi.stubEnv('WEBHOOK_URL', WEBHOOK_URL);
+vi.stubEnv('WEBHOOK_SECRET', WEBHOOK_SECRET);
 
 /** A store adapter that records which models are read. */
 function recordingAdapter(): StoreAdapter & { models: string[] } {
@@ -70,7 +72,7 @@ describe('deployment entry points', () => {
   it('A16: a store passed to createHandler is used without DATABASE_URL', async () => {
     const { createHandler } = await import('./lambda.js');
     const store = recordingAdapter();
-    const handler = createHandler({ store, mailer: recordingMailer() });
+    const handler = createHandler({ store });
     const body = JSON.stringify({ email: 'ada@example.com', password: 'whatever pass' });
 
     const res = await handler(
@@ -92,7 +94,7 @@ describe('deployment entry points', () => {
     const { register } = await import('./azure.js');
     const store = recordingAdapter();
 
-    register({ store, mailer: recordingMailer() });
+    register({ store });
     const response = (await registered[0].handler(
       new HttpRequest({
         method: 'POST',
@@ -144,9 +146,9 @@ describe('deployment entry points', () => {
     await expect(new SignJWT({}).setProtectedHeader({ alg: 'ES256' }).sign(key)).resolves.toBeTruthy();
   });
 
-  it('A17: create-user asks for a password and creates a verified user', async () => {
+  it('A17: create-user asks for a password and creates a verified user, without needing the webhook', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
-    const env = { ...process.env, DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}`, SMTP_URL: 'console' };
+    const env = { DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}` };
     const io = { askSecret: async () => 'correct horse battery' };
 
     const created = await runCli(['create-user', 'Ada@Example.com'], io, env);
@@ -157,7 +159,7 @@ describe('deployment entry points', () => {
     expect(duplicate).toMatchObject({ exitCode: 1, output: expect.stringContaining('already exists') });
     expect(short).toMatchObject({ exitCode: 1, output: expect.stringContaining('at least 8') });
     const store = createSqliteAdapter(env.DATABASE_URL.slice('sqlite:'.length));
-    const { app } = passwordApp({ password: { minLength: 8, store, mailer: recordingMailer() } });
+    const { app } = passwordApp({ password: { minLength: 8, store } });
     const res = await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'correct horse battery' });
     expect(res.status).toBe(200);
     rmSync(dir, { recursive: true, force: true });
@@ -167,6 +169,13 @@ describe('deployment entry points', () => {
     expect(await runCli(['schema', '--dialect', 'mysql'])).toEqual({ exitCode: 0, output: createTablesSql('mysql') });
     expect(await runCli(['schema'])).toEqual({ exitCode: 0, output: createTablesSql('postgres') });
     expect(await runCli(['schema', '--dialect', 'oracle'])).toMatchObject({ exitCode: 1 });
+  });
+
+  it('generate-webhook-secret prints a usable secret', async () => {
+    const { output, exitCode } = await runCli(['generate-webhook-secret']);
+
+    expect(exitCode).toBe(0);
+    expect(output).toMatch(/^whsec_[A-Za-z0-9+/]+=*$/);
   });
 
   it('prints usage for unknown commands', async () => {

@@ -1,0 +1,22 @@
+{
+  "name": "@madauth/example-aws-ses-mailer",
+  "private": true,
+  "version": "0.0.0",
+  "description": "A madAuth webhook receiver on AWS Lambda that sends the e-mails with Amazon SES.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@madauth/server": "*"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-sesv2": "^3.1146.0",
+    "@types/aws-lambda": "^8.10.164",
+    "@types/node": "^26.6.4",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

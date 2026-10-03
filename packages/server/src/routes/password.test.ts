@@ -34,17 +34,20 @@ function advance(ms: number) {
 
 describe('sign-up and e-mail verification', () => {
   it('A1: sends a link to redirectTo and a code, and stores only their hashes', async () => {
-    const { app, mailer, store } = passwordApp();
+    const { app, hook, store } = passwordApp();
 
     const res = await signUp(app);
 
     expect(res.status).toBe(202);
-    expect(mailer.sent).toHaveLength(1);
-    const mail = mailer.sent[0];
-    expect(mail).toMatchObject({ to: 'grace@example.com', subject: expect.stringContaining('app.example.com') });
+    expect(hook.emails()).toHaveLength(1);
+    const mail = hook.emails()[0];
+    expect(mail).toMatchObject({
+      type: 'email.verify',
+      data: { to: 'grace@example.com', site: 'app.example.com', user: { name: 'Grace Hopper' }, expiresAt: expect.any(Number) },
+    });
     const { link, token, code } = linkAndCode(mail);
     expect(link.startsWith(`${REDIRECT_TO}#madauth_verify=`)).toBe(true);
-    expect(mail.html).toContain(link);
+    expect(code).toMatch(/^\d{6}$/);
 
     const records = await store.findMany('verification', {});
     expect(records).toHaveLength(1);
@@ -54,26 +57,26 @@ describe('sign-up and e-mail verification', () => {
   });
 
   it('A2: answers the same for an existing account and mails its owner instead', async () => {
-    const { app, mailer } = passwordApp();
-    await signUpVerified(app, mailer);
+    const { app, hook } = passwordApp();
+    await signUpVerified(app, hook);
     advance(61_000);
 
     const res = await signUp(app, { password: 'another password' });
 
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({});
-    expect(mailer.last()!.subject).toMatch(/already have an account/);
+    expect(hook.lastEmail()).toMatchObject({ type: 'email.already_registered', data: { to: 'grace@example.com', link: REDIRECT_TO } });
     // The existing password still works; the new one doesn't.
     expect((await signIn(app)).status).toBe(200);
     expect((await signIn(app, { password: 'another password' })).status).toBe(401);
   });
 
   it('rejects an invalid e-mail address or a short password', async () => {
-    const { app, mailer } = passwordApp();
+    const { app, hook } = passwordApp();
 
     expect(await (await signUp(app, { email: 'nope' })).json()).toMatchObject({ error: 'invalid_email' });
     expect(await (await signUp(app, { password: 'short' })).json()).toMatchObject({ error: 'weak_password' });
-    expect(mailer.sent).toHaveLength(0);
+    expect(hook.emails()).toHaveLength(0);
   });
 
   it('A3: an unverified account can not sign in', async () => {
@@ -88,9 +91,9 @@ describe('sign-up and e-mail verification', () => {
   });
 
   it('A4: the link signs in once, with a madAuth session for the password method', async () => {
-    const { app, mailer } = passwordApp();
+    const { app, hook } = passwordApp();
     await signUp(app);
-    const { token } = linkAndCode(mailer.last());
+    const { token } = linkAndCode(hook.lastEmail());
 
     const res = await post(app, '/auth/password/verify-email', { token });
 
@@ -106,9 +109,9 @@ describe('sign-up and e-mail verification', () => {
   });
 
   it('A4: the code signs in as well, once', async () => {
-    const { app, mailer } = passwordApp();
+    const { app, hook } = passwordApp();
     await signUp(app);
-    const { code } = linkAndCode(mailer.last());
+    const { code } = linkAndCode(hook.lastEmail());
 
     const res = await post(app, '/auth/password/verify-email', { email: 'Grace@Example.com', code: `${code.slice(0, 3)} ${code.slice(3)}` });
 
@@ -120,32 +123,32 @@ describe('sign-up and e-mail verification', () => {
   });
 
   it('sends the verification e-mail again on request, but not for verified accounts', async () => {
-    const { app, mailer } = passwordApp();
+    const { app, hook } = passwordApp();
     await signUp(app);
     advance(61_000);
 
     await post(app, '/auth/password/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
 
-    expect(mailer.sent).toHaveLength(2);
-    expect(linkAndCode(mailer.sent[1]).token).not.toBe(linkAndCode(mailer.sent[0]).token);
-    await post(app, '/auth/password/verify-email', { token: linkAndCode(mailer.last()).token });
+    expect(hook.emails()).toHaveLength(2);
+    expect(linkAndCode(hook.emails()[1]).token).not.toBe(linkAndCode(hook.emails()[0]).token);
+    await post(app, '/auth/password/verify-email', { token: linkAndCode(hook.lastEmail()).token });
     advance(122_000);
     const res = await post(app, '/auth/password/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
     expect(res.status).toBe(202);
-    expect(mailer.sent).toHaveLength(2);
+    expect(hook.emails()).toHaveLength(2);
   });
 
   it('an unconfirmed sign-up can be repeated; the latest password and e-mail count', async () => {
-    const { app, mailer } = passwordApp();
+    const { app, hook } = passwordApp();
     await signUp(app, { password: 'first password' });
-    const first = linkAndCode(mailer.last());
+    const first = linkAndCode(hook.lastEmail());
     advance(61_000);
 
     await signUp(app, { password: 'second password' });
 
-    expect(mailer.sent).toHaveLength(2);
+    expect(hook.emails()).toHaveLength(2);
     expect((await post(app, '/auth/password/verify-email', { token: first.token })).status).toBe(400);
-    await post(app, '/auth/password/verify-email', { token: linkAndCode(mailer.last()).token });
+    await post(app, '/auth/password/verify-email', { token: linkAndCode(hook.lastEmail()).token });
     expect((await signIn(app, { password: 'second password' })).status).toBe(200);
     expect((await signIn(app, { password: 'first password' })).status).toBe(401);
   });
@@ -153,8 +156,8 @@ describe('sign-up and e-mail verification', () => {
 
 describe('sign-in', () => {
   it('A5: answers the same for a wrong password and an unknown e-mail, and hashes in both cases', async () => {
-    const { app, mailer } = passwordApp();
-    await signUpVerified(app, mailer);
+    const { app, hook } = passwordApp();
+    await signUpVerified(app, hook);
     const dummy = vi.spyOn(passwordModule, 'verifyAgainstDummy');
 
     const wrongPassword = await signIn(app, { password: 'wrong password' });
@@ -167,8 +170,8 @@ describe('sign-in', () => {
   });
 
   it('A6: makes further attempts wait after 5 failures, then resets the count on success', async () => {
-    const { app, mailer } = passwordApp();
-    await signUpVerified(app, mailer);
+    const { app, hook } = passwordApp();
+    await signUpVerified(app, hook);
 
     for (let i = 0; i < 5; i++) expect((await signIn(app, { password: 'wrong password' })).status).toBe(401);
     const locked = await signIn(app);
@@ -183,8 +186,8 @@ describe('sign-in', () => {
   });
 
   it('A6: the wait doubles with every further failure, up to 15 minutes', async () => {
-    const { app, mailer, store } = passwordApp();
-    await signUpVerified(app, mailer);
+    const { app, hook, store } = passwordApp();
+    await signUpVerified(app, hook);
     await store.update('account', {}, { failedAttempts: 30 });
 
     const before = Date.now();
@@ -196,8 +199,8 @@ describe('sign-in', () => {
   });
 
   it('P2: replaces a hash with older parameters after a successful sign-in', async () => {
-    const { app, mailer, store } = passwordApp();
-    await signUpVerified(app, mailer);
+    const { app, hook, store } = passwordApp();
+    await signUpVerified(app, hook);
     await store.update('account', {}, { secret: await hashPassword(grace.password, { logN: 14, r: 8, p: 1 }) });
 
     expect((await signIn(app)).status).toBe(200);
@@ -220,12 +223,12 @@ describe('sign-in', () => {
 
 describe('password reset', () => {
   it('A7: resets with the link, signs in and ends older sessions', async () => {
-    const { app, mailer } = passwordApp();
-    const oldSession = await signUpVerified(app, mailer);
+    const { app, hook } = passwordApp();
+    const oldSession = await signUpVerified(app, hook);
     advance(61_000);
 
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    const { link, token } = linkAndCode(mailer.last());
+    const { link, token } = linkAndCode(hook.lastEmail());
     expect(link.startsWith(`${REDIRECT_TO}#madauth_reset=`)).toBe(true);
     const res = await post(app, '/auth/password/reset', { token, password: 'new password!' });
 
@@ -243,11 +246,11 @@ describe('password reset', () => {
   });
 
   it('A7: resets with the code, and also confirms an unverified e-mail address', async () => {
-    const { app, mailer } = passwordApp();
+    const { app, hook } = passwordApp();
     await signUp(app);
     advance(61_000);
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    const { code } = linkAndCode(mailer.last());
+    const { code } = linkAndCode(hook.lastEmail());
 
     const res = await post(app, '/auth/password/reset', { email: grace.email, code, password: 'new password!' });
 
@@ -256,25 +259,25 @@ describe('password reset', () => {
   });
 
   it('a weak new password does not use up the link', async () => {
-    const { app, mailer } = passwordApp();
-    await signUpVerified(app, mailer);
+    const { app, hook } = passwordApp();
+    await signUpVerified(app, hook);
     advance(61_000);
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    const { token } = linkAndCode(mailer.last());
+    const { token } = linkAndCode(hook.lastEmail());
 
     expect(await (await post(app, '/auth/password/reset', { token, password: 'short' })).json()).toMatchObject({ error: 'weak_password' });
     expect((await post(app, '/auth/password/reset', { token, password: 'long enough' })).status).toBe(200);
   });
 
   it('A8: links and codes expire', async () => {
-    const { app, mailer } = passwordApp();
+    const { app, hook } = passwordApp();
     await signUp(app);
-    const verify = linkAndCode(mailer.last());
+    const verify = linkAndCode(hook.lastEmail());
     advance(VERIFY_TTL_MS + 60_000);
     expect(await (await post(app, '/auth/password/verify-email', { token: verify.token })).json()).toMatchObject({ error: 'link_invalid' });
 
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    const reset = linkAndCode(mailer.last());
+    const reset = linkAndCode(hook.lastEmail());
     advance(VERIFY_TTL_MS + 60_000 + RESET_TTL_MS + 60_000);
     expect(await (await post(app, '/auth/password/reset', { email: grace.email, code: reset.code, password: 'new password!' })).json()).toMatchObject({
       error: 'code_invalid',
@@ -282,20 +285,20 @@ describe('password reset', () => {
   });
 
   it('A9: only sends links to allowed pages', async () => {
-    const { app, mailer } = passwordApp();
-    await signUpVerified(app, mailer);
+    const { app, hook } = passwordApp();
+    await signUpVerified(app, hook);
     advance(61_000);
 
     const res = await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: 'https://evil.example/x' });
 
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'invalid_options' });
-    expect(mailer.sent).toHaveLength(1);
+    expect(hook.emails()).toHaveLength(1);
   });
 
   it('A10: sends at most one e-mail per minute and account, and answers the same', async () => {
-    const { app, mailer } = passwordApp();
-    await signUpVerified(app, mailer);
+    const { app, hook } = passwordApp();
+    await signUpVerified(app, hook);
     advance(61_000);
 
     const first = await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
@@ -303,15 +306,15 @@ describe('password reset', () => {
     const unknown = await post(app, '/auth/password/send-reset', { email: 'nobody@example.com', redirectTo: REDIRECT_TO });
 
     expect([first.status, second.status, unknown.status]).toEqual([202, 202, 202]);
-    expect(mailer.sent.filter((m) => m.subject.startsWith('Reset'))).toHaveLength(1);
+    expect(hook.emails().filter((m) => m.type === 'email.reset')).toHaveLength(1);
   });
 
   it('A11: a code stops working after 5 wrong attempts', async () => {
-    const { app, mailer } = passwordApp();
-    await signUpVerified(app, mailer);
+    const { app, hook } = passwordApp();
+    await signUpVerified(app, hook);
     advance(61_000);
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    const { code, token } = linkAndCode(mailer.last());
+    const { code, token } = linkAndCode(hook.lastEmail());
     const wrong = code === '000000' ? '111111' : '000000';
 
     for (let i = 0; i < 5; i++) {
@@ -324,14 +327,14 @@ describe('password reset', () => {
   });
 
   it('A12: a new e-mail replaces the earlier link and code', async () => {
-    const { app, mailer } = passwordApp();
-    await signUpVerified(app, mailer);
+    const { app, hook } = passwordApp();
+    await signUpVerified(app, hook);
     advance(61_000);
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    const first = linkAndCode(mailer.last());
+    const first = linkAndCode(hook.lastEmail());
     advance(122_000);
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    const second = linkAndCode(mailer.last());
+    const second = linkAndCode(hook.lastEmail());
 
     expect((await post(app, '/auth/password/reset', { token: first.token, password: 'new password!' })).status).toBe(400);
     expect((await post(app, '/auth/password/reset', { email: grace.email, code: first.code, password: 'new password!' })).status).toBe(400);

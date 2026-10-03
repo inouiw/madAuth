@@ -23,6 +23,8 @@ const errorCodes = [
   'too_many_attempts',
   'link_invalid',
   'code_invalid',
+  'temporarily_unavailable',
+  'signup_rejected',
   'unknown',
 ] as const;
 

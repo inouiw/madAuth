@@ -28,19 +28,25 @@ Install dependencies:
 npm install
 ```
 
-Create the server's configuration from the example. It uses a Google client that already allows `http://localhost:3000`, stores e-mail & password users in `packages/server/madauth.db` and prints e-mails (with their links and codes) to the server's log:
+Create the server's configuration from the example. It uses a Google client that already allows `http://localhost:3000`, stores e-mail & password users in `packages/server/madauth.db`, and hands e-mails to a development webhook receiver that prints them:
 
 ```bash
 cp packages/server/.env.example packages/server/.env
 ```
 
-Start the madAuth server. The first start prints a signing key; copy it into `packages/server/.env` as `MADAUTH_SIGNING_KEY` and start again:
+Start the madAuth server. The first start prints a signing key, then a webhook secret; copy each into `packages/server/.env` (`MADAUTH_SIGNING_KEY`, `WEBHOOK_SECRET`) and start again:
 
 ```bash
 npm run dev:server
 ```
 
-In a second terminal, start the demo at http://localhost:3000 (it proxies `/auth` to the server). http://localhost:3000/custom.html shows a custom login screen built with the same library:
+In a second terminal, start the webhook receiver. The confirmation and reset e-mails appear there, with their links and codes:
+
+```bash
+npm run dev:webhooks
+```
+
+In a third terminal, start the demo at http://localhost:3000 (it proxies `/auth` to the server). http://localhost:3000/custom.html shows a custom login screen built with the same library:
 
 ```bash
 npm run dev
@@ -82,7 +88,7 @@ signInButton.onclick = () => Madauth.signIn();
 See [Running the madAuth server](docs/server.md) for:
 - the configuration
 - Google Cloud Console setup
-- e-mail & password sign-in: the database and sending e-mails
+- e-mail & password sign-in: the database, and webhooks for sending e-mails (with an [Amazon SES example](examples/aws-ses-mailer)), checking sign-ups and receiving events
 - Docker, AWS Lambda and Azure Functions
 - storing users in your own database (custom store adapter)
 - verifying the session in your own backend

@@ -6,8 +6,8 @@ export type LambdaHandler = (event: LambdaEvent, context: LambdaContext) => Retu
 
 /**
  * Creates an AWS Lambda handler (Function URL, API Gateway v1/v2 or ALB). It reads the configuration from
- * the function's environment variables on the first invocation. Pass `store` or `mailer` to use your own
- * store adapter or mail service.
+ * the function's environment variables on the first invocation. Pass `store` to use your own store
+ * adapter.
  */
 export function createHandler(overrides: ConfigOverrides = {}): LambdaHandler {
   let handlerPromise: Promise<ReturnType<typeof handle>> | undefined;

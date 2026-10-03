@@ -1,7 +1,7 @@
 import type { JWK, JWTVerifyGetKey } from 'jose';
 import { assertPrivateSigningJwk, generateSigningKey } from './keys.js';
-import { consoleMailer, createSmtpMailer, type Mailer } from './mail.js';
 import type { StoreAdapter } from './store/schema.js';
+import { WEBHOOK_TYPES, checkWebhookSecret, generateWebhookSecret, type WebhookSettings } from './webhooks.js';
 
 export interface MadauthConfig {
   /** Public base URL of the server (MADAUTH_ISSUER). */
@@ -26,10 +26,13 @@ export interface MadauthConfig {
     /** PASSWORD_MIN_LENGTH. */
     minLength: number;
     store: StoreAdapter;
-    mailer: Mailer;
   };
+  /** Where madAuth sends e-mails, sign-up checks and events (WEBHOOK_URL); required for password sign-in. */
+  webhook?: WebhookSettings;
   /** Test hook: resolves Google's signing keys. Defaults to Google's published JWKS. */
   jwksResolver?: JWTVerifyGetKey;
+  /** Test hook: the fetch used for webhook calls. */
+  webhookFetch?: typeof fetch;
 }
 
 /** Every environment variable read by {@link loadConfig}, with whether it is required. */
@@ -40,19 +43,18 @@ export const envVars = {
   GOOGLE_CLIENT_ID: false,
   GOOGLE_CLIENT_SECRET: false,
   DATABASE_URL: false,
-  SMTP_URL: false,
-  MAIL_FROM: false,
   PASSWORD_MIN_LENGTH: false,
+  WEBHOOK_URL: false,
+  WEBHOOK_SECRET: false,
+  WEBHOOK_EVENTS: false,
   SESSION_TTL: false,
   COOKIE_DOMAIN: false,
 } as const;
 
-/** Instead of environment variables: your own store adapter or mailer. */
+/** Instead of environment variables: your own store adapter. */
 export interface ConfigOverrides {
   /** Stores users; replaces DATABASE_URL. */
   store?: StoreAdapter;
-  /** Sends e-mails; replaces SMTP_URL and MAIL_FROM. */
-  mailer?: Mailer;
 }
 
 const DEFAULT_SESSION_TTL = 8 * 60 * 60;
@@ -124,16 +126,19 @@ export async function loadConfig(
     throw new ConfigError(`GOOGLE_CLIENT_ID must end with ".apps.googleusercontent.com" but is "${clientId}".`);
   }
 
+  const webhook = webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_EVENTS'));
+
   const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
   let password: MadauthConfig['password'];
   if (store) {
-    const mailer = overrides.mailer ?? mailerFromEnv(read('SMTP_URL'), read('MAIL_FROM'));
-    const minValue = read('PASSWORD_MIN_LENGTH');
-    const minLength = minValue ? Number(minValue) : DEFAULT_PASSWORD_MIN_LENGTH;
-    if (!Number.isInteger(minLength) || minLength < 1 || minLength > 128) {
-      throw new ConfigError(`PASSWORD_MIN_LENGTH must be a whole number from 1 to 128 but is "${minValue}".`);
+    if (!webhook) {
+      throw new ConfigError(
+        'WEBHOOK_URL is not set. E-mail & password sign-in sends its e-mails through your webhook. For ' +
+          'development, run the example receiver (npm run dev:webhooks) and set ' +
+          'WEBHOOK_URL=http://localhost:8790/webhook. See "Webhooks" in docs/server.md.',
+      );
     }
-    password = { minLength, store, mailer };
+    password = { minLength: passwordMinLength(read('PASSWORD_MIN_LENGTH')), store };
   }
 
   if (!clientId && !password) {
@@ -157,7 +162,27 @@ export async function loadConfig(
     cookieDomain: read('COOKIE_DOMAIN'),
     google: clientId ? { clientId, clientSecret: read('GOOGLE_CLIENT_SECRET') } : undefined,
     password,
+    webhook,
   };
+}
+
+/**
+ * Only the settings needed to manage users from the command line (DATABASE_URL, PASSWORD_MIN_LENGTH), so
+ * `create-user` works without a running webhook receiver.
+ */
+export async function loadUserStoreConfig(env: Record<string, string | undefined>): Promise<NonNullable<MadauthConfig['password']>> {
+  const read = (name: string) => env[name]?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
+  const store = await storeFromDatabaseUrl(read('DATABASE_URL'));
+  if (!store) throw new ConfigError('Set DATABASE_URL to manage users.');
+  return { store, minLength: passwordMinLength(read('PASSWORD_MIN_LENGTH')) };
+}
+
+function passwordMinLength(value: string | undefined): number {
+  const minLength = value ? Number(value) : DEFAULT_PASSWORD_MIN_LENGTH;
+  if (!Number.isInteger(minLength) || minLength < 1 || minLength > 128) {
+    throw new ConfigError(`PASSWORD_MIN_LENGTH must be a whole number from 1 to 128 but is "${value}".`);
+  }
+  return minLength;
 }
 
 /** `DATABASE_URL=sqlite:<path>` creates the built-in SQLite adapter, just as passing it as `store` would. */
@@ -179,15 +204,45 @@ async function storeFromDatabaseUrl(url: string | undefined): Promise<StoreAdapt
   }
 }
 
-function mailerFromEnv(url: string | undefined, from: string | undefined): Mailer {
+/** Hosts that may be called over plain http, e.g. a receiver on the developer's machine. */
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'];
+
+function webhookFromEnv(
+  url: string | undefined,
+  secret: string | undefined,
+  events: string | undefined,
+): WebhookSettings | undefined {
   if (!url) {
+    if (secret || events) throw new ConfigError('WEBHOOK_SECRET and WEBHOOK_EVENTS need WEBHOOK_URL.');
+    return undefined;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ConfigError(`WEBHOOK_URL: "${url}" is not a URL.`);
+  }
+  // The calls carry e-mail links and codes, so they must be encrypted unless they stay on this machine.
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && LOCAL_HOSTS.includes(parsed.hostname))) {
+    throw new ConfigError(`WEBHOOK_URL must be an https URL (http only for localhost) but is "${url}".`);
+  }
+  if (!secret) {
     throw new ConfigError(
-      'SMTP_URL is not set. E-mail & password sign-in sends e-mails: set SMTP_URL (e.g. ' +
-        'smtps://user:password@smtp.example.com:465), or SMTP_URL=console to print them during development.',
+      'WEBHOOK_SECRET is not set. Here is a newly generated secret you can use (keep it secret; your ' +
+        `webhook receiver needs the same one):\n\nWEBHOOK_SECRET=${generateWebhookSecret()}\n`,
     );
   }
-  if (url === 'console') return consoleMailer;
-  if (!/^smtps?:\/\//.test(url)) throw new ConfigError('SMTP_URL must start with smtp:// or smtps://, or be "console".');
-  if (!from) throw new ConfigError('MAIL_FROM is not set, e.g. MAIL_FROM="Example" <no-reply@example.com>');
-  return createSmtpMailer(url, from);
+  const problem = checkWebhookSecret(secret);
+  if (problem) {
+    throw new ConfigError(`WEBHOOK_SECRET ${problem}. Generate one with: npx @madauth/server generate-webhook-secret`);
+  }
+  let selected: Set<string> | null = null;
+  if (events) {
+    selected = new Set(events.split(',').map((e) => e.trim()).filter(Boolean));
+    const unknown = [...selected].filter((e) => !(WEBHOOK_TYPES as readonly string[]).includes(e));
+    if (unknown.length) {
+      throw new ConfigError(`WEBHOOK_EVENTS: unknown type ${unknown.join(', ')}. Known types: ${WEBHOOK_TYPES.join(', ')}.`);
+    }
+  }
+  return { url: parsed.href, secret, events: selected };
 }

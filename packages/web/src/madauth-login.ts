@@ -28,10 +28,15 @@ const errorTexts: Partial<Record<MadauthErrorCode, string>> = {
 const defaultErrorText = 'Sign-in is not available right now.';
 
 /** Errors whose server message is written for the user (it contains the details, e.g. the minimum length). */
-const userFacingMessages: MadauthErrorCode[] = ['weak_password', 'too_many_attempts'];
+const userFacingMessages: MadauthErrorCode[] = ['weak_password', 'too_many_attempts', 'signup_rejected'];
 
-function errorText(error: MadauthError, method?: LoginMethodId): string {
+function errorText(error: MadauthError, method?: LoginMethodId, view?: View): string {
   if (userFacingMessages.includes(error.code)) return error.message;
+  if (error.code === 'temporarily_unavailable') {
+    return view === 'signup'
+      ? 'E-mail & password sign-up is not available right now. Please try again later.'
+      : 'Sending e-mails is not available right now. Please try again later.';
+  }
   if (error.code === 'email_unverified' && method === 'password') {
     return 'Please confirm your e-mail address first: open the link in the e-mail we sent you.';
   }
@@ -401,7 +406,7 @@ export class MadauthLogin extends LitElement {
       <div class="notice error" part="error" role="alert" data-code=${error.code}>
         ${infoIcon}
         <span>
-          ${errorText(error, error.method)}
+          ${errorText(error, error.method, this.view)}
           ${resend
             ? html`<button class="link" part="link" type="button" data-action="resend-verification" ?disabled=${this.busy}
                 @click=${() => this.resend('verify')}>Send the e-mail again</button>`
