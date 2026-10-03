@@ -197,9 +197,14 @@ export async function loadConfig(
  * `create-user` works without a running webhook receiver.
  */
 export async function loadUserStoreConfig(env: Record<string, string | undefined>): Promise<NonNullable<MadauthConfig['password']>> {
+  return { store: await loadStore(env), minLength: passwordMinLength(readEnv(env, 'PASSWORD_MIN_LENGTH')) };
+}
+
+/** Only the store from DATABASE_URL, e.g. to manage roles from the command line. */
+export async function loadStore(env: Record<string, string | undefined>): Promise<StoreAdapter> {
   const store = await storeFromDatabaseUrl(readEnv(env, 'DATABASE_URL'));
   if (!store) throw new ConfigError('Set DATABASE_URL to manage users.');
-  return { store, minLength: passwordMinLength(readEnv(env, 'PASSWORD_MIN_LENGTH')) };
+  return store;
 }
 
 function passwordMinLength(value: string | undefined): number {

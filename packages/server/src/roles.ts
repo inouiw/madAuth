@@ -33,7 +33,7 @@ export class Roles {
   /** The address's roles, sorted; empty if it has none. */
   async get(emailNormalized: string): Promise<string[]> {
     const record = await this.store.findOne('role', { id: emailNormalized });
-    return typeof record?.roles === 'string' && record.roles ? record.roles.split(' ') : [];
+    return typeof record?.roles === 'string' && record.roles ? record.roles.split(' ').filter(Boolean) : [];
   }
 
   /** Replaces the address's roles. `updatedBy` is the address of the admin, or null for the command line. */

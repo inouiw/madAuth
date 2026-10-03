@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 import { parseArgs, parseEnv } from 'node:util';
-import { loadConfig, loadUserStoreConfig } from './config.js';
+import { loadConfig, loadStore, loadUserStoreConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
 import { Roles, parseRoles } from './roles.js';
@@ -378,7 +378,7 @@ function nextSteps(file: string, origin: string, google: 'GoogleFedcm' | 'Google
 
 async function roles(command: 'set-roles' | 'get-roles', email: string | undefined, names: string[], env: Env) {
   if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const { store } = await loadUserStoreConfig(env);
+  const store = await loadStore(env);
   const address = normalizeEmail(email);
   const assignments = new Roles(store);
   if (command === 'set-roles') {
