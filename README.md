@@ -104,7 +104,7 @@ signInButton.onclick = () => Madauth.signIn();
 See [Running the madAuth server](docs/server.md) for:
 - the configuration
 - Google Cloud Console setup
-- e-mail & password sign-in: the database, and webhooks for sending e-mails (with an [Amazon SES example](examples/aws-ses-mailer)), checking sign-ups and receiving events
+- e-mail & password sign-in: the database (SQLite or Amazon DynamoDB), and webhooks for sending e-mails (with an [Amazon SES example](examples/aws-ses-mailer)), checking sign-ups and receiving events
 - Docker, AWS Lambda and Azure Functions
 - storing users in your own database (custom store adapter)
 - verifying the session in your own backend

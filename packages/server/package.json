@@ -23,7 +23,8 @@
     "jwt",
     "hono",
     "aws-lambda",
-    "azure-functions"
+    "azure-functions",
+    "dynamodb"
   ],
   "type": "module",
   "engines": {
@@ -43,6 +44,10 @@
     "./sqlite": {
       "types": "./dist/store/sqlite.d.ts",
       "import": "./dist/sqlite.js"
+    },
+    "./dynamodb": {
+      "types": "./dist/store/dynamodb.d.ts",
+      "import": "./dist/dynamodb.js"
     },
     "./testing": {
       "types": "./dist/testing.d.ts",
@@ -87,14 +92,19 @@
     "jose": "^6.2.12"
   },
   "peerDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.0.0",
     "@azure/functions": "^4.0.0"
   },
   "peerDependenciesMeta": {
+    "@aws-sdk/client-dynamodb": {
+      "optional": true
+    },
     "@azure/functions": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1146.0",
     "@azure/functions": "^4.16.5",
     "@types/aws-lambda": "^8.10.164",
     "@types/node": "^26.6.4",

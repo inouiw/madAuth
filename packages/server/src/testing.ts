@@ -28,8 +28,22 @@ function testUser(overrides: Row = {}): Row {
   };
 }
 
-function testVerification(userId: string): Row {
-  return { id: unique('ver'), userId, purpose: 'reset', codeHash: 'h', attempts: 0, expiresAt: 1_700_000_000_000 };
+function testAccount(overrides: Row = {}): Row {
+  const id = unique('acc_contract');
+  return {
+    id,
+    userId: unique('usr_contract'),
+    key: `password:${id}`,
+    secret: 'hash',
+    failedAttempts: 0,
+    lockedUntil: 0,
+    createdAt: 1_700_000_000_000,
+    ...overrides,
+  };
+}
+
+function testVerification(userId: string, purpose = 'reset'): Row {
+  return { id: unique('ver'), userId, purpose, codeHash: 'h', attempts: 0, expiresAt: 1_700_000_000_000 };
 }
 
 /**
@@ -136,6 +150,66 @@ export function storeAdapterContract(t: ContractRunner, createAdapter: () => Sto
       const counts = await Promise.all(Array.from({ length: 10 }, () => store.delete('verification', { id: record.id })));
 
       expect(counts.reduce((sum, n) => sum + n, 0)).toBe(1);
+    });
+
+    it('finds a record by a unique field other than its id', async () => {
+      const store = await createAdapter();
+      const account = testAccount();
+      await store.create('account', account);
+
+      expect(await store.findOne('account', { key: account.key })).toEqual(account);
+      expect(await store.findOne('account', { key: unique('password:missing') })).toBe(null);
+    });
+
+    it('sets a field to a value and to null', async () => {
+      const store = await createAdapter();
+      const user = testUser({ name: 'Ada' });
+      await store.create('user', user);
+
+      expect(await store.update('user', { id: user.id }, { name: 'Grace' })).toBe(1);
+      expect((await store.findOne('user', { id: user.id }))?.name).toBe('Grace');
+
+      expect(await store.update('user', { id: user.id }, { name: null })).toBe(1);
+      expect(await store.findOne('user', { id: user.id })).toEqual({ ...user, name: null });
+    });
+
+    it('updates a record only while it still matches every field of the filter', async () => {
+      const store = await createAdapter();
+      const account = testAccount();
+      await store.create('account', account);
+      const unchanged = { id: account.id, failedAttempts: 0 };
+
+      expect(await store.update('account', unchanged, { failedAttempts: 1, lockedUntil: 5 })).toBe(1);
+      expect(await store.update('account', unchanged, { failedAttempts: 1, lockedUntil: 9 })).toBe(0);
+
+      expect(await store.findOne('account', { id: account.id })).toEqual({ ...account, failedAttempts: 1, lockedUntil: 5 });
+    });
+
+    it('applies only one of several concurrent updates with the same filter', async () => {
+      const store = await createAdapter();
+      const account = testAccount();
+      await store.create('account', account);
+
+      const counts = await Promise.all(
+        Array.from({ length: 10 }, () => store.update('account', { id: account.id, failedAttempts: 0 }, { failedAttempts: 1 })),
+      );
+
+      expect(counts.reduce((sum, n) => sum + n, 0)).toBe(1);
+    });
+
+    it('deletes every record that matches an indexed field', async () => {
+      const store = await createAdapter();
+      const userId = unique('usr_contract');
+      const other = testVerification(unique('usr_contract'));
+      for (const purpose of ['verify', 'reset', 'reset']) await store.create('verification', testVerification(userId, purpose));
+      await store.create('verification', other);
+
+      expect(await store.delete('verification', { userId, purpose: 'verify' })).toBe(1);
+      expect((await store.findMany('verification', { userId })).length).toBe(2);
+
+      expect(await store.delete('verification', { userId })).toBe(2);
+      expect(await store.findMany('verification', { userId })).toEqual([]);
+      expect(await store.findOne('verification', { id: other.id })).toEqual(other);
     });
   });
 }

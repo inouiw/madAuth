@@ -38,6 +38,7 @@ The package also contains self-contained bundles for AWS Lambda (`dist/standalon
 | `@madauth/server/verify` | verify a madAuth session in your own backend |
 | `@madauth/server/webhook` | verify webhook calls in your receiver |
 | `@madauth/server/sqlite` | the SQLite store |
+| `@madauth/server/dynamodb` | the Amazon DynamoDB store |
 | `@madauth/server/node`, `/lambda`, `/azure` | hosting entry points |
 | `@madauth/server/testing` | a contract test suite for custom store adapters |
 

@@ -2,7 +2,7 @@
 
 `@madauth/server` signs users in with Google or with e-mail & password, and issues the madAuth session. You can run it as a Docker container, an AWS Lambda function or an Azure Function.
 
-Google sign-in needs no database. E-mail & password sign-in stores its users through a [store adapter](#custom-store-adapter): SQLite is built in, and other databases need a small adapter of your own.
+Google sign-in needs no database. E-mail & password sign-in stores its users through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own.
 
 ## How it works
 
@@ -25,7 +25,7 @@ All settings are environment variables.
 | `ALLOWED_ORIGINS` | yes | Comma-separated origins of your apps, e.g. `https://app.example.com`. Only these may call the server or be redirected back to. |
 | `GOOGLE_CLIENT_ID` | for Google | OAuth client ID of type "Web application", ending in `.apps.googleusercontent.com`. Turns on Google sign-in. |
 | `GOOGLE_CLIENT_SECRET` | no | Client secret of the same client. Enables the server-side redirect flow (`GoogleRedirect`); without it those routes return 404. |
-| `DATABASE_URL` | for e-mail & password | `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`. Turns on e-mail & password sign-in. For other databases pass your own [store adapter](#custom-store-adapter) instead. |
+| `DATABASE_URL` | for e-mail & password | `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). Turns on e-mail & password sign-in. For other databases pass your own [store adapter](#custom-store-adapter) instead. |
 | `WEBHOOK_URL` | for e-mail & password | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
 | `WEBHOOK_EVENTS` | no | Comma-separated [types](#webhooks) to send besides the e-mails, e.g. `signup.before,user.created`. Default: all. |
@@ -53,7 +53,7 @@ npx @madauth/server generate-key
 
 ## E-mail & password sign-in
 
-Set `DATABASE_URL`, `WEBHOOK_URL` and `WEBHOOK_SECRET`. Users are stored in the SQLite file; with Docker, keep it on a volume (the `docker-compose.yml` does this).
+Set `DATABASE_URL`, `WEBHOOK_URL` and `WEBHOOK_SECRET`. With `sqlite:<path>`, users are stored in that SQLite file; with Docker, keep it on a volume (the `docker-compose.yml` does this). With `dynamodb:<table>`, they are stored in a [DynamoDB table](#dynamodb).
 
 madAuth does not send e-mails itself: it hands each one to your [webhook](#webhooks) receiver. There are three: the address confirmation, the password reset, and a note to the owner when someone tries to sign up with an address that already has an account. The confirmation and reset e-mails contain a link to the app page that asked for them (its origin must be in `ALLOWED_ORIGINS`) and a 6-digit code, for when the e-mail is read on another device.
 
@@ -70,6 +70,47 @@ npx @madauth/server create-user admin@example.com
 In this repository, `npm run cli -w packages/server -- create-user you@example.com` does the same with the settings from `packages/server/.env`.
 
 Brute-force protection is per account. Limit requests per IP address in your reverse proxy, load balancer or WAF as well. See [Password security](password-security.md) for all rules.
+
+### DynamoDB
+
+On AWS, and always on AWS Lambda, store the users in a DynamoDB table. madAuth keeps all its records in one table.
+
+1. Create the table, with the partition key `pk` and the sort key `sk`, both strings:
+
+   ```bash
+   aws dynamodb create-table --table-name madauth \
+     --attribute-definitions AttributeName=pk,AttributeType=S AttributeName=sk,AttributeType=S \
+     --key-schema AttributeName=pk,KeyType=HASH AttributeName=sk,KeyType=RANGE \
+     --billing-mode PAY_PER_REQUEST
+   ```
+
+2. Set `DATABASE_URL=dynamodb:madauth` on the server.
+3. Allow the server these actions on the table: `dynamodb:GetItem`, `dynamodb:Query`, `dynamodb:PutItem`, `dynamodb:UpdateItem` and `dynamodb:DeleteItem`. On Lambda, add them to the function's role.
+
+The region and the credentials come from the environment, as for every AWS SDK: on Lambda from the function itself, elsewhere e.g. from `AWS_REGION` and `aws configure`.
+
+The adapter needs the `@aws-sdk/client-dynamodb` package. AWS Lambda's Node.js runtimes and the madAuth Docker image contain it. Anywhere else, install it next to madAuth:
+
+```bash
+npm install @aws-sdk/client-dynamodb
+```
+
+The command line works with the table as well, e.g. to create the first user. Run it in a project where `@madauth/server` and `@aws-sdk/client-dynamodb` are installed:
+
+```bash
+DATABASE_URL=dynamodb:madauth npx madauth-server create-user admin@example.com
+```
+
+In your own entry file, create the adapter yourself, e.g. to pass a configured client:
+
+```ts
+import { createHandler } from '@madauth/server/lambda';
+import { createDynamoDbAdapter } from '@madauth/server/dynamodb';
+
+export const handler = createHandler({ store: createDynamoDbAdapter({ tableName: 'madauth' }) });
+```
+
+How the records are stored: each record is one item (`pk` = `r|<model>|<id>`), with one more item per unique value (`u|user|emailNormalized|<address>`) and per indexed value (`i|account|userId|<id>`). A record and these items are always written in one transaction, and every read is strongly consistent, so the table needs no secondary index.
 
 ## Hosting
 
@@ -124,7 +165,7 @@ And a `package.json` that points to the bundle:
 
 Set the environment variables as application settings.
 
-For e-mail & password sign-in on Lambda or Azure, use a [custom store adapter](#custom-store-adapter): their file system is not persistent, so SQLite does not fit. Password hashing needs about 32 MB per sign-in; give a Lambda function at least 256 MB.
+For e-mail & password sign-in on Lambda or Azure, SQLite does not fit: their file system is not persistent. On Lambda, use [DynamoDB](#dynamodb): `DATABASE_URL=dynamodb:<table>` works with the bundle as it is. On Azure, use a [custom store adapter](#custom-store-adapter). Password hashing needs about 32 MB per sign-in; give a Lambda function at least 256 MB.
 
 ### Your own Node server
 
@@ -192,7 +233,7 @@ The models and their fields are in `madauthSchema` (exported by `@madauth/server
 npx @madauth/server schema --dialect postgres
 ```
 
-`mysql` and `sqlite` work as well. The built-in SQLite adapter ([`packages/server/src/store/sqlite.ts`](../packages/server/src/store/sqlite.ts)) uses only this public API, so it is a complete example.
+`mysql` and `sqlite` work as well. The built-in SQLite adapter ([`packages/server/src/store/sqlite.ts`](../packages/server/src/store/sqlite.ts)) uses only this public API, so it is a complete example. The DynamoDB adapter ([`dynamodb.ts`](../packages/server/src/store/dynamodb.ts)) is one for a database without SQL.
 
 ### Example: Postgres
 
