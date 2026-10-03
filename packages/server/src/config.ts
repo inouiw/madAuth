@@ -2,6 +2,7 @@ import type { JWK, JWTVerifyGetKey } from 'jose';
 import { assertPrivateSigningJwk, generateSigningKey } from './keys.js';
 import type { StoreAdapter } from './store/schema.js';
 import {
+  DEV_WEBHOOK_RECEIVER_URL,
   REQUIRED_EMAIL_TYPES,
   WEBHOOK_TYPES,
   checkWebhookSecret,
@@ -158,7 +159,7 @@ export async function loadConfig(
   if (sendsEmails && !webhook) {
     throw new ConfigError(
       'WEBHOOK_URL is not set. E-mail & password sign-in sends its e-mails through your webhook. For ' +
-        'development, run the example receiver (npm run dev:webhooks) and set ' +
+        `development, run the receiver at ${DEV_WEBHOOK_RECEIVER_URL} and set ` +
         'WEBHOOK_URL=http://localhost:8790/webhook and ' +
         `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.already_registered. See "Webhooks" in docs/server.md.`,
     );

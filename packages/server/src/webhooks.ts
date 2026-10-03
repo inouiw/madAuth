@@ -21,6 +21,9 @@ export type WebhookType = (typeof WEBHOOK_TYPES)[number];
 export const REQUIRED_EMAIL_TYPES = ['email.verify', 'email.reset'] as const satisfies readonly WebhookType[];
 
 const SECRET_PREFIX = 'whsec_';
+/** Where the webhook receiver for development is, which prints the e-mails instead of sending them. */
+export const DEV_WEBHOOK_RECEIVER_URL = 'https://github.com/inouiw/madAuth-webhooks/tree/main/dev-receiver';
+
 /** How old a call may be before receivers reject it, so a captured call can't be replayed. */
 export const WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 

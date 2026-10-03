@@ -59,9 +59,9 @@ Set `DATABASE_URL`, `WEBHOOK_URL`, `WEBHOOK_SECRET` and `WEBHOOK_EVENTS`. With `
 
 madAuth does not send e-mails itself: it hands each one to your [webhook](#webhooks) receiver. There are three: the address confirmation, the password reset, and a note to the owner when someone tries to sign up with an address that already has an account. The confirmation and reset e-mails contain a link to the app page that asked for them (its origin must be in `ALLOWED_ORIGINS`) and a 6-digit code, for when the e-mail is read on another device.
 
-Two receivers are included:
-- [`examples/dev-webhook-receiver`](../examples/dev-webhook-receiver) prints the e-mails in the terminal, for development: `npm run dev:webhooks`.
-- [`examples/aws-ses-mailer`](../examples/aws-ses-mailer) sends them with Amazon SES from an AWS Lambda function, with a step-by-step AWS setup.
+Ready-made receivers are in the [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks) repository:
+- [`dev-receiver`](https://github.com/inouiw/madAuth-webhooks/tree/main/dev-receiver) prints the e-mails in the terminal, for development.
+- [`aws-ses-mailer`](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer) sends them with Amazon SES from an AWS Lambda function, with a step-by-step AWS setup.
 
 To create a user without e-mail, e.g. the first admin or for testing, run on a machine with the same environment variables (or add `--env-file .env`):
 

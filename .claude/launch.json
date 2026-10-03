@@ -21,10 +21,10 @@
     },
     {
       "name": "webhooks",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "sh",
       "runtimeArgs": [
-        "run",
-        "dev:webhooks"
+        "-c",
+        "npm run dev --prefix \"$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")/../madAuth-webhooks/dev-receiver\""
       ],
       "port": 8790
     }
