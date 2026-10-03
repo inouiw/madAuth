@@ -1,12 +1,7 @@
 import { REDIRECT_ERROR_PARAM } from '../constants.js';
 import { fail, ok, toErrorCode, type Result } from '../result.js';
+import { stringsFor, type Strings } from '../strings.js';
 import type { ButtonOptions, ProviderContext, SignInProvider } from './provider.js';
-
-const errorMessages: Record<string, string> = {
-  cancelled: 'The Google sign-in was cancelled.',
-  verification_failed: 'The Google sign-in could not be verified. Please try again.',
-  email_unverified: 'Your Google account’s e-mail address is not verified.',
-};
 
 const GOOGLE_LOGO = `<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
 <path fill="#ea4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
@@ -44,17 +39,30 @@ export class GoogleRedirect implements SignInProvider {
       params.delete(REDIRECT_ERROR_PARAM);
       const hash = params.toString();
       history.replaceState(history.state, '', `${location.pathname}${location.search}${hash ? `#${hash}` : ''}`);
-      ctx.signInFailed({ code: toErrorCode(error), message: errorMessages[error] ?? `Google sign-in failed (${error}).` });
+      const code = toErrorCode(error);
+      const strings = stringsFor(ctx.locale);
+      const message = Object.hasOwn(strings.googleErrors, code)
+        ? strings.googleErrors[code as keyof Strings['googleErrors']]
+        : strings.googleFailed(error);
+      ctx.signInFailed({ code, message });
     }
     return ok();
   }
 
   /** Renders a "Continue with Google" button that starts the redirect. The result arrives after the return. */
   renderButton(container: HTMLElement, options: ButtonOptions): () => void {
+    const ctx = this.#ctx!;
     const colors = buttonColors[options.theme];
     const button = document.createElement('button');
     button.type = 'button';
-    button.innerHTML = `${GOOGLE_LOGO}<span>Continue with Google</span>`;
+    button.innerHTML = `${GOOGLE_LOGO}<span></span>`;
+    const label = button.querySelector('span')!;
+    const setLabel = () => {
+      label.textContent = stringsFor(ctx.locale).methods.google.label;
+    };
+    setLabel();
+    // The button follows Madauth.setLocale while it is shown.
+    const stopFollowingLocale = ctx.onLocaleChanged(setLabel);
     Object.assign(button.style, {
       display: 'flex',
       alignItems: 'center',
@@ -72,7 +80,10 @@ export class GoogleRedirect implements SignInProvider {
     });
     button.addEventListener('click', () => this.#start());
     container.replaceChildren(button);
-    return () => container.replaceChildren();
+    return () => {
+      stopFollowingLocale();
+      container.replaceChildren();
+    };
   }
 
   #start(): void {

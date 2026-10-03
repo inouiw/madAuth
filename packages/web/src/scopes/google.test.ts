@@ -67,6 +67,24 @@ describe('Madauth.google.renderButton', () => {
     );
   });
 
+  it('labels the redirect button in the configured language until it is removed', async () => {
+    fakeServer().codeFlow = true;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()], locale: 'de-CH', ui: 'custom' });
+    const el = container();
+
+    const rendered = Madauth.google.renderButton(el);
+    await settle();
+    const button = el.querySelector('button')!;
+    expect(button.textContent).toBe('Weiter mit Google');
+
+    Madauth.setLocale('en');
+    expect(button.textContent).toBe('Continue with Google');
+
+    if (rendered.isSuccess) rendered.remove();
+    Madauth.setLocale('de');
+    expect(button.textContent).toBe('Continue with Google');
+  });
+
   it('H10: fails without a Google provider or before initialize', async () => {
     fakeServer();
 

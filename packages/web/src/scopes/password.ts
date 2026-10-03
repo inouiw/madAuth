@@ -63,8 +63,6 @@ export interface PasswordApi {
 }
 
 const currentPage = () => location.href.split('#')[0];
-/** The user's language, so the webhook can send the e-mail in it. */
-const locale = () => (typeof navigator !== 'undefined' ? navigator.language : undefined);
 
 const notRegistered = () => fail('flow_not_enabled', 'Pass new Password() to Madauth.initialize to use Madauth.password.');
 
@@ -102,13 +100,13 @@ export function createPasswordApi(core: Core): PasswordApi {
         password,
         name,
         redirectTo: redirectTo ?? currentPage(),
-        locale: locale(),
+        locale: core.locale(),
       });
       return result.isSuccess ? ok() : result;
     },
 
     async sendVerificationEmail({ email, redirectTo }) {
-      const result = await call('/auth/password/send-verification', { email, redirectTo: redirectTo ?? currentPage(), locale: locale() });
+      const result = await call('/auth/password/send-verification', { email, redirectTo: redirectTo ?? currentPage(), locale: core.locale() });
       return result.isSuccess ? ok() : result;
     },
 
@@ -117,7 +115,7 @@ export function createPasswordApi(core: Core): PasswordApi {
     },
 
     async sendResetEmail({ email, redirectTo }) {
-      const result = await call('/auth/password/send-reset', { email, redirectTo: redirectTo ?? currentPage(), locale: locale() });
+      const result = await call('/auth/password/send-reset', { email, redirectTo: redirectTo ?? currentPage(), locale: core.locale() });
       return result.isSuccess ? ok() : result;
     },
 

@@ -236,7 +236,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password` or `google`) | the same | the same |
 | `user.deleted` | A user deleted their account | `user` (the session's), `passwordUserId` (the deleted e-mail & password user, if there was one; differs from `user.id` after a Google sign-in) | the same | the same |
 
-- `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's browser language (e.g. `de-CH`) if known.
+- `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
 - Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. With e-mail & password sign-in, `email.verify` and `email.reset` must be in the list: the server does not start without them.
 - Without `email.already_registered` in the list, a sign-up with an address that already has a confirmed account is answered like any other and no e-mail is sent. Without `signup.before`, every sign-up is allowed.
 - madAuth waits for each call before it answers the browser, because AWS Lambda stops a function as soon as it has answered. Keep receivers fast.

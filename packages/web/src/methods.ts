@@ -1,41 +1,20 @@
+import { en } from './strings.js';
+
 /** A sign-in method shown in the login dialog. */
 export interface LoginMethod {
   id: LoginMethodId;
+  /** English name. The dialog shows the name in its own language, see `strings.ts`. */
   label: string;
-  /** Short hint shown under the label. */
+  /** Short English hint, the tooltip of the method's button. */
   description: string;
 }
 
 export type LoginMethodId = 'password' | 'google' | 'totp' | 'email' | 'sms';
 
+const order: LoginMethodId[] = ['google', 'password', 'totp', 'email', 'sms'];
+
 /**
  * All sign-in methods, in the order they appear in the dialog. A method is offered when a provider for it
  * is passed to `Madauth.initialize`; the others show "coming soon".
  */
-export const loginMethods: LoginMethod[] = [
-  {
-    id: 'google',
-    label: 'Continue with Google',
-    description: 'Use your Google account',
-  },
-  {
-    id: 'password',
-    label: 'E-mail & password',
-    description: 'Sign in with your e-mail address and password',
-  },
-  {
-    id: 'totp',
-    label: 'Authenticator app',
-    description: 'One-time code from your authenticator',
-  },
-  {
-    id: 'email',
-    label: 'E-mail link',
-    description: 'Passwordless sign-in by e-mail',
-  },
-  {
-    id: 'sms',
-    label: 'SMS code',
-    description: 'One-time code sent to your phone',
-  },
-];
+export const loginMethods: LoginMethod[] = order.map((id) => ({ id, ...en.methods[id] }));

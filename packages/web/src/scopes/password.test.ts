@@ -84,6 +84,36 @@ describe('Madauth.password', () => {
     expect(server.requests.at(-1)!.body).toMatchObject({ locale: navigator.language });
   });
 
+  it('sends the configured locale with sign-up and the e-mail requests', async () => {
+    const server = fakeServer();
+    vi.spyOn(navigator, 'language', 'get').mockReturnValue('en-US');
+    await init({ locale: 'de-CH' });
+    const sentLocales = () => server.requests.filter((r) => r.method === 'POST').map((r) => (r.body as { locale?: string }).locale);
+
+    await Madauth.password.signUp({ email: 'new@example.com', password: 'long enough' });
+    await Madauth.password.sendVerificationEmail({ email: 'new@example.com' });
+    await Madauth.password.sendResetEmail({ email: 'grace@example.com' });
+    expect(sentLocales()).toEqual(['de-CH', 'de-CH', 'de-CH']);
+
+    Madauth.setLocale('en-GB');
+    await Madauth.password.sendResetEmail({ email: 'grace@example.com' });
+    expect(sentLocales().at(-1)).toBe('en-GB');
+  });
+
+  it('without a configured locale, sends the page’s language, else the browser’s', async () => {
+    const server = fakeServer();
+    vi.spyOn(navigator, 'language', 'get').mockReturnValue('fr-FR');
+    document.documentElement.lang = 'de';
+    await init();
+
+    await Madauth.password.sendResetEmail({ email: 'grace@example.com' });
+    expect(server.requests.at(-1)!.body).toMatchObject({ locale: 'de' });
+
+    document.documentElement.removeAttribute('lang');
+    await Madauth.password.sendResetEmail({ email: 'grace@example.com' });
+    expect(server.requests.at(-1)!.body).toMatchObject({ locale: 'fr-FR' });
+  });
+
   it('reports a refused sign-up and e-mails that can not be sent', async () => {
     const server = fakeServer();
     await init();

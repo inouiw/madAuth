@@ -13,6 +13,10 @@ export interface ProviderContext {
   readonly serverUrl: string;
   readonly config: ServerConfig;
   readonly currentUser: MadauthUser | null;
+  /** The locale of the texts shown to the user: the configured one, else the page's, else the browser's. */
+  readonly locale: string | undefined;
+  /** Calls `listener` when the locale changes. Returns a function that unsubscribes. */
+  onLocaleChanged(listener: () => void): () => void;
   request<T>(path: string, init?: RequestInit): Promise<HttpResult<T>>;
   /** A sign-in succeeded (also when it happened outside the dialog, e.g. One Tap). */
   signedIn(user: MadauthUser): void;

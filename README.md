@@ -110,7 +110,8 @@ signInButton.onclick = () => Madauth.signIn();
 - **`initialize`** checks the server and loads the current session. You don't need to await it. Problems are logged to the console and returned as `{ isSuccess: false, error }`.
 - **Google sign-in:** `new GoogleFedcm()` shows Google One Tap on page load ("Continue as …"). `Madauth.signIn()` opens the sign-in dialog with Google's button, which keeps working when Chrome holds One Tap back. For the server-side redirect flow use `new GoogleRedirect()`.
 - **E-mail & password:** `new Password()` adds the form to the dialog, with "Create account" and "Forgot password?". New accounts confirm their address with a link or a code from an e-mail. The links in the e-mails lead back to your page: `initialize` handles them, and opens the dialog to choose a new password after a reset link. See [Password security](docs/password-security.md).
-- **The dialog:** `signIn()` adds a `<madauth-login>` to the page; put one in your HTML only to customize it.
+- **The dialog:** `signIn()` adds a `<madauth-login>` to the page; put one in your HTML only to customize it. `signIn({ email })` opens it with the e-mail address filled in, e.g. from a link like `/?email=…`, so the user only types the password.
+- **Language:** the dialog has English and German texts. It follows the page's `<html lang>`, then the browser's language. To set the language yourself, pass `locale: 'de'` (or e.g. `'de-CH'`) to `initialize`, and call `Madauth.setLocale('en')` when the user switches the language of your app; an open dialog changes at once. Every other language shows English. The same locale goes to your e-mail webhook, so the e-mails can match the dialog.
 - **Your own login screen:** pass `ui: 'custom'` and use `Madauth.password` and `Madauth.google` instead of the dialog. See [Building your own login screen](docs/custom-ui.md).
 - **Other methods:** `signOut()`, `getSession()`, `currentUser`, and `deleteAccount()` to [delete the signed-in user's account](docs/server.md#deleting-an-account). All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
 - **Server URL:** the server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 'https://auth.example.com'` to `initialize` if it runs elsewhere on the same site.
@@ -131,7 +132,7 @@ The login form can be styled to match your app (colors, corner radius, font, and
 
 ## Adding a sign-in method
 
-1. Add or update the entry in [`packages/web/src/methods.ts`](packages/web/src/methods.ts).
+1. Add or update the entry in [`packages/web/src/methods.ts`](packages/web/src/methods.ts), and its texts in [`strings.ts`](packages/web/src/strings.ts).
 2. Implement a `SignInProvider` (see [`packages/web/src/providers`](packages/web/src/providers)). A method shows "coming soon" until its provider is passed to `Madauth.initialize`.
 3. Add the server endpoints in a module in [`packages/server/src/routes`](packages/server/src/routes) and register it in [`app.ts`](packages/server/src/app.ts). Store what it needs as models in [`madauthSchema`](packages/server/src/store/schema.ts).
 4. Add the method's actions as a scope on `Madauth` (see [`packages/web/src/scopes`](packages/web/src/scopes)), so custom login screens can use it.

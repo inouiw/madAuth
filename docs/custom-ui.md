@@ -39,11 +39,11 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 
 `signUp`, `sendVerificationEmail` and `sendResetEmail` succeed whether or not the address has an account, so nobody can probe for accounts. Tell the user to check their inbox in every case.
 
-`too_many_attempts`, `weak_password` and `signup_rejected` come with a `message` written for the user: the wait time, the minimum length, or the reason your sign-up check gave. For the other codes, write your own texts.
+`too_many_attempts`, `weak_password` and `signup_rejected` come with a `message` written for the user: the wait time, the minimum length, or the reason your sign-up check gave. The first two are in English; for another language, write your own texts (`policy` has the minimum length). For the other codes, write your own texts.
 
 `codes_locked` means that too many wrong codes were entered for this account, across e-mails: its codes no longer work until one of its e-mail links is used. Tell the user to ask for a new e-mail and to open the link in it.
 
-`temporarily_unavailable` means the server's [webhook](server.md#webhooks) did not take over the e-mail, or did not answer the sign-up check. Show something like "E-mail & password sign-up is not available right now. Please try again later." The user's browser language is sent along (`locale`), so your receiver can write the e-mail in it.
+`temporarily_unavailable` means the server's [webhook](server.md#webhooks) did not take over the e-mail, or did not answer the sign-up check. Show something like "E-mail & password sign-up is not available right now. Please try again later." The user's locale is sent along (`locale`), so your receiver can write the e-mail in it. See [Language](#language).
 
 ### The flows
 
@@ -102,11 +102,27 @@ if (result.isSuccess) result.remove();
 ```
 
 - With `GoogleFedcm`, this renders Google's own button, which opens the browser's "Continue as …" dialog. Google's button can't be styled; it is between 200 and 400 pixels wide.
-- With `GoogleRedirect`, it renders a "Continue with Google" button in Google's colors that starts the redirect. The result arrives through `onAuthStateChanged` after the return.
+- With `GoogleRedirect`, it renders a "Continue with Google" button in Google's colors that starts the redirect. The result arrives through `onAuthStateChanged` after the return. The button is labelled in English or German, see [Language](#language).
 
 You can call `renderButton` before `initialize` has finished. The button appears as soon as madAuth is ready.
 
 One Tap (`GoogleFedcm` with its default `autoPrompt: true`) works on custom screens as well.
+
+## Language
+
+Pass `locale` to `initialize` to tell madAuth the language of your screen, and call `Madauth.setLocale` when the user switches it:
+
+```ts
+Madauth.initialize({ providers: [new Password()], ui: 'custom', locale: 'de' }); // or e.g. 'de-CH'
+Madauth.setLocale('en');
+```
+
+Without a locale, madAuth uses the page's `<html lang>`, then the browser's language.
+
+The locale is used for:
+- **The e-mails.** `signUp`, `sendVerificationEmail` and `sendResetEmail` send it to the server, which passes it to your [webhook](server.md#webhooks) and your sign-up check.
+- **The `GoogleRedirect` button.** It says "Weiter mit Google" for a German locale and "Continue with Google" for every other. `setLocale` also changes a button that is already on the page.
+- **The `message` of a failed `GoogleRedirect` sign-in**, which `initialize` returns. It is German for a German locale, English otherwise.
 
 ## Signing out and the session
 
