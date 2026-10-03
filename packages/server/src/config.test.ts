@@ -65,14 +65,14 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined })).rejects.toThrow(/GOOGLE_CLIENT_ID.*DATABASE_URL/s);
   });
 
-  const hook = { WEBHOOK_URL, WEBHOOK_SECRET };
+  const hook = { WEBHOOK_URL, WEBHOOK_SECRET, WEBHOOK_EVENTS: 'email.verify,email.reset' };
 
   it('A14: turns on e-mail & password sign-in with DATABASE_URL and the webhook', async () => {
     const config = await loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, DATABASE_URL: 'sqlite::memory:' });
 
     expect(config.google).toBeUndefined();
     expect(config.password).toMatchObject({ minLength: 8 });
-    expect(config.webhook).toEqual({ url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: null });
+    expect(config.webhook).toEqual({ url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) });
     expect(await config.password!.store.findOne('user', { id: 'x' })).toBeNull();
   });
 
@@ -112,11 +112,36 @@ describe('loadConfig', () => {
     }
   });
 
-  it('K6: WEBHOOK_EVENTS selects the event types and rejects unknown ones', async () => {
+  it('K6: WEBHOOK_EVENTS lists the types that are sent and rejects unknown ones', async () => {
     const config = await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.verified, user.created' });
 
     expect(config.webhook?.events).toEqual(new Set(['email.verified', 'user.created']));
-    await expect(loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'user.deleted' })).rejects.toThrow(/unknown type user.deleted/);
+    await expect(loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'user.renamed' })).rejects.toThrow(/unknown type user.renamed/);
+  });
+
+  it('K6: a webhook without WEBHOOK_EVENTS is an error that says what to set', async () => {
+    const withDb = { ...env, WEBHOOK_URL, WEBHOOK_SECRET, DATABASE_URL: 'sqlite::memory:' };
+
+    const error = await loadConfig(withDb).catch((e: Error) => e);
+
+    expect(error).toBeInstanceOf(ConfigError);
+    expect((error as Error).message).toContain('\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.already_registered\n\n');
+    await expect(loadConfig({ ...withDb, WEBHOOK_EVENTS: ' , ' })).rejects.toThrow(/WEBHOOK_EVENTS is not set/);
+    // Without e-mail & password sign-in no e-mail type is needed, but the list still is.
+    await expect(loadConfig({ ...env, WEBHOOK_URL, WEBHOOK_SECRET })).rejects.toThrow(/WEBHOOK_EVENTS is not set.*WEBHOOK_EVENTS=user.signed_in/s);
+  });
+
+  it('K6: e-mail & password sign-in needs email.verify and email.reset among the events', async () => {
+    const withDb = { ...env, ...hook, DATABASE_URL: 'sqlite::memory:' };
+
+    await expect(loadConfig({ ...withDb, WEBHOOK_EVENTS: 'email.verify,user.created' })).rejects.toThrow(
+      new ConfigError(
+        "WEBHOOK_EVENTS lacks email.reset. E-mail & password sign-in can't work without these e-mails, so your " +
+          'webhook receiver must send them:\n\nWEBHOOK_EVENTS=email.verify,user.created,email.reset\n',
+      ),
+    );
+    await expect(loadConfig({ ...withDb, WEBHOOK_EVENTS: 'signup.before' })).rejects.toThrow(/lacks email.verify and email.reset/);
+    expect((await loadConfig({ ...withDb, WEBHOOK_EVENTS: 'email.reset,email.verify' })).password).toBeDefined();
   });
 
   it('A16: a store passed in replaces DATABASE_URL', async () => {

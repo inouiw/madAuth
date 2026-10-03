@@ -93,6 +93,7 @@ const user = {
   name: null,
   sessionVersion: 0,
   lastMailAt: 0,
+  wrongCodes: 0,
   createdAt: 1,
 };
 
@@ -106,6 +107,7 @@ const userItem = {
   name: { NULL: true },
   sessionVersion: { N: '0' },
   lastMailAt: { N: '0' },
+  wrongCodes: { N: '0' },
   createdAt: { N: '1' },
 };
 

@@ -229,6 +229,21 @@ export const Madauth = {
     return ok();
   },
 
+  /**
+   * Deletes the signed-in user's account on the madAuth server and signs them out: the e-mail & password
+   * account of their address goes, whichever way they signed in. Delete the user's data in your own
+   * backend first, while they are still signed in. Fails with `no_session` when nobody is signed in.
+   */
+  async deleteAccount(): Promise<Result> {
+    const ready = await whenReady();
+    if (!ready.isSuccess) return ready;
+    const res = await request(state!.serverUrl, '/auth/account/delete', { method: 'POST' });
+    if (!res.ok && res.status !== 401) return { isSuccess: false, error: res.error };
+    for (const provider of state!.providers.values()) provider.onSignedOut?.();
+    setUser(null);
+    return res.ok ? ok() : fail('no_session', 'Nobody is signed in.');
+  },
+
   /** Asks the server for the current session. Fails with `no_session` when nobody is signed in. */
   async getSession(): Promise<Result<{ user: MadauthUser }>> {
     const ready = await whenReady();

@@ -6,7 +6,7 @@ A madAuth [webhook](../../docs/server.md#webhooks) receiver on AWS Lambda that s
 - renders the e-mail ([`src/templates.ts`](src/templates.ts)) with the link and the 6-digit code
 - answers `200` only after SES has accepted the e-mail. Otherwise it answers `502`, and madAuth tells the user that e-mails can't be sent right now.
 
-Other calls (the sign-up check and events) are answered with `204`, which allows sign-ups. Add your own logic to [`src/handler.ts`](src/handler.ts) if you need it.
+Other calls (the sign-up check and events) are answered with `204`, which allows sign-ups. madAuth only sends them if you add their types to `WEBHOOK_EVENTS`; add your own logic to [`src/handler.ts`](src/handler.ts) if you need it.
 
 Costs: SES charges about $0.10 per 1000 e-mails. The Lambda function stays in the free tier for most sites.
 
@@ -72,7 +72,10 @@ Set these on the madAuth server and restart it:
 ```
 WEBHOOK_URL=https://abc123.lambda-url.eu-central-1.on.aws/
 WEBHOOK_SECRET=<the same secret>
+WEBHOOK_EVENTS=email.verify,email.reset,email.already_registered
 ```
+
+`WEBHOOK_EVENTS` lists what this function handles: the three e-mails. madAuth then sends nothing else to it.
 
 ## 6. Test
 
