@@ -118,3 +118,16 @@ main {
 :root:not([data-theme='dark']) #theme-toggle .sun {
   display: none;
 }
+
+.page-link {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  font-size: 0.875rem;
+  color: light-dark(#5c6066, #a6a9af);
+}
+
+.page-link:hover {
+  color: light-dark(#17181a, #f1f2f3);
+}

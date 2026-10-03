@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>madAuth demo: custom login screen</title>
+    <link rel="stylesheet" href="/src/style.css" />
+    <link rel="stylesheet" href="/src/custom.css" />
+  </head>
+  <body>
+    <main>
+      <!-- A login screen built with the headless API (Madauth.password, Madauth.google). See src/custom.ts. -->
+      <section id="login" class="card" hidden>
+        <h1 id="title">Sign in</h1>
+        <p id="message" hidden></p>
+
+        <div data-view="signin">
+          <div id="google-button"></div>
+          <div class="divider">or</div>
+          <form id="signin-form">
+            <label>E-mail <input name="email" type="email" autocomplete="email" required /></label>
+            <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+            <button type="submit">Sign in</button>
+          </form>
+          <p class="links">
+            <button type="button" data-go="forgot">Forgot password?</button>
+            <button type="button" data-go="signup">Create account</button>
+          </p>
+        </div>
+
+        <div data-view="signup" hidden>
+          <form id="signup-form">
+            <label>Name <input name="name" autocomplete="name" /></label>
+            <label>E-mail <input name="email" type="email" autocomplete="email" required /></label>
+            <label>
+              Password <input name="password" type="password" autocomplete="new-password" required />
+              <small id="password-hint"></small>
+            </label>
+            <button type="submit">Create account</button>
+          </form>
+          <p class="links"><button type="button" data-go="signin">Back to sign in</button></p>
+        </div>
+
+        <div data-view="forgot" hidden>
+          <form id="forgot-form">
+            <label>E-mail <input name="email" type="email" autocomplete="email" required /></label>
+            <button type="submit">Send reset e-mail</button>
+          </form>
+          <p class="links"><button type="button" data-go="signin">Back to sign in</button></p>
+        </div>
+
+        <div data-view="code" hidden>
+          <p>Open the link in the e-mail we sent to <strong id="code-email"></strong>, or enter its code.</p>
+          <form id="code-form">
+            <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" required /></label>
+            <button type="submit">Continue</button>
+          </form>
+          <p class="links"><button type="button" data-go="signin">Back to sign in</button></p>
+        </div>
+
+        <div data-view="reset" hidden>
+          <form id="reset-form">
+            <label>New password <input name="password" type="password" autocomplete="new-password" required /></label>
+            <button type="submit">Set password</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="account" hidden>
+        <p><strong id="user-name"></strong><span id="user-email"></span></p>
+        <button id="sign-out" type="button">Sign out</button>
+      </section>
+    </main>
+    <a class="page-link" href="/">← Built-in dialog</a>
+    <script type="module" src="/src/custom.ts"></script>
+  </body>
+</html>

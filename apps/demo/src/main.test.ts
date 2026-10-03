@@ -14,7 +14,7 @@ vi.stubGlobal(
   vi.fn(async (input: string, init: RequestInit = {}) => {
     switch (`${init.method ?? 'GET'} ${new URL(input).pathname}`) {
       case 'GET /auth/config':
-        return json({ google: { clientId: 'cid.apps.googleusercontent.com', codeFlow: false } });
+        return json({ google: { clientId: 'cid.apps.googleusercontent.com', codeFlow: false }, password: { minLength: 8 } });
       case 'GET /auth/session':
         return sessionUser ? json({ user: sessionUser }) : json({ error: 'no_session' }, 401);
       case 'POST /auth/google/nonce':

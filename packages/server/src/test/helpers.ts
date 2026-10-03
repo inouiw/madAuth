@@ -2,6 +2,8 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type JWTPayload
 import { createApp } from '../app.js';
 import type { MadauthConfig } from '../config.js';
 import { generateSigningKey } from '../keys.js';
+import type { Mail, Mailer } from '../mail.js';
+import { createSqliteAdapter } from '../store/sqlite.js';
 
 export const ISSUER = 'https://auth.example.com';
 export const APP_ORIGIN = 'https://app.example.com';
@@ -93,5 +95,61 @@ export function verify(app: App, credential: string, cookie?: string): Promise<R
 export async function signIn(app: App): Promise<string> {
   const { nonce, cookie } = await getNonce(app);
   const res = await verify(app, await googleIdToken({ nonce }), cookie);
+  return cookies(res).madauth_session.value;
+}
+
+// --- E-mail & password ---
+
+/** A mailer that keeps the sent mails, so tests can read the links and codes. */
+export function recordingMailer(): Mailer & { sent: Mail[]; last(): Mail | undefined } {
+  const sent: Mail[] = [];
+  return {
+    sent,
+    last: () => sent.at(-1),
+    async send(mail) {
+      sent.push(mail);
+    },
+  };
+}
+
+export const REDIRECT_TO = `${APP_ORIGIN}/account`;
+
+/** An app with e-mail & password sign-in (in-memory SQLite) and Google. */
+export function passwordApp(overrides: Partial<MadauthConfig> = {}) {
+  const mailer = recordingMailer();
+  const store = createSqliteAdapter(':memory:');
+  const app = testApp({ password: { minLength: 8, store, mailer }, ...overrides });
+  return { app, mailer, store };
+}
+
+type PasswordApp = ReturnType<typeof passwordApp>['app'];
+
+export function post(app: PasswordApp, path: string, body: unknown, headers: Record<string, string> = {}): Promise<Response> {
+  return Promise.resolve(
+    app.request(path, {
+      method: 'POST',
+      headers: { Origin: APP_ORIGIN, 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+/** The link token and the code of a verification or reset mail. */
+export function linkAndCode(mail: Mail | undefined): { token: string; code: string; link: string } {
+  const link = mail?.text.match(/https?:\/\/\S+#madauth_(?:verify|reset)=\S+/)?.[0];
+  const code = mail?.text.match(/code: (\d{3}) (\d{3})/);
+  if (!link || !code) throw new Error(`No link and code in mail:\n${mail?.text}`);
+  return { link, token: link.split('=').at(-1)!, code: code[1] + code[2] };
+}
+
+/** Signs up and confirms the e-mail with the link; returns the session cookie. */
+export async function signUpVerified(
+  app: PasswordApp,
+  mailer: ReturnType<typeof recordingMailer>,
+  email = 'grace@example.com',
+  password = 'correct horse battery',
+): Promise<string> {
+  await post(app, '/auth/password/signup', { email, password, name: 'Grace Hopper', redirectTo: REDIRECT_TO });
+  const res = await post(app, '/auth/password/verify-email', { token: linkAndCode(mailer.last()).token });
   return cookies(res).madauth_session.value;
 }

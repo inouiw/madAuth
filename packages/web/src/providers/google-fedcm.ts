@@ -1,25 +1,14 @@
 import { loadGis, type GoogleAccountsId } from '../gis.js';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
-import type { ProviderContext, SignInProvider } from './provider.js';
+import type { ButtonOptions, ProviderContext, SignInProvider } from './provider.js';
 
 export interface GoogleFedcmOptions {
   /** Show Google One Tap on page load when nobody is signed in. Default `true`. */
   autoPrompt?: boolean;
 }
 
-/**
- * Whether `el` is shown in dark mode: when its `color-scheme` allows only dark, or allows both and the
- * user prefers dark (the dialog's default is `light dark`).
- */
-function isDark(el: Element): boolean {
-  const schemes = getComputedStyle(el).colorScheme?.split(/\s+/) ?? [];
-  if (!schemes.includes('dark')) return false;
-  return !schemes.includes('light') || matchMedia('(prefers-color-scheme: dark)').matches;
-}
-
-interface DialogMount {
+interface ButtonMount extends ButtonOptions {
   container: HTMLElement;
-  onResult: (result: Result<{ user: MadauthUser }>) => void;
 }
 
 /**
@@ -32,7 +21,8 @@ export class GoogleFedcm implements SignInProvider {
   readonly #autoPrompt: boolean;
   #ctx?: ProviderContext;
   #gis?: GoogleAccountsId;
-  #dialog?: DialogMount;
+  /** The rendered button, if any; only the latest one gets results. */
+  #button?: ButtonMount;
 
   constructor(options: GoogleFedcmOptions = {}) {
     this.#autoPrompt = options.autoPrompt ?? true;
@@ -40,7 +30,10 @@ export class GoogleFedcm implements SignInProvider {
 
   async setup(ctx: ProviderContext): Promise<Result> {
     this.#ctx = ctx;
-    this.#dialog = undefined;
+    this.#button = undefined;
+    if (!ctx.config.google) {
+      return fail('flow_not_enabled', 'The madAuth server has no GOOGLE_CLIENT_ID, so Google sign-in is off.');
+    }
     try {
       this.#gis = await loadGis();
     } catch (e) {
@@ -50,15 +43,21 @@ export class GoogleFedcm implements SignInProvider {
     return ok();
   }
 
-  renderInDialog(container: HTMLElement, onResult: DialogMount['onResult']): () => void {
-    const mount = { container, onResult };
-    this.#dialog = mount;
+  renderButton(container: HTMLElement, options: ButtonOptions): () => void {
+    const mount = { container, ...options };
+    this.#button = mount;
     // One Tap and the button share the server's nonce cookie, so only the button may be active now.
     this.#gis?.cancel();
     void this.#renderButton(mount);
     return () => {
-      if (this.#dialog === mount) this.#dialog = undefined;
+      if (this.#button === mount) this.#button = undefined;
+      container.replaceChildren();
     };
+  }
+
+  onSignedIn(): void {
+    // E.g. signed in with a password while One Tap was still showing.
+    if (!this.#button) this.#gis?.cancel();
   }
 
   onSignedOut(): void {
@@ -71,7 +70,7 @@ export class GoogleFedcm implements SignInProvider {
     const res = await ctx.request<{ nonce: string }>('/auth/google/nonce', { method: 'POST' });
     if (!res.ok) return { isSuccess: false, error: res.error };
     this.#gis!.initialize({
-      client_id: ctx.config.google.clientId,
+      client_id: ctx.config.google!.clientId,
       nonce: res.data.nonce,
       callback: ({ credential }) => void this.#onCredential(credential),
       use_fedcm_for_button: true,
@@ -87,21 +86,24 @@ export class GoogleFedcm implements SignInProvider {
       console.error('[madauth]', prepared.error.code, prepared.error.message);
       return;
     }
-    if (!this.#dialog) this.#gis!.prompt();
+    if (!this.#button && !this.#ctx!.currentUser) this.#gis!.prompt();
   }
 
-  async #renderButton(mount: DialogMount): Promise<void> {
+  async #renderButton(mount: ButtonMount): Promise<void> {
     const prepared = await this.#prepare();
-    if (this.#dialog !== mount) return;
+    if (this.#button !== mount) return;
     if (!prepared.isSuccess) {
       mount.onResult(prepared);
       return;
     }
-    mount.container.replaceChildren();
-    this.#gis!.renderButton(mount.container, {
+    // Google's button is an iframe with a light page. If the iframe's color-scheme differed from its
+    // parent's, the browser would paint it on an opaque background (a white box on a dark page).
+    const wrapper = document.createElement('div');
+    wrapper.style.colorScheme = 'light';
+    mount.container.replaceChildren(wrapper);
+    this.#gis!.renderButton(wrapper, {
       type: 'standard',
-      // The slot itself is forced to light (see .google-slot), so read the theme from its parent.
-      theme: isDark(mount.container.parentElement ?? mount.container) ? 'filled_black' : 'outline',
+      theme: mount.theme === 'dark' ? 'filled_black' : 'outline',
       size: 'large',
       text: 'continue_with',
       shape: 'rectangular',
@@ -122,7 +124,7 @@ export class GoogleFedcm implements SignInProvider {
       : { isSuccess: false, error: res.error };
     if (result.isSuccess) ctx.signedIn(result.user);
 
-    const mount = this.#dialog;
+    const mount = this.#button;
     if (mount) {
       mount.onResult(result);
       // A nonce is used up by an attempt; give the button a fresh one for a retry.

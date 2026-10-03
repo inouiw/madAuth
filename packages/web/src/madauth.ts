@@ -2,12 +2,21 @@ import { request, type HttpResult, type RequestInit } from './http.js';
 import type { LoginMethodId } from './methods.js';
 import type { ProviderContext, ServerConfig, SignInProvider } from './providers/provider.js';
 import { fail, ok, type MadauthError, type MadauthUser, type Result } from './result.js';
+import type { Core } from './scopes/core.js';
+import { createGoogleApi } from './scopes/google.js';
+import { createPasswordApi } from './scopes/password.js';
 
 export interface MadauthOptions {
   /** Base URL of the madAuth server. Default: the page's own origin (e.g. behind a reverse proxy). */
   serverUrl?: string;
-  /** The sign-in methods to offer, e.g. `[new GoogleFedcm()]`. */
+  /** The sign-in methods to offer, e.g. `[new GoogleFedcm(), new Password()]`. */
   providers: SignInProvider[];
+  /**
+   * `'dialog'` (default): madAuth's sign-in dialog, opened with `Madauth.signIn()`; it also opens by itself
+   * when the page was opened from a password reset link.
+   * `'custom'`: your own login screen, built with `Madauth.password` and `Madauth.google`; the dialog never opens.
+   */
+  ui?: 'dialog' | 'custom';
 }
 
 export type AuthStateListener = (user: MadauthUser | null) => void;
@@ -15,6 +24,9 @@ export type AuthStateListener = (user: MadauthUser | null) => void;
 interface State {
   serverUrl: string;
   providers: Map<LoginMethodId, SignInProvider>;
+  ui: 'dialog' | 'custom';
+  /** The server's public settings, once fetched. */
+  config?: ServerConfig;
   /** Settles when `initialize` is done; a failure here means madAuth is not usable. */
   ready: Promise<Result>;
 }
@@ -33,8 +45,10 @@ function sameUser(a: MadauthUser | null, b: MadauthUser | null): boolean {
 
 function setUser(next: MadauthUser | null, notifyAlways = false): void {
   const changed = notifyAlways || !userKnown || !sameUser(user, next);
+  const signedIn = next !== null && !sameUser(user, next);
   user = next;
   userKnown = true;
+  if (signedIn) for (const provider of state?.providers.values() ?? []) provider.onSignedIn?.();
   if (!changed) return;
   for (const listener of [...listeners]) {
     try {
@@ -50,9 +64,15 @@ function logError(result: Result): Result {
   return result;
 }
 
-function validate(options: MadauthOptions | undefined): Result<{ serverUrl: string; providers: Map<LoginMethodId, SignInProvider> }> {
+function validate(
+  options: MadauthOptions | undefined,
+): Result<{ serverUrl: string; providers: Map<LoginMethodId, SignInProvider>; ui: 'dialog' | 'custom' }> {
   if (!options || !Array.isArray(options.providers)) {
     return fail('invalid_options', 'Madauth.initialize needs { providers: [...] }, e.g. [new GoogleFedcm()].');
+  }
+  const ui = options.ui ?? 'dialog';
+  if (ui !== 'dialog' && ui !== 'custom') {
+    return fail('invalid_options', `ui must be 'dialog' or 'custom' but is "${String(options.ui)}".`);
   }
   let serverUrl = location.origin;
   if (options.serverUrl !== undefined) {
@@ -77,14 +97,11 @@ function validate(options: MadauthOptions | undefined): Result<{ serverUrl: stri
     }
     providers.set(provider.method, provider);
   }
-  return ok({ serverUrl, providers });
+  return ok({ serverUrl, providers, ui });
 }
 
-async function initialize(
-  serverUrl: string,
-  providers: Map<LoginMethodId, SignInProvider>,
-  run: number,
-): Promise<{ ready: Result; result: Result }> {
+async function initialize(target: State, run: number): Promise<{ ready: Result; result: Result }> {
+  const { serverUrl, providers } = target;
   const call = <T>(path: string, init?: RequestInit): Promise<HttpResult<T>> => request<T>(serverUrl, path, init);
 
   const failed = (result: Result) => ({ ready: result, result });
@@ -97,6 +114,7 @@ async function initialize(
   if (!session.ok && session.status !== 401) return failed({ isSuccess: false, error: session.error });
   // A later initialize replaced this one: leave the user and the providers to it.
   if (run !== generation) return failed(fail('cancelled', 'Replaced by a later Madauth.initialize call.'));
+  target.config = config.data;
   setUser(session.ok ? session.data.user : null, true);
 
   let signInError: MadauthError | undefined;
@@ -121,6 +139,8 @@ async function initialize(
     const result = await provider.setup(ctx);
     if (!result.isSuccess) return failed(result);
   }
+  // Opened from a password reset link: show the dialog's "new password" form once madAuth is ready.
+  if (target.ui === 'dialog' && Madauth.password.pendingReset) queueMicrotask(() => void Madauth.signIn());
   // A failed redirect sign-in is reported by initialize, but madAuth itself is ready.
   return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError } : ok() };
 }
@@ -129,6 +149,18 @@ async function whenReady(): Promise<Result> {
   if (!state) return fail('not_initialized', 'Call Madauth.initialize({ providers: [...] }) first.');
   return state.ready;
 }
+
+const core: Core = {
+  isConfigured: () => !!state,
+  whenReady,
+  provider: (method) => state?.providers.get(method),
+  config: () => state?.config,
+  request: (path, init) => request(state!.serverUrl, path, init),
+  signedIn: (signedIn) => {
+    pendingError = undefined;
+    setUser(signedIn);
+  },
+};
 
 /**
  * The madAuth client. Call {@link Madauth.initialize} once (no need to await it); every other method
@@ -145,11 +177,13 @@ export const Madauth = {
     pendingError = undefined;
     const valid = validate(options);
     if (!valid.isSuccess) {
-      state = { serverUrl: '', providers: new Map(), ready: Promise.resolve(valid) };
+      state = { serverUrl: '', providers: new Map(), ui: 'dialog', ready: Promise.resolve(valid) };
       return Promise.resolve(logError(valid));
     }
-    const done = initialize(valid.serverUrl, valid.providers, run);
-    state = { serverUrl: valid.serverUrl, providers: valid.providers, ready: done.then((d) => d.ready) };
+    const next: State = { serverUrl: valid.serverUrl, providers: valid.providers, ui: valid.ui, ready: Promise.resolve(ok()) };
+    state = next;
+    const done = initialize(next, run);
+    next.ready = done.then((d) => d.ready);
     return done.then((d) => logError(d.result));
   },
 
@@ -161,6 +195,9 @@ export const Madauth = {
   async signIn(): Promise<Result<{ user: MadauthUser }>> {
     const ready = await whenReady();
     if (!ready.isSuccess) return ready;
+    if (state!.ui === 'custom') {
+      return fail('invalid_options', "Madauth.signIn() opens madAuth's dialog, but initialize was called with ui: 'custom'.");
+    }
     let dialog = document.querySelector('madauth-login');
     if (!dialog) {
       dialog = document.createElement('madauth-login');
@@ -212,6 +249,12 @@ export const Madauth = {
   get currentUser(): MadauthUser | null {
     return user;
   },
+
+  /** E-mail & password sign-in for custom login screens. Needs `new Password()`. */
+  password: createPasswordApi(core),
+
+  /** Google sign-in for custom login screens. Needs `new GoogleFedcm()` or `new GoogleRedirect()`. */
+  google: createGoogleApi(core),
 
   /**
    * Calls `listener` with the current user once it is known, and again on every sign-in and sign-out.

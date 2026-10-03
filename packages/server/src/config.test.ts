@@ -2,7 +2,9 @@ import { importJWK } from 'jose';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ConfigError, envVars, loadConfig } from './config.js';
-import { CLIENT_ID, signingKey } from './test/helpers.js';
+import { consoleMailer } from './mail.js';
+import { CLIENT_ID, recordingMailer, signingKey } from './test/helpers.js';
+import { createSqliteAdapter } from './store/sqlite.js';
 
 const env = {
   MADAUTH_ISSUER: 'https://auth.example.com/',
@@ -27,12 +29,12 @@ describe('loadConfig', () => {
     const config = await loadConfig({ ...env, MADAUTH_SIGNING_KEY: `'${JSON.stringify(signingKey)}'`, GOOGLE_CLIENT_ID: `"${CLIENT_ID}"` });
 
     expect(config.signingKey).toEqual(signingKey);
-    expect(config.google.clientId).toBe(CLIENT_ID);
+    expect(config.google?.clientId).toBe(CLIENT_ID);
   });
 
   it('X6: names a missing variable', async () => {
-    await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: '' })).rejects.toThrow(
-      new ConfigError('GOOGLE_CLIENT_ID is not set. See docs/server.md.'),
+    await expect(loadConfig({ ...env, ALLOWED_ORIGINS: '' })).rejects.toThrow(
+      new ConfigError('ALLOWED_ORIGINS is not set. See docs/server.md.'),
     );
   });
 
@@ -57,6 +59,38 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, ALLOWED_ORIGINS: 'app.example.com' })).rejects.toThrow(/ALLOWED_ORIGINS/);
     await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: 'abc' })).rejects.toThrow(/GOOGLE_CLIENT_ID must end with/);
     await expect(loadConfig({ ...env, SESSION_TTL: '5' })).rejects.toThrow(/SESSION_TTL/);
+  });
+
+  it('A14: needs at least one sign-in method', async () => {
+    await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined })).rejects.toThrow(/GOOGLE_CLIENT_ID.*DATABASE_URL/s);
+  });
+
+  it('A14: turns on e-mail & password sign-in with DATABASE_URL and SMTP_URL', async () => {
+    const config = await loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined, DATABASE_URL: 'sqlite::memory:', SMTP_URL: 'console' });
+
+    expect(config.google).toBeUndefined();
+    expect(config.password).toMatchObject({ minLength: 8, mailer: consoleMailer });
+    expect(await config.password!.store.findOne('user', { id: 'x' })).toBeNull();
+  });
+
+  it('A14: names what is missing or wrong for e-mail & password sign-in', async () => {
+    const withDb = { ...env, DATABASE_URL: 'sqlite::memory:' };
+    await expect(loadConfig(withDb)).rejects.toThrow(/SMTP_URL is not set/);
+    await expect(loadConfig({ ...withDb, SMTP_URL: 'smtp://localhost:25' })).rejects.toThrow(/MAIL_FROM is not set/);
+    await expect(loadConfig({ ...withDb, SMTP_URL: 'mail.example.com' })).rejects.toThrow(/SMTP_URL must start with/);
+    await expect(loadConfig({ ...withDb, SMTP_URL: 'console', PASSWORD_MIN_LENGTH: '0' })).rejects.toThrow(/PASSWORD_MIN_LENGTH/);
+    await expect(loadConfig({ ...env, DATABASE_URL: 'postgres://db/madauth', SMTP_URL: 'console' })).rejects.toThrow(
+      /must start with "sqlite:".*own store adapter/s,
+    );
+  });
+
+  it('A16: a store or mailer passed in replaces DATABASE_URL and SMTP_URL', async () => {
+    const store = createSqliteAdapter(':memory:');
+    const mailer = recordingMailer();
+
+    const config = await loadConfig({ ...env, PASSWORD_MIN_LENGTH: '12' }, { store, mailer });
+
+    expect(config.password).toEqual({ minLength: 12, store, mailer });
   });
 
   it('documents every environment variable in docs/server.md', () => {

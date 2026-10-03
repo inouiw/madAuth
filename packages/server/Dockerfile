@@ -14,6 +14,9 @@ RUN npm run build --workspace @madauth/server
 FROM node:22-alpine
 WORKDIR /app
 COPY --from=build /repo/packages/server/dist/standalone/main.mjs ./main.mjs
+# For DATABASE_URL=sqlite:/data/madauth.db: a volume the unprivileged user can write to.
+RUN mkdir /data && chown node:node /data
+VOLUME /data
 USER node
 ENV NODE_ENV=production PORT=8787
 EXPOSE 8787

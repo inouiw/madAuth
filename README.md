@@ -5,7 +5,7 @@ A self-hostable alternative to Cognito / Auth0. Sign-in methods:
 | Method | Status |
 | --- | --- |
 | Google sign-in (FedCM / One Tap, or server-side redirect) | available |
-| Username & password | coming soon |
+| E-mail & password (with e-mail confirmation and password reset) | available |
 | Authenticator app (TOTP) | coming soon |
 | Passwordless e-mail link | coming soon |
 | SMS code | coming soon |
@@ -28,7 +28,7 @@ Install dependencies:
 npm install
 ```
 
-Create the server's configuration from the example. It uses a Google client that already allows `http://localhost:3000`:
+Create the server's configuration from the example. It uses a Google client that already allows `http://localhost:3000`, stores e-mail & password users in `packages/server/madauth.db` and prints e-mails (with their links and codes) to the server's log:
 
 ```bash
 cp packages/server/.env.example packages/server/.env
@@ -40,7 +40,7 @@ Start the madAuth server. The first start prints a signing key; copy it into `pa
 npm run dev:server
 ```
 
-In a second terminal, start the demo at http://localhost:3000 (it proxies `/auth` to the server):
+In a second terminal, start the demo at http://localhost:3000 (it proxies `/auth` to the server). http://localhost:3000/custom.html shows a custom login screen built with the same library:
 
 ```bash
 npm run dev
@@ -62,16 +62,18 @@ npm test
 ## Using madAuth in your app
 
 ```ts
-import { Madauth, GoogleFedcm } from '@madauth/web';
+import { Madauth, GoogleFedcm, Password } from '@madauth/web';
 
-Madauth.initialize({ providers: [new GoogleFedcm()] });
+Madauth.initialize({ providers: [new GoogleFedcm(), new Password()] });
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 signInButton.onclick = () => Madauth.signIn();
 ```
 
 - **`initialize`** checks the server and loads the current session. You don't need to await it. Problems are logged to the console and returned as `{ isSuccess: false, error }`.
 - **Google sign-in:** `new GoogleFedcm()` shows Google One Tap on page load ("Continue as …"). `Madauth.signIn()` opens the sign-in dialog with Google's button, which keeps working when Chrome holds One Tap back. For the server-side redirect flow use `new GoogleRedirect()`.
+- **E-mail & password:** `new Password()` adds the form to the dialog, with "Create account" and "Forgot password?". New accounts confirm their address with a link or a code from an e-mail. The links in the e-mails lead back to your page: `initialize` handles them, and opens the dialog to choose a new password after a reset link. See [Password security](docs/password-security.md).
 - **The dialog:** `signIn()` adds a `<madauth-login>` to the page; put one in your HTML only to customize it.
+- **Your own login screen:** pass `ui: 'custom'` and use `Madauth.password` and `Madauth.google` instead of the dialog. See [Building your own login screen](docs/custom-ui.md).
 - **Other methods:** `signOut()`, `getSession()` and `currentUser`. All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
 - **Server URL:** the server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 'https://auth.example.com'` to `initialize` if it runs elsewhere on the same site.
 
@@ -80,7 +82,9 @@ signInButton.onclick = () => Madauth.signIn();
 See [Running the madAuth server](docs/server.md) for:
 - the configuration
 - Google Cloud Console setup
+- e-mail & password sign-in: the database and sending e-mails
 - Docker, AWS Lambda and Azure Functions
+- storing users in your own database (custom store adapter)
 - verifying the session in your own backend
 
 ### Styling
@@ -91,8 +95,9 @@ The login form can be styled to match your app (colors, corner radius, font, and
 
 1. Add or update the entry in [`packages/web/src/methods.ts`](packages/web/src/methods.ts).
 2. Implement a `SignInProvider` (see [`packages/web/src/providers`](packages/web/src/providers)). A method shows "coming soon" until its provider is passed to `Madauth.initialize`.
-3. Add the server endpoints in [`packages/server/src/app.ts`](packages/server/src/app.ts).
-4. Add tests next to the code (`*.test.ts`) and run `npm test`.
+3. Add the server endpoints in a module in [`packages/server/src/routes`](packages/server/src/routes) and register it in [`app.ts`](packages/server/src/app.ts). Store what it needs as models in [`madauthSchema`](packages/server/src/store/schema.ts).
+4. Add the method's actions as a scope on `Madauth` (see [`packages/web/src/scopes`](packages/web/src/scopes)), so custom login screens can use it.
+5. Add tests next to the code (`*.test.ts`) and run `npm test`.
 
 ## Contributing
 

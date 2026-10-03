@@ -1,10 +1,10 @@
-import { GoogleFedcm, GoogleRedirect, Madauth, type MadauthUser } from '@madauth/web';
+import { GoogleFedcm, GoogleRedirect, Madauth, Password, type MadauthUser } from '@madauth/web';
 
 // VITE_GOOGLE_FLOW=redirect uses the server-side flow (needs GOOGLE_CLIENT_SECRET on the server).
 const google = import.meta.env.VITE_GOOGLE_FLOW === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();
 
 // No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin.
-void Madauth.initialize({ providers: [google] });
+void Madauth.initialize({ providers: [google, new Password()] });
 Madauth.onAuthStateChanged(handleAuthStateChanged);
 
 document.querySelector('#sign-in')!.addEventListener('click', () => void Madauth.signIn());

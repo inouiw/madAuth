@@ -1,0 +1,104 @@
+/* A deliberately different look from madAuth's dialog: the custom screen is styled by the app. */
+.card {
+  display: grid;
+  gap: 16px;
+  width: min(360px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 28px;
+  border-radius: 20px;
+  color: light-dark(#1e1b4b, #e0e7ff);
+  background: light-dark(#eef2ff, #1e1b4b);
+}
+
+.card h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.card > div,
+.card form {
+  display: grid;
+  gap: 12px;
+}
+
+.card p {
+  margin: 0;
+}
+
+.card label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.card input {
+  height: 40px;
+  padding: 0 12px;
+  font: inherit;
+  font-weight: 400;
+  border: 1px solid light-dark(#a5b4fc, #4338ca);
+  border-radius: 10px;
+  background: light-dark(#fff, #312e81);
+  color: inherit;
+}
+
+.card small {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.card form > button {
+  height: 42px;
+  font: inherit;
+  font-weight: 600;
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  background: #4f46e5;
+  cursor: pointer;
+}
+
+.card form > button:disabled {
+  opacity: 0.6;
+}
+
+.divider {
+  text-align: center;
+  font-size: 0.875rem;
+  opacity: 0.7;
+}
+
+.links {
+  display: flex;
+  justify-content: space-between;
+}
+
+.links button {
+  padding: 0;
+  font: inherit;
+  font-size: 0.875rem;
+  border: none;
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+#message {
+  padding: 10px 12px;
+  font-size: 0.875rem;
+  border-radius: 10px;
+  background: light-dark(#e0e7ff, #312e81);
+}
+
+#message.error {
+  color: light-dark(#b42318, #fda29b);
+  background: light-dark(#fef3f2, rgb(240 68 56 / 0.12));
+}
+
+#google-button {
+  display: flex;
+  justify-content: center;
+  min-height: 40px;
+}

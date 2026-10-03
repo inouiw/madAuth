@@ -16,7 +16,7 @@ Set these on `madauth-login` or any ancestor (e.g. `:root`).
 
 | Property | Default | Description |
 | --- | --- | --- |
-| `--madauth-primary` | `#17181a` (light), `#f1f2f3` (dark) | Fill color of the primary "Sign in" button. Its text switches between white and near-black to stay readable on the color you set. |
+| `--madauth-primary` | `#17181a` (light), `#f1f2f3` (dark) | Fill color of the primary buttons ("Sign in", "Create account", …). Its text switches between white and near-black to stay readable on the color you set. |
 | `--madauth-radius` | `14px` | Corner radius of the dialog. Buttons and fields use this value minus 6px, the "Other ways to sign in" list minus 4px. |
 | `--madauth-font` | `'Public Sans Variable', 'Public Sans', system-ui, sans-serif` | Font family of the dialog. See [Font](#font). |
 
@@ -57,8 +57,11 @@ Use `::part()` to style an element directly.
 | Part | Element |
 | --- | --- |
 | `dialog` | The dialog box itself (`<dialog>`). |
-| `method` | Each sign-in method button: "Continue with Google", the "Sign in" button of the password form, and every row under "Other ways to sign in". With `GoogleFedcm`, the Google button is rendered by Google and can't be styled. |
+| `method` | Each sign-in method button: "Continue with Google", the submit buttons of the forms ("Sign in", "Create account", …), and every row under "Other ways to sign in". Google's own button (with `GoogleFedcm`) and the redirect button (with `GoogleRedirect`) follow Google's design and can't be styled. |
 | `error` | The message shown when a sign-in fails. |
+| `form` | Each form: sign in, create account, forgot password, code, new password. |
+| `input` | Each text field. |
+| `link` | The text buttons: "Forgot password?", "Create account", "Back to sign in", "Send the e-mail again". |
 
 ```css
 madauth-login::part(dialog) {
@@ -70,7 +73,13 @@ madauth-login::part(dialog) {
 madauth-login::part(method) {
   font-weight: 600;
 }
+
+madauth-login::part(input) {
+  border-color: #9ca3af;
+}
 ```
+
+To change more than the look, e.g. the layout or the texts, build your own screen with the same methods the dialog uses: see [Building your own login screen](custom-ui.md).
 
 ## Attributes
 

@@ -6,6 +6,8 @@ export default defineConfig([
     entry: {
       index: 'src/index.ts',
       verify: 'src/verify.ts',
+      sqlite: 'src/store/sqlite.ts',
+      testing: 'src/testing.ts',
       bin: 'src/bin.ts',
       'entry/node': 'src/entry/node.ts',
       'entry/lambda': 'src/entry/lambda.ts',
@@ -13,7 +15,17 @@ export default defineConfig([
     },
     format: 'esm',
     target: 'node20',
-    dts: { entry: ['src/index.ts', 'src/verify.ts', 'src/entry/node.ts', 'src/entry/lambda.ts', 'src/entry/azure.ts'] },
+    dts: {
+      entry: [
+        'src/index.ts',
+        'src/verify.ts',
+        'src/store/sqlite.ts',
+        'src/testing.ts',
+        'src/entry/node.ts',
+        'src/entry/lambda.ts',
+        'src/entry/azure.ts',
+      ],
+    },
     clean: true,
   },
   // Self-contained bundles to deploy without node_modules: Docker, Lambda and Azure Functions.
@@ -21,7 +33,7 @@ export default defineConfig([
     entry: {
       main: 'src/main.ts',
       lambda: 'src/entry/lambda.ts',
-      azure: 'src/entry/azure.ts',
+      azure: 'src/entry/azure-main.ts',
     },
     outDir: 'dist/standalone',
     // One file per target, so each can be deployed on its own.

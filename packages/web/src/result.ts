@@ -1,6 +1,6 @@
 /** The signed-in user. */
 export interface MadauthUser {
-  /** Stable id, e.g. `google:<sub>`. */
+  /** Stable id: `google:<sub>` for Google, `usr_<id>` for e-mail & password users. */
   id: string;
   email?: string;
   name?: string;
@@ -17,6 +17,12 @@ const errorCodes = [
   'verification_failed',
   'email_unverified',
   'no_session',
+  'invalid_credentials',
+  'invalid_email',
+  'weak_password',
+  'too_many_attempts',
+  'link_invalid',
+  'code_invalid',
   'unknown',
 ] as const;
 

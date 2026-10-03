@@ -1,9 +1,12 @@
 {
   "name": "@madauth/server",
   "version": "0.0.1",
-  "description": "madAuth server: Google sign-in and madAuth sessions for Docker, AWS Lambda and Azure Functions.",
+  "description": "madAuth server: Google and e-mail & password sign-in with madAuth sessions, for Docker, AWS Lambda and Azure Functions.",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -14,6 +17,14 @@
     "./verify": {
       "types": "./dist/verify.d.ts",
       "import": "./dist/verify.js"
+    },
+    "./sqlite": {
+      "types": "./dist/store/sqlite.d.ts",
+      "import": "./dist/sqlite.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
     },
     "./node": {
       "types": "./dist/entry/node.d.ts",
@@ -38,15 +49,17 @@
     "build": "tsup",
     "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
     "start": "node --env-file-if-exists=.env dist/standalone/main.mjs",
-    "generate-key": "tsx src/bin.ts generate-key",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "generate-key": "tsx src/bin.ts generate-key",
+    "cli": "tsx --env-file-if-exists=.env src/bin.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.3",
     "hono": "^4.13.12",
-    "jose": "^6.2.12"
+    "jose": "^6.2.12",
+    "nodemailer": "^10.0.13"
   },
   "peerDependencies": {
     "@azure/functions": "^4.0.0"
@@ -63,6 +76,7 @@
     "tsup": "^8.5.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.3",
+    "@types/nodemailer": "^8.0.2"
   }
 }

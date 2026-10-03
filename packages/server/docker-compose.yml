@@ -4,5 +4,13 @@ services:
       context: ../..
       dockerfile: packages/server/Dockerfile
     env_file: .env
+    environment:
+      # E-mail & password users are stored in this SQLite file, on the volume below.
+      DATABASE_URL: sqlite:/data/madauth.db
     ports:
       - '8787:8787'
+    volumes:
+      - madauth-data:/data
+
+volumes:
+  madauth-data:
