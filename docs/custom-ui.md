@@ -31,15 +31,17 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 | `signIn({ email, password })` | `{ user }` | `invalid_credentials`, `email_unverified`, `too_many_attempts` |
 | `signUp({ email, password, name?, redirectTo? })` | — | `invalid_email`, `weak_password`, `signup_rejected`, `temporarily_unavailable` |
 | `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
-| `verifyEmail({ email, code })` | `{ user }` | `code_invalid` |
+| `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked` |
 | `sendResetEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
-| `confirmReset({ newPassword, token? })` or `confirmReset({ newPassword, email, code })` | `{ user }` | `link_invalid`, `code_invalid`, `weak_password` |
+| `confirmReset({ newPassword, token? })` or `confirmReset({ newPassword, email, code })` | `{ user }` | `link_invalid`, `code_invalid`, `codes_locked`, `weak_password` |
 | `pendingReset` | `boolean` | True when the page was opened from a reset link |
 | `policy` | `{ minLength } \| null` | The server's password rules, for a hint next to the field |
 
 `signUp`, `sendVerificationEmail` and `sendResetEmail` succeed whether or not the address has an account, so nobody can probe for accounts. Tell the user to check their inbox in every case.
 
 `too_many_attempts`, `weak_password` and `signup_rejected` come with a `message` written for the user: the wait time, the minimum length, or the reason your sign-up check gave. For the other codes, write your own texts.
+
+`codes_locked` means that too many wrong codes were entered for this account, across e-mails: its codes no longer work until one of its e-mail links is used. Tell the user to ask for a new e-mail and to open the link in it.
 
 `temporarily_unavailable` means the server's [webhook](server.md#webhooks) did not take over the e-mail, or did not answer the sign-up check. Show something like "E-mail & password sign-up is not available right now. Please try again later." The user's browser language is sent along (`locale`), so your receiver can write the e-mail in it.
 

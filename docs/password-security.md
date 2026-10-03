@@ -40,7 +40,7 @@ Nobody should be able to find out through madAuth whether an address has an acco
 
 Two things are still visible:
 
-- After five wrong passwords for an address, the answer becomes `too_many_attempts`, which only happens for existing accounts. Per-IP limits in front of madAuth (see below) make this slow to use.
+- After five wrong passwords for an address, the answer becomes `too_many_attempts`, and after ten wrong e-mail codes `codes_locked`. Both only happen for existing accounts. Per-IP limits in front of madAuth (see below) make this slow to use.
 - While your [webhook](server.md#webhooks) receiver is down, "send a reset e-mail" and "send the confirmation e-mail again" fail with `temporarily_unavailable` for existing accounts, but answer `202` for unknown addresses, which get no e-mail. Answering `202` for existing accounts too would leave users waiting for an e-mail that never comes. Sign-up is not affected: every sign-up sends an e-mail, so it fails the same way for every address.
 
 ## Sign-up check
@@ -66,8 +66,11 @@ The confirmation and reset e-mails contain a link and a 6-digit code. The link i
 - The link and the code share one record. It expires after 24 hours for a confirmation and after 30 minutes for a reset.
 - They work once. The record is deleted when it is used, and the number of deleted records decides, so two requests with the same link can't both succeed.
 - After 5 wrong codes the record is deleted, and the link stops working too. Attempts sent at the same time count one by one.
+- Wrong codes are also counted per account, across e-mails. After 10 wrong codes in a row the account's codes stop working (`429 codes_locked`), also the right one, while the links in its e-mails keep working. Using a link or a right code sets the count back. Without this, asking for a new e-mail every minute would buy five new guesses each time: about 7,200 a day against the million possible codes. With it, nobody gets more than 10 guesses without access to the inbox.
 - A new e-mail replaces the previous one for the same purpose; older links and codes stop working.
 - The link points to the app page that asked for it (`redirectTo`), which must be on an origin in `ALLOWED_ORIGINS`. The token is in the URL's **hash** (`#madauth_reset=…`). Browsers never send the hash to servers or in the `Referer` header, and `Madauth.initialize` removes it from the address bar right away.
+
+The count also covers accounts that were never confirmed. Someone who signs up with another person's address, to guess the code sent to that person, is stopped after 10 guesses; the owner can still sign up later and confirm with the link.
 
 Code: `issueVerification`, `consumeLinkToken` and `consumeCode` in [`packages/server/src/users.ts`](../packages/server/src/users.ts).
 

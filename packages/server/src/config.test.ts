@@ -80,8 +80,16 @@ describe('loadConfig', () => {
     const withDb = { ...env, DATABASE_URL: 'sqlite::memory:' };
     await expect(loadConfig({ ...withDb, ...hook, PASSWORD_MIN_LENGTH: '0' })).rejects.toThrow(/PASSWORD_MIN_LENGTH/);
     await expect(loadConfig({ ...env, ...hook, DATABASE_URL: 'postgres://db/madauth' })).rejects.toThrow(
-      /must start with "sqlite:".*own store adapter/s,
+      /must start with "sqlite:".*or "dynamodb:".*own store adapter/s,
     );
+  });
+
+  it('DATABASE_URL=dynamodb:<table> uses the DynamoDB adapter, which only reaches AWS on first use', async () => {
+    const config = await loadConfig({ ...env, ...hook, DATABASE_URL: 'dynamodb:madauth' });
+
+    expect(config.password?.store).toBeDefined();
+    await expect(loadConfig({ ...env, ...hook, DATABASE_URL: 'dynamodb:' })).rejects.toThrow(/needs a table name/);
+    await expect(loadConfig({ ...env, ...hook, DATABASE_URL: 'dynamodb://madauth' })).rejects.toThrow(/DynamoDB table name/);
   });
 
   it('K7: e-mail & password sign-in needs WEBHOOK_URL', async () => {

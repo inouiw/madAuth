@@ -210,13 +210,18 @@ function passwordMinLength(value: string | undefined): number {
   return minLength;
 }
 
-/** `DATABASE_URL=sqlite:<path>` creates the built-in SQLite adapter, just as passing it as `store` would. */
+/**
+ * `DATABASE_URL=sqlite:<path>` or `DATABASE_URL=dynamodb:<table>` creates the built-in adapter, just as
+ * passing it as `store` would.
+ */
 async function storeFromDatabaseUrl(url: string | undefined): Promise<StoreAdapter | undefined> {
   if (!url) return undefined;
+  if (url.startsWith('dynamodb:')) return dynamoDbStore(url.slice('dynamodb:'.length));
   if (!url.startsWith('sqlite:')) {
     throw new ConfigError(
-      `DATABASE_URL must start with "sqlite:" (e.g. sqlite:/data/madauth.db) but is "${url}". ` +
-        'For other databases, pass your own store adapter (see "Custom store adapter" in docs/server.md).',
+      `DATABASE_URL must start with "sqlite:" (e.g. sqlite:/data/madauth.db) or "dynamodb:" (e.g. ` +
+        `dynamodb:madauth) but is "${url}". For other databases, pass your own store adapter (see "Custom ` +
+        'store adapter" in docs/server.md).',
     );
   }
   const path = url.slice('sqlite:'.length);
@@ -227,6 +232,27 @@ async function storeFromDatabaseUrl(url: string | undefined): Promise<StoreAdapt
   } catch (e) {
     throw new ConfigError(`DATABASE_URL: could not open "${path}": ${(e as Error).message}`);
   }
+}
+
+async function dynamoDbStore(tableName: string): Promise<StoreAdapter> {
+  if (!tableName) throw new ConfigError('DATABASE_URL needs a table name, e.g. dynamodb:madauth');
+  if (!/^[\w.-]{3,255}$/.test(tableName)) {
+    throw new ConfigError(
+      `DATABASE_URL=dynamodb: needs a DynamoDB table name (3 to 255 letters, digits, _ . -) but has "${tableName}"`,
+    );
+  }
+  // The adapter loads the AWS SDK on first use; check here that it is installed, so a missing package
+  // stops the start-up instead of the first sign-in.
+  try {
+    await import('@aws-sdk/client-dynamodb');
+  } catch (e) {
+    throw new ConfigError(
+      'DATABASE_URL=dynamodb: needs the AWS SDK. Install it next to madAuth: npm install @aws-sdk/client-dynamodb ' +
+        `(${(e as Error).message})`,
+    );
+  }
+  const { createDynamoDbAdapter } = await import('./store/dynamodb.js');
+  return createDynamoDbAdapter({ tableName });
 }
 
 /** Hosts that may be called over plain http, e.g. a receiver on the developer's machine. */

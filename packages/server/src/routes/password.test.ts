@@ -353,6 +353,75 @@ describe('password reset', () => {
     expect((await post(app, '/auth/password/reset', { token, password: 'new password!' })).status).toBe(400);
   });
 
+  it('wrong codes are counted across e-mails: after 10 the codes stop working, the links do not', async () => {
+    const { app, hook } = passwordApp();
+    await signUpVerified(app, hook);
+    const newResetMail = async () => {
+      advance(61_000 * (hook.emails().length + 1));
+      await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
+      return linkAndCode(hook.lastEmail());
+    };
+    const tryCode = (code: string) => post(app, '/auth/password/reset', { email: grace.email, code, password: 'new password!' });
+
+    // Two e-mails with five guesses each.
+    const answers: unknown[] = [];
+    for (let mail = 0; mail < 2; mail++) {
+      const { code } = await newResetMail();
+      const wrong = code === '000000' ? '111111' : '000000';
+      for (let i = 0; i < 5; i++) answers.push((await (await tryCode(wrong)).json()).error);
+    }
+    expect(answers).toEqual([...Array(9).fill('code_invalid'), 'codes_locked']);
+
+    // Asking for another e-mail no longer buys new guesses: even its right code is refused.
+    const third = await newResetMail();
+    const locked = await tryCode(third.code);
+    expect(locked.status).toBe(429);
+    expect(await locked.json()).toEqual({ error: 'codes_locked', message: expect.stringContaining('use the link') });
+
+    // The link of that e-mail still works, and using it lets codes work again.
+    expect((await post(app, '/auth/password/reset', { token: third.token, password: 'new password!' })).status).toBe(200);
+    const fourth = await newResetMail();
+    expect((await tryCode(fourth.code)).status).toBe(200);
+  });
+
+  it('a stranger signing up with someone else’s address gets 10 guesses, not 5 per e-mail', async () => {
+    const { app, hook, store } = passwordApp();
+    const guess = (code: string) => post(app, '/auth/password/verify-email', { email: grace.email, code });
+    // The stranger signs up again and again to get new codes sent to the owner's inbox.
+    let lastAnswer = '';
+    for (let mail = 0; mail < 3; mail++) {
+      advance(61_000 * (mail + 1));
+      await signUp(app, { password: 'the stranger’s password' });
+      const { code } = linkAndCode(hook.lastEmail());
+      const wrong = code === '000000' ? '111111' : '000000';
+      for (let i = 0; i < 5; i++) lastAnswer = (await (await guess(wrong)).json()).error;
+    }
+    expect(lastAnswer).toBe('codes_locked');
+    expect((await store.findOne('user', { emailNormalized: grace.email }))?.wrongCodes).toBe(10);
+
+    // The owner signs up themselves later: their link works and sets the count back.
+    advance(61_000 * 10);
+    await signUp(app);
+    const { code, token } = linkAndCode(hook.lastEmail());
+    expect((await guess(code)).status).toBe(429);
+    expect((await post(app, '/auth/password/verify-email', { token })).status).toBe(200);
+    expect((await store.findOne('user', { emailNormalized: grace.email }))?.wrongCodes).toBe(0);
+    expect((await signIn(app)).status).toBe(200);
+  });
+
+  it('a right code sets the count of wrong codes back', async () => {
+    const { app, hook, store } = passwordApp();
+    await signUp(app);
+    const { code } = linkAndCode(hook.lastEmail());
+    const wrong = code === '000000' ? '111111' : '000000';
+    for (let i = 0; i < 4; i++) await post(app, '/auth/password/verify-email', { email: grace.email, code: wrong });
+    expect((await store.findOne('user', { emailNormalized: grace.email }))?.wrongCodes).toBe(4);
+
+    expect((await post(app, '/auth/password/verify-email', { email: grace.email, code })).status).toBe(200);
+
+    expect((await store.findOne('user', { emailNormalized: grace.email }))?.wrongCodes).toBe(0);
+  });
+
   it('A12: a new e-mail replaces the earlier link and code', async () => {
     const { app, hook } = passwordApp();
     await signUpVerified(app, hook);

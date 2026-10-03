@@ -14,6 +14,14 @@ jobs:
     strategy:
       matrix:
         node: [22, 24]
+    services:
+      # For the DynamoDB adapter's contract tests.
+      dynamodb:
+        image: amazon/dynamodb-local
+        ports:
+          - 8000:8000
+    env:
+      DYNAMODB_TEST_ENDPOINT: http://localhost:8000
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
