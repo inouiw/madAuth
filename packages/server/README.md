@@ -9,7 +9,7 @@ The browser side is [`@madauth/web`](https://www.npmjs.com/package/@madauth/web)
 With Docker:
 
 ```bash
-docker run --rm -p 8787:8787 --env-file .env ghcr.io/inouiw/madauth-server
+docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data ghcr.io/inouiw/madauth-server
 ```
 
 Or with Node.js 22.13 or newer:

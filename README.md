@@ -78,7 +78,7 @@ npm install @madauth/web
 Run the server, for example with Docker (see [Running the madAuth server](docs/server.md) for the configuration and other hosting options):
 
 ```bash
-docker run --rm -p 8787:8787 --env-file .env ghcr.io/inouiw/madauth-server
+docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data ghcr.io/inouiw/madauth-server
 ```
 
 Then sign users in:

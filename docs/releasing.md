@@ -52,4 +52,4 @@ npm publishes with [trusted publishing](https://docs.npmjs.com/trusted-publisher
 
 4. **Make the image public.** The first release creates the `madauth-server` package on GitHub as private. Under *Your profile → Packages → madauth-server → Package settings*, change its visibility to public.
 
-The `npm` environment in GitHub (*Settings → Environments*) is created by the first run. Add required reviewers there if releases should wait for approval.
+The `npm` environment in GitHub (*Settings → Environments*) is created by the first run. Add required reviewers there if releases should wait for approval. The image and the GitHub release are published after npm, so they wait too.

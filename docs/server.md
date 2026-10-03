@@ -78,8 +78,10 @@ Brute-force protection is per account. Limit requests per IP address in your rev
 Run the published image (for `linux/amd64` and `linux/arm64`). Pin a version, e.g. `ghcr.io/inouiw/madauth-server:0.1.0`, in production:
 
 ```bash
-docker run --rm -p 8787:8787 --env-file .env ghcr.io/inouiw/madauth-server
+docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data ghcr.io/inouiw/madauth-server
 ```
+
+The `madauth-data` volume keeps a SQLite database (`DATABASE_URL=sqlite:/data/madauth.db`) when the container is removed.
 
 To build the image yourself, run this from the repository root:
 

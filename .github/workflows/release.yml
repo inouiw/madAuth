@@ -72,7 +72,8 @@ jobs:
           done
 
   docker:
-    needs: check
+    # After npm, so the image isn't pushed for a release that npm rejected or that is still waiting for approval.
+    needs: [check, npm]
     runs-on: ubuntu-latest
     permissions:
       contents: read
