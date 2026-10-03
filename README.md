@@ -67,6 +67,22 @@ npm test
 
 ## Using madAuth in your app
 
+madAuth has two parts: the sign-in library for your web app, and the madAuth server it talks to.
+
+Install the library:
+
+```bash
+npm install @madauth/web
+```
+
+Run the server, for example with Docker (see [Running the madAuth server](docs/server.md) for the configuration and other hosting options):
+
+```bash
+docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data ghcr.io/inouiw/madauth-server
+```
+
+Then sign users in:
+
 ```ts
 import { Madauth, GoogleFedcm, Password } from '@madauth/web';
 
@@ -104,6 +120,10 @@ The login form can be styled to match your app (colors, corner radius, font, and
 3. Add the server endpoints in a module in [`packages/server/src/routes`](packages/server/src/routes) and register it in [`app.ts`](packages/server/src/app.ts). Store what it needs as models in [`madauthSchema`](packages/server/src/store/schema.ts).
 4. Add the method's actions as a scope on `Madauth` (see [`packages/web/src/scopes`](packages/web/src/scopes)), so custom login screens can use it.
 5. Add tests next to the code (`*.test.ts`) and run `npm test`.
+
+## Releasing
+
+See [Releasing](docs/releasing.md).
 
 ## Contributing
 

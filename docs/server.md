@@ -75,35 +75,37 @@ Brute-force protection is per account. Limit requests per IP address in your rev
 
 ### Docker
 
-Build the image from the repository root:
+Run the published image (for `linux/amd64` and `linux/arm64`). Pin a version, e.g. `ghcr.io/inouiw/madauth-server:0.1.0`, in production:
+
+```bash
+docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data ghcr.io/inouiw/madauth-server
+```
+
+The `madauth-data` volume keeps a SQLite database (`DATABASE_URL=sqlite:/data/madauth.db`) when the container is removed.
+
+To build the image yourself, run this from the repository root:
 
 ```bash
 docker build -f packages/server/Dockerfile -t madauth-server .
 ```
 
-Run it:
-
-```bash
-docker run --rm -p 8787:8787 --env-file packages/server/.env madauth-server
-```
-
-There is also a `docker-compose.yml` in `packages/server`. The container exposes `GET /health` for health checks.
+There is also a `docker-compose.yml` in `packages/server` that builds and runs it from the repository. The container exposes `GET /health` for health checks.
 
 With e-mail & password sign-in, the container must reach your webhook receiver. A receiver on your own machine, e.g. the development receiver, is `http://host.docker.internal:8790/webhook` from inside the container.
 
 ### AWS Lambda
 
-Build the self-contained bundle:
+Download `madauth-server-lambda.mjs` from a [GitHub release](https://github.com/inouiw/madAuth/releases), or take `dist/standalone/lambda.mjs` from the `@madauth/server` npm package. In this repository, build it with:
 
 ```bash
 npm run build -w packages/server
 ```
 
-Deploy `packages/server/dist/standalone/lambda.mjs` with the handler `lambda.handler` on a Node.js 22 or newer runtime. Put it behind a Function URL, API Gateway (HTTP API) or an ALB, and set the environment variables on the function.
+Deploy the bundle, as `lambda.mjs`, with the handler `lambda.handler` on a Node.js 22 or newer runtime. Put it behind a Function URL, API Gateway (HTTP API) or an ALB, and set the environment variables on the function.
 
 ### Azure Functions
 
-Build as above, then deploy `packages/server/dist/standalone/azure.mjs` as the main file of a Node.js (v4 programming model) function app. It registers one HTTP function for all routes.
+Get `madauth-server-azure.mjs` (or `dist/standalone/azure.mjs`) as above, then deploy it as `azure.mjs`, the main file of a Node.js (v4 programming model) function app. It registers one HTTP function for all routes.
 
 Add a `host.json` that removes the default `/api` route prefix:
 
