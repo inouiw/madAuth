@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline';
 import { ConfigError, loadUserStoreConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
+import { madauthSchema } from './store/schema.js';
 import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
 import { Users } from './users.js';
 import { generateWebhookSecret } from './webhooks.js';
@@ -90,7 +91,7 @@ export async function runCli(
       const f = rest.indexOf('--from');
       if (f < 0) return { output: createTablesSql(dialect), exitCode: 0 };
       const from = Number(rest[f + 1]);
-      if (!Number.isInteger(from) || from < 1) return { output: usage, exitCode: 1 };
+      if (!Number.isInteger(from) || from < 1 || from > madauthSchema.version) return { output: usage, exitCode: 1 };
       return { output: upgradeTablesSql(dialect, from) || '-- The tables are up to date.', exitCode: 0 };
     }
     if (command === 'create-user') {

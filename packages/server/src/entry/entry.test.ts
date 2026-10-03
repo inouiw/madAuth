@@ -180,6 +180,7 @@ describe('deployment entry points', () => {
     expect(await runCli(['schema', '--from', '1'])).toMatchObject({ output: expect.stringContaining('wrong_codes DOUBLE PRECISION NOT NULL DEFAULT 0') });
     expect(await runCli(['schema', '--from', '2'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
     expect(await runCli(['schema', '--from', 'x'])).toMatchObject({ exitCode: 1 });
+    expect(await runCli(['schema', '--from', '3'])).toMatchObject({ exitCode: 1 });
   });
 
   it('generate-webhook-secret prints a usable secret', async () => {

@@ -12,7 +12,7 @@ import {
   verifyPassword,
 } from '../password.js';
 import type { MadauthUser } from '../user.js';
-import type { StoredUser, Users, VerificationPurpose } from '../users.js';
+import type { CodeResult, StoredUser, Users, VerificationPurpose } from '../users.js';
 import type { WebhookClient, WebhookType } from '../webhooks.js';
 
 /** Failed sign-ins allowed before each further attempt has to wait. */
@@ -104,7 +104,7 @@ export function passwordRoutes(
   const localeOf = (data: Body): string | undefined =>
     typeof data.locale === 'string' && data.locale.length <= MAX_LOCALE_LENGTH ? data.locale : undefined;
 
-  type Consumed = { userId: string | null; via: 'link' | 'code'; locked?: boolean };
+  type Consumed = Partial<CodeResult> & { userId: string | null; via: 'link' | 'code' };
 
   /** Resolves the user from `{ token }` (an e-mail link) or `{ email, code }`; null if invalid, expired or used. */
   const consume = async (data: Body, purpose: VerificationPurpose): Promise<Consumed> => {

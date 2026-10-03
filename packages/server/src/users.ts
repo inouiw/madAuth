@@ -183,25 +183,29 @@ export class Users {
     if ((await this.store.update('verification', { id: record.id, attempts: record.attempts }, { attempts })) !== 1) {
       return { userId: null, locked: false };
     }
+    // The code is also counted as wrong for the user before it is compared, so codes for confirming and
+    // for resetting tried at the same time can't get past the limit either. A right code sets it back.
+    const wrongCodes = await this.countWrongCode(user);
+    if (wrongCodes === null) return { userId: null, locked: false };
+    if (wrongCodes > MAX_WRONG_CODES) return { userId: null, locked: true };
     if (!safeEqual(hashCode(this.key, code), record.codeHash)) {
       if (attempts >= MAX_CODE_ATTEMPTS) await this.store.delete('verification', { id: record.id });
-      return { userId: null, locked: (await this.countWrongCode(user.id)) >= MAX_WRONG_CODES };
+      return { userId: null, locked: wrongCodes >= MAX_WRONG_CODES };
     }
     return { userId: await this.consume(record), locked: false };
   }
 
-  /** Counts a wrong code for the user and resolves to the new count. */
-  private async countWrongCode(userId: string): Promise<number> {
-    // Codes for confirming and for resetting can be tried at the same time; count each of them.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const user = await this.findById(userId);
-      if (!user) return 0;
-      const wrongCodes = (user.wrongCodes ?? 0) + 1;
-      if ((await this.store.update('user', { id: userId, wrongCodes: user.wrongCodes ?? null }, { wrongCodes })) === 1) {
+  /** Counts a code for the user and resolves to the new count; null if other requests kept changing it. */
+  private async countWrongCode(user: StoredUser): Promise<number | null> {
+    let current: StoredUser | null = user;
+    for (let attempt = 0; attempt < 3 && current; attempt++) {
+      const wrongCodes = (current.wrongCodes ?? 0) + 1;
+      if ((await this.store.update('user', { id: user.id, wrongCodes: current.wrongCodes ?? null }, { wrongCodes })) === 1) {
         return wrongCodes;
       }
+      current = await this.findById(user.id);
     }
-    return MAX_WRONG_CODES;
+    return null;
   }
 
   private async consume(record: StoredVerification): Promise<string | null> {
