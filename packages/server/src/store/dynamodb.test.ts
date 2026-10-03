@@ -41,6 +41,19 @@ describe.skipIf(!endpoint)('DynamoDB adapter with a database', () => {
 
   storeAdapterContract({ describe, it, expect }, () => createDynamoDbAdapter({ tableName, client }));
 
+  it('keeps records whose id is an e-mail address, whatever characters it contains', async () => {
+    const store = createDynamoDbAdapter({ tableName, client });
+    const id = `o'neil+test|x#y_${Date.now()}@example.com`;
+    const record = { id, roles: 'admin', updatedAt: 1, updatedBy: null };
+
+    expect(await store.create('role', record)).toBe(true);
+    expect(await store.findOne('role', { id })).toEqual(record);
+    expect(await store.update('role', { id }, { roles: 'admin editor', updatedBy: 'ada@example.com' })).toBe(1);
+    expect((await store.findOne('role', { id }))?.roles).toBe('admin editor');
+    expect(await store.delete('role', { id })).toBe(1);
+    expect(await store.findOne('role', { id })).toBe(null);
+  });
+
   it('leaves no unique values or index entries behind when records are deleted', async () => {
     const store = createDynamoDbAdapter({ tableName, client });
     const account = {

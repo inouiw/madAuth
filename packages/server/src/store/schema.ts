@@ -46,7 +46,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 2,
+  version: 3,
   models: {
     user: {
       fields: {
@@ -83,6 +83,19 @@ export const madauthSchema = {
         codeHash: { type: 'string' },
         attempts: { type: 'number' },
         expiresAt: { type: 'number' },
+      },
+    },
+    /**
+     * The roles of an e-mail address (since version 3). `id` is the normalized address, so the roles
+     * apply whichever way its owner signs in. `roles` holds the names separated by spaces.
+     */
+    role: {
+      fields: {
+        id: { type: 'string', primaryKey: true },
+        roles: { type: 'string' },
+        updatedAt: { type: 'number' },
+        /** The address of the admin who set them; empty when set from the command line. */
+        updatedBy: { type: 'string', nullable: true },
       },
     },
   },

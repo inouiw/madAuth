@@ -71,9 +71,9 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
       return c.json({ error: result.error, message: result.reason }, result.error === 'email_unverified' ? 403 : 401);
     }
     deleteCookie(c, NONCE_COOKIE, { path: '/auth/google', secure });
-    await ctx.startSession(c, result.user, ['google']);
-    await ctx.emit('user.signed_in', { user: result.user, method: 'google' });
-    return c.json({ user: result.user });
+    const user = await ctx.startSession(c, result.user, ['google']);
+    await ctx.emit('user.signed_in', { user, method: 'google' });
+    return c.json({ user });
   });
 
   // --- Server-side authorization-code flow with PKCE (only with GOOGLE_CLIENT_SECRET) ---
@@ -159,8 +159,8 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
       keys: config.jwksResolver,
     });
     if (!result.ok) return back(result.error);
-    await ctx.startSession(c, result.user, ['google']);
-    await ctx.emit('user.signed_in', { user: result.user, method: 'google' });
+    const user = await ctx.startSession(c, result.user, ['google']);
+    await ctx.emit('user.signed_in', { user, method: 'google' });
     return back();
   });
 }

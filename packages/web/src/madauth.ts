@@ -3,6 +3,7 @@ import type { LoginMethodId } from './methods.js';
 import type { ProviderContext, ServerConfig, SignInProvider } from './providers/provider.js';
 import { fail, ok, type MadauthError, type MadauthUser, type Result } from './result.js';
 import type { Core } from './scopes/core.js';
+import { createAdminApi } from './scopes/admin.js';
 import { createGoogleApi } from './scopes/google.js';
 import { createPasswordApi } from './scopes/password.js';
 
@@ -313,6 +314,9 @@ export const Madauth = {
 
   /** Google sign-in for custom login screens. Needs `new GoogleFedcm()` or `new GoogleRedirect()`. */
   google: createGoogleApi(core),
+
+  /** Reading and setting roles, for users with the role `admin`. */
+  admin: createAdminApi(core),
 
   /**
    * Calls `listener` with the current user once it is known, and again on every sign-in and sign-out.

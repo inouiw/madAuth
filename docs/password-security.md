@@ -84,7 +84,7 @@ Password users get the same madAuth session as Google users: a signed JWT in an 
 
 A password reset increases the session version and deletes the user's unused confirmation link and code. The madAuth server then rejects older sessions when the app checks them (`GET /auth/session`, e.g. on page load), and doesn't renew them.
 
-**Limit:** your own backends usually check the JWT offline with [`createSessionVerifier`](server.md#verifying-the-session-in-your-backend), without asking madAuth. They accept an older session until it expires. A shorter `SESSION_TTL` shortens this window; the session is renewed when the app checks it after half of that time.
+**Limit:** your own backends usually check the JWT offline with [`createSessionVerifier`](server.md#verifying-the-session-in-your-backend), without asking madAuth. They accept an older session until it expires, and with it the [roles](server.md#roles) it was issued with. A shorter `SESSION_TTL` shortens this window; the session is renewed when the app checks it after half of that time.
 
 Code: `GET /auth/session` in [`packages/server/src/app.ts`](../packages/server/src/app.ts).
 

@@ -235,6 +235,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `password.reset` | A password was reset (older sessions end) | `user` | the same | the same |
 | `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password` or `google`) | the same | the same |
 | `user.deleted` | A user deleted their account | `user` (the session's), `passwordUserId` (the deleted e-mail & password user, if there was one; differs from `user.id` after a Google sign-in) | the same | the same |
+| `roles.changed` | An admin set the roles of an address | `email`, `roles`, `by` (the admin's address) | the same | the same |
 
 - `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
 - Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. With e-mail & password sign-in, `email.verify` and `email.reset` must be in the list: the server does not start without them.
@@ -257,11 +258,40 @@ const { type, data } = JSON.parse(body);
 
 The calls contain e-mail links and codes, so `WEBHOOK_URL` must be https, except for a receiver on the same machine (`localhost`, `127.0.0.1`, or `host.docker.internal` from a Docker container). Calls with the same `webhook-id` are the same call; madAuth does not retry by itself.
 
+## Roles
+
+A role is a name such as `admin` or `editor` that madAuth puts into the session, so your app and your backends can tell what a user may do. What a role means is up to you; madAuth only knows `admin`, the role that may manage roles.
+
+- Roles belong to an **e-mail address**, not to a sign-in method. The owner of the address gets them with every sign-in, with Google as well as with a password. The address needs no account yet.
+- The session carries them as `roles` (a `roles` claim in the JWT). `createSessionVerifier` returns them as `user.roles`, and the web library as `Madauth.currentUser.roles`. A user without roles has no `roles` field.
+- Roles need a store, so they are available when e-mail & password sign-in is configured (`DATABASE_URL` or your own store adapter). Without a store, nobody has roles and the routes below answer 404.
+
+**The first admin** is made on the command line, by someone who can reach the database. Run it where the server's settings are available:
+
+```bash
+npx @madauth/server set-roles you@example.com admin
+```
+
+`set-roles <email> [role...]` replaces the roles of the address (without roles: removes them), and `get-roles <email>` prints them. This is also the way back in if the last admin removed their own role.
+
+**Admins manage roles** from your app with the web library, or with the HTTP API:
+
+```ts
+await Madauth.admin.setRoles('ada@example.com', ['editor']); // replaces her roles; [] removes them
+const result = await Madauth.admin.getRoles('ada@example.com'); // { isSuccess: true, roles: ['editor'] }
+```
+
+Whether the caller is an admin is asked from the store each time, not read from their session, so a removed `admin` role stops counting at once.
+
+**When a change shows.** The roles of a session are from the moment it was issued. The madAuth server reads them again whenever the app checks the session (`GET /auth/session`, e.g. on page load) and issues a new cookie if they changed. Your own backends, which verify the JWT offline, see the change from that moment; a session that is not checked again keeps its roles until it expires. A shorter `SESSION_TTL` shortens this.
+
+Role names consist of lower-case letters, digits, `-` and `_`, start with a letter and have at most 32 characters. An address can hold up to 20.
+
 ## Deleting an account
 
 `Madauth.deleteAccount()` in the web library (`POST /auth/account/delete`) lets a signed-in user delete their account:
 
-- The e-mail & password account of the session's e-mail address is deleted, with its pending confirmation and reset links. This also happens when the user signed in with Google: the session proves that the address is theirs. Google sign-in itself stores nothing.
+- The e-mail & password account of the session's e-mail address is deleted, with its pending confirmation and reset links, and so are the [roles](#roles) of the address. This also happens when the user signed in with Google: the session proves that the address is theirs. Google sign-in itself stores nothing.
 - The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`. Its `passwordUserId` is the ID of the deleted e-mail & password user: after a Google sign-in it differs from `user.id`, so delete what your backend stored under either ID.
 
 Delete the user's data in your own backend first, while the user is still signed in. Sessions on other devices end when the app next checks them; your own backends accept them until they expire (see [Password security](password-security.md#sessions)).
@@ -300,6 +330,7 @@ npx @madauth/server schema --dialect postgres --from 1
 | Version | Change |
 | --- | --- |
 | 2 | `user.wrongCodes`: wrong e-mail codes in a row, see [Password security](password-security.md#links-and-codes-in-e-mails). Number, starts at 0. |
+| 3 | New model `role`: the [roles](#roles) of an e-mail address. A new table; existing ones don't change. |
 
 Stores without fixed columns need no change: madAuth reads a missing `wrongCodes` as 0.
 
@@ -411,7 +442,7 @@ const verifySession = createSessionVerifier({ issuer: 'https://auth.example.com'
 
 const user = await verifySession(request); // or a Cookie header, or the token itself
 if (!user) return new Response('Unauthorized', { status: 401 });
-console.log(user.id, user.email);
+console.log(user.id, user.email, user.roles); // roles: e.g. ['admin'], see "Roles"
 ```
 
 Other languages can verify the JWT with any JOSE library:
@@ -419,6 +450,8 @@ Other languages can verify the JWT with any JOSE library:
 - issuer `MADAUTH_ISSUER`
 - header `typ` `madauth-session+jwt`
 - keys from `/.well-known/jwks.json`
+
+The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the user signed in) and `roles` (see [Roles](#roles)).
 
 ## HTTP API
 
@@ -437,6 +470,8 @@ Other languages can verify the JWT with any JOSE library:
 | `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie; ends all older sessions; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
 | `GET /auth/session` | `{ user }` for the current session, or 401 |
 | `POST /auth/logout` | Clears the session cookie |
+| `POST /auth/admin/roles/get` | `{ email }` → `{ email, roles }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`. See [Roles](#roles). |
+| `POST /auth/admin/roles/set` | `{ email, roles }` → `{ email, roles }`: replaces the roles of the address; also 400 `invalid_roles` |
 | `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; 401 `no_session`. See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
 | `GET /health` | `ok` |
