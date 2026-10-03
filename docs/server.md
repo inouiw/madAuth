@@ -98,7 +98,7 @@ npm install @aws-sdk/client-dynamodb
 The command line works with the table as well, e.g. to create the first user. Run it in a project where `@madauth/server` and `@aws-sdk/client-dynamodb` are installed:
 
 ```bash
-DATABASE_URL=dynamodb:madauth npx madauth-server create-user admin@example.com
+DATABASE_URL=dynamodb:madauth npx @madauth/server create-user admin@example.com
 ```
 
 In your own entry file, create the adapter yourself, e.g. to pass a configured client:
