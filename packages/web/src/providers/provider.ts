@@ -35,7 +35,10 @@ export interface ButtonOptions {
  */
 export interface SignInProvider {
   readonly method: LoginMethodId;
-  /** Called by `Madauth.initialize`. A failure makes `initialize` fail. */
+  /**
+   * Called by `Madauth.initialize`. A failure makes `initialize` fail — except `flow_not_enabled` (the
+   * server doesn't offer the method), which leaves the provider out and lets the others work.
+   */
   setup(ctx: ProviderContext): Promise<Result>;
   /** Renders the provider's sign-in button into `container`. Returns a function that removes it. */
   renderButton?(container: HTMLElement, options: ButtonOptions): () => void;

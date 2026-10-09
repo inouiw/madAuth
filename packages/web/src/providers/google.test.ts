@@ -5,12 +5,15 @@ import type { MadauthLogin } from '../madauth-login.js';
 import { CLIENT_ID, SERVER, ada, fakeGis, fakeServer, gisScripts, resetAll, settle } from '../test-helpers.js';
 import { GoogleFedcm } from './google-fedcm.js';
 import { GoogleRedirect } from './google-redirect.js';
+import { Password } from './password.js';
 
 let errorLog: ReturnType<typeof vi.spyOn>;
+let warnLog: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   resetAll();
   errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+  warnLog = vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 afterEach(resetAll);
 
@@ -197,12 +200,29 @@ describe('GoogleFedcm', () => {
 });
 
 describe('GoogleRedirect', () => {
-  it('D1: is reported as not enabled when the server has no client secret', async () => {
+  it('D1: is left out, with a warning, when the server has no client secret; the other methods work', async () => {
+    fakeServer().codeFlow = false;
+
+    const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect(), new Password()] });
+
+    expect(result).toEqual({ isSuccess: true });
+    expect(warnLog).toHaveBeenCalledWith('[madauth]', 'flow_not_enabled', expect.stringContaining('left out'));
+    expect(errorLog).not.toHaveBeenCalled();
+    // The page behaves as if GoogleRedirect had not been passed.
+    expect(Madauth.google.renderButton(document.createElement('div'))).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+    void Madauth.signIn();
+    await settle();
+    expect(shadow('.google-slot')).toBeNull();
+    expect(shadow('form.signin')).not.toBeNull();
+  });
+
+  it('D1b: initialize fails when no sign-in method is left', async () => {
     fakeServer().codeFlow = false;
 
     const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
 
-    expect(result).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+    expect(result).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('No sign-in method') } });
+    expect(errorLog).toHaveBeenCalledWith('[madauth]', 'flow_not_enabled', expect.stringContaining('No sign-in method'));
   });
 
   it('D2 / W6: the dialog’s Google button starts the code flow', async () => {
