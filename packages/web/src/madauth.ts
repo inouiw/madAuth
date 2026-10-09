@@ -184,9 +184,21 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
       console.error('[madauth]', error.code, error.message);
     },
   };
+  // A provider for a method the server doesn't offer (e.g. GoogleRedirect without a Google client on
+  // the server) is left out, so the page works with the other methods: the server's configuration
+  // decides what is on, and a development server often has less than production. Other failures
+  // (e.g. Google's script not loading) fail initialize.
+  const notEnabled: string[] = [];
   for (const provider of providers.values()) {
     const result = await provider.setup(ctx);
-    if (!result.isSuccess) return failed(result);
+    if (result.isSuccess) continue;
+    if (result.error.code !== 'flow_not_enabled') return failed(result);
+    providers.delete(provider.method);
+    notEnabled.push(result.error.message);
+    console.warn('[madauth]', result.error.code, `${result.error.message} Sign-in with "${provider.method}" is left out.`);
+  }
+  if (providers.size === 0 && notEnabled.length > 0) {
+    return failed(fail('flow_not_enabled', `No sign-in method is enabled on the madAuth server. ${notEnabled.join(' ')}`));
   }
   // Opened from a password reset link: show the dialog's "new password" form once madAuth is ready.
   if (target.ui === 'dialog' && Madauth.password.pendingReset) queueMicrotask(() => void Madauth.signIn());
