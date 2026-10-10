@@ -45,6 +45,22 @@
           <span class="caption">Claims</span>
           <pre id="claims"></pre>
         </div>
+        <!-- How this session was authenticated (Madauth.currentUser.amr), e.g. pwd and otp. -->
+        <p class="amr">Signed in with <code id="amr"></code></p>
+        <!-- The authenticator app: Madauth.setUpAuthenticator() opens the dialog with the QR code; the other calls take a code. -->
+        <div class="authenticator">
+          <span class="caption">Authenticator app</span>
+          <p id="totp-status"></p>
+          <label class="code-field" hidden>
+            Code from the app, or a recovery code
+            <input id="totp-code" type="text" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" />
+          </label>
+          <p class="buttons">
+            <button type="button" data-call="setUpAuthenticator" hidden>Madauth.setUpAuthenticator()</button>
+            <button type="button" data-call="newRecoveryCodes" hidden>Madauth.totp.newRecoveryCodes({ code })</button>
+            <button type="button" data-call="removeAuthenticator" hidden>Madauth.totp.remove({ code })</button>
+          </p>
+        </div>
         <button id="sign-out" type="button">Sign out</button>
       </section>
 
@@ -77,11 +93,34 @@
           <button type="button" data-call="getClaims">Madauth.admin.getClaims(email)</button>
           <button type="button" data-call="setClaims">Madauth.admin.setClaims(email, claims)</button>
         </p>
-        <!-- The checkboxes show the server's settings once getSettings succeeded; only then can they be sent back. -->
-        <p class="checks">
-          <label><input id="method-google" type="checkbox" /> Google</label>
-          <label><input id="method-password" type="checkbox" /> E-mail &amp; password</label>
-        </p>
+        <!--
+          The controls show the server's settings once getSettings succeeded; only then can they be sent back.
+          The list says which methods are on; Google and password take a policy for the authenticator app.
+        -->
+        <table class="methods">
+          <tr>
+            <td><label><input id="method-google" type="checkbox" /> Google</label></td>
+            <td>
+              <label class="policy">
+                Authenticator app
+                <select id="policy-google"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
+              </label>
+            </td>
+          </tr>
+          <tr>
+            <td><label><input id="method-password" type="checkbox" /> E-mail &amp; password</label></td>
+            <td>
+              <label class="policy">
+                Authenticator app
+                <select id="policy-password"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
+              </label>
+            </td>
+          </tr>
+          <tr>
+            <td><label><input id="method-totp" type="checkbox" /> Authenticator app on its own</label></td>
+            <td></td>
+          </tr>
+        </table>
         <p class="buttons">
           <button type="button" data-call="getSettings">Madauth.admin.getSettings()</button>
           <button type="button" data-call="setSettings" disabled>Madauth.admin.setSettings({ methods })</button>
