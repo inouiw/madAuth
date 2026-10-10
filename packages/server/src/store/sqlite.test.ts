@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { storeAdapterContract } from '../testing.js';
 import { madauthSchema } from './schema.js';
-import { columnName, createTablesSql, upgradeTablesSql } from './sql.js';
+import { columnName, createTablesSql, tableName, upgradeTablesSql } from './sql.js';
 import { createSqliteAdapter } from './sqlite.js';
 
 // P4: the built-in adapter is checked with the same contract as a custom one.
@@ -54,14 +54,16 @@ describe('SQLite adapter', () => {
   it('upgrades a database written by an older madAuth and keeps its records', async () => {
     dir = mkdtempSync(join(tmpdir(), 'madauth-'));
     const path = join(dir, 'madauth.db');
-    // Schema version 1: users had no count of wrong codes and no claims, accounts no e-mail, and there were no settings.
+    // Schema version 1: users had no count of wrong codes and no claims, accounts no e-mail and no last code,
+    // and there were no settings and no recovery codes.
     const { wrongCodes: _, claims: __, ...v1Fields } = madauthSchema.models.user.fields;
-    const { email: ___, ...v1AccountFields } = madauthSchema.models.account.fields;
-    const { setting: ____, ...v1Models } = madauthSchema.models;
+    const { email: ___, lastUsedStep: _____, ...v1AccountFields } = madauthSchema.models.account.fields;
+    const { setting: ____, recoveryCode: ______, ...v1Models } = madauthSchema.models;
     const v1 = { version: 1, models: { ...v1Models, user: { fields: v1Fields }, account: { fields: v1AccountFields } } };
     const db = new DatabaseSync(path);
     db.exec(createTablesSql('sqlite', v1));
     db.exec("INSERT INTO madauth_user VALUES ('usr_1', 'Ada@example.com', 'ada@example.com', 1, 'Ada', 0, 0, 1)");
+    db.exec("INSERT INTO madauth_account VALUES ('acc_1', 'usr_1', 'password:usr_1', 'hash', 0, 0, 1)");
     db.exec('PRAGMA user_version = 1');
     db.close();
 
@@ -70,6 +72,10 @@ describe('SQLite adapter', () => {
     expect(await store.findOne('user', { id: 'usr_1' })).toEqual(user);
     expect(await store.update('user', { id: 'usr_1', wrongCodes: 0 }, { wrongCodes: 1 })).toBe(1);
     expect(await store.create('setting', { id: 'methods', value: '{}', updatedAt: 1, updatedBy: null })).toBe(true);
+    // An account from before version 5 reads as if no authenticator code was ever used.
+    expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ email: null, lastUsedStep: 0 });
+    expect(await store.update('account', { id: 'acc_1', lastUsedStep: 0 }, { lastUsedStep: 7 })).toBe(1);
+    expect(await store.create('recoveryCode', { id: 'hash', userId: 'usr_1', createdAt: 1 })).toBe(true);
     // Opening it again changes nothing more.
     const reopened = createSqliteAdapter(path);
     expect((await reopened.findOne('user', { id: 'usr_1' }))?.wrongCodes).toBe(1);
@@ -107,7 +113,7 @@ describe('createTablesSql', () => {
     for (const dialect of ['sqlite', 'postgres', 'mysql'] as const) {
       const sql = createTablesSql(dialect);
       for (const [model, { fields }] of Object.entries(madauthSchema.models)) {
-        expect(sql).toContain(`CREATE TABLE madauth_${model} (`);
+        expect(sql).toContain(`CREATE TABLE ${tableName(model)} (`);
         for (const field of Object.keys(fields)) expect(sql).toContain(`  ${columnName(field)} `);
       }
       expect(sql).toMatch(/email_normalized \S+ NOT NULL UNIQUE/);
@@ -122,12 +128,19 @@ describe('createTablesSql', () => {
     expect(upgradeTablesSql('mysql', 1).split('\n')[0]).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE NOT NULL DEFAULT 0;');
     expect(upgradeTablesSql('mysql', 2).split('\n')[0]).toBe('CREATE TABLE madauth_role (');
     // Version 4 replaced the role table with claims on the user and added settings.
-    expect(upgradeTablesSql('postgres', 3)).toBe(
+    expect(upgradeTablesSql('postgres', 3).split('\n').slice(0, 4).join('\n')).toBe(
       'ALTER TABLE madauth_user ADD COLUMN claims TEXT;\n' +
         'ALTER TABLE madauth_account ADD COLUMN email TEXT;\n' +
         'DROP TABLE madauth_role;\n' +
-        'CREATE TABLE madauth_setting (\n  id TEXT PRIMARY KEY,\n  value TEXT NOT NULL,\n  updated_at DOUBLE PRECISION NOT NULL,\n  updated_by TEXT\n);',
+        'CREATE TABLE madauth_setting (',
     );
+    // Version 5 added the authenticator app: the last used code on the account, and recovery codes.
+    expect(upgradeTablesSql('postgres', 4)).toBe(
+      'ALTER TABLE madauth_account ADD COLUMN last_used_step DOUBLE PRECISION NOT NULL DEFAULT 0;\n' +
+        'CREATE TABLE madauth_recovery_code (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL\n);\n' +
+        'CREATE INDEX madauth_recovery_code_user_id ON madauth_recovery_code (user_id);',
+    );
+    expect(upgradeTablesSql('mysql', 4).split('\n')[0]).toBe('ALTER TABLE madauth_account ADD COLUMN last_used_step DOUBLE NOT NULL DEFAULT 0;');
     expect(upgradeTablesSql('sqlite', madauthSchema.version)).toBe('');
   });
 
@@ -136,6 +149,6 @@ describe('createTablesSql', () => {
     db.exec(createTablesSql('sqlite'));
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((r) => r.name);
-    expect(tables).toEqual(['madauth_account', 'madauth_setting', 'madauth_user', 'madauth_verification']);
+    expect(tables).toEqual(['madauth_account', 'madauth_recovery_code', 'madauth_setting', 'madauth_user', 'madauth_verification']);
   });
 });

@@ -5,10 +5,11 @@ import type { AppContext } from '../app.js';
 import type { MadauthConfig } from '../config.js';
 import { verifyGoogleIdToken, type GoogleProfile } from '../google.js';
 import { normalizeEmail } from '../password.js';
+import type { SignInMethod } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
-import type { MadauthUser } from '../user.js';
 import { googleAccountKey, toMadauthUser, type StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
+import { signInAnswer } from './helpers.js';
 
 const NONCE_COOKIE = 'madauth_nonce';
 const NONCE_TYP = 'madauth-nonce+jwt';
@@ -23,6 +24,8 @@ const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
 /** Hash parameter that carries a sign-in error back to the app after the code flow. */
 export const REDIRECT_ERROR_PARAM = 'madauth_error';
+/** Hash parameter that says what the sign-in still needs after the code flow: the authenticator app's code or setup. */
+export const REDIRECT_NEXT_PARAM = 'madauth_next';
 
 interface OAuthState {
   state: string;
@@ -33,8 +36,10 @@ interface OAuthState {
 }
 
 type SignInResult =
-  | { ok: true; user: MadauthUser; sv: number }
-  | { ok: false; error: 'signup_rejected' | 'temporarily_unavailable'; message: string };
+  | { ok: true; user: StoredUser }
+  | { ok: false; error: 'signup_rejected' | 'temporarily_unavailable'; message: string }
+  /** The address belongs to a user who signs in another way; `methods` says how. */
+  | { ok: false; error: 'other_method'; message: string; methods: SignInMethod[] };
 
 async function pkceChallenge(verifier: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
@@ -48,13 +53,16 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
   const callbackUrl = `${issuer}/auth/google/callback`;
 
   /**
-   * The user behind a verified Google profile. A returning Google account is known by its `sub`; a new one
-   * joins the user with the same (verified) address, or becomes a new user after the operator's sign-up check.
+   * The user behind a verified Google profile. A returning Google account is known by its `sub`. A new one
+   * becomes a new user after the operator's sign-up check, or takes over a user with the same address whom
+   * nobody can sign in as yet (a sign-up that was never finished). It never joins a user who signs in
+   * another way: that would open their account to whoever controls the Google account, past a password
+   * and the authenticator app.
    */
   const resolveUser = async (profile: GoogleProfile, locale: string | undefined): Promise<SignInResult> => {
     const key = googleAccountKey(profile.sub);
     const emailNormalized = normalizeEmail(profile.email);
-    const signedIn = (user: StoredUser) => ({ ok: true as const, user: toMadauthUser(user, profile), sv: user.sessionVersion });
+    const signedIn = (user: StoredUser) => ({ ok: true as const, user });
 
     const account = await users.findAccountByKey(key);
     if (account) {
@@ -72,8 +80,13 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     for (let attempt = 0; attempt < 2; attempt++) {
       const existing = await users.findByEmail(emailNormalized);
       if (existing) {
-        // Google verified the address, so its owner owns this user: the Google account joins it. An
-        // unconfirmed password sign-up with the address was made by whoever, so its password goes.
+        if (existing.emailVerified && (await users.hasAccounts(existing.id))) {
+          const methods = await users.signInMethods(existing.id, await ctx.settings.methods());
+          const how = methods.map((method) => ({ password: 'a password', totp: 'an authenticator app', google: 'Google' })[method]).join(' or ');
+          return { ok: false, error: 'other_method', message: `This e-mail address signs in with ${how || 'another method'}. Use that instead of Google.`, methods };
+        }
+        // Google verified the address, and nobody has proven this user yet (an unconfirmed sign-up, whose
+        // password goes) or nobody can sign in as them: the Google account takes the user over.
         await users.verifyByProvider(existing);
         if (!(await users.linkAccount(existing.id, { key, email: profile.email }))) {
           // The account appeared meanwhile; it belongs to whoever has it now.
@@ -147,11 +160,10 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     deleteCookie(c, NONCE_COOKIE, { path: '/auth/google', secure });
     const resolved = await resolveUser(result.profile, localeOf(body.locale));
     if (!resolved.ok) {
+      if (resolved.error === 'other_method') return c.json({ error: resolved.error, message: resolved.message, methods: resolved.methods }, 403);
       return c.json({ error: resolved.error, message: resolved.message }, resolved.error === 'signup_rejected' ? 403 : 503);
     }
-    const user = await ctx.startSession(c, resolved.user, ['google'], { sv: resolved.sv });
-    await ctx.emit('user.signed_in', { user, method: 'google' });
-    return c.json({ user });
+    return signInAnswer(c, await ctx.secondStep(c, resolved.user, ['google'], 'google', result.profile));
   });
 
   // --- Server-side authorization-code flow with PKCE (only with GOOGLE_CLIENT_SECRET) ---
@@ -202,9 +214,10 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     if (!oauth) return c.text('Sign-in expired or was started in another browser. Please try again.', 400);
     deleteCookie(c, OAUTH_COOKIE, { path: '/auth/google', secure });
 
-    const back = (error?: string) => {
+    const back = (error?: string, next?: string) => {
       const url = new URL(oauth.returnTo);
       if (error) url.hash = `${REDIRECT_ERROR_PARAM}=${error}`;
+      if (next) url.hash = `${REDIRECT_NEXT_PARAM}=${next}`;
       return c.redirect(url.href, 302);
     };
 
@@ -241,8 +254,10 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     if (!result.ok) return back(result.error);
     const resolved = await resolveUser(result.profile, typeof oauth.locale === 'string' ? oauth.locale : undefined);
     if (!resolved.ok) return back(resolved.error);
-    const user = await ctx.startSession(c, resolved.user, ['google'], { sv: resolved.sv });
-    await ctx.emit('user.signed_in', { user, method: 'google' });
+    const step = await ctx.secondStep(c, resolved.user, ['google'], 'google', result.profile);
+    if ('disabled' in step) return back('method_disabled');
+    // The app continues with the authenticator app's code or setup; the challenge cookie is set.
+    if ('next' in step) return back(undefined, step.next);
     return back();
   });
 }

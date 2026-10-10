@@ -25,6 +25,7 @@ describe('loadConfig', () => {
       sessionTtlSeconds: 28800,
       renewalTtlSeconds: 2592000,
       cookieDomain: undefined,
+      totpIssuer: undefined,
       google: { clientId: CLIENT_ID, clientSecret: undefined },
       store: expect.any(Object),
       password: undefined,

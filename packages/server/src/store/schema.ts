@@ -46,7 +46,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 4,
+  version: 5,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -65,7 +65,10 @@ export const madauthSchema = {
         createdAt: { type: 'number' },
       },
     },
-    /** How a user signs in. `key` is `password:<userId>` or `google:<sub>`; later e.g. `totp:<userId>`. */
+    /**
+     * How a user signs in. `key` is `password:<userId>`, `google:<sub>` or `totp:<userId>` (the authenticator
+     * app, whose `secret` is encrypted).
+     */
     account: {
       fields: {
         id: { type: 'string', primaryKey: true },
@@ -76,6 +79,16 @@ export const madauthSchema = {
         lockedUntil: { type: 'number' },
         /** The address the provider reported at the last sign-in, e.g. Google's current primary address (since version 4). */
         email: { type: 'string', nullable: true },
+        /** The time step of the last authenticator code that was accepted, so a code works once; 0 before (since version 5). */
+        lastUsedStep: { type: 'number' },
+        createdAt: { type: 'number' },
+      },
+    },
+    /** A recovery code of a user's authenticator app (since version 5). `id` is the code's keyed hash; the record goes when the code is used. */
+    recoveryCode: {
+      fields: {
+        id: { type: 'string', primaryKey: true },
+        userId: { type: 'string', index: true },
         createdAt: { type: 'number' },
       },
     },

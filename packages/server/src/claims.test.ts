@@ -3,6 +3,7 @@ import { createLocalJWKSet } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseClaims, parseRoles } from './claims.js';
 import { importSigningKeys } from './keys.js';
+import { Users } from './users.js';
 import {
   APP_ORIGIN,
   ISSUER,
@@ -102,6 +103,9 @@ describe('claims in the session', () => {
     const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook, 'ada@example.com');
     await setClaims(store, 'ada@example.com', { roles: ['admin'] });
+    // Her Google account, linked in the store: a sign-in alone never joins a user who signs in another way.
+    const [user] = await store.findMany('user', {});
+    await new Users(store).linkAccount(user.id as string, { key: 'google:1001', email: 'ada@example.com' });
     const { nonce, cookie } = await getNonce(app);
 
     const res = await verify(app, await googleIdToken({ nonce, email: 'Ada@Example.com' }), cookie);
@@ -113,7 +117,7 @@ describe('claims in the session', () => {
     const { app, hook } = passwordApp();
     const cookie = await signUpVerified(app, hook);
 
-    expect((await (await session(app, cookie)).json()).user).toEqual({ id: expect.any(String), email: 'grace@example.com', name: 'Grace Hopper' });
+    expect((await (await session(app, cookie)).json()).user).toEqual({ id: expect.any(String), email: 'grace@example.com', name: 'Grace Hopper', amr: ['pwd'] });
   });
 
   it('a change shows the next time the app checks the session, which gets a new session token', async () => {
