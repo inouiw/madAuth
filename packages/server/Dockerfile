@@ -4,7 +4,8 @@ WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
-COPY apps/demo/package.json apps/demo/
+COPY demo/package.json demo/
+COPY site/package.json site/
 RUN npm ci --workspace @madauth/server --include-workspace-root=false --ignore-scripts
 COPY tsconfig.base.json ./
 COPY packages/server packages/server

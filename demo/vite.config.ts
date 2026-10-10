@@ -5,10 +5,12 @@ import { defineConfig } from 'vite';
 const madauthServer = process.env.MADAUTH_SERVER ?? 'http://localhost:8787';
 
 export default defineConfig({
+  // The path the demo is served under, e.g. DEMO_BASE=/demo/ on madauth.com. The page links are relative.
+  base: process.env.DEMO_BASE ?? '/',
   resolve: {
     alias: {
       // Use the library source directly so edits hot-reload without rebuilding it.
-      '@madauth/web': fileURLToPath(new URL('../../packages/web/src/index.ts', import.meta.url)),
+      '@madauth/web': fileURLToPath(new URL('../packages/web/src/index.ts', import.meta.url)),
     },
   },
   build: {

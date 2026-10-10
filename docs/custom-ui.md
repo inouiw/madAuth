@@ -20,7 +20,7 @@ if (!result.isSuccess) showError(result.error.code); // e.g. 'invalid_credential
 
 A successful sign-in also calls the `onAuthStateChanged` listeners, so you can update the page in one place.
 
-A complete example is the demo's [custom login page](../apps/demo/custom.html) ([`src/custom.ts`](../apps/demo/src/custom.ts)), which is at http://localhost:3000/custom.html when the demo runs.
+A complete example is the demo's [custom login page](../demo/custom.html) ([`src/custom.ts`](../demo/src/custom.ts)), which is at http://localhost:3000/custom.html when the demo runs.
 
 ## E-mail & password: `Madauth.password`
 

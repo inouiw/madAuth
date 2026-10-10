@@ -117,6 +117,8 @@ How the records are stored: each record is one item (`pk` = `r|<model>|<id>`), w
 
 ## Hosting
 
+Ready-made deployment templates are in [`deploy/`](../deploy/README.md). On AWS, [`deploy/aws`](../deploy/aws/README.md) creates the Lambda function, the DynamoDB table and the secrets in the Parameter Store with one `cdk deploy`.
+
 ### Node
 
 With Node.js 22.13 or newer, install the package and start the server:
@@ -161,7 +163,7 @@ Download `madauth-server-lambda.mjs` from a [GitHub release](https://github.com/
 npm run build -w packages/server
 ```
 
-Deploy the bundle, as `lambda.mjs`, with the handler `lambda.handler` on a Node.js 22 or newer runtime. Put it behind a Function URL, API Gateway (HTTP API) or an ALB, and set the environment variables on the function.
+The [AWS CDK template](../deploy/aws/README.md) does all of the following for you. By hand: deploy the bundle, as `lambda.mjs`, with the handler `lambda.handler` on a Node.js 22 or newer runtime. Put it behind a Function URL, API Gateway (HTTP API) or an ALB, and set the environment variables on the function.
 
 Environment variables of a function can be read by everyone who may view its configuration. To keep `MADAUTH_SIGNING_KEY` and the other secrets in the Parameter Store or Secrets Manager instead, write a small entry file and pass `env`: a function that loads the settings. It runs once, before the first request:
 

@@ -1,0 +1,11 @@
+{
+  "app": "npx tsx bin/app.ts",
+  "context": {
+    "issuer": "",
+    "allowedOrigins": "",
+    "googleClientId": "",
+    "secretsPath": "/madauth",
+    "webhookUrl": "",
+    "webhookEvents": "email.verify,email.reset,email.already_registered"
+  }
+}
