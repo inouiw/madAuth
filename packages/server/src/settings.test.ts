@@ -43,6 +43,28 @@ describe('Settings', () => {
     expect(await store.findOne('setting', { id: 'methods' })).toMatchObject({ value: '{"google":true,"password":false}', updatedBy: 'grace@example.com' });
     expect(await settings.methods()).toEqual({ google: true, password: false });
   });
+
+  it('a change sees what another change wrote in between, so a guard on the written value holds', async () => {
+    const { store } = passwordApp();
+    const settings = new Settings(store);
+    const atLeastOne = (next: Record<string, boolean>) => (Object.values(next).some(Boolean) ? next : null);
+    let first = true;
+    // While the first change is being applied, another request switches password off.
+    const results = await Promise.all([
+      settings.changeMethods((current) => {
+        if (first) {
+          first = false;
+          // Simulates the other write landing between this read and this write (same thread: do it inline).
+          void store.create('setting', { id: 'methods', value: '{"password":false}', updatedAt: 1, updatedBy: null });
+        }
+        return atLeastOne({ ...current, google: false });
+      }, 'a@example.com'),
+    ]);
+
+    // The first attempt lost the race; the second saw { password: false } and the guard refused.
+    expect(results).toEqual([null]);
+    expect(await settings.methods()).toEqual({ password: false });
+  });
 });
 
 describe('switching sign-in methods off and on', () => {

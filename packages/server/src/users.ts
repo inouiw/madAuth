@@ -150,6 +150,22 @@ export class Users {
     return user;
   }
 
+  /**
+   * A provider verified the user's address: an unconfirmed password sign-up with it, whose password nobody
+   * has proven, is dropped (the account and its pending links and codes), and the user counts as verified.
+   */
+  async verifyByProvider(user: StoredUser): Promise<void> {
+    if (user.emailVerified) return;
+    await this.store.delete('account', { key: passwordAccountKey(user.id) });
+    await this.clearVerifications(user.id);
+    await this.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
+  }
+
+  /** Removes an account record, e.g. one left behind by a deletion that did not finish. */
+  async deleteAccount(id: string): Promise<void> {
+    await this.store.delete('account', { id });
+  }
+
   /** Adds a sign-in method to a user. Resolves to null if the account key is taken. */
   async linkAccount(userId: string, account: NewAccount): Promise<StoredAccount | null> {
     const record: StoredAccount = {
@@ -174,7 +190,8 @@ export class Users {
     // The user record goes first: from then on nobody can sign in, and a sign-up with the address starts afresh.
     if ((await this.store.delete('user', { id: user.id })) !== 1) return false;
     // The user is gone now, so the deletion has to finish: a retry would find no session and send no event.
-    // Records left behind belong to a user ID that no longer exists and are never read again.
+    // Records left behind belong to a user ID that no longer exists; a Google sign-in that meets such an
+    // account removes it.
     try {
       await this.store.delete('account', { userId: user.id });
       await this.store.delete('verification', { userId: user.id });

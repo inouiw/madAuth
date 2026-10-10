@@ -90,6 +90,58 @@ describe('Google users', () => {
     expect(await store.findMany('account', { userId: google.id })).toHaveLength(1);
   });
 
+  it('joining an unconfirmed password sign-up drops its unproven password and confirms the user', async () => {
+    const { app, hook, store } = passwordApp();
+    // Someone signed up with Ada's address and their own password; nobody confirmed it.
+    await post(app, '/auth/password/signup', { email: 'ada@example.com', password: 'attackers choice', redirectTo: REDIRECT_TO });
+    expect(await store.findMany('verification', {})).toHaveLength(1);
+
+    const res = await googleSignIn(app);
+
+    expect(res.status).toBe(200);
+    const [user] = await store.findMany('user', {});
+    expect(user).toMatchObject({ emailVerified: true, wrongCodes: 0 });
+    expect((await store.findMany('account', {})).map((a) => a.key)).toEqual(['google:1001']);
+    expect(await store.findMany('verification', {})).toEqual([]);
+    // The unproven password is gone, and the old confirmation link signs nobody in.
+    expect((await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'attackers choice' })).status).toBe(401);
+    expect((await post(app, '/auth/password/verify-email', { token: linkAndCode(hook.lastEmail()).token })).status).toBe(400);
+    // Nothing is sent again for a confirmed user without a password.
+    hook.calls.length = 0;
+    await post(app, '/auth/password/send-verification', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
+    expect(hook.emails()).toEqual([]);
+  });
+
+  it('an account left behind by an unfinished deletion does not lock its Google account out', async () => {
+    const { app, store } = passwordApp();
+    const first = (await (await googleSignIn(app)).json()).user;
+    // The user record went, the account record stayed.
+    expect(await store.delete('user', { id: first.id })).toBe(1);
+
+    const again = await googleSignIn(app);
+
+    expect(again.status).toBe(200);
+    const user = (await again.json()).user;
+    expect(user.id).not.toBe(first.id);
+    expect(await store.findMany('account', {})).toEqual([expect.objectContaining({ userId: user.id, key: 'google:1001' })]);
+  });
+
+  it('a Google user sets a password with "forgot password": the e-mail proves the inbox', async () => {
+    const { app, hook, store } = passwordApp();
+    const google = (await (await googleSignIn(app)).json()).user;
+
+    await post(app, '/auth/password/send-reset', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
+    expect(hook.lastEmail()?.type).toBe('email.reset');
+    const reset = await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'adas own password' });
+
+    expect(reset.status).toBe(200);
+    expect((await reset.json()).user.id).toBe(google.id);
+    expect((await store.findMany('account', { userId: google.id })).map((a) => a.key).sort()).toEqual(['google:1001', `password:${google.id}`]);
+    const signin = await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'adas own password' });
+    expect(signin.status).toBe(200);
+    expect((await signin.json()).user.id).toBe(google.id);
+  });
+
   it('a password reset ends the Google sessions of the same user', async () => {
     const { app, hook } = passwordApp();
     await signUpVerified(app, hook);

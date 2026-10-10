@@ -7,16 +7,14 @@ import { importSigningKeys, type SigningKeys } from './keys.js';
 import { deriveCodeKey, isValidEmail, normalizeEmail } from './password.js';
 import { googleRoutes } from './routes/google.js';
 import { passwordRoutes } from './routes/password.js';
-import { SIGN_IN_METHODS, Settings, parseMethodSettings, type SignInMethod } from './settings.js';
+import { SIGN_IN_METHODS, Settings, anyOn, isOn, parseMethodSettings, type MethodSettings, type SignInMethod } from './settings.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims } from './tokens.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 import { Users } from './users.js';
-import { createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
+import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
-/** How long madAuth waits for the webhook to accept an e-mail or to decide on a sign-up. */
-export const WEBHOOK_TIMEOUT_MS = 10_000;
 
 export { REDIRECT_ERROR_PARAM } from './routes/google.js';
 
@@ -126,7 +124,7 @@ export function createApp(config: MadauthConfig): Hono {
     settings,
     webhook: config.webhook ? createWebhookClient(config.webhook, config.webhookFetch) : undefined,
     async enabled(method) {
-      return available(method) && (await settings.methods())[method] !== false;
+      return isOn(method, available, await settings.methods());
     },
     async checkSignup(data) {
       if (!this.webhook?.wants('signup.before')) return { ok: true };
@@ -181,7 +179,7 @@ export function createApp(config: MadauthConfig): Hono {
   // The methods that are on right now, so the web library shows exactly those.
   app.get('/auth/config', async (c) => {
     const methods = await settings.methods();
-    const on = (method: SignInMethod) => available(method) && methods[method] !== false;
+    const on = (method: SignInMethod) => isOn(method, available, methods);
     return c.json({
       google: on('google') ? { clientId: config.google!.clientId, codeFlow: !!config.google!.clientSecret } : null,
       password: on('password') ? { minLength: config.password!.minLength } : null,
@@ -321,19 +319,16 @@ export function createApp(config: MadauthConfig): Hono {
   });
 
   /** The settings as the admin API answers them: for each method, whether it is configured and whether it is on. */
-  const settingsAnswer = async () => {
-    const methods = await settings.methods();
-    return {
-      methods: Object.fromEntries(
-        SIGN_IN_METHODS.map((method) => [method, { available: available(method), enabled: available(method) && methods[method] !== false }]),
-      ),
-    };
-  };
+  const settingsAnswer = (methods: MethodSettings) => ({
+    methods: Object.fromEntries(
+      SIGN_IN_METHODS.map((method) => [method, { available: available(method), enabled: isOn(method, available, methods) }]),
+    ),
+  });
 
   app.post('/auth/admin/settings/get', async (c) => {
     const caller = await admin(c);
     if ('answer' in caller) return caller.answer;
-    return c.json(await settingsAnswer());
+    return c.json(settingsAnswer(await settings.methods()));
   });
 
   app.post('/auth/admin/settings/set', async (c) => {
@@ -343,12 +338,13 @@ export function createApp(config: MadauthConfig): Hono {
     const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
     const changes = parseMethodSettings(data.methods);
     if (!changes) return invalid(`methods must be an object with true or false for ${SIGN_IN_METHODS.join(' and/or ')}.`);
-    const methods = { ...(await settings.methods()), ...changes };
-    if (!SIGN_IN_METHODS.some((method) => available(method) && methods[method] !== false)) {
-      return invalid('At least one sign-in method must stay on.');
-    }
-    await settings.setMethods(methods, caller.email);
-    return c.json(await settingsAnswer());
+    // The guard runs on the value that is written: a change that lands in between is seen.
+    const methods = await settings.changeMethods((current) => {
+      const next = { ...current, ...changes };
+      return anyOn(available, next) ? next : null;
+    }, caller.email);
+    if (!methods) return invalid('At least one sign-in method must stay on.');
+    return c.json(settingsAnswer(methods));
   });
 
   return app;

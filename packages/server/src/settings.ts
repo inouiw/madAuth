@@ -25,28 +25,53 @@ export function parseMethodSettings(input: unknown): MethodSettings | null {
   return settings;
 }
 
+/** How often a change is tried again when another request changed the setting in between. */
+const MAX_TRIES = 3;
+
 /** Settings on top of the StoreAdapter, each one a JSON value under its id. */
 export class Settings {
   constructor(private readonly store: StoreAdapter) {}
 
   /** The setting's value, or undefined if it was never set. */
   async get<T>(id: string): Promise<T | undefined> {
+    return (await this.read<T>(id)).value;
+  }
+
+  /** The stored JSON and what it holds; both undefined if the setting was never set. */
+  private async read<T>(id: string): Promise<{ json?: string; value?: T }> {
     const record = await this.store.findOne('setting', { id });
-    if (typeof record?.value !== 'string') return undefined;
+    if (typeof record?.value !== 'string') return {};
     try {
-      return JSON.parse(record.value) as T;
+      return { json: record.value, value: JSON.parse(record.value) as T };
     } catch {
-      return undefined;
+      return { json: record.value };
     }
   }
 
-  /** Replaces the setting. `updatedBy` is the address of the admin, or null for the command line. */
+  /**
+   * Changes the setting: `apply` gets the current value and returns the new one, or null to refuse the
+   * change. The write only lands if nobody changed the setting since `apply` read it; otherwise `apply` runs
+   * again with the newer value. Resolves to the new value, or null if `apply` refused.
+   * `updatedBy` is the address of the admin, or null for the command line.
+   */
+  async change<T>(id: string, apply: (current: T | undefined) => T | null, updatedBy: string | null): Promise<T | null> {
+    for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+      const { json, value } = await this.read<T>(id);
+      const next = apply(value);
+      if (next === null) return null;
+      const patch: Row = { value: JSON.stringify(next), updatedAt: Date.now(), updatedBy };
+      const written =
+        json === undefined
+          ? await this.store.create('setting', { id, ...patch })
+          : (await this.store.update('setting', { id, value: json }, patch)) === 1;
+      if (written) return next;
+    }
+    throw new Error(`Setting "${id}" kept changing; try again.`);
+  }
+
+  /** Replaces the setting. */
   async set(id: string, value: unknown, updatedBy: string | null): Promise<void> {
-    const patch: Row = { value: JSON.stringify(value), updatedAt: Date.now(), updatedBy };
-    if (await this.store.update('setting', { id }, patch)) return;
-    if (await this.store.create('setting', { id, ...patch })) return;
-    // Another request created it meanwhile.
-    await this.store.update('setting', { id }, patch);
+    await this.change(id, () => value, updatedBy);
   }
 
   /** Which sign-in methods are on; a method that was never switched off is on. */
@@ -54,7 +79,21 @@ export class Settings {
     return parseMethodSettings(await this.get(METHODS_SETTING)) ?? {};
   }
 
-  async setMethods(methods: MethodSettings, updatedBy: string | null): Promise<void> {
-    await this.set(METHODS_SETTING, methods, updatedBy);
+  /** Changes which methods are on, see {@link change}; `apply` gets the methods as they are now. */
+  async changeMethods(
+    apply: (current: MethodSettings) => MethodSettings | null,
+    updatedBy: string | null,
+  ): Promise<MethodSettings | null> {
+    return this.change<MethodSettings>(METHODS_SETTING, (current) => apply(parseMethodSettings(current) ?? {}), updatedBy);
   }
+}
+
+/** Whether a method is on: configured on the server, and not switched off in the settings. */
+export function isOn(method: SignInMethod, available: (method: SignInMethod) => boolean, methods: MethodSettings): boolean {
+  return available(method) && methods[method] !== false;
+}
+
+/** Whether the settings leave at least one configured method on. */
+export function anyOn(available: (method: SignInMethod) => boolean, methods: MethodSettings): boolean {
+  return SIGN_IN_METHODS.some((method) => isOn(method, available, methods));
 }

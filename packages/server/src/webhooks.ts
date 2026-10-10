@@ -21,6 +21,16 @@ export const EMAIL_TYPES = ['email.verify', 'email.reset', 'email.already_regist
 
 export type WebhookType = (typeof WEBHOOK_TYPES)[number];
 
+/** How long madAuth waits for the webhook to accept an e-mail or to decide on a sign-up. */
+export const WEBHOOK_TIMEOUT_MS = 10_000;
+
+const MAX_LOCALE_LENGTH = 35;
+
+/** The user's locale as a request sent it, for the webhook; undefined if it is missing or too long to be one. */
+export function localeOf(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length <= MAX_LOCALE_LENGTH ? value : undefined;
+}
+
 /** The e-mails that e-mail & password sign-in can't work without: WEBHOOK_EVENTS must contain them. */
 export const REQUIRED_EMAIL_TYPES = ['email.verify', 'email.reset'] as const satisfies readonly WebhookType[];
 

@@ -12,7 +12,7 @@ import {
   verifyPassword,
 } from '../password.js';
 import { passwordAccountKey, toMadauthUser, type CodeResult, type StoredUser, type Users, type VerificationPurpose } from '../users.js';
-import type { WebhookClient, WebhookType } from '../webhooks.js';
+import { WEBHOOK_TIMEOUT_MS, localeOf, type WebhookClient, type WebhookType } from '../webhooks.js';
 
 /** Failed sign-ins allowed before each further attempt has to wait. */
 export const FREE_ATTEMPTS = 5;
@@ -22,15 +22,12 @@ export const MAX_LOCK_MS = 15 * 60 * 1000;
 export const MAIL_INTERVAL_MS = 60 * 1000;
 export const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
 export const RESET_TTL_MS = 30 * 60 * 1000;
-export { WEBHOOK_TIMEOUT_MS } from '../app.js';
-import { WEBHOOK_TIMEOUT_MS } from '../app.js';
 
 /** Hash parameters that carry e-mail link tokens to the app (`<redirectTo>#madauth_verify=<token>`). */
 export const VERIFY_LINK_PARAM = 'madauth_verify';
 export const RESET_LINK_PARAM = 'madauth_reset';
 
 const MAX_NAME_LENGTH = 100;
-const MAX_LOCALE_LENGTH = 35;
 
 type Body = Record<string, unknown>;
 
@@ -100,9 +97,6 @@ export function passwordRoutes(
       locale,
     });
   };
-
-  const localeOf = (data: Body): string | undefined =>
-    typeof data.locale === 'string' && data.locale.length <= MAX_LOCALE_LENGTH ? data.locale : undefined;
 
   type Consumed = Partial<CodeResult> & { userId: string | null; via: 'link' | 'code' };
 
@@ -182,7 +176,7 @@ export function passwordRoutes(
     if (policy) return error(c, 400, 'weak_password', policy);
     const name = typeof data.name === 'string' && data.name.trim() ? data.name.trim().slice(0, MAX_NAME_LENGTH) : null;
     const email = data.email.trim();
-    const locale = localeOf(data);
+    const locale = localeOf(data.locale);
 
     // The operator's check comes first and fails closed: without an answer, nobody signs up.
     const check = await ctx.checkSignup({ email, name: name ?? undefined, locale, method: 'password' });
@@ -228,7 +222,7 @@ export function passwordRoutes(
     if (!isValidEmail(data.email)) return error(c, 400, 'invalid_email', 'This is not a valid e-mail address.');
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (user && !user.emailVerified && (await users.passwordAccount(user.id))) {
-      if (!(await sendLinkEmail(user, 'verify', target, localeOf(data)))) return unavailable(c);
+      if (!(await sendLinkEmail(user, 'verify', target, localeOf(data.locale)))) return unavailable(c);
     }
     return accepted(c);
   });
@@ -252,8 +246,9 @@ export function passwordRoutes(
     if (target instanceof Response) return target;
     if (!isValidEmail(data.email)) return error(c, 400, 'invalid_email', 'This is not a valid e-mail address.');
     const user = await users.findByEmail(normalizeEmail(data.email));
-    if (user && (await users.passwordAccount(user.id))) {
-      if (!(await sendLinkEmail(user, 'reset', target, localeOf(data)))) return unavailable(c);
+    // A confirmed user without a password (signed up with Google) sets one this way: the e-mail proves the inbox.
+    if (user && (user.emailVerified || (await users.passwordAccount(user.id)))) {
+      if (!(await sendLinkEmail(user, 'reset', target, localeOf(data.locale)))) return unavailable(c);
     }
     return accepted(c);
   });
@@ -265,10 +260,12 @@ export function passwordRoutes(
     if (policy) return error(c, 400, 'weak_password', policy);
     const consumed = await consume(data, 'reset');
     const user = consumed.userId ? await users.findById(consumed.userId) : null;
-    const account = user ? await users.passwordAccount(user.id) : null;
-    if (!user || !account) return invalidVerification(c, consumed);
+    if (!user) return invalidVerification(c, consumed);
 
-    await users.updateAccount(account.id, { secret: await hashPassword(data.password as string), failedAttempts: 0, lockedUntil: 0 });
+    const secret = await hashPassword(data.password as string);
+    const account = await users.passwordAccount(user.id);
+    if (account) await users.updateAccount(account.id, { secret, failedAttempts: 0, lockedUntil: 0 });
+    else await users.linkAccount(user.id, { key: passwordAccountKey(user.id), secret });
     // The reset proves access to the inbox, and the new session version ends all older sessions.
     const sessionVersion = user.sessionVersion + 1;
     await users.updateUser(user.id, { emailVerified: true, sessionVersion, wrongCodes: 0 });

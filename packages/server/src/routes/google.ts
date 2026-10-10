@@ -8,6 +8,7 @@ import { normalizeEmail } from '../password.js';
 import { randomString, readToken, signToken } from '../tokens.js';
 import type { MadauthUser } from '../user.js';
 import { googleAccountKey, toMadauthUser, type StoredUser } from '../users.js';
+import { localeOf } from '../webhooks.js';
 
 const NONCE_COOKIE = 'madauth_nonce';
 const NONCE_TYP = 'madauth-nonce+jwt';
@@ -22,8 +23,6 @@ const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
 /** Hash parameter that carries a sign-in error back to the app after the code flow. */
 export const REDIRECT_ERROR_PARAM = 'madauth_error';
-
-const MAX_LOCALE_LENGTH = 35;
 
 interface OAuthState {
   state: string;
@@ -65,13 +64,17 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
         if (account.email !== profile.email) await users.updateAccount(account.id, { email: profile.email });
         return signedIn(user);
       }
+      // Left behind by a deletion that did not finish: it would hold the key forever.
+      await users.deleteAccount(account.id);
     }
 
     // Twice at most: a user created between the lookup and the create is found the second time.
     for (let attempt = 0; attempt < 2; attempt++) {
       const existing = await users.findByEmail(emailNormalized);
       if (existing) {
-        // Google verified the address, so its owner owns this user: the Google account joins it.
+        // Google verified the address, so its owner owns this user: the Google account joins it. An
+        // unconfirmed password sign-up with the address was made by whoever, so its password goes.
+        await users.verifyByProvider(existing);
         if (!(await users.linkAccount(existing.id, { key, email: profile.email }))) {
           // The account appeared meanwhile; it belongs to whoever has it now.
           const linked = await users.findAccountByKey(key);
@@ -106,9 +109,6 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
 
   const disabled = (c: Context) =>
     c.json({ error: 'method_disabled', message: 'Google sign-in is switched off.' }, 403);
-
-  const localeOf = (value: unknown): string | undefined =>
-    typeof value === 'string' && value.length <= MAX_LOCALE_LENGTH ? value : undefined;
 
   // --- FedCM / One Tap (the ID token is issued in the browser and verified here) ---
 

@@ -250,16 +250,35 @@ describe('deployment entry points', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('set-methods switches sign-in methods off and on without a running server', async () => {
+  it('set-methods switches sign-in methods off and on without a running server, but never all off', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
-    const env = { DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}` };
+    // The server's whole configuration, as with --env-file: both methods.
+    const env = {
+      MADAUTH_ISSUER: 'https://auth.example.com',
+      MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
+      ALLOWED_ORIGINS: APP_ORIGIN,
+      GOOGLE_CLIENT_ID: CLIENT_ID,
+      WEBHOOK_URL,
+      WEBHOOK_SECRET,
+      WEBHOOK_EVENTS: 'email.verify,email.reset',
+      DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}`,
+    };
     const io = { ask: async () => '', askSecret: async () => '' };
 
-    expect(await runCli(['get-methods'], io, env)).toMatchObject({ exitCode: 0, output: expect.stringContaining('Switched on: google, password.') });
-    expect(await runCli(['set-methods', 'google'], io, env)).toMatchObject({ exitCode: 0, output: expect.stringContaining('Switched on: google.') });
-    expect(await runCli(['get-methods'], io, env)).toMatchObject({ output: expect.stringContaining('Switched on: google.') });
-    expect(await runCli(['set-methods'], io, env)).toMatchObject({ output: expect.stringContaining('Switched on: google, password.') });
+    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google, password.' });
+    expect(await runCli(['set-methods', 'google'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password.' });
+    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password.' });
+    expect(await runCli(['set-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google, password.' });
     expect(await runCli(['set-methods', 'sms'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('Unknown sign-in method sms') });
+
+    // A password-only server: "set-methods google" would switch off the only method there is.
+    const passwordOnly = { ...env, GOOGLE_CLIENT_ID: undefined };
+    expect(await runCli(['set-methods', 'google'], io, passwordOnly)).toEqual({
+      exitCode: 1,
+      output: 'That would switch off every sign-in method. The server is configured for: password.',
+    });
+    expect(await runCli(['get-methods'], io, passwordOnly)).toEqual({ exitCode: 0, output: 'Switched on: password.' });
+    expect(await runCli(['get-methods'], io, { DATABASE_URL: env.DATABASE_URL })).toMatchObject({ exitCode: 1, output: expect.stringContaining('MADAUTH_ISSUER') });
     rmSync(dir, { recursive: true, force: true });
   });
 

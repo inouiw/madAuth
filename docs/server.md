@@ -4,7 +4,7 @@
 
 To set it up on your machine step by step, see [Getting started](getting-started.md).
 
-Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method: the password, or the Google account (known by Google's stable `sub`). Someone who signs in with Google using the address of their e-mail & password account is the same user, and the other way round.
+Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method: the password, or the Google account (known by Google's stable `sub`). Someone who signs in with Google using the address of their e-mail & password account is the same user, and the other way round. A password nobody has confirmed yet (a sign-up whose e-mail link was never used) is dropped when its address signs in with Google. A Google user who wants a password uses "Forgot password?": the reset e-mail proves the inbox.
 
 ## How it works
 

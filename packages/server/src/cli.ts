@@ -5,7 +5,7 @@ import { loadConfig, loadStore, loadUserStoreConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
 import { claimsFromJson, parseClaims, parseRoles, type Claims } from './claims.js';
-import { METHODS_SETTING, SIGN_IN_METHODS, Settings, type MethodSettings, type SignInMethod } from './settings.js';
+import { SIGN_IN_METHODS, Settings, anyOn, isOn, type MethodSettings, type SignInMethod } from './settings.js';
 import { madauthSchema, type StoreAdapter } from './store/schema.js';
 import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
 import { passwordAccountKey, Users } from './users.js';
@@ -36,7 +36,8 @@ Commands:
   set-methods [method...]      Switch sign-in methods on and off while the server runs: the listed ones
                                (google, password) are on, the others off. Without any, all are on.
   get-methods                  Print which sign-in methods are switched on.
-                               These commands use DATABASE_URL from the environment.
+                               The claims commands use DATABASE_URL from the environment; the methods
+                               commands need the server's whole configuration (e.g. --env-file .env).
   schema [--dialect <name>] [--from <version>]
                                Print the SQL that creates madAuth's tables for a custom store adapter.
                                Dialects: postgres (default), mysql, sqlite. With --from, print only the
@@ -183,14 +184,8 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
   const { values: options, positionals } = parsed;
   const [command, ...rest] = positionals;
   // Few commands take arguments; anywhere else one is likely a mistyped option, e.g. `init .env.local`.
-  const maxArguments =
-    command === 'set-roles' || command === 'set-methods'
-      ? Infinity
-      : command === 'set-claims'
-        ? 2
-        : command === 'create-user' || command === 'get-roles' || command === 'get-claims'
-          ? 1
-          : 0;
+  const argumentLimits: Record<string, number> = { 'set-roles': Infinity, 'set-methods': Infinity, 'set-claims': 2, 'create-user': 1, 'get-roles': 1, 'get-claims': 1 };
+  const maxArguments = command ? (argumentLimits[command] ?? 0) : 0;
   if (rest.length > maxArguments) {
     return { output: `Unexpected argument: ${rest.at(-1)}\n\n${usage}`, exitCode: 1 };
   }
@@ -444,7 +439,10 @@ async function claims(
 }
 
 async function methods(command: 'set-methods' | 'get-methods', names: string[], env: Env) {
-  const settings = new Settings(await loadStore(env));
+  // The whole configuration: only a method the server is configured for can be on, and one must stay on.
+  const config = await loadConfig(env);
+  const available = (method: SignInMethod) => (method === 'google' ? !!config.google : !!config.password);
+  const settings = new Settings(config.store);
   if (command === 'set-methods') {
     const unknown = names.filter((name) => !(SIGN_IN_METHODS as readonly string[]).includes(name));
     if (unknown.length) {
@@ -452,14 +450,16 @@ async function methods(command: 'set-methods' | 'get-methods', names: string[], 
     }
     const next: MethodSettings = {};
     for (const method of SIGN_IN_METHODS) next[method] = !names.length || names.includes(method);
-    await settings.setMethods(next, null);
+    if (!anyOn(available, next)) {
+      const configured = SIGN_IN_METHODS.filter(available);
+      return { output: `That would switch off every sign-in method. The server is configured for: ${configured.join(', ')}.`, exitCode: 1 };
+    }
+    await settings.changeMethods(() => next, null);
   }
   const current = await settings.methods();
-  const on = SIGN_IN_METHODS.filter((method: SignInMethod) => current[method] !== false);
-  return {
-    output: `Switched on: ${on.join(', ')}. Only methods the server is configured for work (setting "${METHODS_SETTING}").`,
-    exitCode: 0,
-  };
+  const on = SIGN_IN_METHODS.filter((method) => isOn(method, available, current));
+  const off = SIGN_IN_METHODS.filter((method) => available(method) && !isOn(method, available, current));
+  return { output: `Switched on: ${on.join(', ')}.${off.length ? ` Switched off: ${off.join(', ')}.` : ''}`, exitCode: 0 };
 }
 
 async function createUser(email: string | undefined, io: CliIo, env: Env) {
