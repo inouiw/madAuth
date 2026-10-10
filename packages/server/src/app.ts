@@ -41,7 +41,7 @@ export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | 
  * What a primary sign-in method ends in: the user with their session; the next step with the
  * authenticator app (the challenge cookie is set); or nothing, because the method is switched off.
  */
-export type SignInStep = { user: MadauthUser } | { next: NextStep } | { disabled: true };
+export type SignInStep = { user: MadauthUser } | { next: NextStep; method: SignInMethod } | { disabled: true };
 
 /** What the route modules share. */
 export interface AppContext {
@@ -210,7 +210,7 @@ export function createApp(config: MadauthConfig): Hono {
       const next: NextStep | null = policy === 'none' ? null : enrolled ? 'totp' : policy === 'required' ? 'totp-setup' : null;
       if (next) {
         await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next });
-        return { next };
+        return { next, method };
       }
       const result = await this.startSession(c, toMadauthUser(user, profile), amr, { sv: user.sessionVersion });
       await this.emit('user.signed_in', { user: result, method });

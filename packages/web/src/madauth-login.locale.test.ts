@@ -3,7 +3,8 @@ import './index.js';
 import { Madauth, type MadauthOptions } from './madauth.js';
 import type { MadauthLogin } from './madauth-login.js';
 import { Password } from './providers/password.js';
-import { CODE, RESET_TOKEN, SERVER, fakeServer, resetAll, settle } from './test-helpers.js';
+import { Totp } from './providers/totp.js';
+import { CODE, RESET_TOKEN, SERVER, fakeServer, grace, resetAll, settle } from './test-helpers.js';
 
 beforeEach(() => {
   resetAll();
@@ -238,6 +239,60 @@ describe('<madauth-login> in German', () => {
     expect(text('[part="error"]')).toBe(
       'Der Anmeldedienst ist nicht erreichbar. Bitte prüfen Sie Ihre Internetverbindung und versuchen Sie es erneut.',
     );
+  });
+
+  it('shows the views of the authenticator app', async () => {
+    const server = fakeServer();
+    server.methods.totp = true;
+    server.policy.password = 'optional';
+    server.authenticators.add('grace@example.com');
+    await openDialog({ providers: [new Password(), new Totp()], locale: 'de' });
+
+    // Signing in with the app alone.
+    await click('[data-method="totp"]');
+    expect(text('h2')).toBe('Authentifizierungs-App');
+    expect(text('label[for="code"]')).toBe('Code aus der App');
+    expect(text('form.totp .hint')).toBe('Geben Sie den 6-stelligen Code aus Ihrer Authentifizierungs-App ein.');
+    expect(text('[data-action="toggle-recovery"]')).toBe('Stattdessen einen Wiederherstellungscode verwenden');
+    expect(text('form.totp .submit')).toBe('Anmelden');
+    fill({ email: 'grace@example.com', code: '000000' });
+    await submit('totp');
+    expect(text('[part="error"]')).toContain('E-Mail-Adresse oder Code ist falsch.');
+    await click('[data-action="toggle-recovery"]');
+    expect(text('label[for="recovery-code"]')).toBe('Wiederherstellungscode');
+    expect(text('[data-action="toggle-recovery"]')).toBe('Stattdessen die Authentifizierungs-App verwenden');
+
+    // The second step after the password.
+    await click('[data-action="back"]');
+    fill({ email: 'grace@example.com', password: 'correct horse battery' });
+    await submit('signin');
+    expect(text('h2')).toBe('Code eingeben');
+    expect(text('.lead')).toBe('Geben Sie den Code aus Ihrer Authentifizierungs-App ein, um die Anmeldung abzuschließen.');
+    expect(text('form.totp-code .submit')).toBe('Weiter');
+    login().close();
+
+    // Setting the app up while signed in.
+    server.user = grace;
+    await Madauth.getSession();
+    void Madauth.setUpAuthenticator();
+    await settle();
+    expect(text('h2')).toBe('Authentifizierungs-App einrichten');
+    expect(text('.lead')).toBe(
+      'Scannen Sie diesen QR-Code mit Ihrer Authentifizierungs-App (z. B. Google Authenticator oder 1Password) und geben Sie dann den Code ein, den sie anzeigt.',
+    );
+    expect(text('.hint')).toBe('Die Anmeldung mit E-Mail-Adresse und Passwort fragt dann zusätzlich nach einem Code aus der App.');
+    expect($('[part="qr"]')!.getAttribute('aria-label')).toBe('QR-Code für Ihre Authentifizierungs-App');
+    expect(text('form.totp-setup .submit')).toBe('Einschalten');
+    expect(text('[data-action="cancel"]')).toBe('Abbrechen');
+    server.totpSetup = undefined;
+    fill({ code: CODE });
+    await submit('totp-setup');
+    expect(text('[part="error"]')).toBe('Die Einrichtung hat zu lange gedauert. Bitte beginnen Sie neu. Neu beginnen');
+    await click('[data-action="restart-setup"]');
+    fill({ code: CODE });
+    await submit('totp-setup');
+    expect(text('h2')).toBe('Wiederherstellungscodes speichern');
+    expect(text('[data-action="saved"]')).toBe('Ich habe sie gespeichert');
   });
 });
 

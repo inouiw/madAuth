@@ -42,9 +42,10 @@ export function nameOf(value: unknown): string | null {
 export function signInAnswer(c: Context, step: SignInStep): Response {
   if ('disabled' in step) return error(c, 403, 'method_disabled', 'This way of signing in is switched off.');
   if ('next' in step) {
+    // `method` says which sign-in goes on, for a client that learns of the step later (e.g. after a redirect).
     return step.next === 'totp'
-      ? error(c, 401, 'totp_required', 'Enter the code from your authenticator app to finish signing in.')
-      : error(c, 401, 'totp_setup_required', 'Set up an authenticator app to finish signing in.');
+      ? c.json({ error: 'totp_required', message: 'Enter the code from your authenticator app to finish signing in.', method: step.method }, 401)
+      : c.json({ error: 'totp_setup_required', message: 'Set up an authenticator app to finish signing in.', method: step.method }, 401);
   }
   return c.json({ user: step.user });
 }
