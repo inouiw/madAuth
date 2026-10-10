@@ -126,20 +126,32 @@ describe('Google users', () => {
     expect(await store.findMany('account', {})).toEqual([expect.objectContaining({ userId: user.id, key: 'google:1001' })]);
   });
 
-  it('a Google user sets a password with "forgot password": the e-mail proves the inbox', async () => {
+  it('"forgot password" only resets passwords: a Google user without one gets no e-mail, and the same answer', async () => {
     const { app, hook, store } = passwordApp();
     const google = (await (await googleSignIn(app)).json()).user;
+    hook.calls.length = 0;
 
+    const res = await post(app, '/auth/password/send-reset', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
+
+    expect(res.status).toBe(202);
+    expect(hook.emails()).toEqual([]);
+    expect((await store.findMany('account', { userId: google.id })).map((a) => a.key)).toEqual(['google:1001']);
+  });
+
+  it('a Google sign-in that drops an unproven password ends its pending reset too', async () => {
+    const { app, hook, store } = passwordApp();
+    // Someone signed up with Ada's address and asked for a reset e-mail, without confirming anything.
+    await post(app, '/auth/password/signup', { email: 'ada@example.com', password: 'attackers choice', redirectTo: REDIRECT_TO });
+    advance(61_000);
     await post(app, '/auth/password/send-reset', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
+    const reset = linkAndCode(hook.lastEmail());
     expect(hook.lastEmail()?.type).toBe('email.reset');
-    const reset = await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'adas own password' });
 
-    expect(reset.status).toBe(200);
-    expect((await reset.json()).user.id).toBe(google.id);
-    expect((await store.findMany('account', { userId: google.id })).map((a) => a.key).sort()).toEqual(['google:1001', `password:${google.id}`]);
-    const signin = await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'adas own password' });
-    expect(signin.status).toBe(200);
-    expect((await signin.json()).user.id).toBe(google.id);
+    await googleSignIn(app);
+
+    // The link went with the password, and a reset can't add one.
+    expect((await post(app, '/auth/password/reset', { token: reset.token, password: 'attackers new choice' })).status).toBe(400);
+    expect((await store.findMany('account', {})).map((a) => a.key)).toEqual(['google:1001']);
   });
 
   it('a password reset ends the Google sessions of the same user', async () => {

@@ -246,8 +246,9 @@ export function passwordRoutes(
     if (target instanceof Response) return target;
     if (!isValidEmail(data.email)) return error(c, 400, 'invalid_email', 'This is not a valid e-mail address.');
     const user = await users.findByEmail(normalizeEmail(data.email));
-    // A confirmed user without a password (signed up with Google) sets one this way: the e-mail proves the inbox.
-    if (user && (user.emailVerified || (await users.passwordAccount(user.id)))) {
+    // Only a password can be reset. A user who signs in with Google alone has none and gets no e-mail; the
+    // answer is the same, so nothing is revealed. (Firebase Auth and Auth0 do the same.)
+    if (user && (await users.passwordAccount(user.id))) {
       if (!(await sendLinkEmail(user, 'reset', target, localeOf(data.locale)))) return unavailable(c);
     }
     return accepted(c);
@@ -260,12 +261,11 @@ export function passwordRoutes(
     if (policy) return error(c, 400, 'weak_password', policy);
     const consumed = await consume(data, 'reset');
     const user = consumed.userId ? await users.findById(consumed.userId) : null;
-    if (!user) return invalidVerification(c, consumed);
+    const account = user ? await users.passwordAccount(user.id) : null;
+    // A reset never adds a password: without one (dropped by a Google sign-in meanwhile) there is nothing to reset.
+    if (!user || !account) return invalidVerification(c, consumed);
 
-    const secret = await hashPassword(data.password as string);
-    const account = await users.passwordAccount(user.id);
-    if (account) await users.updateAccount(account.id, { secret, failedAttempts: 0, lockedUntil: 0 });
-    else await users.linkAccount(user.id, { key: passwordAccountKey(user.id), secret });
+    await users.updateAccount(account.id, { secret: await hashPassword(data.password as string), failedAttempts: 0, lockedUntil: 0 });
     // The reset proves access to the inbox, and the new session version ends all older sessions.
     const sessionVersion = user.sessionVersion + 1;
     await users.updateUser(user.id, { emailVerified: true, sessionVersion, wrongCodes: 0 });

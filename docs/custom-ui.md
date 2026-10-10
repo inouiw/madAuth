@@ -37,7 +37,7 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 | `pendingReset` | `boolean` | True when the page was opened from a reset link |
 | `policy` | `{ minLength } \| null` | The server's password rules, for a hint next to the field |
 
-`signUp`, `sendVerificationEmail` and `sendResetEmail` succeed whether or not the address has an account, so nobody can probe for accounts. Tell the user to check their inbox in every case.
+`signUp`, `sendVerificationEmail` and `sendResetEmail` succeed whether or not the address has an account (or a password to reset), so nobody can probe for accounts. Tell the user to check their inbox in every case.
 
 `too_many_attempts`, `weak_password` and `signup_rejected` come with a `message` written for the user: the wait time, the minimum length, or the reason your sign-up check gave. The first two are in English; for another language, write your own texts (`policy` has the minimum length). For the other codes, write your own texts.
 

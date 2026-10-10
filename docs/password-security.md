@@ -35,6 +35,7 @@ Nobody should be able to find out through madAuth whether an address has an acco
 
 - Sign-in answers `invalid_credentials` both for an unknown address and for a wrong password. For an unknown address the password is still hashed against a dummy hash, so the answer takes as long.
 - Sign-up, "send the confirmation e-mail again" and "send a reset e-mail" always answer `202`. The address is hashed before it is looked up, so sign-up takes as long for new and existing addresses.
+- A reset e-mail only goes to an address that has a password. A user who signs in with Google alone gets none, with the same `202`: "Forgot password?" resets a password and never adds one, as with Firebase Auth or Auth0.
 - Signing up with an address that already has a confirmed account sends its owner a "you already have an account" e-mail instead of revealing anything to the person signing up. This needs `email.already_registered` in `WEBHOOK_EVENTS`. Without it no e-mail is sent, so the answer comes faster than for a new address and the two can be told apart: keep it in the list unless your receiver can't send this e-mail.
 - An address that signed up but never confirmed can sign up again: the latest sign-up sets the password, and only the latest e-mail works. This prevents someone from blocking an address by signing it up first.
 
@@ -96,5 +97,5 @@ All password endpoints are `POST` requests. madAuth only accepts them from an `O
 
 - Checking new passwords against lists of leaked passwords (e.g. Have I Been Pwned).
 - Changing the password while signed in (use "Forgot password?" meanwhile).
-- Linking a Google account and a password account with the same address. They are separate users for now.
+- Adding a password to a user who signs in with Google: "Forgot password?" only resets a password that exists.
 - Moving users with existing password hashes from another system.

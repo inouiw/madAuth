@@ -52,7 +52,7 @@ git clone https://github.com/inouiw/madAuth-webhooks.git ../madAuth-webhooks && 
 npm run dev --prefix ../madAuth-webhooks/dev-receiver
 ```
 
-In a third terminal, start the demo at http://localhost:3000 (it proxies `/auth` to the server). http://localhost:3000/custom.html shows a custom login screen built with the same library:
+In a third terminal, start the demo at http://localhost:3000 (it proxies `/auth` to the server). The demo page switches between Google One Tap and the server-side redirect flow (which needs `GOOGLE_CLIENT_SECRET` in `packages/server/.env`), shows the signed-in user's claims, and has a button for every other call a signed-in user can make, the admin API included. http://localhost:3000/custom.html shows a custom login screen built with the same library:
 
 ```bash
 npm run dev

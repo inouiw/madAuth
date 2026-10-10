@@ -24,10 +24,16 @@ madauth-login {
   color-scheme: inherit;
 }
 
+/* Leaves the page link's height free at the bottom: it follows the content instead of floating over it. */
 main {
-  min-height: 100vh;
+  min-height: calc(100vh - 64px);
+  box-sizing: border-box;
   display: grid;
-  place-items: center;
+  align-content: center;
+  justify-items: center;
+  gap: 24px;
+  padding: 80px 16px 16px;
+  color: light-dark(#17181a, #f1f2f3);
 }
 
 [hidden] {
@@ -120,14 +126,190 @@ main {
 }
 
 .page-link {
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
+  display: block;
+  height: 64px;
+  box-sizing: border-box;
+  padding: 24px 16px;
   font-size: 0.875rem;
+  text-align: center;
   color: light-dark(#5c6066, #a6a9af);
 }
 
 .page-link:hover {
   color: light-dark(#17181a, #f1f2f3);
+}
+
+code {
+  font-size: 0.9em;
+}
+
+/* The switch between the two Google demos. */
+#flow {
+  display: flex;
+  padding: 4px;
+  border: 1px solid light-dark(#d0d2d6, #3d4045);
+  border-radius: 10px;
+  background: light-dark(#fff, #232428);
+}
+
+#flow a {
+  padding: 8px 16px;
+  border-radius: 7px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: light-dark(#5c6066, #a6a9af);
+  text-decoration: none;
+}
+
+#flow a:hover {
+  color: light-dark(#17181a, #f1f2f3);
+}
+
+#flow a[aria-current] {
+  color: light-dark(#fff, #17181a);
+  background: light-dark(#17181a, #f1f2f3);
+}
+
+.flow-description,
+.note {
+  max-width: 560px;
+  margin: -8px 0 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: light-dark(#5c6066, #a6a9af);
+  text-align: center;
+}
+
+.note {
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: light-dark(#7a4b00, #f5c26b);
+  background: light-dark(#fff6e5, rgb(245 194 107 / 0.12));
+}
+
+/* The signed-in user's claims and the results of the API calls. */
+pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  border: 1px solid light-dark(#d0d2d6, #3d4045);
+  border-radius: 8px;
+  background: light-dark(#fff, #232428);
+}
+
+.claims {
+  display: grid;
+  gap: 4px;
+  width: min(360px, 100%);
+  text-align: left;
+}
+
+.caption {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: light-dark(#5c6066, #a6a9af);
+}
+
+#output {
+  width: min(560px, 100%);
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The API panel. */
+#api {
+  display: grid;
+  gap: 12px;
+  width: min(560px, 100%);
+  box-sizing: border-box;
+  padding: 20px 24px;
+  border: 1px solid light-dark(#d0d2d6, #3d4045);
+  border-radius: 12px;
+  background: light-dark(#fff, #232428);
+}
+
+#api h2 {
+  margin: 8px 0 0;
+  font-size: 1rem;
+}
+
+#api h2:first-child {
+  margin-top: 0;
+}
+
+#api p {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: light-dark(#5c6066, #a6a9af);
+}
+
+#api label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+#api input[type='email'],
+#api textarea {
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 400;
+  color: inherit;
+  border: 1px solid light-dark(#d0d2d6, #3d4045);
+  border-radius: 8px;
+  background: light-dark(#f5f5f4, #101113);
+}
+
+#api textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  resize: vertical;
+}
+
+.buttons,
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#api .checks label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+}
+
+.buttons button {
+  padding: 8px 12px;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  color: inherit;
+  border: 1px solid light-dark(#d0d2d6, #3d4045);
+  border-radius: 8px;
+  background: light-dark(#f5f5f4, #2c2d32);
+  cursor: pointer;
+}
+
+.buttons button:hover {
+  background: light-dark(#e8e9ea, #3d4045);
+}
+
+.buttons button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.buttons button:focus-visible,
+#flow a:focus-visible {
+  outline: 2px solid light-dark(#17181a, #f1f2f3);
+  outline-offset: 2px;
 }

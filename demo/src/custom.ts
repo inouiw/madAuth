@@ -31,6 +31,9 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   $('#account').hidden = !user;
   $('#user-name').textContent = user?.name ?? user?.email ?? '';
   $('#user-email').textContent = user?.email ?? '';
+  // What admins attached to the user, e.g. { roles: ['admin'] }.
+  $('#claims').hidden = !user?.claims;
+  $('#claims').textContent = user?.claims ? JSON.stringify(user.claims, null, 2) : '';
   if (!user) show('signin');
 }
 
