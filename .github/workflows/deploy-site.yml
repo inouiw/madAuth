@@ -1,0 +1,56 @@
+# Deploys madauth.com (landing page, demo and the demo's madAuth server) to AWS with each release, or by hand.
+# One-time setup: site/infra/README.md.
+name: Deploy madauth.com
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Required reviewers on this environment approve each deployment. The AWS role trusts only this environment.
+    environment: site
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: inouiw/madAuth-webhooks
+          path: madAuth-webhooks
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            deploy/aws/package-lock.json
+            site/infra/package-lock.json
+      - run: npm ci
+      - run: npm run build -w packages/server -w site
+      - run: npm run build -w demo
+        env:
+          DEMO_BASE: /demo/
+      - run: npm ci && npm run build
+        working-directory: deploy/aws
+      - run: npm ci
+        working-directory: site/infra
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: eu-central-1
+      - run: >-
+          npx cdk deploy MadAuthSite --require-approval never
+          -c webhooksDir=$GITHUB_WORKSPACE/madAuth-webhooks
+          -c alertEmail=${{ secrets.ALERT_EMAIL }}
+        working-directory: site/infra

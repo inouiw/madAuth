@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>madAuth – self-hostable authentication</title>
+    <meta
+      name="description"
+      content="madAuth is a self-hostable alternative to Cognito and Auth0: Google sign-in and e-mail & password, with a login UI that works in any framework."
+    />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header>
+      <span class="logo">madAuth</span>
+      <nav>
+        <a href="https://github.com/inouiw/madAuth/tree/main/docs">Docs</a>
+        <a href="https://github.com/inouiw/madAuth">GitHub</a>
+      </nav>
+    </header>
+    <main>
+      <section class="hero">
+        <h1>Self-hostable authentication</h1>
+        <p class="lead">
+          An open-source alternative to Cognito and Auth0. Run the madAuth server in your own cloud account and add
+          a ready-made login dialog to any web app.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="/demo/">Try the demo</a>
+          <a class="button" href="https://github.com/inouiw/madAuth/blob/main/docs/getting-started.md">Get started</a>
+        </div>
+      </section>
+      <section class="features">
+        <article>
+          <h2>Sign-in methods</h2>
+          <p>Google (One Tap / FedCM or redirect) and e-mail &amp; password with confirmation and password reset.</p>
+        </article>
+        <article>
+          <h2>Any framework</h2>
+          <p>The login UI is a standard web component: plain HTML, React, Angular, Vue, Svelte or Capacitor.</p>
+        </article>
+        <article>
+          <h2>Your infrastructure</h2>
+          <p>Docker, AWS Lambda with DynamoDB, or Azure Functions. Your users stay in your database.</p>
+        </article>
+      </section>
+      <section class="install">
+        <h2>Add it to your app</h2>
+        <pre><code>npm install @madauth/web @madauth/server</code></pre>
+        <pre><code>npx @madauth/server init</code></pre>
+      </section>
+    </main>
+    <footer>
+      <p>MIT licensed · <a href="https://github.com/inouiw/madAuth">github.com/inouiw/madAuth</a></p>
+    </footer>
+  </body>
+</html>

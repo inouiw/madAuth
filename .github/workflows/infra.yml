@@ -1,0 +1,44 @@
+# Type-checks and synthesizes the AWS template (deploy/aws) and madauth.com's infrastructure (site/infra).
+# Needs no AWS access: nothing is deployed.
+name: Infra
+
+on:
+  pull_request:
+    paths: ['deploy/**', 'site/**', 'demo/**', 'packages/server/**', '.github/workflows/infra.yml']
+  push:
+    branches: [main]
+    paths: ['deploy/**', 'site/**', 'demo/**', 'packages/server/**', '.github/workflows/infra.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  synth:
+    runs-on: ubuntu-latest
+    env:
+      # Any account: synthesizing needs one for the cross-region references, but never calls AWS.
+      CDK_DEFAULT_ACCOUNT: '123456789012'
+      CDK_DEFAULT_REGION: eu-central-1
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: inouiw/madAuth-webhooks
+          path: madAuth-webhooks
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            deploy/aws/package-lock.json
+            site/infra/package-lock.json
+      - run: npm ci
+      - run: npm run build -w packages/server -w site
+      - run: npm run build -w demo
+        env:
+          DEMO_BASE: /demo/
+      - run: npm ci && npm run typecheck && npm run build && npx cdk synth -q
+        working-directory: deploy/aws
+      - run: npm ci && npm run typecheck && npx cdk synth -q -c webhooksDir=$GITHUB_WORKSPACE/madAuth-webhooks
+        working-directory: site/infra

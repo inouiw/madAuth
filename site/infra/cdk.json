@@ -1,0 +1,11 @@
+{
+  "app": "npx tsx bin/site.ts",
+  "context": {
+    "domain": "madauth.com",
+    "region": "eu-central-1",
+    "googleClientId": "",
+    "githubRepo": "inouiw/madAuth",
+    "githubEnvironment": "site",
+    "@aws-cdk/core:defaultCrossStackReferences": "strong"
+  }
+}

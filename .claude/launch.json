@@ -11,6 +11,26 @@
       "port": 3000
     },
     {
+      "name": "demo-built",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "export DEMO_BASE=/demo/ && npm run build -w demo && npm run preview -w demo -- --port 4173 --strictPort"
+      ],
+      "port": 4173
+    },
+    {
+      "name": "site",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "-w",
+        "site"
+      ],
+      "port": 3001
+    },
+    {
       "name": "server",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

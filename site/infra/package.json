@@ -1,0 +1,30 @@
+{
+  "name": "@madauth/site-infra",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The infrastructure of madauth.com: the landing page, the demo and its madAuth server on AWS.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --all"
+  },
+  "dependencies": {
+    "@madauth/deploy-aws": "file:../../deploy/aws",
+    "aws-cdk-lib": "^2.273.0",
+    "constructs": "^10.8.1"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-sesv2": "^3.1149.0",
+    "@aws-sdk/client-ssm": "^3.1149.0",
+    "@types/aws-lambda": "^8.10.164",
+    "@types/node": "^26.6.4",
+    "aws-cdk": "^2.1145.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

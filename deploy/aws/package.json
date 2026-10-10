@@ -1,0 +1,40 @@
+{
+  "name": "@madauth/deploy-aws",
+  "private": true,
+  "version": "0.0.0",
+  "description": "AWS CDK template for the madAuth server: Lambda with a Function URL, DynamoDB, secrets from the Parameter Store.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "main": "./dist/madauth-server.js",
+  "types": "./dist/madauth-server.d.ts",
+  "files": [
+    "dist",
+    "lambda"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy"
+  },
+  "dependencies": {
+    "@madauth/server": ">=0.2.0-beta.2 <1.0.0",
+    "esbuild": "^0.28.2"
+  },
+  "peerDependencies": {
+    "aws-cdk-lib": "^2.200.0",
+    "constructs": "^10.0.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-ssm": "^3.1149.0",
+    "@types/node": "^26.6.4",
+    "aws-cdk": "^2.1145.0",
+    "aws-cdk-lib": "^2.273.0",
+    "constructs": "^10.8.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
