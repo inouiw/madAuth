@@ -1,6 +1,6 @@
 {
   "name": "@madauth/server",
-  "version": "0.2.0-beta.2",
+  "version": "0.3.0-beta.1",
   "description": "madAuth server: Google and e-mail & password sign-in with madAuth sessions, for Docker, AWS Lambda and Azure Functions.",
   "license": "MIT",
   "author": "David Neuy",

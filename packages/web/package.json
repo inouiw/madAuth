@@ -1,6 +1,6 @@
 {
   "name": "@madauth/web",
-  "version": "0.2.0-beta.2",
+  "version": "0.3.0-beta.1",
   "description": "madAuth sign-in UI as framework-agnostic web components.",
   "license": "MIT",
   "author": "David Neuy",
