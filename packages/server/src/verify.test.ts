@@ -34,7 +34,12 @@ describe('createSessionVerifier', () => {
       .setExpirationTime('1h')
       .sign(await importJWK(signingKey, 'ES256'));
 
-    expect(await verifySession(token.slice(0, -2) + 'xx')).toBeNull();
+    // Tampered in the payload: any change there breaks the signature, which covers the encoded string. (A change
+    // to the signature's last characters would not always: they are mostly padding bits, which decoders ignore,
+    // so 1 token in 256 verified unchanged and this test failed now and then.)
+    const [header, payload, signature] = token.split('.');
+    const tampered = `${header}.${payload.slice(0, -1)}${payload.endsWith('A') ? 'B' : 'A'}.${signature}`;
+    expect(await verifySession(tampered)).toBeNull();
     expect(await verifySession(wrongIssuer)).toBeNull();
     expect(await verifySession(new Request('https://api.example.com'))).toBeNull();
     expect(await verifySession('')).toBeNull();
