@@ -1,12 +1,12 @@
 /** The signed-in user as returned to apps. */
 export interface MadauthUser {
-  /** Stable id, e.g. `google:<sub>`. */
+  /** Stable id (`usr_…`), the same whichever way the user signs in. */
   id: string;
   email?: string;
   name?: string;
   picture?: string;
-  /** The roles of the user's e-mail address, e.g. `['admin']`. Absent without roles. */
-  roles?: string[];
+  /** What admins attached to the user, e.g. `{ roles: ['admin'] }`. Absent without claims. */
+  claims?: Record<string, unknown>;
 }
 
 /** Name of the cookie that holds the madAuth session JWT. */

@@ -14,7 +14,7 @@ export type {
   SignUpOptions,
 } from './scopes/password.js';
 export type { GoogleApi, GoogleButtonOptions } from './scopes/google.js';
-export type { AdminApi } from './scopes/admin.js';
+export type { AdminApi, Claims, MethodSetting, Settings } from './scopes/admin.js';
 export { MadauthLogin, type ErrorDetail, type SignedInDetail } from './madauth-login.js';
 export { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
 

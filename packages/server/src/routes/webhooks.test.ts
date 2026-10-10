@@ -7,6 +7,7 @@ import {
   REDIRECT_TO,
   WEBHOOK_SECRET,
   WEBHOOK_URL,
+  cookies,
   getNonce,
   googleIdToken,
   linkAndCode,
@@ -125,7 +126,7 @@ describe('the sign-up guard (signup.before)', () => {
 
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: 'signup_rejected', message: 'Company addresses only' });
-    expect(hook.calls).toEqual([{ type: 'signup.before', data: { email: 'grace@example.com', name: 'Grace Hopper', locale: 'de-CH' } }]);
+    expect(hook.calls).toEqual([{ type: 'signup.before', data: { email: 'grace@example.com', name: 'Grace Hopper', locale: 'de-CH', method: 'password' } }]);
     expect(await store.findMany('user', {})).toEqual([]);
   });
 
@@ -204,7 +205,7 @@ describe('events', () => {
       'user.signed_in',
       'user.signed_in',
       'email.reset',
-      'password.reset',
+      'email.password_reset',
       'user.signed_in',
     ]);
     const user = { id: expect.stringMatching(/^usr_/), email: 'grace@example.com', name: 'Grace Hopper' };
@@ -212,13 +213,36 @@ describe('events', () => {
     expect(hook.calls.find((c) => c.type === 'user.signed_in')!.data).toEqual({ user, method: 'password' });
   });
 
-  it('K5: reports Google sign-ins', async () => {
+  it('K5: reports Google sign-ins, and the first one as a sign-up', async () => {
     const { app, hook } = passwordApp();
+    const user = { id: expect.stringMatching(/^usr_/), email: 'ada@example.com', name: 'Ada Lovelace' };
+
+    const first = await getNonce(app);
+    await verify(app, await googleIdToken({ nonce: first.nonce }), first.cookie);
+    expect(hook.calls).toEqual([
+      { type: 'signup.before', data: { email: 'ada@example.com', name: 'Ada Lovelace', method: 'google' } },
+      { type: 'user.created', data: { user, method: 'google' } },
+      { type: 'user.signed_in', data: { user: { ...user, picture: 'https://example.com/ada.png' }, method: 'google' } },
+    ]);
+
+    hook.calls.length = 0;
+    const second = await getNonce(app);
+    await verify(app, await googleIdToken({ nonce: second.nonce }), second.cookie);
+    expect(hook.types()).toEqual(['user.signed_in']);
+  });
+
+  it('K3: the sign-up guard applies to Google too, before anything is stored', async () => {
+    const { app, hook, store } = passwordApp();
+    hook.respond = (call) => (call.type === 'signup.before' ? { allow: false, message: 'Company addresses only' } : undefined);
     const { nonce, cookie } = await getNonce(app);
 
-    await verify(app, await googleIdToken({ nonce }), cookie);
+    const res = await verify(app, await googleIdToken({ nonce }), cookie);
 
-    expect(hook.calls).toEqual([{ type: 'user.signed_in', data: { user: expect.objectContaining({ id: 'google:1001' }), method: 'google' } }]);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'signup_rejected', message: 'Company addresses only' });
+    expect(cookies(res).madauth_session).toBeUndefined();
+    expect(await store.findMany('user', {})).toEqual([]);
+    expect(hook.types()).toEqual(['signup.before']);
   });
 
   it('K5: a failing receiver does not fail the sign-in, but is logged', async () => {

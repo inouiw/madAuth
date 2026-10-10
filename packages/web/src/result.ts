@@ -1,12 +1,12 @@
 /** The signed-in user. */
 export interface MadauthUser {
-  /** Stable id: `google:<sub>` for Google, `usr_<id>` for e-mail & password users. */
+  /** Stable id (`usr_…`), the same whichever way the user signs in. */
   id: string;
   email?: string;
   name?: string;
   picture?: string;
-  /** The roles of the user's e-mail address, e.g. `['admin']`. Absent without roles. */
-  roles?: string[];
+  /** What admins attached to the user, e.g. `{ roles: ['admin'] }`. Absent without claims. */
+  claims?: Record<string, unknown>;
 }
 
 const errorCodes = [
@@ -28,8 +28,11 @@ const errorCodes = [
   'codes_locked',
   'temporarily_unavailable',
   'signup_rejected',
+  'method_disabled',
   'forbidden',
-  'invalid_roles',
+  'invalid_claims',
+  'user_not_found',
+  'invalid_settings',
   'unknown',
 ] as const;
 

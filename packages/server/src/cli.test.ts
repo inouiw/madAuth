@@ -129,12 +129,14 @@ describe('init', () => {
     await init('--app-url', 'https://app.example.com/login', '--google-client-secret=shh', '--no-password', '--out', googleOnly);
     await init('--password', '--database', 'dynamodb:users', '--webhook-url', 'https://hooks.example.com/madauth', '--out', both);
 
+    // Google only: still a database, where every user is stored.
     expect(readEnvFile(googleOnly)).toEqual({
       MADAUTH_ISSUER: 'https://app.example.com',
       MADAUTH_SIGNING_KEY: expect.any(String),
       ALLOWED_ORIGINS: 'https://app.example.com',
       GOOGLE_CLIENT_ID: CLIENT_ID,
       GOOGLE_CLIENT_SECRET: 'shh',
+      DATABASE_URL: 'sqlite:./madauth.db',
       PORT: '8787',
     });
     expect(readEnvFile(both)).toMatchObject({
@@ -175,7 +177,7 @@ describe('init', () => {
     const answered = await runCli(['init', '--out', file], io);
     const withOptions = await runCli(['init', '--yes', '--no-password', '--out', file], noQuestions);
 
-    // Without a client ID its secret is not asked for; without password sign-in, neither database nor webhook.
+    // Without a client ID its secret is not asked for; without any method, nothing more.
     expect(io.asked).toEqual([
       'App URL, the address your users open',
       'Google client ID (empty: no Google sign-in)',

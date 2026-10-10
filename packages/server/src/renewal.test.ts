@@ -3,7 +3,6 @@
 import { createLocalJWKSet } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { importSigningKeys } from './keys.js';
-import { Roles } from './roles.js';
 import {
   APP_ORIGIN,
   ISSUER,
@@ -13,6 +12,7 @@ import {
   linkAndCode,
   passwordApp,
   post,
+  setClaims,
   signInResponse,
   signUpVerified,
   signingKey,
@@ -75,7 +75,7 @@ describe('renewal', () => {
 
     const res = await check(app, renewalOnly(signedIn));
     expect(res.status).toBe(200);
-    expect((await res.json()).user).toMatchObject({ id: 'google:1001', email: 'ada@example.com' });
+    expect((await res.json()).user).toMatchObject({ id: expect.stringMatching(/^usr_/), email: 'ada@example.com' });
     const renewed = cookies(res);
     expect(renewed.madauth_session.value).toBeTruthy();
     expect(renewed.madauth_renewal.value).toBeTruthy();
@@ -138,32 +138,32 @@ describe('renewal', () => {
     expect((await check(app, renewalOnly(otherDevice))).status).toBe(401);
   });
 
-  it('reads the roles again, so a renewed session has the current ones', async () => {
+  it('reads the claims again, so a renewed session has the current ones', async () => {
     const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook);
     const signedIn = await post(app, '/auth/password/signin', grace);
-    await new Roles(store).set('grace@example.com', ['admin'], null);
+    await setClaims(store, 'grace@example.com', { roles: ['admin'] });
     advance(2 * HOUR);
 
     const res = await check(app, renewalOnly(signedIn));
 
-    expect((await res.json()).user.roles).toEqual(['admin']);
+    expect((await res.json()).user.claims).toEqual({ roles: ['admin'] });
     const { publicJwk } = await importSigningKeys(signingKey);
     const verifySession = createSessionVerifier({ issuer: ISSUER, jwks: createLocalJWKSet({ keys: [publicJwk] }) });
-    expect((await verifySession(cookies(res).madauth_session.value))?.roles).toEqual(['admin']);
+    expect((await verifySession(cookies(res).madauth_session.value))?.claims).toEqual({ roles: ['admin'] });
   });
 
   it('the other routes of this server renew on the way: an expired session token does not sign the user out', async () => {
     const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook);
-    await new Roles(store).set('grace@example.com', ['admin'], null);
+    await setClaims(store, 'grace@example.com', { roles: ['admin'] });
     const signedIn = await post(app, '/auth/password/signin', grace);
     advance(2 * HOUR);
 
-    const res = await app.request('/auth/admin/roles/get', {
+    const res = await app.request('/auth/admin/claims/get', {
       method: 'POST',
       headers: { Origin: APP_ORIGIN, 'Content-Type': 'application/json', Cookie: renewalOnly(signedIn) },
-      body: JSON.stringify({ email: 'ada@example.com' }),
+      body: JSON.stringify({ email: 'grace@example.com' }),
     });
 
     expect(res.status).toBe(200);

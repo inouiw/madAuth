@@ -4,10 +4,11 @@ import { parseArgs, parseEnv } from 'node:util';
 import { loadConfig, loadStore, loadUserStoreConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
-import { Roles, parseRoles } from './roles.js';
+import { claimsFromJson, parseClaims, parseRoles, type Claims } from './claims.js';
+import { METHODS_SETTING, SIGN_IN_METHODS, Settings, type MethodSettings, type SignInMethod } from './settings.js';
 import { madauthSchema, type StoreAdapter } from './store/schema.js';
 import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
-import { Users } from './users.js';
+import { passwordAccountKey, Users } from './users.js';
 import { DEV_WEBHOOK_RECEIVER_URL, generateWebhookSecret } from './webhooks.js';
 
 /** The server's default port, which `init` writes as PORT. */
@@ -26,10 +27,16 @@ Commands:
   generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
   create-user <email>          Create a user with a password (asks for it), already verified.
                                Uses DATABASE_URL and PASSWORD_MIN_LENGTH from the environment.
-  set-roles <email> [role...]  Set the roles of an e-mail address, e.g. to make the first admin:
+  set-roles <email> [role...]  Set the roles of a user (the claim "roles"), e.g. to make the first admin:
                                set-roles you@example.com admin. Without roles, removes them all.
-                               Uses DATABASE_URL from the environment.
-  get-roles <email>            Print the roles of an e-mail address.
+                               The user must exist: signed in once, or created with create-user.
+  get-roles <email>            Print the roles of a user.
+  set-claims <email> <json>    Replace the claims of a user, e.g. '{"roles":["admin"],"plan":"pro"}'.
+  get-claims <email>           Print the claims of a user as JSON.
+  set-methods [method...]      Switch sign-in methods on and off while the server runs: the listed ones
+                               (google, password) are on, the others off. Without any, all are on.
+  get-methods                  Print which sign-in methods are switched on.
+                               These commands use DATABASE_URL from the environment.
   schema [--dialect <name>] [--from <version>]
                                Print the SQL that creates madAuth's tables for a custom store adapter.
                                Dialects: postgres (default), mysql, sqlite. With --from, print only the
@@ -176,7 +183,14 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
   const { values: options, positionals } = parsed;
   const [command, ...rest] = positionals;
   // Few commands take arguments; anywhere else one is likely a mistyped option, e.g. `init .env.local`.
-  const maxArguments = command === 'set-roles' ? Infinity : command === 'create-user' || command === 'get-roles' ? 1 : 0;
+  const maxArguments =
+    command === 'set-roles' || command === 'set-methods'
+      ? Infinity
+      : command === 'set-claims'
+        ? 2
+        : command === 'create-user' || command === 'get-roles' || command === 'get-claims'
+          ? 1
+          : 0;
   if (rest.length > maxArguments) {
     return { output: `Unexpected argument: ${rest.at(-1)}\n\n${usage}`, exitCode: 1 };
   }
@@ -213,8 +227,11 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     if (command === 'create-user') {
       return await createUser(rest[0], io, env);
     }
-    if (command === 'set-roles' || command === 'get-roles') {
-      return await roles(command, rest[0], rest.slice(1), env);
+    if (command === 'set-roles' || command === 'get-roles' || command === 'set-claims' || command === 'get-claims') {
+      return await claims(command, rest[0], rest.slice(1), env);
+    }
+    if (command === 'set-methods' || command === 'get-methods') {
+      return await methods(command, rest, env);
     }
   } catch (e) {
     return { output: e instanceof Error ? e.message : String(e), exitCode: 1 };
@@ -262,14 +279,15 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   const clientSecret = clientId ? (options['google-client-secret'] ?? (await askClientSecret())).trim() : '';
 
   const password = options.password ?? /^y/i.test(await answer(undefined, 'E-mail & password sign-in? (yes/no)', 'yes'));
-  if (!password && (options.database !== undefined || options['webhook-url'] !== undefined)) {
-    return fail('--database and --webhook-url are for e-mail & password sign-in, which is turned off.');
+  if (!password && options['webhook-url'] !== undefined) {
+    return fail('--webhook-url is for e-mail & password sign-in, which is turned off.');
   }
   if (!clientId && !password) {
     return fail('No sign-in method is chosen. Give a Google client ID, turn on e-mail & password sign-in, or both.');
   }
-  const database = password ? await answer(options.database, 'Database for the users', 'sqlite:./madauth.db') : '';
-  if (password && !/^(sqlite|dynamodb):./.test(database)) {
+  // Every user is stored, whichever way they sign in.
+  const database = await answer(options.database, 'Database for the users', 'sqlite:./madauth.db');
+  if (!/^(sqlite|dynamodb):./.test(database)) {
     return fail(`The database must be sqlite:<path> or dynamodb:<table> but is "${database}".`);
   }
   const webhookUrl = password
@@ -296,7 +314,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
     variable('ALLOWED_ORIGINS', origin, 'Origins of your apps, comma-separated. Only these may call the server.'),
     clientId && variable('GOOGLE_CLIENT_ID', clientId, 'Google sign-in: your OAuth client ID, of the type Web application.'),
     clientSecret && variable('GOOGLE_CLIENT_SECRET', clientSecret, 'Client secret of the same client. It enables the redirect flow.'),
-    password && variable('DATABASE_URL', database, 'E-mail & password sign-in: where the users are stored.'),
+    variable('DATABASE_URL', database, 'Where the users are stored, whichever way they sign in.'),
     password && variable('WEBHOOK_URL', webhookUrl, 'Your webhook receiver. madAuth hands its e-mails to it.'),
     password && variable('WEBHOOK_SECRET', generateWebhookSecret(), 'Signs every webhook call. Your receiver needs the same one.'),
     password &&
@@ -312,7 +330,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
 
   // The server's own checks, on the file as it will be read, so that it is ready to use. The database is
   // not opened here: a placeholder stands in for DATABASE_URL.
-  await loadConfig({ ...parseEnv(content), DATABASE_URL: undefined }, password ? { store: {} as StoreAdapter } : {});
+  await loadConfig({ ...parseEnv(content), DATABASE_URL: undefined }, { store: {} as StoreAdapter });
 
   // Always a new file, readable by its owner only: it holds secrets, and an overwritten file would keep its mode.
   if (options.force) rmSync(file, { force: true });
@@ -373,24 +391,75 @@ function nextSteps(file: string, origin: string, google: 'GoogleFedcm' | 'Google
   return steps.map((lines, i) => `${i + 1}. ${lines.map((line, j) => (j && line ? `   ${line}` : line)).join('\n')}`).join('\n\n');
 }
 
-async function roles(command: 'set-roles' | 'get-roles', email: string | undefined, names: string[], env: Env) {
+async function claims(
+  command: 'set-roles' | 'get-roles' | 'set-claims' | 'get-claims',
+  email: string | undefined,
+  args: string[],
+  env: Env,
+) {
   if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const store = await loadStore(env);
+  const users = new Users(await loadStore(env));
   const address = normalizeEmail(email);
-  const assignments = new Roles(store);
-  if (command === 'set-roles') {
-    const parsed = parseRoles(names);
-    if (!parsed) {
+  const user = await users.findByEmail(address);
+  if (!user) return { output: `No user has the e-mail address ${address}. Users exist once they signed in, or with create-user.`, exitCode: 1 };
+  let current = claimsFromJson(user.claims);
+  if (command === 'set-roles' || command === 'set-claims') {
+    let next: Claims | null;
+    if (command === 'set-roles') {
+      const roles = parseRoles(args);
+      if (!roles) {
+        return {
+          output: 'Role names consist of lower-case letters, digits, "-" and "_", and start with a letter, e.g. admin.',
+          exitCode: 1,
+        };
+      }
+      const { roles: _, ...rest } = current;
+      next = parseClaims(roles.length ? { ...rest, roles } : rest);
+    } else {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(args[0] ?? '');
+      } catch {
+        return { output: `The claims must be JSON, e.g. '{"roles":["admin"]}'.\n\n${usage}`, exitCode: 1 };
+      }
+      next = parseClaims(parsed);
+    }
+    if (!next) {
       return {
-        output: 'Role names consist of lower-case letters, digits, "-" and "_", and start with a letter, e.g. admin.',
+        output:
+          'Claims are a JSON object of at most 2048 characters whose keys are names (letters, digits and "_", starting ' +
+          'with a letter); "roles" is a list of role names.',
         exitCode: 1,
       };
     }
     // Whoever can reach the database decides: this is how the first admin gets the role.
-    await assignments.set(address, parsed, null);
+    await users.updateUser(user.id, { claims: Object.keys(next).length ? JSON.stringify(next) : null });
+    current = next;
   }
-  const current = await assignments.get(address);
-  return { output: current.length ? `${address}: ${current.join(' ')}` : `${address} has no roles.`, exitCode: 0 };
+  if (command === 'set-claims' || command === 'get-claims') {
+    return { output: `${address}: ${JSON.stringify(current)}`, exitCode: 0 };
+  }
+  const roles = Array.isArray(current.roles) ? (current.roles as string[]) : [];
+  return { output: roles.length ? `${address}: ${roles.join(' ')}` : `${address} has no roles.`, exitCode: 0 };
+}
+
+async function methods(command: 'set-methods' | 'get-methods', names: string[], env: Env) {
+  const settings = new Settings(await loadStore(env));
+  if (command === 'set-methods') {
+    const unknown = names.filter((name) => !(SIGN_IN_METHODS as readonly string[]).includes(name));
+    if (unknown.length) {
+      return { output: `Unknown sign-in method ${unknown.join(', ')}. Methods: ${SIGN_IN_METHODS.join(', ')}.`, exitCode: 1 };
+    }
+    const next: MethodSettings = {};
+    for (const method of SIGN_IN_METHODS) next[method] = !names.length || names.includes(method);
+    await settings.setMethods(next, null);
+  }
+  const current = await settings.methods();
+  const on = SIGN_IN_METHODS.filter((method: SignInMethod) => current[method] !== false);
+  return {
+    output: `Switched on: ${on.join(', ')}. Only methods the server is configured for work (setting "${METHODS_SETTING}").`,
+    exitCode: 0,
+  };
 }
 
 async function createUser(email: string | undefined, io: CliIo, env: Env) {
@@ -400,12 +469,13 @@ async function createUser(email: string | undefined, io: CliIo, env: Env) {
   const policy = checkPasswordPolicy(password, minLength);
   if (policy) return { output: policy, exitCode: 1 };
   const users = new Users(store);
-  const user = await users.createPasswordUser({
+  const passwordHash = await hashPassword(password);
+  const user = await users.createUser({
     email: email.trim(),
     emailNormalized: normalizeEmail(email),
     name: null,
-    passwordHash: await hashPassword(password),
     emailVerified: true,
+    account: (userId) => ({ key: passwordAccountKey(userId), secret: passwordHash }),
   });
   if (!user) return { output: `A user with the e-mail address ${email} already exists.`, exitCode: 1 };
   return { output: `Created user ${user.id} (${user.email}).`, exitCode: 0 };

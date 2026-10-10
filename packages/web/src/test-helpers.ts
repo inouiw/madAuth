@@ -53,8 +53,10 @@ export interface FakeServer {
   down: boolean;
   nonces: number;
   requests: RecordedRequest[];
-  /** Roles by e-mail address, as set through the admin API. */
-  roles: Map<string, string[]>;
+  /** Claims by e-mail address, as set through the admin API. */
+  claims: Map<string, Record<string, unknown>>;
+  /** Which sign-in methods an admin switched off. */
+  methods: { google: boolean; password: boolean };
   /** Lifetime of a session in seconds; the server's expiry cookie is set from it. */
   sessionTtl: number;
 }
@@ -83,7 +85,8 @@ export function fakeServer(): FakeServer {
     down: false,
     nonces: 0,
     requests: [],
-    roles: new Map(),
+    claims: new Map(),
+    methods: { google: true, password: true },
     sessionTtl: 3600,
   };
   const userFor = (email: string): MadauthUser => {
@@ -187,17 +190,34 @@ export function fakeServer(): FakeServer {
         server.user = null;
         setExpiryCookie(null);
         return new Response(null, { status: 204 });
-      case 'POST /auth/admin/roles/get':
-      case 'POST /auth/admin/roles/set': {
+      case 'POST /auth/admin/claims/get':
+      case 'POST /auth/admin/claims/set': {
         if (!server.user) return json({ error: 'no_session' }, 401);
-        if (!server.user.roles?.includes('admin')) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        if (!(server.user.claims?.roles as string[] | undefined)?.includes('admin')) return json({ error: 'forbidden', message: 'admins only' }, 403);
         if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
+        if (!server.accounts.has(email)) return json({ error: 'user_not_found', message: 'no user' }, 404);
         if (url.pathname.endsWith('/set')) {
-          const roles = (body as { roles?: unknown }).roles;
-          if (!Array.isArray(roles)) return json({ error: 'invalid_roles', message: 'invalid' }, 400);
-          server.roles.set(email, [...roles].sort());
+          const claims = (body as { claims?: unknown }).claims;
+          if (!claims || typeof claims !== 'object' || Array.isArray(claims)) return json({ error: 'invalid_claims', message: 'invalid' }, 400);
+          server.claims.set(email, claims as Record<string, unknown>);
         }
-        return json({ email, roles: server.roles.get(email) ?? [] });
+        return json({ email, userId: userFor(email).id, claims: server.claims.get(email) ?? {} });
+      }
+      case 'POST /auth/admin/settings/get':
+      case 'POST /auth/admin/settings/set': {
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        if (!(server.user.claims?.roles as string[] | undefined)?.includes('admin')) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        if (url.pathname.endsWith('/set')) {
+          const methods = (body as { methods?: Record<string, unknown> }).methods;
+          if (!methods || typeof methods !== 'object') return json({ error: 'invalid_settings', message: 'invalid' }, 400);
+          server.methods = { ...server.methods, ...(methods as Partial<typeof server.methods>) };
+        }
+        return json({
+          methods: {
+            google: { available: server.google, enabled: server.google && server.methods.google },
+            password: { available: server.password, enabled: server.password && server.methods.password },
+          },
+        });
       }
       case 'POST /auth/account/delete':
         if (!server.user) return json({ error: 'no_session' }, 401);

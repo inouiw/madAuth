@@ -10,11 +10,14 @@ export const WEBHOOK_TYPES = [
   'signup.before',
   'user.created',
   'email.verified',
-  'password.reset',
+  'email.password_reset',
   'user.signed_in',
   'user.deleted',
-  'roles.changed',
+  'user.claims_changed',
 ] as const;
+
+/** The calls that hand over an e-mail (as opposed to events and checks). */
+export const EMAIL_TYPES = ['email.verify', 'email.reset', 'email.already_registered'] as const satisfies readonly WebhookType[];
 
 export type WebhookType = (typeof WEBHOOK_TYPES)[number];
 

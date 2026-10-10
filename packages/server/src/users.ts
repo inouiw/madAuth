@@ -1,7 +1,9 @@
 // Everything madAuth stores, written once on top of the StoreAdapter. Routes never call the adapter directly.
 import { randomBytes } from 'node:crypto';
+import { claimsFromJson } from './claims.js';
 import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
 import type { Row, StoreAdapter } from './store/schema.js';
+import type { MadauthUser } from './user.js';
 
 export interface StoredUser {
   id: string;
@@ -13,16 +15,21 @@ export interface StoredUser {
   lastMailAt: number;
   /** Wrong e-mail codes in a row. Empty in records that a store keeps from before schema version 2. */
   wrongCodes: number | null;
+  /** The user's claims as JSON. Empty without claims, and in records from before schema version 4. */
+  claims: string | null;
   createdAt: number;
 }
 
 export interface StoredAccount {
   id: string;
   userId: string;
+  /** `password:<userId>` or `google:<sub>`. */
   key: string;
   secret: string | null;
   failedAttempts: number;
   lockedUntil: number;
+  /** The address the provider reported at the last sign-in. Empty for password accounts and before schema version 4. */
+  email: string | null;
   createdAt: number;
 }
 
@@ -58,6 +65,31 @@ export function passwordAccountKey(userId: string): string {
   return `password:${userId}`;
 }
 
+export function googleAccountKey(sub: string): string {
+  return `google:${sub}`;
+}
+
+/**
+ * The user as apps see them. `profile` is what the sign-in method knows beyond the record, e.g. Google's
+ * picture; the stored name wins over the provider's.
+ */
+export function toMadauthUser(user: StoredUser, profile: { name?: string; picture?: string } = {}): MadauthUser {
+  const result: MadauthUser = { id: user.id, email: user.email };
+  const name = user.name ?? profile.name;
+  if (name) result.name = name;
+  if (profile.picture) result.picture = profile.picture;
+  const claims = claimsFromJson(user.claims);
+  if (Object.keys(claims).length) result.claims = claims;
+  return result;
+}
+
+/** A new account's sign-in method: its key, and its secret (the password hash) or the provider's address. */
+export interface NewAccount {
+  key: string;
+  secret?: string;
+  email?: string;
+}
+
 export class Users {
   /** `codeKey` keys the e-mail codes (see deriveCodeKey); only needed to issue and check them. */
   constructor(
@@ -79,18 +111,24 @@ export class Users {
   }
 
   async passwordAccount(userId: string): Promise<StoredAccount | null> {
-    return (await this.store.findOne('account', { key: passwordAccountKey(userId) })) as StoredAccount | null;
+    return this.findAccountByKey(passwordAccountKey(userId));
   }
 
-  /** Creates a user with a password. Resolves to null if the e-mail address is taken. */
-  async createPasswordUser(data: {
+  async findAccountByKey(key: string): Promise<StoredAccount | null> {
+    return (await this.store.findOne('account', { key })) as StoredAccount | null;
+  }
+
+  /**
+   * Creates a user with their first account. Resolves to null if the e-mail address or the account key is
+   * taken. `account.key` is `password:<userId>` for a password (its hash as `secret`), or e.g. `google:<sub>`.
+   */
+  async createUser(data: {
     email: string;
     emailNormalized: string;
     name: string | null;
-    passwordHash: string;
     emailVerified: boolean;
+    account: NewAccount | ((userId: string) => NewAccount);
   }): Promise<StoredUser | null> {
-    const now = Date.now();
     const user: StoredUser = {
       id: newId('usr'),
       email: data.email,
@@ -100,34 +138,41 @@ export class Users {
       sessionVersion: 0,
       lastMailAt: 0,
       wrongCodes: 0,
-      createdAt: now,
+      claims: null,
+      createdAt: Date.now(),
     };
     if (!(await this.store.create('user', user as unknown as Row))) return null;
-    const account: StoredAccount = {
-      id: newId('acc'),
-      userId: user.id,
-      key: passwordAccountKey(user.id),
-      secret: data.passwordHash,
-      failedAttempts: 0,
-      lockedUntil: 0,
-      createdAt: now,
-    };
-    if (!(await this.store.create('account', account as unknown as Row))) {
+    const account = typeof data.account === 'function' ? data.account(user.id) : data.account;
+    if (!(await this.linkAccount(user.id, account))) {
       await this.store.delete('user', { id: user.id });
       return null;
     }
     return user;
   }
 
+  /** Adds a sign-in method to a user. Resolves to null if the account key is taken. */
+  async linkAccount(userId: string, account: NewAccount): Promise<StoredAccount | null> {
+    const record: StoredAccount = {
+      id: newId('acc'),
+      userId,
+      key: account.key,
+      secret: account.secret ?? null,
+      failedAttempts: 0,
+      lockedUntil: 0,
+      email: account.email ?? null,
+      createdAt: Date.now(),
+    };
+    return (await this.store.create('account', record as unknown as Row)) ? record : null;
+  }
+
   /**
-   * Deletes the user with this e-mail address and everything stored for them. Resolves to the deleted
-   * user's ID, or null if there is no such user (any more).
+   * Deletes the user and everything stored for them. Resolves to false if there is no such user (any more).
    */
-  async deleteByEmail(emailNormalized: string): Promise<string | null> {
-    const user = await this.findByEmail(emailNormalized);
-    if (!user) return null;
+  async deleteById(id: string): Promise<boolean> {
+    const user = await this.findById(id);
+    if (!user) return false;
     // The user record goes first: from then on nobody can sign in, and a sign-up with the address starts afresh.
-    if ((await this.store.delete('user', { id: user.id })) !== 1) return null;
+    if ((await this.store.delete('user', { id: user.id })) !== 1) return false;
     // The user is gone now, so the deletion has to finish: a retry would find no session and send no event.
     // Records left behind belong to a user ID that no longer exists and are never read again.
     try {
@@ -136,7 +181,7 @@ export class Users {
     } catch (e) {
       console.error(`[madauth] Deleted user ${user.id}, but not all of their records: ${(e as Error).message}`);
     }
-    return user.id;
+    return true;
   }
 
   async updateUser(id: string, patch: Partial<Omit<StoredUser, 'id'>>): Promise<void> {

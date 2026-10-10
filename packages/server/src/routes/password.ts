@@ -11,8 +11,7 @@ import {
   verifyAgainstDummy,
   verifyPassword,
 } from '../password.js';
-import type { MadauthUser } from '../user.js';
-import type { CodeResult, StoredUser, Users, VerificationPurpose } from '../users.js';
+import { passwordAccountKey, toMadauthUser, type CodeResult, type StoredUser, type Users, type VerificationPurpose } from '../users.js';
 import type { WebhookClient, WebhookType } from '../webhooks.js';
 
 /** Failed sign-ins allowed before each further attempt has to wait. */
@@ -23,8 +22,8 @@ export const MAX_LOCK_MS = 15 * 60 * 1000;
 export const MAIL_INTERVAL_MS = 60 * 1000;
 export const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
 export const RESET_TTL_MS = 30 * 60 * 1000;
-/** How long madAuth waits for the webhook to accept an e-mail or to decide on a sign-up. */
-export const WEBHOOK_TIMEOUT_MS = 10_000;
+export { WEBHOOK_TIMEOUT_MS } from '../app.js';
+import { WEBHOOK_TIMEOUT_MS } from '../app.js';
 
 /** Hash parameters that carry e-mail link tokens to the app (`<redirectTo>#madauth_verify=<token>`). */
 export const VERIFY_LINK_PARAM = 'madauth_verify';
@@ -35,12 +34,6 @@ const MAX_LOCALE_LENGTH = 35;
 
 type Body = Record<string, unknown>;
 
-function toMadauthUser(user: StoredUser): MadauthUser {
-  const result: MadauthUser = { id: user.id, email: user.email };
-  if (user.name) result.name = user.name;
-  return result;
-}
-
 export function passwordRoutes(
   app: Hono,
   ctx: AppContext,
@@ -49,6 +42,13 @@ export function passwordRoutes(
   webhook: WebhookClient,
 ): void {
   const { minLength } = password;
+
+  const disabled = (c: Context) => c.json({ error: 'method_disabled', message: 'E-mail & password sign-in is switched off.' }, 403);
+  // Every route of the method: an admin switched it off for sign-ups and sign-ins alike.
+  app.use('/auth/password/*', async (c, next) => {
+    if (!(await ctx.enabled('password'))) return disabled(c);
+    await next();
+  });
 
   const body = async (c: Context): Promise<Body> => {
     const data = await c.req.json<unknown>().catch(() => null);
@@ -185,18 +185,8 @@ export function passwordRoutes(
     const locale = localeOf(data);
 
     // The operator's check comes first and fails closed: without an answer, nobody signs up.
-    if (webhook.wants('signup.before')) {
-      const check = await webhook.call('signup.before', { email, name: name ?? undefined, locale }, WEBHOOK_TIMEOUT_MS);
-      if (!check.ok) {
-        console.error(`[madauth] Webhook "signup.before" failed: ${check.reason}`);
-        return unavailable(c);
-      }
-      const answer = check.body as { allow?: unknown; message?: unknown } | undefined;
-      if (answer?.allow === false) {
-        const message = typeof answer.message === 'string' && answer.message ? answer.message : 'Sign-up is not possible with this e-mail address.';
-        return error(c, 403, 'signup_rejected', message);
-      }
-    }
+    const check = await ctx.checkSignup({ email, name: name ?? undefined, locale, method: 'password' });
+    if (!check.ok) return check.reason === 'rejected' ? error(c, 403, 'signup_rejected', check.message) : unavailable(c);
 
     // Hash before looking the address up, so new and existing addresses take the same time.
     const passwordHash = await hashPassword(data.password as string);
@@ -213,19 +203,20 @@ export function passwordRoutes(
       if (Date.now() - existing.lastMailAt < MAIL_INTERVAL_MS) return accepted(c);
       const account = await users.passwordAccount(existing.id);
       if (account) await users.updateAccount(account.id, { secret: passwordHash, failedAttempts: 0, lockedUntil: 0 });
+      else await users.linkAccount(existing.id, { key: passwordAccountKey(existing.id), secret: passwordHash });
       await users.updateUser(existing.id, { name });
       return (await sendLinkEmail({ ...existing, name }, 'verify', target, locale)) ? accepted(c) : unavailable(c);
     }
 
-    const user = await users.createPasswordUser({
+    const user = await users.createUser({
       email,
       emailNormalized: normalizeEmail(email),
       name,
-      passwordHash,
       emailVerified: false,
+      account: (userId) => ({ key: passwordAccountKey(userId), secret: passwordHash }),
     });
     if (!user) return accepted(c);
-    await ctx.emit('user.created', { user: toMadauthUser(user) });
+    await ctx.emit('user.created', { user: toMadauthUser(user), method: 'password' });
     // If this fails, signing up again is allowed: the account is not confirmed yet.
     return (await sendLinkEmail(user, 'verify', target, locale)) ? accepted(c) : unavailable(c);
   });
@@ -284,7 +275,7 @@ export function passwordRoutes(
     // An unused confirmation link would otherwise still sign in.
     await users.clearVerifications(user.id);
     const result = await ctx.startSession(c, toMadauthUser(user), ['pwd'], { sv: sessionVersion });
-    await ctx.emit('password.reset', { user: result });
+    await ctx.emit('email.password_reset', { user: result });
     await ctx.emit('user.signed_in', { user: result, method: 'password' });
     return c.json({ user: result });
   });

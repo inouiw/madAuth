@@ -2,8 +2,10 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type JWTPayload
 import { createApp } from '../app.js';
 import type { MadauthConfig } from '../config.js';
 import { generateSigningKey } from '../keys.js';
+import type { StoreAdapter } from '../store/schema.js';
 import { createSqliteAdapter } from '../store/sqlite.js';
-import { WEBHOOK_TYPES, generateWebhookSecret, verifyWebhook } from '../webhooks.js';
+import { Users } from '../users.js';
+import { EMAIL_TYPES, WEBHOOK_TYPES, generateWebhookSecret, verifyWebhook } from '../webhooks.js';
 
 export const ISSUER = 'https://auth.example.com';
 export const APP_ORIGIN = 'https://app.example.com';
@@ -37,6 +39,7 @@ export async function googleIdToken(
 
 export const signingKey = await generateSigningKey();
 
+/** Google sign-in with an in-memory store; no e-mail & password and no webhook unless overridden. */
 export function testConfig(overrides: Partial<MadauthConfig> = {}): MadauthConfig {
   return {
     issuer: ISSUER,
@@ -45,6 +48,7 @@ export function testConfig(overrides: Partial<MadauthConfig> = {}): MadauthConfi
     sessionTtlSeconds: 3600,
     renewalTtlSeconds: 30 * 24 * 3600,
     google: { clientId: CLIENT_ID, clientSecret: 'test-secret' },
+    store: createSqliteAdapter(':memory:'),
     jwksResolver: googleJwks,
     ...overrides,
   };
@@ -139,7 +143,7 @@ export function recordingWebhook() {
     failOnly: undefined as ((type: string) => boolean) | undefined,
     respond: undefined as ((call: WebhookCall) => unknown) | undefined,
     /** The e-mails taken over so far. */
-    emails: () => calls.filter((c) => c.type.startsWith('email.') && c.type !== 'email.verified'),
+    emails: () => calls.filter((c) => (EMAIL_TYPES as readonly string[]).includes(c.type)),
     lastEmail: () => hook.emails().at(-1),
     types: () => calls.map((c) => c.type),
     fetch: (async (url: string | URL, init: RequestInit = {}) => {
@@ -162,6 +166,14 @@ export function recordingWebhook() {
 
 export type RecordingWebhook = ReturnType<typeof recordingWebhook>;
 
+/** Sets a user's claims straight in the store, as the command line does; the user must exist. */
+export async function setClaims(store: StoreAdapter, email: string, claims: Record<string, unknown> | null): Promise<void> {
+  const users = new Users(store);
+  const user = await users.findByEmail(email.toLowerCase());
+  if (!user) throw new Error(`No user ${email}`);
+  await users.updateUser(user.id, { claims: claims && Object.keys(claims).length ? JSON.stringify(claims) : null });
+}
+
 export const REDIRECT_TO = `${APP_ORIGIN}/account`;
 
 /** An app with e-mail & password sign-in (in-memory SQLite), Google, and a recording webhook receiver. */
@@ -169,7 +181,8 @@ export function passwordApp(overrides: Partial<MadauthConfig> = {}) {
   const hook = recordingWebhook();
   const store = createSqliteAdapter(':memory:');
   const app = testApp({
-    password: { minLength: 8, store },
+    store,
+    password: { minLength: 8 },
     webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: ALL_EVENTS },
     webhookFetch: hook.fetch,
     ...overrides,

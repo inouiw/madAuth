@@ -1,5 +1,14 @@
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
-import type { MadauthUser } from './user.js';
+
+/** What a verified Google ID token says about its account. */
+export interface GoogleProfile {
+  /** Google's stable id of the account; its address may change. */
+  sub: string;
+  /** The account's current primary address, verified by Google. */
+  email: string;
+  name?: string;
+  picture?: string;
+}
 
 const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
 
@@ -12,7 +21,7 @@ export function googleKeys(): JWTVerifyGetKey {
 }
 
 export type GoogleVerifyResult =
-  | { ok: true; user: MadauthUser }
+  | { ok: true; profile: GoogleProfile }
   | { ok: false; error: 'verification_failed' | 'email_unverified'; reason: string };
 
 /**
@@ -39,12 +48,11 @@ export async function verifyGoogleIdToken(
   if (payload.nonce !== opts.nonce) {
     return { ok: false, error: 'verification_failed', reason: 'nonce mismatch' };
   }
-  if (payload.email_verified !== true) {
+  if (typeof payload.email !== 'string' || !payload.email || payload.email_verified !== true) {
     return { ok: false, error: 'email_unverified', reason: 'e-mail address not verified' };
   }
-  const user: MadauthUser = { id: `google:${payload.sub}` };
-  if (typeof payload.email === 'string') user.email = payload.email;
-  if (typeof payload.name === 'string') user.name = payload.name;
-  if (typeof payload.picture === 'string') user.picture = payload.picture;
-  return { ok: true, user };
+  const profile: GoogleProfile = { sub: payload.sub, email: payload.email };
+  if (typeof payload.name === 'string') profile.name = payload.name;
+  if (typeof payload.picture === 'string') profile.picture = payload.picture;
+  return { ok: true, profile };
 }

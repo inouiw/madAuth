@@ -368,7 +368,7 @@ export const Madauth = {
   /** Google sign-in for custom login screens. Needs `new GoogleFedcm()` or `new GoogleRedirect()`. */
   google: createGoogleApi(core),
 
-  /** Reading and setting roles, for users with the role `admin`. */
+  /** Reading and setting claims and settings, for users with the role `admin`. */
   admin: createAdminApi(core),
 
   /**

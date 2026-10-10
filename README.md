@@ -118,7 +118,7 @@ signInButton.onclick = () => Madauth.signIn();
 - **Language:** the dialog has English and German texts. It follows the page's `<html lang>`, then the browser's language. To set the language yourself, pass `locale: 'de'` (or e.g. `'de-CH'`) to `initialize`, and call `Madauth.setLocale('en')` when the user switches the language of your app; an open dialog changes at once. Every other language shows English. The same locale goes to your e-mail webhook, so the e-mails can match the dialog.
 - **Your own login screen:** pass `ui: 'custom'` and use `Madauth.password` and `Madauth.google` instead of the dialog. See [Building your own login screen](docs/custom-ui.md).
 - **Other methods:** `signOut()`, `getSession()`, `currentUser`, `deleteAccount()` to [delete the signed-in user's account](docs/server.md#deleting-an-account), and `sessionReady()` to wait for a fresh session before calling your own backend (see [Sessions](docs/server.md#sessions)). All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
-- **Roles:** `currentUser.roles` holds the user's roles, e.g. `['admin']`. Admins set them with `Madauth.admin.setRoles(email, roles)`. See [Roles](docs/server.md#roles).
+- **Claims:** `currentUser.claims` holds what admins attached to the user, e.g. `{ roles: ['admin'] }`; it is in the session token for your backends too. Admins set them with `Madauth.admin.setClaims(email, claims)`, and switch sign-in methods on and off with `Madauth.admin.setSettings(...)`. See [Claims](docs/server.md#claims) and [Sign-in methods](docs/server.md#sign-in-methods).
 - **Server URL:** the server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 'https://auth.example.com'` to `initialize` if it runs elsewhere on the same site.
 
 ### Running the server
@@ -126,7 +126,7 @@ signInButton.onclick = () => Madauth.signIn();
 See [Running the madAuth server](docs/server.md) for:
 - the configuration
 - Google Cloud Console setup
-- e-mail & password sign-in: the database (SQLite or Amazon DynamoDB), and webhooks for sending e-mails (with ready-made receivers in [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks), e.g. for Amazon SES), checking sign-ups and receiving events
+- the database (SQLite or Amazon DynamoDB) that stores every user, and webhooks for sending e-mails (with ready-made receivers in [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks), e.g. for Amazon SES), checking sign-ups and receiving events
 - Node, Docker, AWS Lambda and Azure Functions
 - storing users in your own database (custom store adapter)
 - verifying the session in your own backend

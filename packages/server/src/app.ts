@@ -1,12 +1,13 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
+import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
 import type { MadauthConfig } from './config.js';
 import { importSigningKeys, type SigningKeys } from './keys.js';
 import { deriveCodeKey, isValidEmail, normalizeEmail } from './password.js';
-import { ADMIN_ROLE, Roles, parseRoles, sameRoles } from './roles.js';
 import { googleRoutes } from './routes/google.js';
 import { passwordRoutes } from './routes/password.js';
+import { SIGN_IN_METHODS, Settings, parseMethodSettings, type SignInMethod } from './settings.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims } from './tokens.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 import { Users } from './users.js';
@@ -14,8 +15,13 @@ import { createWebhookClient, type WebhookClient, type WebhookType } from './web
 
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
+/** How long madAuth waits for the webhook to accept an e-mail or to decide on a sign-up. */
+export const WEBHOOK_TIMEOUT_MS = 10_000;
 
 export { REDIRECT_ERROR_PARAM } from './routes/google.js';
+
+/** The answer of the operator's sign-up check. */
+export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | { ok: false; reason: 'rejected'; message: string };
 
 /** What the route modules share. */
 export interface AppContext {
@@ -26,12 +32,16 @@ export interface AppContext {
   isAllowedOrigin(origin: string | undefined): boolean;
   /** Parses an absolute URL whose origin is in ALLOWED_ORIGINS, without its hash; null otherwise. */
   allowedUrl(value: unknown): URL | null;
-  /** Sets the session cookie. Resolves to the user as the session holds it: with the roles of the address. */
+  /** Sets the session cookies for the user, as the routes resolved them from the store. */
   startSession(c: Context, user: MadauthUser, amr: string[], extra?: { sv?: number }): Promise<MadauthUser>;
-  /** Present when e-mail & password sign-in is configured. */
-  users?: Users;
+  users: Users;
+  settings: Settings;
   /** Present when WEBHOOK_URL is configured. */
   webhook?: WebhookClient;
+  /** Whether a sign-in method is on: configured, and not switched off by an admin. Read from the store each time. */
+  enabled(method: SignInMethod): Promise<boolean>;
+  /** Asks the webhook whether someone may sign up (`signup.before`). Fails closed: without an answer, nobody signs up. */
+  checkSignup(data: { email: string; name?: string; locale?: string; method: SignInMethod }): Promise<SignupCheck>;
   /** Tells the webhook that something happened. Awaited (Lambda stops after the answer), but never fails. */
   emit(type: WebhookType, data: Record<string, unknown>): Promise<void>;
 }
@@ -46,15 +56,11 @@ export function createApp(config: MadauthConfig): Hono {
   // Browsers treat http://localhost as secure, but only mark cookies Secure when served over https.
   const secure = issuer.startsWith('https:');
   const isAllowedOrigin = (origin: string | undefined) => !!origin && allowedOrigins.includes(origin);
+  const users = new Users(config.store, deriveCodeKey(config.signingKey.d!));
+  const settings = new Settings(config.store);
+  /** Whether the method is configured at all; an admin can only switch a configured method off. */
+  const available = (method: SignInMethod) => (method === 'google' ? !!config.google : !!config.password);
 
-  // Roles need a store, which only e-mail & password sign-in configures. They then apply to Google sign-ins too.
-  const roles = config.password ? new Roles(config.password.store) : undefined;
-  /** The user with the current roles of their address. */
-  const withRoles = async (user: MadauthUser): Promise<MadauthUser> => {
-    const { roles: _, ...rest } = user;
-    const current = roles && user.email ? await roles.get(normalizeEmail(user.email)) : [];
-    return current.length ? { ...rest, roles: current } : rest;
-  };
   /**
    * Sets the cookies of a session: the session token for app backends, the renewal token for this server
    * only, and the expiry time for the web library.
@@ -113,12 +119,29 @@ export function createApp(config: MadauthConfig): Hono {
       return url;
     },
     async startSession(c, user, amr, extra) {
-      const signedIn = await withRoles(user);
-      await issueSession(c, signedIn, amr, extra);
-      return signedIn;
+      await issueSession(c, user, amr, extra);
+      return user;
     },
-    users: config.password ? new Users(config.password.store, deriveCodeKey(config.signingKey.d!)) : undefined,
+    users,
+    settings,
     webhook: config.webhook ? createWebhookClient(config.webhook, config.webhookFetch) : undefined,
+    async enabled(method) {
+      return available(method) && (await settings.methods())[method] !== false;
+    },
+    async checkSignup(data) {
+      if (!this.webhook?.wants('signup.before')) return { ok: true };
+      const check = await this.webhook.call('signup.before', data, WEBHOOK_TIMEOUT_MS);
+      if (!check.ok) {
+        console.error(`[madauth] Webhook "signup.before" failed: ${check.reason}`);
+        return { ok: false, reason: 'unavailable' };
+      }
+      const answer = check.body as { allow?: unknown; message?: unknown } | undefined;
+      if (answer?.allow === false) {
+        const message = typeof answer.message === 'string' && answer.message ? answer.message : 'Sign-up is not possible with this e-mail address.';
+        return { ok: false, reason: 'rejected', message };
+      }
+      return { ok: true };
+    },
     async emit(type, data) {
       if (!this.webhook?.wants(type)) return;
       const result = await this.webhook.call(type, data, EVENT_TIMEOUT_MS);
@@ -155,15 +178,18 @@ export function createApp(config: MadauthConfig): Hono {
     return c.json({ keys: [publicJwk] });
   });
 
-  app.get('/auth/config', (c) =>
-    c.json({
-      google: config.google ? { clientId: config.google.clientId, codeFlow: !!config.google.clientSecret } : null,
-      password: config.password ? { minLength: config.password.minLength } : null,
-    }),
-  );
+  // The methods that are on right now, so the web library shows exactly those.
+  app.get('/auth/config', async (c) => {
+    const methods = await settings.methods();
+    const on = (method: SignInMethod) => available(method) && methods[method] !== false;
+    return c.json({
+      google: on('google') ? { clientId: config.google!.clientId, codeFlow: !!config.google!.clientSecret } : null,
+      password: on('password') ? { minLength: config.password!.minLength } : null,
+    });
+  });
 
   if (config.google) googleRoutes(app, ctx, config.google);
-  if (config.password && ctx.users && ctx.webhook) passwordRoutes(app, ctx, config.password, ctx.users, ctx.webhook);
+  if (config.password && ctx.webhook) passwordRoutes(app, ctx, config.password, users, ctx.webhook);
 
   // --- Session ---
 
@@ -171,33 +197,29 @@ export function createApp(config: MadauthConfig): Hono {
   const tokenClaims = async (c: Context, cookie: string, typ: string) =>
     readToken<SessionClaims>(await keys, issuer, typ, getCookie(c, cookie));
 
-  /** Users from the store: a password reset increments the session version and so ends older sessions. */
-  const hasEnded = async (claims: SessionClaims) => {
-    if (!claims.sub.startsWith('usr_')) return false;
-    const stored = await ctx.users?.findById(claims.sub);
-    return !stored || stored.sessionVersion !== claims.sv;
-  };
-
   /**
-   * Whether the session of these claims has ended, and its user with the roles of now. The roles need only
-   * the address from the token, so they are read alongside the session version.
+   * The user of these claims with their claims of now, or null if the session has ended: the user is gone,
+   * or a password reset incremented their session version since.
    */
   const checked = async (claims: SessionClaims): Promise<MadauthUser | null> => {
-    const [ended, user] = await Promise.all([hasEnded(claims), withRoles(userFromClaims(claims))]);
-    return ended ? null : user;
+    const stored = await users.findById(claims.sub);
+    if (!stored || stored.sessionVersion !== claims.sv) return null;
+    const { claims: _, ...user } = userFromClaims(claims);
+    const current = claimsFromJson(stored.claims);
+    return Object.keys(current).length ? { ...user, claims: current } : user;
   };
 
   /**
    * The user of the request's session, or null if there is none or it has ended. A session token that is
-   * missing, expired, past half of its lifetime or carries outdated roles is replaced on the way, if the
-   * request has a valid renewal token: the user and their roles are checked again, and new cookies are set.
+   * missing, expired, past half of its lifetime or carries outdated claims is replaced on the way, if the
+   * request has a valid renewal token: the user and their claims are checked again, and new cookies are set.
    */
   const currentSession = async (c: Context): Promise<MadauthUser | null> => {
     const session = await tokenClaims(c, SESSION_COOKIE, SESSION_TYP);
-    // The roles are read again, so a change shows the next time the app checks the session.
+    // The claims are read again, so a change shows the next time the app checks the session.
     const user = session ? await checked(session) : null;
     const upToDate =
-      session && user && sameRoles(user.roles ?? [], session.roles ?? []) && Date.now() / 1000 - session.iat <= sessionTtlSeconds / 2;
+      session && user && sameClaims(user.claims, session.claims) && Date.now() / 1000 - session.iat <= sessionTtlSeconds / 2;
     if (upToDate) return user;
 
     const renewal = await tokenClaims(c, RENEWAL_COOKIE, RENEWAL_TYP);
@@ -233,70 +255,101 @@ export function createApp(config: MadauthConfig): Hono {
   app.post('/auth/account/delete', async (c) => {
     const user = await currentSession(c);
     if (!user) return c.json({ error: 'no_session' }, 401);
-    // The session proves who owns the address, so its e-mail & password account goes as well when the
-    // user signed in with Google. Google sign-in itself stores nothing.
-    // The roles go first: once the account is gone its session no longer counts, so a failure after that
-    // could not be retried.
-    if (roles && user.email) await roles.remove(normalizeEmail(user.email));
-    const passwordUserId = ctx.users && user.email ? await ctx.users.deleteByEmail(normalizeEmail(user.email)) : null;
+    // The user with all their sign-in methods: the session proves who they are, whichever way they signed in.
+    await users.deleteById(user.id);
     clearSession(c);
-    // passwordUserId tells the receiver which e-mail & password user went, also when the session is Google's.
-    await ctx.emit('user.deleted', { user, passwordUserId: passwordUserId ?? undefined });
+    await ctx.emit('user.deleted', { user });
     return c.body(null, 204);
   });
 
-  // --- Roles (only with a store; otherwise these routes answer 404) ---
+  // --- Admin: claims and settings ---
 
-  if (roles) {
-    /** The admin's address if the request comes from one; otherwise the answer to send. */
-    const admin = async (c: Context): Promise<{ email: string } | { answer: Response }> => {
-      // currentSession reads the roles from the store, not from the session token: a removed admin role
-      // stops counting at once.
-      const user = await currentSession(c);
-      if (!user) return { answer: c.json({ error: 'no_session' }, 401) };
-      const email = user.email ? normalizeEmail(user.email) : undefined;
-      if (!email || !user.roles?.includes(ADMIN_ROLE)) {
-        return { answer: c.json({ error: 'forbidden', message: `Only users with the role "${ADMIN_ROLE}" can manage roles.` }, 403) };
-      }
-      return { email };
+  /** The admin's address if the request comes from one; otherwise the answer to send. */
+  const admin = async (c: Context): Promise<{ email: string } | { answer: Response }> => {
+    // currentSession reads the claims from the store, not from the session token: a removed admin role
+    // stops counting at once.
+    const user = await currentSession(c);
+    if (!user) return { answer: c.json({ error: 'no_session' }, 401) };
+    const email = user.email ? normalizeEmail(user.email) : undefined;
+    if (!email || !isAdmin(user)) {
+      const message = `Only users with the role "${ADMIN_ROLE}" can manage claims and settings.`;
+      return { answer: c.json({ error: 'forbidden', message }, 403) };
+    }
+    return { email };
+  };
+  const body = async (c: Context): Promise<Record<string, unknown>> => {
+    const data = await c.req.json<unknown>().catch(() => null);
+    return data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+  };
+  const invalidEmail = (c: Context) => c.json({ error: 'invalid_email', message: 'This is not a valid e-mail address.' }, 400);
+  const noUser = (c: Context) => c.json({ error: 'user_not_found', message: 'No user has this e-mail address.' }, 404);
+
+  // POST, so the address is not part of a URL that ends up in access logs.
+  app.post('/auth/admin/claims/get', async (c) => {
+    const caller = await admin(c);
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    if (!isValidEmail(data.email)) return invalidEmail(c);
+    const user = await users.findByEmail(normalizeEmail(data.email));
+    if (!user) return noUser(c);
+    return c.json({ email: user.emailNormalized, userId: user.id, claims: claimsFromJson(user.claims) });
+  });
+
+  app.post('/auth/admin/claims/set', async (c) => {
+    const caller = await admin(c);
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    if (!isValidEmail(data.email)) return invalidEmail(c);
+    const claims = parseClaims(data.claims);
+    if (!claims) {
+      return c.json(
+        {
+          error: 'invalid_claims',
+          message:
+            'claims must be a JSON object of at most 2048 characters whose keys are names (letters, digits and "_", ' +
+            'starting with a letter). "roles" must be a list of names of lower-case letters, digits, "-" and "_".',
+        },
+        400,
+      );
+    }
+    const user = await users.findByEmail(normalizeEmail(data.email));
+    if (!user) return noUser(c);
+    await users.updateUser(user.id, { claims: Object.keys(claims).length ? JSON.stringify(claims) : null });
+    const email = user.emailNormalized;
+    await ctx.emit('user.claims_changed', { userId: user.id, email, claims, by: caller.email });
+    return c.json({ email, userId: user.id, claims });
+  });
+
+  /** The settings as the admin API answers them: for each method, whether it is configured and whether it is on. */
+  const settingsAnswer = async () => {
+    const methods = await settings.methods();
+    return {
+      methods: Object.fromEntries(
+        SIGN_IN_METHODS.map((method) => [method, { available: available(method), enabled: available(method) && methods[method] !== false }]),
+      ),
     };
-    const body = async (c: Context): Promise<Record<string, unknown>> => {
-      const data = await c.req.json<unknown>().catch(() => null);
-      return data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
-    };
-    const invalidEmail = (c: Context) => c.json({ error: 'invalid_email', message: 'This is not a valid e-mail address.' }, 400);
+  };
 
-    // POST, so the address is not part of a URL that ends up in access logs.
-    app.post('/auth/admin/roles/get', async (c) => {
-      const caller = await admin(c);
-      if ('answer' in caller) return caller.answer;
-      const data = await body(c);
-      if (!isValidEmail(data.email)) return invalidEmail(c);
-      const email = normalizeEmail(data.email);
-      return c.json({ email, roles: await roles.get(email) });
-    });
+  app.post('/auth/admin/settings/get', async (c) => {
+    const caller = await admin(c);
+    if ('answer' in caller) return caller.answer;
+    return c.json(await settingsAnswer());
+  });
 
-    app.post('/auth/admin/roles/set', async (c) => {
-      const caller = await admin(c);
-      if ('answer' in caller) return caller.answer;
-      const data = await body(c);
-      if (!isValidEmail(data.email)) return invalidEmail(c);
-      const names = parseRoles(data.roles);
-      if (!names) {
-        return c.json(
-          {
-            error: 'invalid_roles',
-            message: 'roles must be a list of names: lower-case letters, digits, "-" and "_", starting with a letter.',
-          },
-          400,
-        );
-      }
-      const email = normalizeEmail(data.email);
-      await roles.set(email, names, caller.email);
-      await ctx.emit('roles.changed', { email, roles: names, by: caller.email });
-      return c.json({ email, roles: names });
-    });
-  }
+  app.post('/auth/admin/settings/set', async (c) => {
+    const caller = await admin(c);
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
+    const changes = parseMethodSettings(data.methods);
+    if (!changes) return invalid(`methods must be an object with true or false for ${SIGN_IN_METHODS.join(' and/or ')}.`);
+    const methods = { ...(await settings.methods()), ...changes };
+    if (!SIGN_IN_METHODS.some((method) => available(method) && methods[method] !== false)) {
+      return invalid('At least one sign-in method must stay on.');
+    }
+    await settings.setMethods(methods, caller.email);
+    return c.json(await settingsAnswer());
+  });
 
   return app;
 }

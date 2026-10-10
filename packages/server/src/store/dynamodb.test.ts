@@ -44,14 +44,14 @@ describe.skipIf(!endpoint)('DynamoDB adapter with a database', () => {
   it('keeps records whose id is an e-mail address, whatever characters it contains', async () => {
     const store = createDynamoDbAdapter({ tableName, client });
     const id = `o'neil+test|x#y_${Date.now()}@example.com`;
-    const record = { id, roles: 'admin', updatedAt: 1, updatedBy: null };
+    const record = { id, value: '{"google":true}', updatedAt: 1, updatedBy: null };
 
-    expect(await store.create('role', record)).toBe(true);
-    expect(await store.findOne('role', { id })).toEqual(record);
-    expect(await store.update('role', { id }, { roles: 'admin editor', updatedBy: 'ada@example.com' })).toBe(1);
-    expect((await store.findOne('role', { id }))?.roles).toBe('admin editor');
-    expect(await store.delete('role', { id })).toBe(1);
-    expect(await store.findOne('role', { id })).toBe(null);
+    expect(await store.create('setting', record)).toBe(true);
+    expect(await store.findOne('setting', { id })).toEqual(record);
+    expect(await store.update('setting', { id }, { value: '{"google":false}', updatedBy: 'ada@example.com' })).toBe(1);
+    expect((await store.findOne('setting', { id }))?.value).toBe('{"google":false}');
+    expect(await store.delete('setting', { id })).toBe(1);
+    expect(await store.findOne('setting', { id })).toBe(null);
   });
 
   it('leaves no unique values or index entries behind when records are deleted', async () => {
@@ -107,6 +107,7 @@ const user = {
   sessionVersion: 0,
   lastMailAt: 0,
   wrongCodes: 0,
+  claims: null,
   createdAt: 1,
 };
 
@@ -121,6 +122,7 @@ const userItem = {
   sessionVersion: { N: '0' },
   lastMailAt: { N: '0' },
   wrongCodes: { N: '0' },
+  claims: { NULL: true },
   createdAt: { N: '1' },
 };
 
