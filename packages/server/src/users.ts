@@ -2,6 +2,7 @@
 import { randomBytes } from 'node:crypto';
 import { claimsFromJson } from './claims.js';
 import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
+import { SIGN_IN_METHODS, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 import type { MadauthUser } from './user.js';
 
@@ -114,6 +115,13 @@ export class Users {
     return this.findAccountByKey(passwordAccountKey(userId));
   }
 
+  /** How the user signs in, from their accounts: e.g. `['google']` for a user without a password. */
+  async signInMethods(userId: string): Promise<SignInMethod[]> {
+    const accounts = await this.store.findMany('account', { userId });
+    const methods = accounts.map((account) => String(account.key).split(':')[0]);
+    return SIGN_IN_METHODS.filter((method) => methods.includes(method));
+  }
+
   async findAccountByKey(key: string): Promise<StoredAccount | null> {
     return (await this.store.findOne('account', { key })) as StoredAccount | null;
   }
@@ -205,8 +213,9 @@ export class Users {
     await this.store.update('user', { id }, patch as Row);
   }
 
-  async updateAccount(id: string, patch: Partial<Omit<StoredAccount, 'id'>>): Promise<void> {
-    await this.store.update('account', { id }, patch as Row);
+  /** Changes an account. Resolves to false if it is gone meanwhile. */
+  async updateAccount(id: string, patch: Partial<Omit<StoredAccount, 'id'>>): Promise<boolean> {
+    return (await this.store.update('account', { id }, patch as Row)) === 1;
   }
 
   /**

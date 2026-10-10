@@ -4,7 +4,7 @@
 
 To set it up on your machine step by step, see [Getting started](getting-started.md).
 
-Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method: the password, or the Google account (known by Google's stable `sub`). Someone who signs in with Google using the address of their e-mail & password account is the same user, and the other way round. A password nobody has confirmed yet (a sign-up whose e-mail link was never used) is dropped when its address signs in with Google. A Google user who wants a password uses "Forgot password?": the reset e-mail proves the inbox.
+Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method: the password, or the Google account (known by Google's stable `sub`). Someone who signs in with Google using the address of their e-mail & password account is the same user, and the other way round. A password nobody has confirmed yet (a sign-up whose e-mail link was never used) is dropped when its address signs in with Google. "Forgot password?" only resets a password that exists: a user who signs in with Google alone gets an e-mail that says how they sign in instead (`email.no_password`), and the answer is the same as for any address.
 
 ## How it works
 
@@ -30,7 +30,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `DATABASE_URL` | yes | Where the users are stored: `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). For other databases pass your own [store adapter](#custom-store-adapter) instead. |
 | `WEBHOOK_URL` | for e-mail & password | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
-| `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.verify` and `email.reset`, e.g. `email.verify,email.reset,email.already_registered`. |
+| `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.verify` and `email.reset`, e.g. `email.verify,email.reset,email.already_registered,email.no_password`. |
 | `PASSWORD_MIN_LENGTH` | no | Minimum password length. Default `8`. |
 | `SESSION_TTL` | no | Lifetime of a session token in seconds: how long your backends accept it. Default `28800` (8 hours). The web library renews it when needed, see [Sessions](#sessions). |
 | `SESSION_RENEWAL_TTL` | no | How long a user stays signed in without opening your app, in seconds: a session can be renewed this long after its last renewal. Default `2592000` (30 days). Not less than `SESSION_TTL`. |
@@ -231,7 +231,8 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | --- | --- | --- | --- | --- |
 | `email.verify` | Sign-up, or "send the e-mail again" | `to`, `link`, `code`, `expiresAt`, `site`, `locale`, `user { id, name }` | 2xx within 10 s, once you have taken over the e-mail (e.g. your mail service accepted it) | The request fails with `503 temporarily_unavailable`, and the user sees that e-mails can't be sent right now. They can retry at once. |
 | `email.reset` | "Forgot password?" | the same | the same | the same |
-| `email.already_registered` | Sign-up with an address that already has a confirmed account | `to`, `link` (the sign-in page), `site`, `locale`, `user` | the same | the same |
+| `email.already_registered` | Sign-up with an address that already has a confirmed account | `to`, `link` (the sign-in page), `site`, `locale`, `user`, `methods` (how the user signs in, e.g. `["google"]`) | the same | the same |
+| `email.no_password` | "Forgot password?" for a user without a password, who signs in with Google: tell them so | the same | the same | the same |
 | `signup.before` | Before a user is created: a password sign-up, or the first Google sign-in of an address nobody has | `email`, `name`, `locale`, `method` (`password` or `google`) | 2xx within 10 s. `{ "allow": false, "message": "…" }` refuses the sign-up and the user sees your message (`403 signup_rejected`); any other 2xx allows it. | The sign-up is refused with `503 temporarily_unavailable`: without your answer, nobody signs up. |
 | `user.created` | A user was created (with a password: not yet confirmed) | `user { id, email, name }`, `method` | 2xx within 5 s | Logged; the request still succeeds. |
 | `email.verified` | An address was confirmed | `user`, `via` (`link` or `code`) | the same | the same |
@@ -242,7 +243,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 
 - `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
 - Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. E-mail & password sign-in is on when `email.verify` and `email.reset` are in the list; a receiver that only wants events (e.g. `user.signed_in`) is fine on a Google-only server.
-- Without `email.already_registered` in the list, a sign-up with an address that already has a confirmed account is answered like any other and no e-mail is sent. Without `signup.before`, every sign-up is allowed.
+- Without `email.already_registered` in the list, a sign-up with an address that already has a confirmed account is answered like any other and no e-mail is sent; the same goes for `email.no_password` and "Forgot password?" for a user without a password. Keep both in the list unless your receiver can't send them: without them the answer comes faster for such an address, see [Password security](password-security.md#no-account-enumeration). Without `signup.before`, every sign-up is allowed.
 - madAuth waits for each call before it answers the browser, because AWS Lambda stops a function as soon as it has answered. Keep receivers fast.
 
 ### Signatures
@@ -512,7 +513,7 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/password/signup` | `{ email, password, name?, redirectTo, locale? }` → 202, and the confirmation e-mail; 400 `invalid_email` or `weak_password`, 403 `signup_rejected`, 503 `temporarily_unavailable` |
 | `POST /auth/password/send-verification` | `{ email, redirectTo, locale? }` → 202, and the confirmation e-mail again; 503 `temporarily_unavailable` |
 | `POST /auth/password/verify-email` | `{ token }` or `{ email, code }` → `{ user }` and the session cookie; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
-| `POST /auth/password/send-reset` | `{ email, redirectTo, locale? }` → 202, and the reset e-mail; 503 `temporarily_unavailable` |
+| `POST /auth/password/send-reset` | `{ email, redirectTo, locale? }` → 202, and the reset e-mail if the address has a password (`email.no_password` if its user has none); 503 `temporarily_unavailable` |
 | `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie; ends all older sessions; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
 | `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
 | `POST /auth/logout` | Clears the cookies of the session |

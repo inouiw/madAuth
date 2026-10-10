@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   APP_ORIGIN,
   REDIRECT_TO,
+  WEBHOOK_SECRET,
+  WEBHOOK_URL,
   cookieHeader,
   cookies,
   getNonce,
@@ -126,20 +128,45 @@ describe('Google users', () => {
     expect(await store.findMany('account', {})).toEqual([expect.objectContaining({ userId: user.id, key: 'google:1001' })]);
   });
 
-  it('a Google user sets a password with "forgot password": the e-mail proves the inbox', async () => {
+  it('"forgot password" only resets passwords: a Google user without one is told how they sign in, with the same answer', async () => {
     const { app, hook, store } = passwordApp();
     const google = (await (await googleSignIn(app)).json()).user;
+    hook.calls.length = 0;
 
-    await post(app, '/auth/password/send-reset', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
-    expect(hook.lastEmail()?.type).toBe('email.reset');
-    const reset = await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'adas own password' });
+    const res = await post(app, '/auth/password/send-reset', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
 
-    expect(reset.status).toBe(200);
-    expect((await reset.json()).user.id).toBe(google.id);
-    expect((await store.findMany('account', { userId: google.id })).map((a) => a.key).sort()).toEqual(['google:1001', `password:${google.id}`]);
-    const signin = await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'adas own password' });
-    expect(signin.status).toBe(200);
-    expect((await signin.json()).user.id).toBe(google.id);
+    expect(res.status).toBe(202);
+    expect(hook.emails()).toEqual([
+      expect.objectContaining({ type: 'email.no_password', data: expect.objectContaining({ to: 'ada@example.com', link: REDIRECT_TO, methods: ['google'] }) }),
+    ]);
+    expect((await store.findMany('account', { userId: google.id })).map((a) => a.key)).toEqual(['google:1001']);
+  });
+
+  it('without email.no_password in the list, a Google user asking for a reset gets nothing', async () => {
+    const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) } });
+    await googleSignIn(app);
+    hook.calls.length = 0;
+
+    const res = await post(app, '/auth/password/send-reset', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
+
+    expect(res.status).toBe(202);
+    expect(hook.calls).toEqual([]);
+  });
+
+  it('a reset never adds a password: a link whose password went meanwhile is invalid', async () => {
+    const { app, hook, store } = passwordApp();
+    await signUpVerified(app, hook);
+    const [user] = await store.findMany('user', {});
+    advance(61_000);
+    await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
+    const { token } = linkAndCode(hook.lastEmail());
+    // The password account went while the link was still valid, e.g. removed straight from the database.
+    await store.delete('account', { key: `password:${user.id}` });
+
+    const res = await post(app, '/auth/password/reset', { token, password: 'a brand new password' });
+
+    expect(res.status).toBe(400);
+    expect(await store.findMany('account', { userId: user.id })).toEqual([]);
   });
 
   it('a password reset ends the Google sessions of the same user', async () => {

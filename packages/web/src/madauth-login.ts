@@ -564,6 +564,7 @@ export class MadauthLogin extends LitElement {
     const s = this.strings;
     return html`
       <p class="lead">${s.forgotLead}</p>
+      ${providerFor('google') ? html`<p class="hint">${s.forgotGoogleHint}</p>` : null}
       <form part="form" class="forgot" @submit=${this.onForgot}>
         ${this.emailField('email')}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>

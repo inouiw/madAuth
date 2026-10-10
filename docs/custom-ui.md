@@ -37,7 +37,7 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 | `pendingReset` | `boolean` | True when the page was opened from a reset link |
 | `policy` | `{ minLength } \| null` | The server's password rules, for a hint next to the field |
 
-`signUp`, `sendVerificationEmail` and `sendResetEmail` succeed whether or not the address has an account, so nobody can probe for accounts. Tell the user to check their inbox in every case.
+`signUp`, `sendVerificationEmail` and `sendResetEmail` succeed whether or not the address has an account (or a password to reset), so nobody can probe for accounts. Tell the user to check their inbox in every case.
 
 `too_many_attempts`, `weak_password` and `signup_rejected` come with a `message` written for the user: the wait time, the minimum length, or the reason your sign-up check gave. The first two are in English; for another language, write your own texts (`policy` has the minimum length). For the other codes, write your own texts.
 
@@ -56,6 +56,8 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 **Forgot password.** Call `sendResetEmail`, then show "check your inbox":
 - The link opens `redirectTo`. After `initialize`, `pendingReset` is true: show a new-password field and call `confirmReset({ newPassword })`.
 - With the code, ask for it and the new password, and call `confirmReset({ newPassword, email, code })`.
+
+If Google is one of your methods, say on the form that a Google user has no password to reset and should use the Google button instead, as the dialog does. (The server tells such a user the same by e-mail: `email.no_password` in [Webhooks](server.md#webhooks).)
 
 A completed reset signs the user in and ends their sessions on other devices.
 

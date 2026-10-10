@@ -42,6 +42,7 @@
         </div>
 
         <div data-view="forgot" hidden>
+          <p id="google-hint" class="hint">Signed up with Google? There is no password to reset: use the Google button instead.</p>
           <form id="forgot-form">
             <label>E-mail <input name="email" type="email" autocomplete="email" required /></label>
             <button type="submit">Send reset e-mail</button>
@@ -68,6 +69,7 @@
 
       <section id="account" hidden>
         <p><strong id="user-name"></strong><span id="user-email"></span></p>
+        <pre id="claims" hidden></pre>
         <button id="sign-out" type="button">Sign out</button>
       </section>
     </main>

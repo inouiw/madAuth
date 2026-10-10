@@ -315,7 +315,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
     password &&
       variable(
         'WEBHOOK_EVENTS',
-        'email.verify,email.reset,email.already_registered',
+        'email.verify,email.reset,email.already_registered,email.no_password',
         'The types your webhook receiver handles; only these are sent. Add e.g. signup.before or user.created.',
       ),
     variable('PORT', String(PORT), 'Port the server listens on.'),

@@ -1,8 +1,29 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import html from '../index.html?raw';
 
-const ada = { id: 'google:1', name: 'Ada Lovelace', email: 'ada@example.com', picture: 'https://example.com/ada.png' };
-let sessionUser: typeof ada | null = null;
+interface DemoUser {
+  id: string;
+  name: string;
+  email: string;
+  picture: string;
+  claims?: Record<string, unknown>;
+}
+
+const ada = {
+  id: 'usr_1',
+  name: 'Ada Lovelace',
+  email: 'ada@example.com',
+  picture: 'https://example.com/ada.png',
+  claims: { roles: ['admin'] },
+} satisfies DemoUser;
+let sessionUser: DemoUser | null = null;
+/** Who the next Google sign-in signs in as. */
+let signInAs: DemoUser = ada;
+let settings = { google: { available: true, enabled: true }, password: { available: true, enabled: false } };
+/** When set, the fake server answers settings/get only once it resolves. */
+let holdSettings: Promise<void> | undefined;
+
+const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -12,6 +33,7 @@ function json(body: unknown, status = 200): Response {
 vi.stubGlobal(
   'fetch',
   vi.fn(async (input: string, init: RequestInit = {}) => {
+    const body = () => JSON.parse(String(init.body)) as Record<string, any>;
     switch (`${init.method ?? 'GET'} ${new URL(input).pathname}`) {
       case 'GET /auth/config':
         return json({ google: { clientId: 'cid.apps.googleusercontent.com', codeFlow: false }, password: { minLength: 8 } });
@@ -20,15 +42,38 @@ vi.stubGlobal(
       case 'POST /auth/google/nonce':
         return json({ nonce: 'n' });
       case 'POST /auth/google/verify':
-        sessionUser = ada;
-        return json({ user: ada });
+        sessionUser = signInAs;
+        return json({ user: signInAs });
       case 'POST /auth/logout':
         sessionUser = null;
         return new Response(null, { status: 204 });
+      case 'POST /auth/account/delete':
+        sessionUser = null;
+        return new Response(null, { status: 204 });
+      case 'POST /auth/admin/claims/get':
+        return json({ email: body().email, userId: ada.id, claims: ada.claims });
+      case 'POST /auth/admin/claims/set':
+        return json({ email: body().email, userId: ada.id, claims: body().claims });
+      case 'POST /auth/admin/settings/get':
+        await holdSettings;
+        return json({ methods: settings });
+      case 'POST /auth/admin/settings/set': {
+        const { methods } = body();
+        if (methods.google === false && methods.password === false) {
+          return json({ error: 'invalid_settings', message: 'At least one sign-in method must stay on.' }, 400);
+        }
+        settings = {
+          google: { ...settings.google, enabled: methods.google ?? settings.google.enabled },
+          password: { ...settings.password, enabled: methods.password ?? settings.password.enabled },
+        };
+        return json({ methods: settings });
+      }
     }
     return json({}, 404);
   }),
 );
+// The page asks before deleting the account.
+vi.stubGlobal('confirm', vi.fn(() => true));
 // Records what the page does with Google Identity Services. (Plain counters: Vitest clears mock calls between tests.)
 const gis = { prompts: 0, buttons: 0, callback: undefined as ((response: { credential: string }) => void) | undefined };
 window.google = {
@@ -59,12 +104,23 @@ describe('demo page', () => {
     expect(buttons[0].textContent).toBe('Sign in');
   });
 
+  it('marks One Tap / FedCM as the current demo and links to the redirect demo', () => {
+    const links = [...document.querySelectorAll<HTMLAnchorElement>('#flow a')];
+    expect(links.map((a) => a.dataset.flow)).toEqual(['fedcm', 'redirect']);
+    expect(links[0].getAttribute('aria-current')).toBe('page');
+    expect(links[1].getAttribute('aria-current')).toBeNull();
+    expect(new URL(links[1].href).search).toBe('?google=redirect');
+    expect($('.flow-description[data-flow="fedcm"]').hidden).toBe(false);
+    expect($('.flow-description[data-flow="redirect"]').hidden).toBe(true);
+    expect($('#flow-note').hidden).toBe(true);
+  });
+
   it('prompts Google One Tap on load', async () => {
     await expect.poll(() => gis.prompts).toBe(1);
   });
 
   it('opens the login dialog with the Google button when the sign-in button is clicked', async () => {
-    document.querySelector<HTMLButtonElement>('#sign-in')!.click();
+    $<HTMLButtonElement>('#sign-in').click();
 
     const login = await vi.waitFor(() => {
       const element = document.querySelector('madauth-login');
@@ -75,24 +131,152 @@ describe('demo page', () => {
     await expect.poll(() => gis.buttons).toBe(1);
   });
 
-  it('shows the user after signing in with Google, and the sign-in button after signing out', async () => {
+  it('shows the user, their claims and the API after signing in with Google, and the sign-in button after signing out', async () => {
     gis.callback!({ credential: 'token' });
 
-    await expect.poll(() => document.querySelector<HTMLElement>('#account')!.hidden).toBe(false);
-    expect(document.querySelector<HTMLElement>('#sign-in')!.hidden).toBe(true);
-    expect(document.querySelector('#user-name')!.textContent).toBe('Ada Lovelace');
-    expect(document.querySelector('#user-email')!.textContent).toBe('ada@example.com');
-    expect(document.querySelector<HTMLImageElement>('#avatar')!.src).toBe(ada.picture);
+    await expect.poll(() => $('#account').hidden).toBe(false);
+    expect($('#sign-in').hidden).toBe(true);
+    expect($('#user-name').textContent).toBe('Ada Lovelace');
+    expect($('#user-email').textContent).toBe('ada@example.com');
+    expect($<HTMLImageElement>('#avatar').src).toBe(ada.picture);
+    expect($('#claims').textContent).toBe(JSON.stringify(ada.claims, null, 2));
+    expect($('#api').hidden).toBe(false);
+    // The admin fields start with the signed-in user's own address, and an admin's checkboxes with the
+    // server's settings; only then can they be sent back.
+    expect($<HTMLInputElement>('#claims-email').value).toBe('ada@example.com');
+    expect($('#admin-note').hidden).toBe(true);
+    await expect.poll(() => $<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+    expect($<HTMLInputElement>('#method-google').checked).toBe(true);
+    expect($<HTMLInputElement>('#method-password').checked).toBe(false);
 
-    document.querySelector<HTMLButtonElement>('#sign-out')!.click();
+    $<HTMLButtonElement>('[data-call="getSession"]').click();
+    await expect.poll(() => $('#output').hidden).toBe(false);
+    $<HTMLInputElement>('#claims-email').value = 'someone@example.com';
 
-    await expect.poll(() => document.querySelector<HTMLElement>('#sign-in')!.hidden).toBe(false);
-    expect(document.querySelector<HTMLElement>('#account')!.hidden).toBe(true);
+    $<HTMLButtonElement>('#sign-out').click();
+
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    expect($('#account').hidden).toBe(true);
+    expect($('#api').hidden).toBe(true);
+    // Nothing of the previous user stays for the next one.
+    expect($<HTMLInputElement>('#claims-email').value).toBe('');
+    expect($('#output').hidden).toBe(true);
+    expect($('#output').textContent).toBe('');
+    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(true);
+    expect($<HTMLInputElement>('#method-google').checked).toBe(false);
+  });
+
+  it('calls the session and admin API and shows each result', async () => {
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $('#api').hidden).toBe(false);
+    await expect.poll(() => $<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+
+    $<HTMLButtonElement>('[data-call="getSettings"]').click();
+    await expect.poll(() => $('#output').textContent).toContain('Madauth.admin.getSettings()');
+    expect($('#output').hidden).toBe(false);
+    expect($('#output').textContent).toContain('"enabled": false');
+    expect($<HTMLInputElement>('#method-google').checked).toBe(true);
+    expect($<HTMLInputElement>('#method-password').checked).toBe(false);
+
+    $<HTMLInputElement>('#method-password').checked = true;
+    $<HTMLButtonElement>('[data-call="setSettings"]').click();
+    await expect.poll(() => settings.password.enabled).toBe(true);
+    await expect.poll(() => $('#output').textContent).toContain('Madauth.admin.setSettings({ methods })');
+    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+
+    $<HTMLButtonElement>('[data-call="sessionReady"]').click();
+    await expect.poll(() => $('#output').textContent).toBe('Madauth.sessionReady()\ntrue');
+
+    $<HTMLTextAreaElement>('#claims-json').value = '{ "plan": "pro" }';
+    $<HTMLButtonElement>('[data-call="setClaims"]').click();
+    await expect.poll(() => $('#output').textContent).toContain('"plan": "pro"');
+    const [, init] = vi.mocked(fetch).mock.calls.at(-1) as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ email: 'ada@example.com', claims: { plan: 'pro' } });
+
+    $<HTMLTextAreaElement>('#claims-json').value = 'not json';
+    $<HTMLButtonElement>('[data-call="setClaims"]').click();
+    await expect.poll(() => $('#output').textContent).toContain('must be JSON');
+
+    $<HTMLButtonElement>('[data-call="getClaims"]').click();
+    await expect.poll(() => $('#output').textContent).toContain('Madauth.admin.getClaims(email)');
+    expect($('#output').textContent).toContain('"userId": "usr_1"');
+
+    $<HTMLButtonElement>('[data-call="getSession"]').click();
+    await expect.poll(() => $('#output').textContent).toContain('Madauth.getSession()');
+    expect($('#output').textContent).toContain('"isSuccess": true');
+  });
+
+  it('deletes the account only after a confirmation, and shows the result', async () => {
+    vi.mocked(confirm).mockReturnValueOnce(false);
+    $<HTMLButtonElement>('[data-call="deleteAccount"]').click();
+    await expect.poll(() => $('#output').textContent).toBe('Madauth.deleteAccount()\nCancelled.');
+    expect($('#sign-in').hidden).toBe(true);
+
+    $<HTMLButtonElement>('[data-call="deleteAccount"]').click();
+
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    expect($('#api').hidden).toBe(true);
+    expect(sessionUser).toBeNull();
+    expect($('#output').textContent).toContain('Madauth.deleteAccount()');
+    expect($('#output').textContent).toContain('"isSuccess": true');
+  });
+
+  it('tells a user without the role admin why the admin calls fail, and loads no settings for them', async () => {
+    const { claims: _, ...bob } = { ...ada, id: 'usr_2', name: 'Bob', email: 'bob@example.com' };
+    signInAs = bob;
+    const requestsBefore = vi.mocked(fetch).mock.calls.length;
+    gis.callback!({ credential: 'token' });
+
+    await expect.poll(() => $('#api').hidden).toBe(false);
+    expect($('#admin-note').hidden).toBe(false);
+    expect($('#admin-note').textContent).toContain('forbidden');
+    // The sentence about madauth.com is only for that host.
+    expect($('#admin-note [data-hosted]').hidden).toBe(true);
+    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(true);
+    const paths = vi.mocked(fetch).mock.calls.slice(requestsBefore).map(([url]) => new URL(String(url)).pathname);
+    expect(paths).not.toContain('/auth/admin/settings/get');
+
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    signInAs = ada;
+  });
+
+  it('leaves the boxes as the user set them when setSettings is refused', async () => {
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+
+    $<HTMLInputElement>('#method-google').checked = false;
+    $<HTMLInputElement>('#method-password').checked = false;
+    $<HTMLButtonElement>('[data-call="setSettings"]').click();
+
+    await expect.poll(() => $('#output').textContent).toContain('invalid_settings');
+    expect($<HTMLInputElement>('#method-google').checked).toBe(false);
+    expect($<HTMLInputElement>('#method-password').checked).toBe(false);
+    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+  });
+
+  it('drops settings that arrive after the admin signed out', async () => {
+    let release!: () => void;
+    holdSettings = new Promise((resolve) => (release = resolve));
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $('#api').hidden).toBe(false);
+
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    release();
+    holdSettings = undefined;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect($<HTMLInputElement>('#method-google').checked).toBe(false);
+    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(true);
   });
 
   it('switches between light and dark theme when the theme button is clicked', () => {
     const root = document.documentElement;
-    const toggle = document.querySelector<HTMLButtonElement>('#theme-toggle')!;
+    const toggle = $<HTMLButtonElement>('#theme-toggle');
     const initial = root.dataset.theme!;
     const other = initial === 'dark' ? 'light' : 'dark';
     expect(['light', 'dark']).toContain(initial);

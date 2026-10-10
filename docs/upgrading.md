@@ -1,5 +1,11 @@
 # Upgrading
 
+## To 0.3.0-beta.2
+
+- **"Forgot password?" only resets passwords.** A user without a password (who signs in with Google) no longer gets a reset e-mail that adds one. Instead madAuth sends the new type `email.no_password`, which tells them how they sign in. Add it to `WEBHOOK_EVENTS` and update your receiver first: the aws-ses-mailer and the dev-receiver of [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks) handle it from their next version, while an older mailer answers an empty 2xx to a type it doesn't know, so the server would count the e-mail as sent. Without the type in the list, such a user gets no e-mail, and the answer comes faster than for an address with a password (see [Password security](password-security.md#no-account-enumeration)).
+- **`email.already_registered` carries `methods`**, how the user signs in (e.g. `["google"]`), so the e-mail can say so instead of pointing a Google user to "Forgot password?".
+- **`Madauth.initialize` resolves with `leftOut`**, the methods whose providers the server doesn't offer, on success and on failure. Code that compares the result as a whole, like `toEqual({ isSuccess: true })`, has to expect `leftOut` as well.
+
 ## To 0.3
 
 0.3 stores every user, whichever way they sign in, and replaces roles with claims. What changes for you:

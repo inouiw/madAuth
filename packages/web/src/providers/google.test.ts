@@ -205,7 +205,8 @@ describe('GoogleRedirect', () => {
 
     const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect(), new Password()] });
 
-    expect(result).toEqual({ isSuccess: true });
+    // The page learns from the result which method it has to do without.
+    expect(result).toEqual({ isSuccess: true, leftOut: ['google'] });
     expect(warnLog).toHaveBeenCalledWith('[madauth]', 'flow_not_enabled', expect.stringContaining('left out'));
     expect(errorLog).not.toHaveBeenCalled();
     // The page behaves as if GoogleRedirect had not been passed.
@@ -221,7 +222,7 @@ describe('GoogleRedirect', () => {
 
     const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
 
-    expect(result).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('No sign-in method') } });
+    expect(result).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('No sign-in method') }, leftOut: ['google'] });
     expect(errorLog).toHaveBeenCalledWith('[madauth]', 'flow_not_enabled', expect.stringContaining('No sign-in method'));
   });
 
@@ -279,6 +280,7 @@ describe('GoogleRedirect', () => {
     expect(german).toEqual({
       isSuccess: false,
       error: { code: 'verification_failed', message: 'Die Anmeldung mit Google konnte nicht überprüft werden. Bitte versuchen Sie es erneut.' },
+      leftOut: [],
     });
     void Madauth.signIn();
     await settle();
@@ -289,11 +291,12 @@ describe('GoogleRedirect', () => {
     expect(unknown).toEqual({
       isSuccess: false,
       error: { code: 'unknown', message: 'Die Anmeldung mit Google ist fehlgeschlagen (server_error).' },
+      leftOut: [],
     });
 
     history.replaceState(null, '', '/page#madauth_error=cancelled');
     const english = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
-    expect(english).toEqual({ isSuccess: false, error: { code: 'cancelled', message: 'The Google sign-in was cancelled.' } });
+    expect(english).toEqual({ isSuccess: false, error: { code: 'cancelled', message: 'The Google sign-in was cancelled.' }, leftOut: [] });
   });
 
   it('D3: restores the session after a successful redirect sign-in', async () => {
@@ -303,7 +306,7 @@ describe('GoogleRedirect', () => {
     const listener = vi.fn();
     Madauth.onAuthStateChanged(listener);
 
-    expect(await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] })).toEqual({ isSuccess: true });
+    expect(await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] })).toEqual({ isSuccess: true, leftOut: [] });
 
     expect(listener).toHaveBeenCalledWith(ada);
   });

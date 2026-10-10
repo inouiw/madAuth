@@ -177,6 +177,22 @@ describe('<madauth-login> with e-mail & password', () => {
     expect(await result).toMatchObject({ isSuccess: true, user: { email: 'new@example.com' } });
   });
 
+  it('D4: the "forgot password" form tells Google users to use the Google button, only when Google is offered', async () => {
+    fakeServer();
+    fakeGis();
+    void openDialog([new GoogleFedcm({ autoPrompt: false }), new Password()]);
+    await settle();
+    await click('[data-action="forgot"]');
+    expect($('.hint')!.textContent).toContain('Google');
+    login().close();
+
+    void openDialog();
+    await settle();
+    await click('[data-action="forgot"]');
+    expect($('h2')!.textContent).toBe('Reset password');
+    expect($('.hint')).toBeNull();
+  });
+
   it('D4: forgot password → code → new password signs in', async () => {
     const server = fakeServer();
     const result = openDialog();

@@ -1,6 +1,6 @@
 import { MadauthLogin } from './madauth-login.js';
 
-export { Madauth, type AuthStateListener, type MadauthOptions, type SignInOptions } from './madauth.js';
+export { Madauth, type AuthStateListener, type InitializeResult, type MadauthOptions, type SignInOptions } from './madauth.js';
 export type { MadauthError, MadauthErrorCode, MadauthUser, Result } from './result.js';
 export { GoogleFedcm, type GoogleFedcmOptions } from './providers/google-fedcm.js';
 export { GoogleRedirect } from './providers/google-redirect.js';

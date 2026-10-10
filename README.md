@@ -52,10 +52,16 @@ git clone https://github.com/inouiw/madAuth-webhooks.git ../madAuth-webhooks && 
 npm run dev --prefix ../madAuth-webhooks/dev-receiver
 ```
 
-In a third terminal, start the demo at http://localhost:3000 (it proxies `/auth` to the server). http://localhost:3000/custom.html shows a custom login screen built with the same library:
+In a third terminal, start the demo at http://localhost:3000 (it proxies `/auth` to the server). The demo page switches between Google One Tap and the server-side redirect flow (which needs `GOOGLE_CLIENT_SECRET` in `packages/server/.env`), shows the signed-in user's claims, and has a button for every other call a signed-in user can make, the admin API included. http://localhost:3000/custom.html shows a custom login screen built with the same library:
 
 ```bash
 npm run dev
+```
+
+The admin API needs the role `admin`, which the public demo at madauth.com gives to nobody. Here you give it to yourself, after signing in once:
+
+```bash
+npm run cli -w packages/server -- set-roles you@example.com admin
 ```
 
 Build the server, the library and the demo:
@@ -113,7 +119,7 @@ Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 signInButton.onclick = () => Madauth.signIn();
 ```
 
-- **`initialize`** checks the server and loads the current session. You don't need to await it. Problems are logged to the console and returned as `{ isSuccess: false, error }`. A provider whose method the server doesn't offer (e.g. `GoogleRedirect` on a development server without a Google client) is left out with a warning, and the other methods work; `initialize` fails only when no method is left.
+- **`initialize`** checks the server and loads the current session. You don't need to await it. Problems are logged to the console and returned as `{ isSuccess: false, error }`. A provider whose method the server doesn't offer (e.g. `GoogleRedirect` on a development server without a Google client) is left out with a warning and named in the result's `leftOut`, and the other methods work; `initialize` fails only when no method is left.
 - **Google sign-in:** `new GoogleFedcm()` shows Google One Tap on page load ("Continue as …"). `Madauth.signIn()` opens the sign-in dialog with Google's button, which keeps working when Chrome holds One Tap back. For the server-side redirect flow use `new GoogleRedirect()`.
 - **E-mail & password:** `new Password()` adds the form to the dialog, with "Create account" and "Forgot password?". New accounts confirm their address with a link or a code from an e-mail. The links in the e-mails lead back to your page: `initialize` handles them, and opens the dialog to choose a new password after a reset link. See [Password security](docs/password-security.md).
 - **The dialog:** `signIn()` adds a `<madauth-login>` to the page; put one in your HTML only to customize it. `signIn({ email })` opens it with the e-mail address filled in, e.g. from a link like `/?email=…`, so the user only types the password.

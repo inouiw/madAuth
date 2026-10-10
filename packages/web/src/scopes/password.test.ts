@@ -147,7 +147,7 @@ describe('Madauth.password', () => {
     const listener = vi.fn();
     Madauth.onAuthStateChanged(listener);
 
-    expect(await init()).toEqual({ isSuccess: true });
+    expect(await init()).toEqual({ isSuccess: true, leftOut: [] });
 
     expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ email: 'new@example.com' }));
     expect(location.href).toBe('https://app.example.com/page?x=1');

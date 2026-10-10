@@ -17,12 +17,79 @@
       </svg>
     </button>
     <main>
+      <!-- Two demos: Google sign-in in the browser (One Tap / FedCM) or through the server (redirect). See src/main.ts. -->
+      <nav id="flow" aria-label="Google sign-in flow">
+        <a href="?google=fedcm" data-flow="fedcm">One Tap / FedCM</a>
+        <a href="?google=redirect" data-flow="redirect">Server-side redirect</a>
+      </nav>
+      <p class="flow-description" data-flow="fedcm">
+        <code>new GoogleFedcm()</code>: the browser shows “Continue as …” (One Tap) and the madAuth server verifies
+        Google's ID token.
+      </p>
+      <p class="flow-description" data-flow="redirect" hidden>
+        <code>new GoogleRedirect()</code>: the browser is redirected to Google and back, and the madAuth server
+        exchanges the code. Needs <code>GOOGLE_CLIENT_SECRET</code> on the server.
+      </p>
+      <p id="flow-note" class="note" hidden>
+        This madAuth server doesn't offer the redirect flow: it needs <code>GOOGLE_CLIENT_ID</code> and
+        <code>GOOGLE_CLIENT_SECRET</code>, with Google switched on. The dialog offers e-mail &amp; password only.
+      </p>
+
       <button id="sign-in" type="button">Sign in</button>
+
       <section id="account" hidden>
         <img id="avatar" alt="" referrerpolicy="no-referrer" />
         <p><strong id="user-name"></strong><span id="user-email"></span></p>
+        <!-- What admins attached to the user (Madauth.currentUser.claims); the session token carries it to your backends too. -->
+        <div class="claims">
+          <span class="caption">Claims</span>
+          <pre id="claims"></pre>
+        </div>
         <button id="sign-out" type="button">Sign out</button>
       </section>
+
+      <!-- Everything else a signed-in user can call. Each result is shown below as it is. -->
+      <section id="api" hidden>
+        <h2>Session</h2>
+        <p class="buttons">
+          <button type="button" data-call="getSession">Madauth.getSession()</button>
+          <button type="button" data-call="sessionReady">Madauth.sessionReady()</button>
+          <button type="button" data-call="deleteAccount">Madauth.deleteAccount()</button>
+        </p>
+        <h2>Admin</h2>
+        <p>
+          For users with the role <code>admin</code>, which is given on the server:
+          <code>npx @madauth/server set-roles you@example.com admin</code>
+        </p>
+        <!-- Shown to a signed-in user without the role. madauth.com gives it to nobody: see src/main.ts. -->
+        <p id="admin-note" class="note" hidden>
+          You don't have the role, so these calls answer <code>forbidden</code>.
+          <span data-hosted hidden>
+            Nobody gets it on madauth.com: an admin could change every visitor's claims and switch sign-in methods
+            off for everyone.
+          </span>
+          To try the admin API, <a href="https://github.com/inouiw/madAuth#getting-started">run the demo on your machine</a>
+          and give yourself the role: <code>npm run cli -w packages/server -- set-roles you@example.com admin</code>
+        </p>
+        <label>E-mail <input id="claims-email" type="email" autocomplete="off" spellcheck="false" /></label>
+        <label>Claims (JSON) <textarea id="claims-json" rows="2" spellcheck="false">{ "roles": ["admin"] }</textarea></label>
+        <p class="buttons">
+          <button type="button" data-call="getClaims">Madauth.admin.getClaims(email)</button>
+          <button type="button" data-call="setClaims">Madauth.admin.setClaims(email, claims)</button>
+        </p>
+        <!-- The checkboxes show the server's settings once getSettings succeeded; only then can they be sent back. -->
+        <p class="checks">
+          <label><input id="method-google" type="checkbox" /> Google</label>
+          <label><input id="method-password" type="checkbox" /> E-mail &amp; password</label>
+        </p>
+        <p class="buttons">
+          <button type="button" data-call="getSettings">Madauth.admin.getSettings()</button>
+          <button type="button" data-call="setSettings" disabled>Madauth.admin.setSettings({ methods })</button>
+        </p>
+      </section>
+
+      <!-- A status region, so the result of a call is announced to screen readers. -->
+      <pre id="output" role="status" hidden></pre>
     </main>
     <a class="page-link" href="custom.html">Custom login screen example →</a>
     <script type="module" src="./src/main.ts"></script>
