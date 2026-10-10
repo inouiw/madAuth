@@ -26,7 +26,7 @@ Nothing in this folder is secret.
 - **Secrets** are SecureString parameters under `/madauth-site/` in the Parameter Store, read by the functions at runtime: the signing key, the webhook secret and the Google client secret.
 - **The account ID** comes from the AWS credentials. `cdk.context.json` and `cdk.out/` are not committed.
 - **Deploys** run only in the GitHub environment `site`, which has required reviewers. The deploy role trusts only that environment, so pull requests can't use it.
-- **Abuse limits:** the server runs with at most 5 concurrent executions and the mailer with at most 2. A budget alert fires at $8 of the $10/month budget.
+- **Abuse limits:** the server runs with at most 5 concurrent executions and the mailer with at most 2. A budget alert fires at $8 of the $10/month budget. The budget counts only the costs tagged `Project=madauth-site`, the tag every resource of the four stacks carries, so the account's other projects don't trip it.
 
 ## One-time setup
 
@@ -70,9 +70,17 @@ cd deploy/aws && npm ci && npm run build && cd ../../site/infra && npm ci
    npx cdk deploy --all -c alertEmail=you@example.com
    ```
 
-6. **Leave the SES sandbox.** In the SES console (eu-central-1), go to **Account dashboard** → **Request production access**. Until AWS grants it, e-mails only reach verified addresses.
+6. **Activate the cost allocation tag**, so the budget sees the costs. The key `Project` appears in the billing data up to 24 hours after the deploy; then run:
 
-7. **Set up GitHub deploys:**
+   ```bash
+   aws ce update-cost-allocation-tags-status --cost-allocation-tags-status TagKey=Project,Status=Active
+   ```
+
+   Until it is active, the budget counts nothing (Billing → Cost allocation tags shows the status).
+
+7. **Leave the SES sandbox.** In the SES console (eu-central-1), go to **Account dashboard** → **Request production access**. Until AWS grants it, e-mails only reach verified addresses.
+
+8. **Set up GitHub deploys:**
    - Create the environment `site` with yourself as required reviewer. Limit it to tags `v*` and the branch `main`.
    - Add the variable `AWS_DEPLOY_ROLE_ARN` (the output `DeployRoleArn` of `MadAuthSiteGithub`) and the secret `ALERT_EMAIL`.
    - If the account already has a GitHub OIDC provider (an account can only have one), deploy `MadAuthSiteGithub` with `-c githubOidcProviderArn=<its ARN>`.
