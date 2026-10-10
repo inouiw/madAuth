@@ -60,7 +60,7 @@ export class SiteStack extends Stack {
       architecture: lambda.Architecture.ARM_64,
       memorySize: 256,
       timeout: Duration.seconds(8),
-      reservedConcurrentExecutions: 2,
+      // TODO: restore reservedConcurrentExecutions: 2 once the account's Lambda concurrency quota is raised above 10.
       environment: {
         MAIL_FROM: `"madAuth demo" <noreply@${domain}>`,
         WEBHOOK_SECRET_PARAMETER: `${SECRETS_PATH}/WEBHOOK_SECRET`,
@@ -99,7 +99,7 @@ export class SiteStack extends Stack {
       secretsPath: SECRETS_PATH,
       webhook: { url: mailerUrl.url, events: EMAIL_EVENTS },
       // A public demo: cap what abuse can cost.
-      reservedConcurrentExecutions: 5,
+      // TODO: restore reservedConcurrentExecutions: 5 once the account's Lambda concurrency quota is raised above 10.
       serverPackageDir: join(repoRoot, 'packages/server'),
     });
 
