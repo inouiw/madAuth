@@ -1,5 +1,6 @@
 import { Password, clearResetToken, pendingResetToken } from '../providers/password.js';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
+import type { SecondFactorPolicy } from '../providers/provider.js';
 import type { Core } from './core.js';
 import { currentPage, emailConfirmation, signedIn, type SendEmailOptions } from './email.js';
 
@@ -60,8 +61,11 @@ export interface PasswordApi {
    * `link_invalid`, `code_invalid` or `weak_password`.
    */
   confirmReset(options: ConfirmResetOptions): Promise<Result<{ user: MadauthUser }>>;
-  /** The server's password rules, for hints in your form; null until initialized. */
-  readonly policy: { minLength: number } | null;
+  /**
+   * The server's password rules, for hints in your form, and whether the method asks for the authenticator
+   * app as a second factor (`none`, `optional`, `required`); null until initialized.
+   */
+  readonly policy: { minLength: number; secondFactor: SecondFactorPolicy } | null;
 }
 
 const notRegistered = () => fail('flow_not_enabled', 'Pass new Password() to Madauth.initialize to use Madauth.password.');

@@ -6,7 +6,7 @@ A self-hostable alternative to Cognito / Auth0. Sign-in methods:
 | --- | --- |
 | Google sign-in (FedCM / One Tap, or server-side redirect) | available |
 | E-mail & password (with e-mail confirmation and password reset) | available |
-| Authenticator app (TOTP) | coming soon |
+| Authenticator app (TOTP): as a second factor for Google and password, and on its own | available |
 | Passwordless e-mail link | coming soon |
 | SMS code | coming soon |
 
@@ -112,9 +112,9 @@ docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data ghcr.io/inoui
 Then sign users in:
 
 ```ts
-import { Madauth, GoogleFedcm, Password } from '@madauth/web';
+import { Madauth, GoogleFedcm, Password, Totp } from '@madauth/web';
 
-Madauth.initialize({ providers: [new GoogleFedcm(), new Password()] });
+Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp()] });
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 signInButton.onclick = () => Madauth.signIn();
 ```
@@ -122,11 +122,12 @@ signInButton.onclick = () => Madauth.signIn();
 - **`initialize`** checks the server and loads the current session. You don't need to await it. Problems are logged to the console and returned as `{ isSuccess: false, error }`. A provider whose method the server doesn't offer (e.g. `GoogleRedirect` on a development server without a Google client) is left out with a warning and named in the result's `leftOut`, and the other methods work; `initialize` fails only when no method is left.
 - **Google sign-in:** `new GoogleFedcm()` shows Google One Tap on page load ("Continue as …"). `Madauth.signIn()` opens the sign-in dialog with Google's button, which keeps working when Chrome holds One Tap back. For the server-side redirect flow use `new GoogleRedirect()`.
 - **E-mail & password:** `new Password()` adds the form to the dialog, with "Create account" and "Forgot password?". New accounts confirm their address with a link or a code from an e-mail. The links in the e-mails lead back to your page: `initialize` handles them, and opens the dialog to choose a new password after a reset link. See [Password security](docs/password-security.md).
+- **Authenticator app:** `new Totp()` adds the authenticator app (TOTP: Google Authenticator, 1Password and the like). What it does is the server's [sign-in policy](docs/server.md#sign-in-methods): a second factor after Google or the password (`optional`: for users who set it up; `required`: everyone sets it up at their next sign-in), and/or a method of its own (the e-mail address and a code), with sign-up by e-mail confirmation. The dialog asks for the code wherever a sign-in goes on with the app. `Madauth.setUpAuthenticator()` opens the dialog with the QR code and shows the recovery codes once; `Madauth.totp.status()`, `newRecoveryCodes(...)` and `remove(...)` manage it from your account page, the last two with a current code. See [Authenticator app security](docs/totp-security.md).
 - **The dialog:** `signIn()` adds a `<madauth-login>` to the page; put one in your HTML only to customize it. `signIn({ email })` opens it with the e-mail address filled in, e.g. from a link like `/?email=…`, so the user only types the password.
 - **Language:** the dialog has English and German texts. It follows the page's `<html lang>`, then the browser's language. To set the language yourself, pass `locale: 'de'` (or e.g. `'de-CH'`) to `initialize`, and call `Madauth.setLocale('en')` when the user switches the language of your app; an open dialog changes at once. Every other language shows English. The same locale goes to your e-mail webhook, so the e-mails can match the dialog.
-- **Your own login screen:** pass `ui: 'custom'` and use `Madauth.password` and `Madauth.google` instead of the dialog. See [Building your own login screen](docs/custom-ui.md).
-- **Other methods:** `signOut()`, `getSession()`, `currentUser`, `deleteAccount()` to [delete the signed-in user's account](docs/server.md#deleting-an-account), and `sessionReady()` to wait for a fresh session before calling your own backend (see [Sessions](docs/server.md#sessions)). All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
-- **Claims:** `currentUser.claims` holds what admins attached to the user, e.g. `{ roles: ['admin'] }`; it is in the session token for your backends too. Admins set them with `Madauth.admin.setClaims(email, claims)`, and switch sign-in methods on and off with `Madauth.admin.setSettings(...)`. See [Claims](docs/server.md#claims) and [Sign-in methods](docs/server.md#sign-in-methods).
+- **Your own login screen:** pass `ui: 'custom'` and use `Madauth.password`, `Madauth.google` and `Madauth.totp` instead of the dialog. See [Building your own login screen](docs/custom-ui.md).
+- **Other methods:** `signOut()`, `getSession()`, `currentUser`, `deleteAccount()` to [delete the signed-in user's account](docs/server.md#deleting-an-account) (with a code from the authenticator app once it is set up), and `sessionReady()` to wait for a fresh session before calling your own backend (see [Sessions](docs/server.md#sessions)). All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
+- **Claims:** `currentUser.claims` holds what admins attached to the user, e.g. `{ roles: ['admin'] }`; it is in the session token for your backends too, as is `currentUser.amr`, how the session was authenticated (e.g. `['pwd', 'otp']`). Admins set claims with `Madauth.admin.setClaims(email, claims)`, and the sign-in methods and their policies with `Madauth.admin.setSettings(...)`. See [Claims](docs/server.md#claims) and [Sign-in methods](docs/server.md#sign-in-methods).
 - **Server URL:** the server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 'https://auth.example.com'` to `initialize` if it runs elsewhere on the same site.
 
 ### Running the server

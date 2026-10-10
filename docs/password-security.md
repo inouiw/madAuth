@@ -42,6 +42,7 @@ Nobody should be able to find out through madAuth whether an address has an acco
 Two things are still visible:
 
 - After five wrong passwords for an address, the answer becomes `too_many_attempts`, and after ten wrong e-mail codes `codes_locked`. Both only happen for existing accounts. Per-IP limits in front of madAuth (see below) make this slow to use.
+- A Google sign-in with the address of a password user is refused with `other_method`, which says that the address signs in with a password. Google has verified that the person owns the address, so this tells the owner, not a stranger. See [Authenticator app security](totp-security.md#a-method-signs-in-only-users-who-have-it).
 - While your [webhook](server.md#webhooks) receiver is down, "send a reset e-mail" and "send the confirmation e-mail again" fail with `temporarily_unavailable` for existing accounts, but answer `202` for unknown addresses, which get no e-mail. Answering `202` for existing accounts too would leave users waiting for an e-mail that never comes. Sign-up is not affected: every sign-up sends an e-mail, so it fails the same way for every address.
 
 ## Sign-up check
@@ -57,6 +58,8 @@ Code: [`packages/server/src/routes/password.ts`](../packages/server/src/routes/p
 - Absurdly long passwords (over 1024 characters) are rejected before hashing.
 
 **Limit requests per IP address in front of madAuth** too, e.g. in your reverse proxy, load balancer, API Gateway or a WAF. madAuth can't do this reliably itself: it runs stateless on several instances, and only the proxy knows the client's real address.
+
+Code: [`packages/server/src/routes/lockout.ts`](../packages/server/src/routes/lockout.ts), shared with the [authenticator app](totp-security.md#brute-force).
 
 ## Links and codes in e-mails
 
@@ -81,9 +84,9 @@ A new account can't sign in until its address is confirmed (`403 email_unverifie
 
 ## Sessions
 
-Password users get the same madAuth session as Google users: a signed JWT in an HttpOnly cookie, with `sub` = `usr_<id>` and `amr: ["pwd"]`. It also carries `sv`, the user's session version.
+Password users get the same madAuth session as Google users: a signed JWT in an HttpOnly cookie, with `sub` = `usr_<id>` and `amr: ["pwd"]` (`["pwd", "otp"]` when the [authenticator app](totp-security.md#the-second-step) was the second step). It also carries `sv`, the user's session version.
 
-A password reset increases the session version and deletes the user's unused confirmation link and code. The madAuth server then rejects older sessions when the app checks them (`GET /auth/session`, e.g. on page load), and doesn't [renew](server.md#sessions) them.
+A password reset increases the session version and deletes the user's unused confirmation link and code. The madAuth server then rejects older sessions when the app checks them (`GET /auth/session`, e.g. on page load), and doesn't [renew](server.md#sessions) them. With a policy that asks for the authenticator app, a reset ends in the app's code step as well: the inbox alone does not sign in.
 
 **Limit:** your own backends usually check the JWT offline with [`createSessionVerifier`](server.md#verifying-the-session-in-your-backend), without asking madAuth. They accept an older session token until it expires, and with it the [claims](server.md#claims) it was issued with. That is `SESSION_TTL` at the longest (8 hours by default): after it, a session only continues if the madAuth server renews it, and it does not renew a session that a reset has ended. A shorter `SESSION_TTL` shortens this window without making users sign in more often.
 
@@ -97,5 +100,7 @@ All password endpoints are `POST` requests. madAuth only accepts them from an `O
 
 - Checking new passwords against lists of leaked passwords (e.g. Have I Been Pwned).
 - Changing the password while signed in (use "Forgot password?" meanwhile).
-- Adding a password to a user who signs in with Google: "Forgot password?" only resets a password that exists.
+- Adding a password to a user who signs in with Google ("Forgot password?" only resets a password that exists), and connecting a Google account to a password user while signed in: a Google sign-in never joins a user who signs in another way.
 - Moving users with existing password hashes from another system.
+
+A second factor for the password is covered: the [authenticator app](totp-security.md).
