@@ -14,6 +14,10 @@ const stack = new Stack(app, context('stackName') || 'MadAuth', {
   env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: process.env.CDK_DEFAULT_REGION },
 });
 
+if (!context('issuer')) {
+  throw new Error('Set issuer in cdk.json (context) or with -c issuer=https://example.com: the origin of your app.');
+}
+
 new MadAuthServer(stack, 'MadAuth', {
   issuer: context('issuer'),
   allowedOrigins: list('allowedOrigins'),

@@ -1,8 +1,8 @@
 {
   "app": "npx tsx bin/app.ts",
   "context": {
-    "issuer": "https://example.com",
-    "allowedOrigins": "https://example.com",
+    "issuer": "",
+    "allowedOrigins": "",
     "googleClientId": "",
     "secretsPath": "/madauth",
     "webhookUrl": "",

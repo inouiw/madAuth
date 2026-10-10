@@ -6,6 +6,8 @@ What it creates (`lib/madauth-server.ts`, the `MadAuthServer` construct):
 
 - **A DynamoDB table** with the keys `pk` and `sk`. It is on-demand, has point-in-time recovery, and is kept when the stack is deleted.
 - **A Lambda function** (Node.js 22, arm64, 512 MB) that runs [`lambda/server.ts`](lambda/server.ts). It reads every parameter under the secrets path, e.g. `/madauth/MADAUTH_SIGNING_KEY`, as the environment variable of that name. The secrets therefore never appear in the function's configuration.
+
+It deploys madAuth 0.3 or newer, which stores every user in the table, with or without e-mail & password sign-in.
 - **A Function URL.** madAuth checks the `Origin` of every request itself (`ALLOWED_ORIGINS`).
 
 ## What you need
@@ -49,12 +51,12 @@ Set your values in [`cdk.json`](cdk.json) under `context`:
 
 | Key | Example | |
 | --- | --- | --- |
-| `issuer` | `https://example.com` | Your app's origin (`MADAUTH_ISSUER`) |
+| `issuer` | `https://example.com` | Your app's origin (`MADAUTH_ISSUER`). Required. |
 | `allowedOrigins` | `https://example.com,https://admin.example.com` | Comma-separated. Default: the issuer |
 | `googleClientId` | `123….apps.googleusercontent.com` | Empty: no Google sign-in |
 | `secretsPath` | `/madauth` | Where step 2 stored the secrets |
-| `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: no e-mail & password |
-| `webhookEvents` | `email.verify,email.reset,email.already_registered` | What the receiver handles |
+| `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: Google sign-in only |
+| `webhookEvents` | `email.verify,email.reset,email.already_registered` | What the receiver handles. This default turns on e-mail & password sign-in. |
 
 Then deploy:
 

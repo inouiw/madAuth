@@ -8,6 +8,18 @@ import { Construct } from 'constructs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/** The events a receiver that sends the e-mails handles, e.g. the aws-ses-mailer of madAuth-webhooks. */
+export const EMAIL_EVENTS = ['email.verify', 'email.reset', 'email.already_registered'] as const;
+
+/** How madAuth's Lambda functions are bundled: one ESM file, with the AWS SDK left to the runtime. */
+export const lambdaBundling: nodejs.BundlingOptions = {
+  format: nodejs.OutputFormat.ESM,
+  target: 'node22',
+  externalModules: ['@aws-sdk/*'],
+  // Some bundled CommonJS code calls require(); give the ESM bundle one.
+  banner: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+};
+
 export interface MadAuthServerProps {
   /** MADAUTH_ISSUER: the public origin the server is reached at, e.g. `https://example.com`. */
   readonly issuer: string;
@@ -21,8 +33,11 @@ export interface MadAuthServerProps {
    * Default: `/madauth`.
    */
   readonly secretsPath?: string;
-  /** WEBHOOK_URL and WEBHOOK_EVENTS, e.g. the aws-ses-mailer of madAuth-webhooks. Needed for e-mail & password. */
-  readonly webhook?: { readonly url: string; readonly events?: string[] };
+  /**
+   * WEBHOOK_URL and WEBHOOK_EVENTS, e.g. the aws-ses-mailer of madAuth-webhooks. E-mail & password sign-in
+   * is on when the events include the e-mails; default: {@link EMAIL_EVENTS}. Without a webhook, Google only.
+   */
+  readonly webhook?: { readonly url: string; readonly events?: readonly string[] };
   /** More environment variables, e.g. `SESSION_TTL` or `PASSWORD_MIN_LENGTH` (see docs/server.md). */
   readonly environment?: Record<string, string>;
   /** Default: 512. madAuth needs at least 256 MB for password hashing; more memory is also more CPU. */
@@ -50,7 +65,15 @@ export class MadAuthServer extends Construct {
 
   constructor(scope: Construct, id: string, props: MadAuthServerProps) {
     super(scope, id);
-    const secretsPath = (props.secretsPath ?? '/madauth').replace(/\/+$/, '');
+    const issuer = httpOrigin(props.issuer);
+    if (!issuer) throw new Error(`MadAuthServer: issuer must be an http(s) origin, e.g. https://example.com, but is "${props.issuer}".`);
+    const allowedOrigins = (props.allowedOrigins ?? [issuer]).map((origin) => {
+      const parsed = httpOrigin(origin);
+      if (!parsed) throw new Error(`MadAuthServer: allowedOrigins must be http(s) origins, but one is "${origin}".`);
+      return parsed;
+    });
+    // The Parameter Store wants hierarchies as /a/b: one leading slash, no trailing one.
+    const secretsPath = `/${(props.secretsPath ?? '/madauth').replace(/^\/+|\/+$/g, '')}`;
 
     // One table with the string keys pk and sk; every read is strongly consistent, so no index is needed.
     this.table = new dynamodb.Table(this, 'Table', {
@@ -62,13 +85,12 @@ export class MadAuthServer extends Construct {
     });
 
     const environment: Record<string, string> = {
-      MADAUTH_ISSUER: props.issuer,
-      ALLOWED_ORIGINS: (props.allowedOrigins ?? [props.issuer]).join(','),
+      MADAUTH_ISSUER: issuer,
+      ALLOWED_ORIGINS: allowedOrigins.join(','),
       DATABASE_URL: `dynamodb:${this.table.tableName}`,
       MADAUTH_SECRETS_PATH: secretsPath,
       ...(props.googleClientId ? { GOOGLE_CLIENT_ID: props.googleClientId } : {}),
-      ...(props.webhook ? { WEBHOOK_URL: props.webhook.url } : {}),
-      ...(props.webhook?.events ? { WEBHOOK_EVENTS: props.webhook.events.join(',') } : {}),
+      ...(props.webhook ? { WEBHOOK_URL: props.webhook.url, WEBHOOK_EVENTS: (props.webhook.events ?? EMAIL_EVENTS).join(',') } : {}),
       ...props.environment,
     };
 
@@ -87,23 +109,29 @@ export class MadAuthServer extends Construct {
         removalPolicy: RemovalPolicy.DESTROY,
       }),
       bundling: {
-        format: nodejs.OutputFormat.ESM,
-        target: 'node22',
-        // The Lambda runtime contains the AWS SDK.
-        externalModules: ['@aws-sdk/*'],
-        // Some bundled CommonJS code calls require(); give the ESM bundle one.
-        banner: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+        ...lambdaBundling,
         esbuildArgs: props.serverPackageDir
           ? { '--alias:@madauth/server/lambda': join(props.serverPackageDir, 'dist/entry/lambda.js') }
           : undefined,
       },
     });
 
-    this.table.grantReadWriteData(this.function);
+    // Exactly what the DynamoDB store uses (see "DynamoDB" in docs/server.md): no Scan, no batch writes.
+    this.table.grant(
+      this.function,
+      'dynamodb:GetItem',
+      'dynamodb:Query',
+      'dynamodb:PutItem',
+      'dynamodb:UpdateItem',
+      'dynamodb:DeleteItem',
+      'dynamodb:TransactWriteItems',
+    );
+    // The hierarchy and the parameters in it: GetParametersByPath is checked against both.
+    const parameterArn = (name: string) => Stack.of(this).formatArn({ service: 'ssm', resource: 'parameter', resourceName: name });
     this.function.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['ssm:GetParametersByPath'],
-        resources: [Stack.of(this).formatArn({ service: 'ssm', resource: 'parameter', resourceName: secretsPath.slice(1) })],
+        resources: [parameterArn(secretsPath.slice(1)), parameterArn(`${secretsPath.slice(1)}/*`)],
       }),
     );
 
@@ -112,4 +140,10 @@ export class MadAuthServer extends Construct {
 
     new CfnOutput(this, 'FunctionUrl', { value: this.functionUrl.url, description: 'The madAuth server' });
   }
+}
+
+/** The origin of an http(s) URL, or undefined. */
+function httpOrigin(value: string): string | undefined {
+  const url = URL.canParse(value) ? new URL(value) : undefined;
+  return url && (url.protocol === 'http:' || url.protocol === 'https:') ? url.origin : undefined;
 }

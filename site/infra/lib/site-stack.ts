@@ -1,4 +1,4 @@
-import { MadAuthServer } from '@madauth/deploy-aws';
+import { EMAIL_EVENTS, MadAuthServer, lambdaBundling } from '@madauth/deploy-aws';
 import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as budgets from 'aws-cdk-lib/aws-budgets';
 import type * as acm from 'aws-cdk-lib/aws-certificatemanager';
@@ -70,10 +70,7 @@ export class SiteStack extends Stack {
         removalPolicy: RemovalPolicy.DESTROY,
       }),
       bundling: {
-        format: nodejs.OutputFormat.ESM,
-        target: 'node22',
-        externalModules: ['@aws-sdk/*'],
-        banner: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+        ...lambdaBundling,
         esbuildArgs: {
           '--alias:madauth-ses-mailer': mailerSource(props.webhooksDir),
           '--alias:@madauth/server/webhook': join(repoRoot, 'packages/server/dist/webhook.js'),
@@ -100,7 +97,7 @@ export class SiteStack extends Stack {
       issuer: origin,
       googleClientId: props.googleClientId || undefined,
       secretsPath: SECRETS_PATH,
-      webhook: { url: mailerUrl.url, events: ['email.verify', 'email.reset', 'email.already_registered'] },
+      webhook: { url: mailerUrl.url, events: EMAIL_EVENTS },
       // A public demo: cap what abuse can cost.
       reservedConcurrentExecutions: 5,
       serverPackageDir: join(repoRoot, 'packages/server'),
@@ -125,6 +122,8 @@ function handler(event) {
     return { statusCode: 301, statusDescription: 'Moved Permanently', headers: { location: { value: location } } };
   };
   if (host.indexOf('www.') === 0) return redirect('https://' + host.slice(4) + request.uri);
+  // The server's paths are passed through as they are.
+  if (request.uri.indexOf('/auth/') === 0 || request.uri.indexOf('/.well-known/') === 0) return request;
   if (request.uri.endsWith('/')) {
     request.uri += 'index.html';
   } else if (request.uri.split('/').pop().indexOf('.') === -1) {
@@ -134,7 +133,7 @@ function handler(event) {
 }`),
     });
 
-        const serverBehavior: cloudfront.BehaviorOptions = {
+    const serverBehavior: cloudfront.BehaviorOptions = {
       origin: new origins.FunctionUrlOrigin(server.functionUrl),
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
       allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
@@ -142,6 +141,8 @@ function handler(event) {
       // Cookies, query strings and the Origin header (madAuth checks it), but not the Host header: the
       // Function URL only answers to its own host name.
       originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+      // The www redirect applies here too; the function passes the server's paths through otherwise.
+      functionAssociations: [{ function: rewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST }],
     };
 
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
