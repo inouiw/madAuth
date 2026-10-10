@@ -65,7 +65,7 @@ describe('sign-up and e-mail verification', () => {
 
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({});
-    expect(hook.lastEmail()).toMatchObject({ type: 'email.already_registered', data: { to: 'grace@example.com', link: REDIRECT_TO } });
+    expect(hook.lastEmail()).toMatchObject({ type: 'email.already_registered', data: { to: 'grace@example.com', link: REDIRECT_TO, methods: ['password'] } });
     // The existing password still works; the new one doesn't.
     expect((await signIn(app)).status).toBe(200);
     expect((await signIn(app, { password: 'another password' })).status).toBe(401);

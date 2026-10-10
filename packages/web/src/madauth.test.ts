@@ -62,7 +62,7 @@ describe('Madauth.initialize', () => {
   it('I3: uses the page origin when serverUrl is omitted', async () => {
     const server = fakeServer();
 
-    expect(await Madauth.initialize({ providers: [] })).toEqual({ isSuccess: true });
+    expect(await Madauth.initialize({ providers: [] })).toEqual({ isSuccess: true, leftOut: [] });
 
     expect(server.requests[0].url).toBe('https://app.example.com/auth/config');
   });
@@ -105,7 +105,7 @@ describe('Madauth.initialize', () => {
     const second = Madauth.initialize({ serverUrl: SERVER, providers: [current] });
 
     expect(await first).toMatchObject({ isSuccess: false, error: { code: 'cancelled' } });
-    expect(await second).toEqual({ isSuccess: true });
+    expect(await second).toEqual({ isSuccess: true, leftOut: [] });
     expect(replaced.setup).not.toHaveBeenCalled();
     expect(current.setup).toHaveBeenCalledOnce();
   });

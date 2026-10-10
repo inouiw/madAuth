@@ -205,7 +205,8 @@ describe('GoogleRedirect', () => {
 
     const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect(), new Password()] });
 
-    expect(result).toEqual({ isSuccess: true });
+    // The page learns from the result which method it has to do without.
+    expect(result).toEqual({ isSuccess: true, leftOut: ['google'] });
     expect(warnLog).toHaveBeenCalledWith('[madauth]', 'flow_not_enabled', expect.stringContaining('left out'));
     expect(errorLog).not.toHaveBeenCalled();
     // The page behaves as if GoogleRedirect had not been passed.
@@ -303,7 +304,7 @@ describe('GoogleRedirect', () => {
     const listener = vi.fn();
     Madauth.onAuthStateChanged(listener);
 
-    expect(await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] })).toEqual({ isSuccess: true });
+    expect(await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] })).toEqual({ isSuccess: true, leftOut: [] });
 
     expect(listener).toHaveBeenCalledWith(ada);
   });

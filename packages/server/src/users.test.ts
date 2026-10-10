@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   APP_ORIGIN,
   REDIRECT_TO,
+  WEBHOOK_SECRET,
+  WEBHOOK_URL,
   cookieHeader,
   cookies,
   getNonce,
@@ -126,7 +128,7 @@ describe('Google users', () => {
     expect(await store.findMany('account', {})).toEqual([expect.objectContaining({ userId: user.id, key: 'google:1001' })]);
   });
 
-  it('"forgot password" only resets passwords: a Google user without one gets no e-mail, and the same answer', async () => {
+  it('"forgot password" only resets passwords: a Google user without one is told how they sign in, with the same answer', async () => {
     const { app, hook, store } = passwordApp();
     const google = (await (await googleSignIn(app)).json()).user;
     hook.calls.length = 0;
@@ -134,24 +136,37 @@ describe('Google users', () => {
     const res = await post(app, '/auth/password/send-reset', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
 
     expect(res.status).toBe(202);
-    expect(hook.emails()).toEqual([]);
+    expect(hook.emails()).toEqual([
+      expect.objectContaining({ type: 'email.already_registered', data: expect.objectContaining({ to: 'ada@example.com', link: REDIRECT_TO, methods: ['google'] }) }),
+    ]);
     expect((await store.findMany('account', { userId: google.id })).map((a) => a.key)).toEqual(['google:1001']);
   });
 
-  it('a Google sign-in that drops an unproven password ends its pending reset too', async () => {
-    const { app, hook, store } = passwordApp();
-    // Someone signed up with Ada's address and asked for a reset e-mail, without confirming anything.
-    await post(app, '/auth/password/signup', { email: 'ada@example.com', password: 'attackers choice', redirectTo: REDIRECT_TO });
-    advance(61_000);
-    await post(app, '/auth/password/send-reset', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
-    const reset = linkAndCode(hook.lastEmail());
-    expect(hook.lastEmail()?.type).toBe('email.reset');
-
+  it('without the "already registered" e-mail in the list, a Google user asking for a reset gets nothing', async () => {
+    const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) } });
     await googleSignIn(app);
+    hook.calls.length = 0;
 
-    // The link went with the password, and a reset can't add one.
-    expect((await post(app, '/auth/password/reset', { token: reset.token, password: 'attackers new choice' })).status).toBe(400);
-    expect((await store.findMany('account', {})).map((a) => a.key)).toEqual(['google:1001']);
+    const res = await post(app, '/auth/password/send-reset', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
+
+    expect(res.status).toBe(202);
+    expect(hook.calls).toEqual([]);
+  });
+
+  it('a reset never adds a password: a link whose password went meanwhile is invalid', async () => {
+    const { app, hook, store } = passwordApp();
+    await signUpVerified(app, hook);
+    const [user] = await store.findMany('user', {});
+    advance(61_000);
+    await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
+    const { token } = linkAndCode(hook.lastEmail());
+    // The password account went while the link was still valid, e.g. removed straight from the database.
+    await store.delete('account', { key: `password:${user.id}` });
+
+    const res = await post(app, '/auth/password/reset', { token, password: 'a brand new password' });
+
+    expect(res.status).toBe(400);
+    expect(await store.findMany('account', { userId: user.id })).toEqual([]);
   });
 
   it('a password reset ends the Google sessions of the same user', async () => {

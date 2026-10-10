@@ -189,7 +189,8 @@ export function passwordRoutes(
     if (existing?.emailVerified) {
       // The note to the owner is optional; the answer is the same either way.
       if (!webhook.wants('email.already_registered')) return accepted(c);
-      const sent = await sendEmail(existing, 'email.already_registered', { link: target.href, site: target.host, locale });
+      const methods = await users.signInMethods(existing.id);
+      const sent = await sendEmail(existing, 'email.already_registered', { link: target.href, site: target.host, locale, methods });
       return sent ? accepted(c) : unavailable(c);
     }
     if (existing) {
@@ -246,10 +247,16 @@ export function passwordRoutes(
     if (target instanceof Response) return target;
     if (!isValidEmail(data.email)) return error(c, 400, 'invalid_email', 'This is not a valid e-mail address.');
     const user = await users.findByEmail(normalizeEmail(data.email));
-    // Only a password can be reset. A user who signs in with Google alone has none and gets no e-mail; the
-    // answer is the same, so nothing is revealed. (Firebase Auth and Auth0 do the same.)
+    const locale = localeOf(data.locale);
+    // Only a password can be reset; the answer is the same either way, so nothing is revealed.
     if (user && (await users.passwordAccount(user.id))) {
-      if (!(await sendLinkEmail(user, 'reset', target, localeOf(data.locale)))) return unavailable(c);
+      if (!(await sendLinkEmail(user, 'reset', target, locale))) return unavailable(c);
+    } else if (user && webhook.wants('email.already_registered')) {
+      // A user who signs in with Google alone has nothing to reset (Firebase Auth and Auth0 send nothing).
+      // Rather than leave them waiting for an e-mail, the inbox's owner is told how they sign in.
+      const methods = await users.signInMethods(user.id);
+      const sent = await sendEmail(user, 'email.already_registered', { link: target.href, site: target.host, locale, methods });
+      if (!sent) return unavailable(c);
     }
     return accepted(c);
   });

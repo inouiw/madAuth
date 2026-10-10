@@ -56,6 +56,8 @@ vi.stubGlobal(
     return json({}, 404);
   }),
 );
+// The page asks before deleting the account.
+vi.stubGlobal('confirm', vi.fn(() => true));
 // Records what the page does with Google Identity Services. (Plain counters: Vitest clears mock calls between tests.)
 const gis = { prompts: 0, buttons: 0, callback: undefined as ((response: { credential: string }) => void) | undefined };
 window.google = {
@@ -123,25 +125,39 @@ describe('demo page', () => {
     expect($<HTMLImageElement>('#avatar').src).toBe(ada.picture);
     expect($('#claims').textContent).toBe(JSON.stringify(ada.claims, null, 2));
     expect($('#api').hidden).toBe(false);
-    // The admin fields start with the signed-in user's own address.
+    // The admin fields start with the signed-in user's own address, and an admin's checkboxes with the
+    // server's settings; only then can they be sent back.
     expect($<HTMLInputElement>('#claims-email').value).toBe('ada@example.com');
+    await expect.poll(() => $<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+    expect($<HTMLInputElement>('#method-google').checked).toBe(true);
+    expect($<HTMLInputElement>('#method-password').checked).toBe(false);
+
+    $<HTMLButtonElement>('[data-call="getSession"]').click();
+    await expect.poll(() => $('#output').hidden).toBe(false);
+    $<HTMLInputElement>('#claims-email').value = 'someone@example.com';
 
     $<HTMLButtonElement>('#sign-out').click();
 
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     expect($('#account').hidden).toBe(true);
     expect($('#api').hidden).toBe(true);
+    // Nothing of the previous user stays for the next one.
+    expect($<HTMLInputElement>('#claims-email').value).toBe('');
+    expect($('#output').hidden).toBe(true);
+    expect($('#output').textContent).toBe('');
+    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(true);
+    expect($<HTMLInputElement>('#method-google').checked).toBe(false);
   });
 
   it('calls the session and admin API and shows each result', async () => {
     gis.callback!({ credential: 'token' });
     await expect.poll(() => $('#api').hidden).toBe(false);
+    await expect.poll(() => $<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
 
     $<HTMLButtonElement>('[data-call="getSettings"]').click();
     await expect.poll(() => $('#output').textContent).toContain('Madauth.admin.getSettings()');
     expect($('#output').hidden).toBe(false);
     expect($('#output').textContent).toContain('"enabled": false');
-    // The checkboxes show the server's settings.
     expect($<HTMLInputElement>('#method-google').checked).toBe(true);
     expect($<HTMLInputElement>('#method-password').checked).toBe(false);
 
@@ -149,6 +165,10 @@ describe('demo page', () => {
     $<HTMLButtonElement>('[data-call="setSettings"]').click();
     await expect.poll(() => settings.password.enabled).toBe(true);
     await expect.poll(() => $('#output').textContent).toContain('Madauth.admin.setSettings({ methods })');
+    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+
+    $<HTMLButtonElement>('[data-call="sessionReady"]').click();
+    await expect.poll(() => $('#output').textContent).toBe('Madauth.sessionReady()\ntrue');
 
     $<HTMLTextAreaElement>('#claims-json').value = '{ "plan": "pro" }';
     $<HTMLButtonElement>('[data-call="setClaims"]').click();
@@ -169,11 +189,17 @@ describe('demo page', () => {
     expect($('#output').textContent).toContain('"isSuccess": true');
   });
 
-  it('deletes the account and shows the result', async () => {
+  it('deletes the account only after a confirmation, and shows the result', async () => {
+    vi.mocked(confirm).mockReturnValueOnce(false);
+    $<HTMLButtonElement>('[data-call="deleteAccount"]').click();
+    await expect.poll(() => $('#output').textContent).toBe('Madauth.deleteAccount()\nCancelled.');
+    expect($('#sign-in').hidden).toBe(true);
+
     $<HTMLButtonElement>('[data-call="deleteAccount"]').click();
 
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     expect($('#api').hidden).toBe(true);
+    expect(sessionUser).toBeNull();
     expect($('#output').textContent).toContain('Madauth.deleteAccount()');
     expect($('#output').textContent).toContain('"isSuccess": true');
   });

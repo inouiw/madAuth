@@ -2,6 +2,7 @@
 import { randomBytes } from 'node:crypto';
 import { claimsFromJson } from './claims.js';
 import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
+import { SIGN_IN_METHODS, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 import type { MadauthUser } from './user.js';
 
@@ -112,6 +113,13 @@ export class Users {
 
   async passwordAccount(userId: string): Promise<StoredAccount | null> {
     return this.findAccountByKey(passwordAccountKey(userId));
+  }
+
+  /** How the user signs in, from their accounts: e.g. `['google']` for a user without a password. */
+  async signInMethods(userId: string): Promise<SignInMethod[]> {
+    const accounts = await this.store.findMany('account', { userId });
+    const methods = accounts.map((account) => String(account.key).split(':')[0]);
+    return SIGN_IN_METHODS.filter((method) => methods.includes(method));
   }
 
   async findAccountByKey(key: string): Promise<StoredAccount | null> {

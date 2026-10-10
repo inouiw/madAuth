@@ -31,8 +31,8 @@
         exchanges the code. Needs <code>GOOGLE_CLIENT_SECRET</code> on the server.
       </p>
       <p id="flow-note" class="note" hidden>
-        This madAuth server has no <code>GOOGLE_CLIENT_SECRET</code>, so the redirect flow is off and the dialog
-        offers e-mail &amp; password only.
+        This madAuth server doesn't offer the redirect flow: it needs <code>GOOGLE_CLIENT_ID</code> and
+        <code>GOOGLE_CLIENT_SECRET</code>, with Google switched on. The dialog offers e-mail &amp; password only.
       </p>
 
       <button id="sign-in" type="button">Sign in</button>
@@ -67,17 +67,19 @@
           <button type="button" data-call="getClaims">Madauth.admin.getClaims(email)</button>
           <button type="button" data-call="setClaims">Madauth.admin.setClaims(email, claims)</button>
         </p>
+        <!-- The checkboxes show the server's settings once getSettings succeeded; only then can they be sent back. -->
         <p class="checks">
-          <label><input id="method-google" type="checkbox" checked /> Google</label>
-          <label><input id="method-password" type="checkbox" checked /> E-mail &amp; password</label>
+          <label><input id="method-google" type="checkbox" /> Google</label>
+          <label><input id="method-password" type="checkbox" /> E-mail &amp; password</label>
         </p>
         <p class="buttons">
           <button type="button" data-call="getSettings">Madauth.admin.getSettings()</button>
-          <button type="button" data-call="setSettings">Madauth.admin.setSettings({ methods })</button>
+          <button type="button" data-call="setSettings" disabled>Madauth.admin.setSettings({ methods })</button>
         </p>
       </section>
 
-      <pre id="output" hidden></pre>
+      <!-- A status region, so the result of a call is announced to screen readers. -->
+      <pre id="output" role="status" hidden></pre>
     </main>
     <a class="page-link" href="custom.html">Custom login screen example →</a>
     <script type="module" src="./src/main.ts"></script>

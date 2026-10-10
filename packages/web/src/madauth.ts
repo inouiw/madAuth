@@ -34,6 +34,12 @@ export interface SignInOptions {
 
 export type AuthStateListener = (user: MadauthUser | null) => void;
 
+/**
+ * What `initialize` resolves to. On success, `leftOut` lists the methods whose providers were left out
+ * because the server doesn't offer them (see {@link Madauth.initialize}); empty when every provider is in.
+ */
+export type InitializeResult = Result<{ leftOut: LoginMethodId[] }>;
+
 interface State {
   serverUrl: string;
   providers: Map<LoginMethodId, SignInProvider>;
@@ -101,7 +107,7 @@ function changeLocale(locale: string | undefined): void {
   for (const listener of [...localeListeners]) listener();
 }
 
-function logError(result: Result): Result {
+function logError<T extends object>(result: Result<T>): Result<T> {
   if (!result.isSuccess) console.error('[madauth]', result.error.code, result.error.message);
   return result;
 }
@@ -145,11 +151,11 @@ function validate(
   return ok({ serverUrl, providers, ui, locale: options.locale });
 }
 
-async function initialize(target: State, run: number): Promise<{ ready: Result; result: Result }> {
+async function initialize(target: State, run: number): Promise<{ ready: Result; result: InitializeResult }> {
   const { serverUrl, providers } = target;
   const call = <T>(path: string, init?: RequestInit): Promise<HttpResult<T>> => request<T>(serverUrl, path, init);
 
-  const failed = (result: Result) => ({ ready: result, result });
+  const failed = (result: { isSuccess: false; error: MadauthError }) => ({ ready: result, result });
 
   const [config, session] = await Promise.all([
     call<ServerConfig>('/auth/config'),
@@ -189,11 +195,13 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
   // decides what is on, and a development server often has less than production. Other failures
   // (e.g. Google's script not loading) fail initialize.
   const notEnabled: string[] = [];
+  const leftOut: LoginMethodId[] = [];
   for (const provider of providers.values()) {
     const result = await provider.setup(ctx);
     if (result.isSuccess) continue;
     if (result.error.code !== 'flow_not_enabled') return failed(result);
     providers.delete(provider.method);
+    leftOut.push(provider.method);
     notEnabled.push(result.error.message);
     console.warn('[madauth]', result.error.code, `${result.error.message} Sign-in with "${provider.method}" is left out.`);
   }
@@ -203,7 +211,7 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
   // Opened from a password reset link: show the dialog's "new password" form once madAuth is ready.
   if (target.ui === 'dialog' && Madauth.password.pendingReset) queueMicrotask(() => void Madauth.signIn());
   // A failed redirect sign-in is reported by initialize, but madAuth itself is ready.
-  return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError } : ok() };
+  return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError } : ok({ leftOut }) };
 }
 
 async function whenReady(): Promise<Result> {
@@ -231,17 +239,20 @@ const core: Core = {
 export const Madauth = {
   /**
    * Configures madAuth: checks the server, sets up the providers (e.g. shows Google One Tap) and loads
-   * the current session. Failures are returned and also logged to the console. Calling it again replaces
+   * the current session. Failures are returned and also logged to the console. A provider whose method
+   * the server doesn't offer (e.g. `GoogleRedirect` without a client secret on the server) is left out
+   * with a warning and named in the result's `leftOut`; the other methods work. Calling it again replaces
    * the configuration.
    */
-  initialize(options: MadauthOptions): Promise<Result> {
+  initialize(options: MadauthOptions): Promise<InitializeResult> {
     const run = ++generation;
     pendingError = undefined;
     const valid = validate(options);
     changeLocale(valid.isSuccess ? valid.locale : undefined);
     if (!valid.isSuccess) {
       state = { serverUrl: '', providers: new Map(), ui: 'dialog', ready: Promise.resolve(valid) };
-      return Promise.resolve(logError(valid));
+      logError(valid);
+      return Promise.resolve(valid);
     }
     const next: State = { serverUrl: valid.serverUrl, providers: valid.providers, ui: valid.ui, ready: Promise.resolve(ok()) };
     state = next;

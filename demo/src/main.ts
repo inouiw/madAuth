@@ -1,4 +1,4 @@
-import { GoogleFedcm, GoogleRedirect, Madauth, Password, type MadauthUser } from '@madauth/web';
+import { GoogleFedcm, GoogleRedirect, Madauth, Password, type MadauthUser, type Settings } from '@madauth/web';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -18,17 +18,12 @@ for (const description of document.querySelectorAll<HTMLElement>('.flow-descript
 const google = flow === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();
 
 // No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin.
-void Madauth.initialize({ providers: [google, new Password()] }).then(() => void checkRedirectFlow());
+void Madauth.initialize({ providers: [google, new Password()] }).then((result) => {
+  // The server offers the redirect flow only with a client secret (and Google switched on); otherwise
+  // initialize left GoogleRedirect out and the dialog has no Google button.
+  if (flow === 'redirect' && result.isSuccess && result.leftOut.includes('google')) $('#flow-note').hidden = false;
+});
 Madauth.onAuthStateChanged(handleAuthStateChanged);
-
-/** The redirect flow needs GOOGLE_CLIENT_SECRET on the server; without it, initialize left GoogleRedirect out. */
-async function checkRedirectFlow(): Promise<void> {
-  if (flow !== 'redirect') return;
-  const config = (await fetch('/auth/config')
-    .then((res) => res.json())
-    .catch(() => null)) as { google: { codeFlow: boolean } | null } | null;
-  $('#flow-note').hidden = !!config?.google?.codeFlow;
-}
 
 $('#sign-in').addEventListener('click', () => void Madauth.signIn());
 $('#sign-out').addEventListener('click', () => void Madauth.signOut());
@@ -44,31 +39,58 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   if (user?.picture) avatar.src = user.picture;
   // What admins attached to the user, e.g. { roles: ['admin'] }; the session token carries it to your backends too.
   $('#claims').textContent = user?.claims ? JSON.stringify(user.claims, null, 2) : 'none';
+
   const email = $<HTMLInputElement>('#claims-email');
-  if (user?.email && !email.value) email.value = user.email;
+  if (!user) {
+    // Nothing of the previous user stays on the page: the admin fields, the last result, the settings.
+    email.value = '';
+    $('#output').hidden = true;
+    $('#output').textContent = '';
+    settingsLoadedFor = undefined;
+    showSettings(null);
+    return;
+  }
+  if (!email.value) email.value = user.email ?? '';
+  // An admin sees the server's settings in the checkboxes before they can send them back.
+  if (isAdmin(user) && settingsLoadedFor !== user.id) {
+    settingsLoadedFor = user.id;
+    void Madauth.admin.getSettings().then(showSettings);
+  }
 }
+
+const isAdmin = (user: MadauthUser) => Array.isArray(user.claims?.roles) && user.claims.roles.includes('admin');
 
 // --- The rest of the API a signed-in user can call. Each button shows what the call resolved to. ---
 
 const output = $('#output');
 const claimsEmail = () => $<HTMLInputElement>('#claims-email').value.trim();
 const methodBox = (method: 'google' | 'password') => $<HTMLInputElement>(`#method-${method}`);
+/** The user whose sign-in loaded the settings, so a claims change (which also notifies) doesn't load them again. */
+let settingsLoadedFor: string | undefined;
 
-/** Shows the server's settings in the checkboxes: a method the server is not configured for can't be switched on. */
-function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSettings>>>(result: T): T {
-  if (result.isSuccess) {
-    for (const method of ['google', 'password'] as const) {
-      methodBox(method).checked = result.methods[method].enabled;
-      methodBox(method).disabled = !result.methods[method].available;
-    }
+/**
+ * Shows the server's settings in the checkboxes and lets them be sent back; until then (or with null) the
+ * boxes are empty and setSettings is off, so the page never sends defaults the server doesn't have. A method
+ * the server is not configured for can't be switched on.
+ */
+function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSettings>> | null>(result: T): T {
+  const methods: Settings['methods'] | undefined = result?.isSuccess ? result.methods : undefined;
+  for (const method of ['google', 'password'] as const) {
+    methodBox(method).checked = methods?.[method].enabled ?? false;
+    methodBox(method).disabled = !methods?.[method].available;
   }
+  $<HTMLButtonElement>('[data-call="setSettings"]').disabled = !methods;
   return result;
 }
 
 const calls: Record<string, () => Promise<unknown>> = {
   getSession: () => Madauth.getSession(),
   sessionReady: () => Madauth.sessionReady(),
-  deleteAccount: () => Madauth.deleteAccount(),
+  // One click would be too easy on a public demo: the user, their claims and their sign-in methods go for good.
+  deleteAccount: async () =>
+    confirm('Delete your account on this madAuth server? Your user, claims and sign-in methods are deleted for good.')
+      ? Madauth.deleteAccount()
+      : 'Cancelled.',
   getClaims: () => Madauth.admin.getClaims(claimsEmail()),
   setClaims: async () => {
     let claims: unknown;
@@ -95,7 +117,8 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-call]')
       output.hidden = false;
       output.textContent = `${button.textContent}\n${typeof result === 'string' ? result : JSON.stringify(result, null, 2)}`;
     } finally {
-      button.disabled = false;
+      // setSettings stays off until the settings were loaded (showSettings decides).
+      if (button.dataset.call !== 'setSettings') button.disabled = false;
     }
   });
 }
