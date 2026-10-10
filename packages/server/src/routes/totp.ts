@@ -252,7 +252,8 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const methods = await methodsNow();
     const required = METHODS_WITH_SECOND_FACTOR.filter((method) => isOn(method, ctx.configured, methods) && policyOf(method, methods) === 'required');
     if (required.length) {
-      return error(c, 403, 'required_by_policy', `Signing in with ${required.join(' and ')} requires the authenticator app, so it can't be removed.`);
+      const names = required.map((method) => (method === 'google' ? 'Google' : 'e-mail & password'));
+      return error(c, 403, 'required_by_policy', `Signing in with ${names.join(' and ')} requires the authenticator app, so it can't be removed.`);
     }
     const account = await users.totpAccount(user.id);
     if (!account) return c.json({});
