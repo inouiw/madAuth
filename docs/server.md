@@ -4,14 +4,14 @@
 
 To set it up on your machine step by step, see [Getting started](getting-started.md).
 
-Google sign-in needs no database. E-mail & password sign-in stores its users through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own.
+Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method: the password, or the Google account (known by Google's stable `sub`). Someone who signs in with Google using the address of their e-mail & password account is the same user, and the other way round. A password nobody has confirmed yet (a sign-up whose e-mail link was never used) is dropped when its address signs in with Google. A Google user who wants a password uses "Forgot password?": the reset e-mail proves the inbox.
 
 ## How it works
 
 1. The browser signs in:
    - with Google, either in the browser with FedCM / One Tap (`GoogleFedcm`) or through the server-side redirect flow (`GoogleRedirect`). The server verifies Google's ID token: signature, issuer, audience, expiry, nonce and a verified e-mail address.
    - or with an e-mail address and password (`Password`). The server checks the password against its scrypt hash; new accounts confirm their address first. See [Password security](password-security.md).
-2. The server sets its own session: an ES256-signed JWT in an HttpOnly cookie named `madauth_session`. It is short-lived and renewed without the user noticing; see [Sessions](#sessions).
+2. The server finds or creates the user, and sets its own session: an ES256-signed JWT in an HttpOnly cookie named `madauth_session`, with the user's [claims](#claims). It is short-lived and renewed without the user noticing; see [Sessions](#sessions).
 3. Your app backends verify that JWT with [`createSessionVerifier`](#verifying-the-session-in-your-backend) or any JWT library, using the public key at `/.well-known/jwks.json`.
 
 > **Same site required.** The session is a cookie, so the madAuth server must be on the same site as your app, for example `auth.example.com` and `app.example.com`, or the same origin behind a reverse proxy. Browsers block third-party cookies, so cross-site setups do not work.
@@ -27,17 +27,17 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `ALLOWED_ORIGINS` | yes | Comma-separated origins of your apps, e.g. `https://app.example.com`. Only these may call the server or be redirected back to. |
 | `GOOGLE_CLIENT_ID` | for Google | OAuth client ID of type "Web application", ending in `.apps.googleusercontent.com`. Turns on Google sign-in. |
 | `GOOGLE_CLIENT_SECRET` | no | Client secret of the same client. Enables the server-side redirect flow (`GoogleRedirect`); without it those routes return 404. |
-| `DATABASE_URL` | for e-mail & password | `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). Turns on e-mail & password sign-in. For other databases pass your own [store adapter](#custom-store-adapter) instead. |
+| `DATABASE_URL` | yes | Where the users are stored: `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). For other databases pass your own [store adapter](#custom-store-adapter) instead. |
 | `WEBHOOK_URL` | for e-mail & password | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
-| `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in needs `email.verify` and `email.reset`, e.g. `email.verify,email.reset,email.already_registered`. |
+| `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.verify` and `email.reset`, e.g. `email.verify,email.reset,email.already_registered`. |
 | `PASSWORD_MIN_LENGTH` | no | Minimum password length. Default `8`. |
 | `SESSION_TTL` | no | Lifetime of a session token in seconds: how long your backends accept it. Default `28800` (8 hours). The web library renews it when needed, see [Sessions](#sessions). |
 | `SESSION_RENEWAL_TTL` | no | How long a user stays signed in without opening your app, in seconds: a session can be renewed this long after its last renewal. Default `2592000` (30 days). Not less than `SESSION_TTL`. |
 | `COOKIE_DOMAIN` | no | Cookie domain, e.g. `.example.com`, so backends on sibling subdomains receive the session cookie. By default the cookie belongs to the server's host only. |
 | `PORT` | no | Port for the Node / Docker server. Default `8787`. |
 
-At least one sign-in method must be configured: `GOOGLE_CLIENT_ID`, `DATABASE_URL` (or a `store`), or both.
+At least one sign-in method must be configured: `GOOGLE_CLIENT_ID`, a webhook that sends the e-mails (e-mail & password), or both. Admins can switch a configured method off and on while the server runs, see [Sign-in methods](#sign-in-methods).
 
 ### Signing key
 
@@ -56,7 +56,7 @@ npx @madauth/server generate-key
 
 ## E-mail & password sign-in
 
-Set `DATABASE_URL`, `WEBHOOK_URL`, `WEBHOOK_SECRET` and `WEBHOOK_EVENTS`. With `sqlite:<path>`, users are stored in that SQLite file; with Docker, keep it on a volume (the `docker-compose.yml` does this). With `dynamodb:<table>`, they are stored in a [DynamoDB table](#dynamodb).
+Set `WEBHOOK_URL`, `WEBHOOK_SECRET` and `WEBHOOK_EVENTS` with `email.verify` and `email.reset` among the events: e-mail & password sign-in is on exactly when your webhook sends those e-mails. The users are in `DATABASE_URL`: with `sqlite:<path>` in that SQLite file (with Docker, keep it on a volume; the `docker-compose.yml` does this), with `dynamodb:<table>` in a [DynamoDB table](#dynamodb).
 
 madAuth does not send e-mails itself: it hands each one to your [webhook](#webhooks) receiver. There are three: the address confirmation, the password reset, and a note to the owner when someone tries to sign up with an address that already has an account. The confirmation and reset e-mails contain a link to the app page that asked for them (its origin must be in `ALLOWED_ORIGINS`) and a 6-digit code, for when the e-mail is read on another device.
 
@@ -230,16 +230,16 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `email.verify` | Sign-up, or "send the e-mail again" | `to`, `link`, `code`, `expiresAt`, `site`, `locale`, `user { id, name }` | 2xx within 10 s, once you have taken over the e-mail (e.g. your mail service accepted it) | The request fails with `503 temporarily_unavailable`, and the user sees that e-mails can't be sent right now. They can retry at once. |
 | `email.reset` | "Forgot password?" | the same | the same | the same |
 | `email.already_registered` | Sign-up with an address that already has a confirmed account | `to`, `link` (the sign-in page), `site`, `locale`, `user` | the same | the same |
-| `signup.before` | Before an account is created | `email`, `name`, `locale` | 2xx within 10 s. `{ "allow": false, "message": "…" }` refuses the sign-up and the user sees your message (`403 signup_rejected`); any other 2xx allows it. | The sign-up is refused with `503 temporarily_unavailable`: without your answer, nobody signs up. |
-| `user.created` | An account was created (not yet confirmed) | `user { id, email, name }` | 2xx within 5 s | Logged; the request still succeeds. |
+| `signup.before` | Before a user is created: a password sign-up, or the first Google sign-in of an address nobody has | `email`, `name`, `locale`, `method` (`password` or `google`) | 2xx within 10 s. `{ "allow": false, "message": "…" }` refuses the sign-up and the user sees your message (`403 signup_rejected`); any other 2xx allows it. | The sign-up is refused with `503 temporarily_unavailable`: without your answer, nobody signs up. |
+| `user.created` | A user was created (with a password: not yet confirmed) | `user { id, email, name }`, `method` | 2xx within 5 s | Logged; the request still succeeds. |
 | `email.verified` | An address was confirmed | `user`, `via` (`link` or `code`) | the same | the same |
-| `password.reset` | A password was reset (older sessions end) | `user` | the same | the same |
+| `email.password_reset` | A password was reset (older sessions end) | `user` | the same | the same |
 | `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password` or `google`) | the same | the same |
-| `user.deleted` | A user deleted their account | `user` (the session's), `passwordUserId` (the deleted e-mail & password user, if there was one; differs from `user.id` after a Google sign-in) | the same | the same |
-| `roles.changed` | An admin set the roles of an address | `email`, `roles`, `by` (the admin's address) | the same | the same |
+| `user.deleted` | A user deleted their account | `user` | the same | the same |
+| `user.claims_changed` | An admin set the claims of a user | `userId`, `email`, `claims`, `by` (the admin's address) | the same | the same |
 
 - `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
-- Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. With e-mail & password sign-in, `email.verify` and `email.reset` must be in the list: the server does not start without them.
+- Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. E-mail & password sign-in is on when `email.verify` and `email.reset` are in the list; a receiver that only wants events (e.g. `user.signed_in`) is fine on a Google-only server.
 - Without `email.already_registered` in the list, a sign-up with an address that already has a confirmed account is answered like any other and no e-mail is sent. Without `signup.before`, every sign-up is allowed.
 - madAuth waits for each call before it answers the browser, because AWS Lambda stops a function as soon as it has answered. Keep receivers fast.
 
@@ -271,7 +271,7 @@ Signing in sets three cookies:
 | `madauth_renewal` | `SESSION_RENEWAL_TTL` (30 days) | The renewal token. It gets a new session token when the old one has expired or is about to. HttpOnly, and only sent to the madAuth server: its path is `/auth`, and it has no domain even with `COOKIE_DOMAIN`. Your backends never see it. |
 | `madauth_session_expires` | `SESSION_RENEWAL_TTL` | When the session token expires, in seconds since 1970, for the web library. Scripts can read it; it holds no secret. |
 
-**Renewal.** `GET /auth/session` renews the session when its token is missing, has expired or has passed half of its lifetime, if the request carries a valid renewal token. Before it does, the server checks again: the account still exists, no password reset happened since, and which [roles](#roles) the address has now. Then it sets all three cookies anew. So a password reset, a deleted account and a changed role reach your backends within `SESSION_TTL` at the latest, while an active user stays signed in.
+**Renewal.** `GET /auth/session` renews the session when its token is missing, has expired or has passed half of its lifetime, if the request carries a valid renewal token. Before it does, the server checks again: the user still exists, no password reset happened since, and which [claims](#claims) they have now. Then it sets all three cookies anew. So a password reset, a deleted account and changed claims reach your backends within `SESSION_TTL` at the latest, while an active user stays signed in.
 
 Each renewal starts the renewal time again: a user who opens your app at least every 30 days stays signed in. Without a visit in that time, they sign in again.
 
@@ -284,49 +284,62 @@ const response = await fetch('/api/orders');
 
 A backend that answers 401 although the user is signed in met a session that expired in between: call `Madauth.sessionReady()` and send the request once more.
 
-**What renewal can't do.** Whoever has both cookies stays signed in until the renewal token expires or the password is reset. Google sign-in stores no account, so there is no way to end all sessions of a Google user at once. A session token issued by madAuth 0.1 has no renewal token: it lasts until it expires and then the user signs in again.
+**What renewal can't do.** Whoever has both cookies stays signed in until the renewal token expires or the password is reset. A password reset ends every session of the user, also those started with Google. A session token issued by madAuth 0.1 has no renewal token, and one issued by madAuth 0.2 for a Google user belongs to an id that no longer exists: either lasts until it expires, and then the user signs in again.
 
-## Roles
+## Claims
 
-A role is a name such as `admin` or `editor` that madAuth puts into the session, so your app and your backends can tell what a user may do. What a role means is up to you; madAuth only knows `admin`, the role that may manage roles.
+Claims are what admins attach to a user, as a JSON object, e.g. `{ "roles": ["admin"], "plan": "pro" }`. madAuth puts them into the session, so your app and your backends can tell what a user may do or has. What a claim means is up to you; madAuth only knows the role `admin` in `claims.roles`: the role that may manage claims and settings.
 
-- Roles belong to an **e-mail address**, not to a sign-in method. The owner of the address gets them with every sign-in, with Google as well as with a password. The address needs no account yet.
-- The session carries them as `roles` (a `roles` claim in the JWT). `createSessionVerifier` returns them as `user.roles`, and the web library as `Madauth.currentUser.roles`. A user without roles has no `roles` field.
-- Roles need a store, so they are available when e-mail & password sign-in is configured (`DATABASE_URL` or your own store adapter). Without a store, nobody has roles and the routes below answer 404.
+- Claims belong to the **user**, whichever way they sign in: with Google as well as with a password.
+- The session carries them as `claims` (a `claims` claim in the JWT). `createSessionVerifier` returns them as `user.claims`, and the web library as `Madauth.currentUser.claims`. A user without claims has no `claims` field.
+- A claims object has at most 2048 characters as JSON. Its keys are names: letters, digits and `_`, starting with a letter, at most 64 characters. `roles`, if present, is a list of role names: lower-case letters, digits, `-` and `_`, starting with a letter, at most 32 characters, at most 20 of them. Other values can be anything JSON carries.
 
-**The first admin** is made on the command line, by someone who can reach the database. Run it where the server's settings are available:
+**The first admin** is made on the command line, by someone who can reach the database, after that person has signed in once (or was created with `create-user`). Run it where the server's settings are available:
 
 ```bash
 npx @madauth/server set-roles you@example.com admin
 ```
 
-`set-roles <email> [role...]` replaces the roles of the address (without roles: removes them), and `get-roles <email>` prints them. This is also the way back in if the last admin removed their own role.
+`set-roles <email> [role...]` replaces the roles of the user, leaving their other claims alone (without roles: removes them), and `get-roles <email>` prints them. `set-claims <email> '<json>'` replaces all claims, and `get-claims <email>` prints them. This is also the way back in if the last admin removed their own role.
 
-**Admins manage roles** from your app with the web library, or with the HTTP API:
+**Admins manage claims** from your app with the web library, or with the HTTP API:
 
 ```ts
-await Madauth.admin.setRoles('ada@example.com', ['editor']); // replaces her roles; [] removes them
-const result = await Madauth.admin.getRoles('ada@example.com'); // { isSuccess: true, roles: ['editor'] }
+await Madauth.admin.setClaims('ada@example.com', { roles: ['editor'], plan: 'pro' }); // replaces her claims; {} removes them
+const result = await Madauth.admin.getClaims('ada@example.com'); // { isSuccess: true, userId: 'usr_…', claims: { … } }
 ```
 
 Whether the caller is an admin is asked from the store each time, not read from their session, so a removed `admin` role stops counting at once.
 
-**When a change shows.** The roles of a session token are from the moment it was issued. The madAuth server reads them again whenever the app checks the session (`GET /auth/session`, e.g. on page load) and at every [renewal](#sessions), and issues a new session token if they changed. Your own backends, which verify the token offline, see the change from that moment, and after `SESSION_TTL` at the latest.
+**When a change shows.** The claims of a session token are from the moment it was issued. The madAuth server reads them again whenever the app checks the session (`GET /auth/session`, e.g. on page load) and at every [renewal](#sessions), and issues a new session token if they changed. Your own backends, which verify the token offline, see the change from that moment, and after `SESSION_TTL` at the latest.
 
-Role names consist of lower-case letters, digits, `-` and `_`, start with a letter and have at most 32 characters. An address can hold up to 20.
+## Sign-in methods
+
+Which sign-in methods the server offers is configured at start (`GOOGLE_CLIENT_ID`, the webhook for e-mail & password). Which of them are switched on is a setting in the database that admins change while the server runs, at once and for every instance: to pause sign-ups with one method, or to turn a new method on for everyone at the same moment.
+
+A method that is off is not shown by the web library (`GET /auth/config` reports it as `null`), and its routes answer `403 method_disabled`. Existing sessions continue. The last method that is on can't be switched off.
+
+From your app with the web library, or with the HTTP API:
+
+```ts
+await Madauth.admin.setSettings({ methods: { password: false } }); // a method not mentioned stays as it is
+const result = await Madauth.admin.getSettings(); // { isSuccess: true, methods: { google: { available, enabled }, password: { … } } }
+```
+
+On the command line, `set-methods google` switches on the listed methods and off the others (`set-methods` alone: all on), and `get-methods` prints them.
 
 ## Deleting an account
 
 `Madauth.deleteAccount()` in the web library (`POST /auth/account/delete`) lets a signed-in user delete their account:
 
-- The e-mail & password account of the session's e-mail address is deleted, with its pending confirmation and reset links, and so are the [roles](#roles) of the address. This also happens when the user signed in with Google: the session proves that the address is theirs. Google sign-in itself stores nothing.
-- The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`. Its `passwordUserId` is the ID of the deleted e-mail & password user: after a Google sign-in it differs from `user.id`, so delete what your backend stored under either ID.
+- The user is deleted with all their sign-in methods (the password, the Google account), their claims, and their pending confirmation and reset links. The session proves who they are, whichever way they signed in.
+- The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`, with the user as the session held them.
 
 Delete the user's data in your own backend first, while the user is still signed in. Sessions on other devices end when the app next checks them; your own backends accept them until they expire (see [Password security](password-security.md#sessions)).
 
 ## Custom store adapter
 
-E-mail & password users are stored through a `StoreAdapter`. madAuth does all the security work (hashing, throttling, single-use links); an adapter only stores records. It has five methods:
+Users are stored through a `StoreAdapter`. madAuth does all the security work (hashing, throttling, single-use links); an adapter only stores records. It has five methods:
 
 ```ts
 interface StoreAdapter {
@@ -339,7 +352,7 @@ interface StoreAdapter {
 // Row: { field: string | number | boolean | null }. Where: every field equals the value (null: is empty).
 ```
 
-The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` and `verification`. The schema says nothing about how records are stored, so it fits any database. For SQL databases there are helpers: rows use the schema's camelCase field names, while the SQL tables use `madauth_<model>` and snake_case columns (`tableName()` and `columnName()` convert), and `createTablesSql()` creates them. Print the SQL to create the tables:
+The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` (one per sign-in method of a user), `verification` and `setting`. The schema says nothing about how records are stored, so it fits any database. For SQL databases there are helpers: rows use the schema's camelCase field names, while the SQL tables use `madauth_<model>` and snake_case columns (`tableName()` and `columnName()` convert), and `createTablesSql()` creates them. Print the SQL to create the tables:
 
 ```bash
 npx @madauth/server schema --dialect postgres
@@ -358,9 +371,10 @@ npx @madauth/server schema --dialect postgres --from 1
 | Version | Change |
 | --- | --- |
 | 2 | `user.wrongCodes`: wrong e-mail codes in a row, see [Password security](password-security.md#links-and-codes-in-e-mails). Number, starts at 0. |
-| 3 | New model `role`: the [roles](#roles) of an e-mail address. A new table; existing ones don't change. |
+| 3 | New model `role`: the roles of an e-mail address. A new table; existing ones don't change. |
+| 4 | Every user is stored, with their [claims](#claims): `user.claims` (JSON string, empty without claims) and `account.email` (the address the provider reported, e.g. Google's; empty for passwords). New model `setting` (the [sign-in methods](#sign-in-methods)). The `role` table is dropped: roles are a claim now, set them again with `set-roles`. |
 
-Stores without fixed columns need no change: madAuth reads a missing `wrongCodes` as 0.
+Stores without fixed columns need no change: madAuth reads a missing `wrongCodes` as 0, and a missing `claims` or `email` as empty. Records of the `role` model are simply not read any more.
 
 ### Example: Postgres
 
@@ -470,7 +484,7 @@ const verifySession = createSessionVerifier({ issuer: 'https://auth.example.com'
 
 const user = await verifySession(request); // or a Cookie header, or the token itself
 if (!user) return new Response('Unauthorized', { status: 401 });
-console.log(user.id, user.email, user.roles); // roles: e.g. ['admin'], see "Roles"
+console.log(user.id, user.email, user.claims); // claims: e.g. { roles: ['admin'] }, see "Claims"
 ```
 
 A session token is valid for `SESSION_TTL`. When `verifySession` finds none, answer 401: the web library then renews the session, and the app sends the request again (see [Sessions](#sessions)).
@@ -481,15 +495,15 @@ Other languages can verify the JWT with any JOSE library:
 - header `typ` `madauth-session+jwt`
 - keys from `/.well-known/jwks.json`
 
-The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the user signed in) and `roles` (see [Roles](#roles)).
+The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the user signed in) and `claims` (what admins attached, see [Claims](#claims)).
 
 ## HTTP API
 
 | Method & path | Description |
 | --- | --- |
-| `GET /auth/config` | Public settings for the web library: `{ google: { clientId, codeFlow } \| null, password: { minLength } \| null }` |
+| `GET /auth/config` | Public settings for the web library: `{ google: { clientId, codeFlow } \| null, password: { minLength } \| null }`. A method is `null` when it is not configured or [switched off](#sign-in-methods). |
 | `POST /auth/google/nonce` | Starts a FedCM / One Tap sign-in: returns `{ nonce }` and sets a 5-minute nonce cookie |
-| `POST /auth/google/verify` | `{ credential }` (Google ID token) → `{ user }` and the session cookie |
+| `POST /auth/google/verify` | `{ credential, locale? }` (Google ID token) → `{ user }` and the session cookie; 403 `signup_rejected` (a first sign-in the sign-up check refused), 503 `temporarily_unavailable` |
 | `GET /auth/google/start?return_to=` | Starts the redirect flow (needs `GOOGLE_CLIENT_SECRET`) |
 | `GET /auth/google/callback` | Google redirects here; redirects back to `return_to`, or to `return_to#madauth_error=<code>` |
 | `POST /auth/password/signin` | `{ email, password }` → `{ user }` and the session cookie; 401 `invalid_credentials`, 403 `email_unverified`, 429 `too_many_attempts` |
@@ -500,10 +514,12 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie; ends all older sessions; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
 | `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
 | `POST /auth/logout` | Clears the cookies of the session |
-| `POST /auth/admin/roles/get` | `{ email }` → `{ email, roles }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`. See [Roles](#roles). |
-| `POST /auth/admin/roles/set` | `{ email, roles }` → `{ email, roles }`: replaces the roles of the address; also 400 `invalid_roles` |
+| `POST /auth/admin/claims/get` | `{ email }` → `{ email, userId, claims }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`, 404 `user_not_found`. See [Claims](#claims). |
+| `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims` |
+| `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { available, enabled }, password: { … } } }`, for admins. See [Sign-in methods](#sign-in-methods). |
+| `POST /auth/admin/settings/set` | `{ methods: { google?, password? } }` (booleans) → the same; 400 `invalid_settings` |
 | `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; 401 `no_session`. See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
 | `GET /health` | `ok` |
 
-POST requests must come from an origin in `ALLOWED_ORIGINS`. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The `/auth/password/*` routes return 404 when e-mail & password sign-in is not configured.
+POST requests must come from an origin in `ALLOWED_ORIGINS`. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The routes of a sign-in method return 404 when it is not configured, and 403 `method_disabled` when an admin switched it off.

@@ -30,13 +30,14 @@ export interface MadauthConfig {
     /** Enables the server-side code flow (GOOGLE_CLIENT_SECRET). */
     clientSecret?: string;
   };
-  /** E-mail & password sign-in; off without a store (DATABASE_URL or the `store` option). */
+  /** Where the users, their accounts, claims and the settings are kept (DATABASE_URL or the `store` option). */
+  store: StoreAdapter;
+  /** E-mail & password sign-in; off unless the webhook sends the e-mails (`email.verify` and `email.reset`). */
   password?: {
     /** PASSWORD_MIN_LENGTH. */
     minLength: number;
-    store: StoreAdapter;
   };
-  /** Where madAuth sends e-mails, sign-up checks and events (WEBHOOK_URL); required for password sign-in. */
+  /** Where madAuth sends e-mails, sign-up checks and events (WEBHOOK_URL). */
   webhook?: WebhookSettings;
   /** Test hook: resolves Google's signing keys. Defaults to Google's published JWKS. */
   jwksResolver?: JWTVerifyGetKey;
@@ -51,7 +52,7 @@ export const envVars = {
   ALLOWED_ORIGINS: true,
   GOOGLE_CLIENT_ID: false,
   GOOGLE_CLIENT_SECRET: false,
-  DATABASE_URL: false,
+  DATABASE_URL: true,
   PASSWORD_MIN_LENGTH: false,
   WEBHOOK_URL: false,
   WEBHOOK_SECRET: false,
@@ -158,24 +159,24 @@ export async function loadConfig(
   }
 
   // Validate the webhook before opening the store, so a configuration error doesn't leave a database open.
-  const sendsEmails = !!(overrides.store || read('DATABASE_URL'));
-  const webhook = webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_EVENTS'), sendsEmails);
-  if (sendsEmails && !webhook) {
-    throw new ConfigError(
-      'WEBHOOK_URL is not set. E-mail & password sign-in sends its e-mails through your webhook. For ' +
-        `development, run the receiver at ${DEV_WEBHOOK_RECEIVER_URL} and set ` +
-        'WEBHOOK_URL=http://localhost:8790/webhook and ' +
-        `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.already_registered. See "Webhooks" in docs/server.md.`,
-    );
-  }
-  const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
-  let password: MadauthConfig['password'];
-  if (store) password = { minLength: passwordMinLength(read('PASSWORD_MIN_LENGTH')), store };
+  const webhook = webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_EVENTS'));
+  // E-mail & password sign-in needs its e-mails sent, so it is on exactly when the webhook handles them.
+  const sendsEmails = !!webhook && REQUIRED_EMAIL_TYPES.every((type) => webhook.events.has(type));
+  const password = sendsEmails ? { minLength: passwordMinLength(read('PASSWORD_MIN_LENGTH')) } : undefined;
 
   if (!clientId && !password) {
     throw new ConfigError(
-      'No sign-in method is configured. Set GOOGLE_CLIENT_ID for Google sign-in and/or DATABASE_URL ' +
-        '(e.g. sqlite:./madauth.db) for e-mail & password sign-in. See docs/server.md.',
+      'No sign-in method is configured. Set GOOGLE_CLIENT_ID for Google sign-in, and/or a webhook that sends ' +
+        `the e-mails for e-mail & password sign-in: for development, run the receiver at ${DEV_WEBHOOK_RECEIVER_URL} ` +
+        'and set WEBHOOK_URL=http://localhost:8790/webhook and ' +
+        `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.already_registered. See docs/server.md.`,
+    );
+  }
+  const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
+  if (!store) {
+    throw new ConfigError(
+      'DATABASE_URL is not set. madAuth stores every user, whichever way they sign in: set e.g. ' +
+        'DATABASE_URL=sqlite:./madauth.db or DATABASE_URL=dynamodb:<table>. See docs/server.md.',
     );
   }
 
@@ -201,6 +202,7 @@ export async function loadConfig(
     renewalTtlSeconds,
     cookieDomain: read('COOKIE_DOMAIN'),
     google: clientId ? { clientId, clientSecret: read('GOOGLE_CLIENT_SECRET') } : undefined,
+    store,
     password,
     webhook,
   };
@@ -210,11 +212,13 @@ export async function loadConfig(
  * Only the settings needed to manage users from the command line (DATABASE_URL, PASSWORD_MIN_LENGTH), so
  * `create-user` works without a running webhook receiver.
  */
-export async function loadUserStoreConfig(env: Record<string, string | undefined>): Promise<NonNullable<MadauthConfig['password']>> {
+export async function loadUserStoreConfig(
+  env: Record<string, string | undefined>,
+): Promise<{ store: StoreAdapter; minLength: number }> {
   return { store: await loadStore(env), minLength: passwordMinLength(readEnv(env, 'PASSWORD_MIN_LENGTH')) };
 }
 
-/** Only the store from DATABASE_URL, e.g. to manage roles from the command line. */
+/** Only the store from DATABASE_URL, e.g. to manage claims and settings from the command line. */
 export async function loadStore(env: Record<string, string | undefined>): Promise<StoreAdapter> {
   const store = await storeFromDatabaseUrl(readEnv(env, 'DATABASE_URL'));
   if (!store) throw new ConfigError('Set DATABASE_URL to manage users.');
@@ -274,16 +278,13 @@ async function dynamoDbStore(tableName: string): Promise<StoreAdapter> {
   return createDynamoDbAdapter({ tableName });
 }
 
+/** Types of madAuth 0.2 and their names now, so an old WEBHOOK_EVENTS gets a helpful error. */
+const RENAMED_TYPES: Record<string, string> = { 'password.reset': 'email.password_reset', 'roles.changed': 'user.claims_changed' };
+
 /** Hosts that may be called over plain http, e.g. a receiver on the developer's machine. */
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'];
 
-function webhookFromEnv(
-  url: string | undefined,
-  secret: string | undefined,
-  events: string | undefined,
-  /** E-mail & password sign-in is on, so its e-mails must be among the events. */
-  sendsEmails: boolean,
-): WebhookSettings | undefined {
+function webhookFromEnv(url: string | undefined, secret: string | undefined, events: string | undefined): WebhookSettings | undefined {
   if (!url) {
     if (secret || events) throw new ConfigError('WEBHOOK_SECRET and WEBHOOK_EVENTS need WEBHOOK_URL.');
     return undefined;
@@ -315,22 +316,18 @@ function webhookFromEnv(
   if (!selected.size) {
     throw new ConfigError(
       'WEBHOOK_EVENTS is not set. List the types your webhook receiver handles; only these are sent. ' +
-        (sendsEmails
-          ? `E-mail & password sign-in needs ${REQUIRED_EMAIL_TYPES.join(' and ')}. For a receiver that sends the e-mails:` +
-            '\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.already_registered\n\n'
-          : 'For example:\n\nWEBHOOK_EVENTS=user.signed_in\n\n') +
+        `E-mail & password sign-in is on when they include ${REQUIRED_EMAIL_TYPES.join(' and ')}. For a receiver ` +
+        'that sends the e-mails:\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.already_registered\n\n' +
+        'For one that only wants to know who signed in:\n\nWEBHOOK_EVENTS=user.signed_in\n\n' +
         allTypes,
     );
   }
   const unknown = [...selected].filter((e) => !(WEBHOOK_TYPES as readonly string[]).includes(e));
   if (unknown.length) {
-    throw new ConfigError(`WEBHOOK_EVENTS: unknown type ${unknown.join(', ')}. Known types: ${WEBHOOK_TYPES.join(', ')}.`);
-  }
-  const missing = sendsEmails ? REQUIRED_EMAIL_TYPES.filter((type) => !selected.has(type)) : [];
-  if (missing.length) {
+    const renamed = unknown.filter((e) => e in RENAMED_TYPES).map((e) => `${e} is now ${RENAMED_TYPES[e]}`);
     throw new ConfigError(
-      `WEBHOOK_EVENTS lacks ${missing.join(' and ')}. E-mail & password sign-in can't work without these e-mails, ` +
-        `so your webhook receiver must send them:\n\nWEBHOOK_EVENTS=${[...selected, ...missing].join(',')}\n`,
+      `WEBHOOK_EVENTS: unknown type ${unknown.join(', ')}. ${renamed.length ? `${renamed.join('; ')}. ` : ''}` +
+        `Known types: ${WEBHOOK_TYPES.join(', ')}.`,
     );
   }
   return { url: parsed.href, secret, events: selected };

@@ -16,6 +16,7 @@ vi.stubEnv('MADAUTH_ISSUER', 'https://auth.example.com');
 vi.stubEnv('MADAUTH_SIGNING_KEY', JSON.stringify(signingKey));
 vi.stubEnv('ALLOWED_ORIGINS', APP_ORIGIN);
 vi.stubEnv('GOOGLE_CLIENT_ID', CLIENT_ID);
+vi.stubEnv('DATABASE_URL', 'sqlite::memory:');
 vi.stubEnv('WEBHOOK_URL', WEBHOOK_URL);
 vi.stubEnv('WEBHOOK_SECRET', WEBHOOK_SECRET);
 vi.stubEnv('WEBHOOK_EVENTS', 'email.verify,email.reset');
@@ -66,7 +67,7 @@ describe('deployment entry points', () => {
     const nonce = await handler(apiGatewayV2Event('POST', '/auth/google/nonce', { origin: APP_ORIGIN }), {} as LambdaContext);
 
     expect(config).toMatchObject({ statusCode: 200 });
-    expect(JSON.parse((config as { body: string }).body)).toEqual({ google: { clientId: CLIENT_ID, codeFlow: false }, password: null });
+    expect(JSON.parse((config as { body: string }).body)).toEqual({ google: { clientId: CLIENT_ID, codeFlow: false }, password: { minLength: 8 } });
     expect(nonce).toMatchObject({ statusCode: 200 });
     expect((nonce as { cookies: string[] }).cookies[0]).toMatch(/^madauth_nonce=/);
   });
@@ -88,7 +89,13 @@ describe('deployment entry points', () => {
 
   it('env can be a function that loads the settings; it runs once, and again after a failure', async () => {
     const { createHandler } = await import('./lambda.js');
-    const settings = { MADAUTH_ISSUER: 'https://login.example.com', MADAUTH_SIGNING_KEY: JSON.stringify(signingKey), ALLOWED_ORIGINS: APP_ORIGIN, GOOGLE_CLIENT_ID: CLIENT_ID };
+    const settings = {
+      MADAUTH_ISSUER: 'https://login.example.com',
+      MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
+      ALLOWED_ORIGINS: APP_ORIGIN,
+      GOOGLE_CLIENT_ID: CLIENT_ID,
+      DATABASE_URL: 'sqlite::memory:',
+    };
     const env = vi.fn(async () => settings);
     const handler = createHandler({ env });
 
@@ -180,7 +187,7 @@ describe('deployment entry points', () => {
     expect(duplicate).toMatchObject({ exitCode: 1, output: expect.stringContaining('already exists') });
     expect(short).toMatchObject({ exitCode: 1, output: expect.stringContaining('at least 8') });
     const store = createSqliteAdapter(env.DATABASE_URL.slice('sqlite:'.length));
-    const { app } = passwordApp({ password: { minLength: 8, store } });
+    const { app } = passwordApp({ store });
     const res = await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'correct horse battery' });
     expect(res.status).toBe(200);
     rmSync(dir, { recursive: true, force: true });
@@ -201,29 +208,77 @@ describe('deployment entry points', () => {
     const fromTwo = await runCli(['schema', '--from', '2']);
     expect(fromTwo.output).toMatch(/^CREATE TABLE madauth_role \(/);
     expect(fromTwo.output).not.toContain('wrong_codes');
-    expect(await runCli(['schema', '--from', '3'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
+    const fromThree = await runCli(['schema', '--from', '3']);
+    expect(fromThree.output).toMatch(/^ALTER TABLE madauth_user ADD COLUMN claims TEXT;/);
+    expect(fromThree.output).toContain('DROP TABLE madauth_role;');
+    expect(fromThree.output).toContain('CREATE TABLE madauth_setting (');
+    expect(await runCli(['schema', '--from', '4'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
     expect(await runCli(['schema', '--from', 'x'])).toMatchObject({ exitCode: 1 });
     // A version this madAuth does not know yet.
-    expect(await runCli(['schema', '--from', '4'])).toMatchObject({ exitCode: 1 });
+    expect(await runCli(['schema', '--from', '5'])).toMatchObject({ exitCode: 1 });
   });
 
   it('set-roles makes the first admin without a running server, and get-roles prints the roles', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
     const env = { DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}` };
-    const io = { ask: async () => '', askSecret: async () => '' };
+    const io = { ask: async () => '', askSecret: async () => 'correct horse battery' };
 
+    // The user must exist: signed in once, or created here.
+    expect(await runCli(['get-roles', 'ada@example.com'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('No user') });
+    await runCli(['create-user', 'Ada@Example.com'], io, env);
     expect(await runCli(['get-roles', 'ada@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com has no roles.' });
-    // The address needs no account yet: the roles apply as soon as its owner signs in, also with Google.
     expect(await runCli(['set-roles', 'Ada@Example.com', 'editor', 'admin'], io, env)).toEqual({
       exitCode: 0,
       output: 'ada@example.com: admin editor',
     });
     expect(await runCli(['get-roles', 'ADA@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com: admin editor' });
+    // Roles are the claim "roles"; set-roles leaves the other claims alone.
+    expect(await runCli(['set-claims', 'ada@example.com', '{"plan":"pro","roles":["editor"]}'], io, env)).toEqual({
+      exitCode: 0,
+      output: 'ada@example.com: {"plan":"pro","roles":["editor"]}',
+    });
+    expect(await runCli(['set-roles', 'ada@example.com', 'admin'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com: admin' });
+    expect(await runCli(['get-claims', 'ada@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com: {"plan":"pro","roles":["admin"]}' });
 
     expect(await runCli(['set-roles', 'ada@example.com', 'Admin!'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('lower-case') });
+    expect(await runCli(['set-claims', 'ada@example.com', 'not json'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('JSON') });
+    expect(await runCli(['set-claims', 'ada@example.com', '{"1st":true}'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('names') });
     expect(await runCli(['set-roles', 'not-an-address', 'admin'], io, env)).toMatchObject({ exitCode: 1 });
     expect(await runCli(['set-roles', 'ada@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com has no roles.' });
+    expect(await runCli(['get-claims', 'ada@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com: {"plan":"pro"}' });
     expect(await runCli(['set-roles', 'ada@example.com', 'admin'], io, {})).toMatchObject({ exitCode: 1, output: expect.stringContaining('DATABASE_URL') });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('set-methods switches sign-in methods off and on without a running server, but never all off', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
+    // The server's whole configuration, as with --env-file: both methods.
+    const env = {
+      MADAUTH_ISSUER: 'https://auth.example.com',
+      MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
+      ALLOWED_ORIGINS: APP_ORIGIN,
+      GOOGLE_CLIENT_ID: CLIENT_ID,
+      WEBHOOK_URL,
+      WEBHOOK_SECRET,
+      WEBHOOK_EVENTS: 'email.verify,email.reset',
+      DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}`,
+    };
+    const io = { ask: async () => '', askSecret: async () => '' };
+
+    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google, password.' });
+    expect(await runCli(['set-methods', 'google'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password.' });
+    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password.' });
+    expect(await runCli(['set-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google, password.' });
+    expect(await runCli(['set-methods', 'sms'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('Unknown sign-in method sms') });
+
+    // A password-only server: "set-methods google" would switch off the only method there is.
+    const passwordOnly = { ...env, GOOGLE_CLIENT_ID: undefined };
+    expect(await runCli(['set-methods', 'google'], io, passwordOnly)).toEqual({
+      exitCode: 1,
+      output: 'That would switch off every sign-in method. The server is configured for: password.',
+    });
+    expect(await runCli(['get-methods'], io, passwordOnly)).toEqual({ exitCode: 0, output: 'Switched on: password.' });
+    expect(await runCli(['get-methods'], io, { DATABASE_URL: env.DATABASE_URL })).toMatchObject({ exitCode: 1, output: expect.stringContaining('MADAUTH_ISSUER') });
     rmSync(dir, { recursive: true, force: true });
   });
 

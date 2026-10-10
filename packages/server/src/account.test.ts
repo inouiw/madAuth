@@ -1,6 +1,6 @@
 // Deleting the account: POST /auth/account/delete. See "HTTP API" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { APP_ORIGIN, REDIRECT_TO, cookies, linkAndCode, passwordApp, post, signIn, signUpVerified, testApp } from './test/helpers.js';
+import { APP_ORIGIN, REDIRECT_TO, cookies, linkAndCode, passwordApp, post, signIn, signUpVerified, type testApp } from './test/helpers.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -38,7 +38,7 @@ describe('deleting the account', () => {
     for (const model of ['user', 'account', 'verification']) expect(await store.findMany(model, {})).toEqual([]);
     expect(hook.calls.at(-1)).toEqual({
       type: 'user.deleted',
-      data: { user: { id: userId, email: 'grace@example.com', name: 'Grace Hopper' }, passwordUserId: userId },
+      data: { user: { id: userId, email: 'grace@example.com', name: 'Grace Hopper' } },
     });
     // The cookie of another device no longer counts, and the password no longer signs in.
     expect((await app.request('/auth/session', { headers: { Cookie: `madauth_session=${session}` } })).status).toBe(401);
@@ -58,29 +58,32 @@ describe('deleting the account', () => {
     expect(await store.findMany('account', {})).toHaveLength(1);
   });
 
-  it('a Google session deletes the e-mail & password account of the same address', async () => {
+  it('a Google session deletes the user with all their sign-in methods', async () => {
     const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook, 'Ada@Example.com');
-    const [{ id: passwordUserId }] = await store.findMany('user', {});
+    const [{ id: userId }] = await store.findMany('user', {});
+    // Google's verified address is Ada's: the Google account joins her user.
     const google = await signIn(app);
+    expect(await store.findMany('account', {})).toHaveLength(2);
 
     expect((await deleteAccount(app, google)).status).toBe(204);
 
     expect(await store.findMany('user', {})).toEqual([]);
-    expect(hook.calls.at(-1)).toMatchObject({
-      type: 'user.deleted',
-      data: { user: { id: 'google:1001', email: 'ada@example.com' }, passwordUserId },
-    });
+    expect(await store.findMany('account', {})).toEqual([]);
+    expect(hook.calls.at(-1)).toMatchObject({ type: 'user.deleted', data: { user: { id: userId, email: 'Ada@Example.com' } } });
   });
 
-  it('without a store there is nothing to delete: the user is signed out', async () => {
-    const app = testApp();
+  it('a user who only ever signed in with Google is deleted too, and is signed out', async () => {
+    const { app, hook, store } = passwordApp();
     const session = await signIn(app);
 
     const res = await deleteAccount(app, session);
 
     expect(res.status).toBe(204);
     expect(cookies(res).madauth_session).toMatchObject({ value: '' });
+    expect(await store.findMany('user', {})).toEqual([]);
+    expect(hook.calls.at(-1)).toMatchObject({ type: 'user.deleted', data: { user: { email: 'ada@example.com' } } });
+    expect((await app.request('/auth/session', { headers: { Cookie: `madauth_session=${session}` } })).status).toBe(401);
   });
 
   it('needs a session that has not ended, from an allowed origin', async () => {

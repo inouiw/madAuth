@@ -11,11 +11,14 @@ const env = {
   MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
   ALLOWED_ORIGINS: 'https://app.example.com, https://admin.example.com/',
   GOOGLE_CLIENT_ID: CLIENT_ID,
+  DATABASE_URL: 'sqlite::memory:',
 };
 
 describe('loadConfig', () => {
   it('reads a valid configuration with defaults', async () => {
-    expect(await loadConfig(env)).toEqual({
+    const config = await loadConfig(env);
+
+    expect(config).toEqual({
       issuer: 'https://auth.example.com',
       signingKey,
       allowedOrigins: ['https://app.example.com', 'https://admin.example.com'],
@@ -23,7 +26,15 @@ describe('loadConfig', () => {
       renewalTtlSeconds: 2592000,
       cookieDomain: undefined,
       google: { clientId: CLIENT_ID, clientSecret: undefined },
+      store: expect.any(Object),
+      password: undefined,
+      webhook: undefined,
     });
+    expect(await config.store.findOne('user', { id: 'x' })).toBeNull();
+  });
+
+  it('needs DATABASE_URL: every user is stored, whichever way they sign in', async () => {
+    await expect(loadConfig({ ...env, DATABASE_URL: undefined })).rejects.toThrow(/DATABASE_URL is not set.*sqlite:\.\/madauth\.db/s);
   });
 
   it('accepts values wrapped in quotes, as Docker’s --env-file passes them', async () => {
@@ -63,18 +74,17 @@ describe('loadConfig', () => {
   });
 
   it('A14: needs at least one sign-in method', async () => {
-    await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined })).rejects.toThrow(/GOOGLE_CLIENT_ID.*DATABASE_URL/s);
+    await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined })).rejects.toThrow(/No sign-in method.*GOOGLE_CLIENT_ID.*WEBHOOK_URL/s);
   });
 
   const hook = { WEBHOOK_URL, WEBHOOK_SECRET, WEBHOOK_EVENTS: 'email.verify,email.reset' };
 
-  it('A14: turns on e-mail & password sign-in with DATABASE_URL and the webhook', async () => {
-    const config = await loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, DATABASE_URL: 'sqlite::memory:' });
+  it('A14: turns on e-mail & password sign-in with a webhook that sends the e-mails', async () => {
+    const config = await loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined });
 
     expect(config.google).toBeUndefined();
-    expect(config.password).toMatchObject({ minLength: 8 });
+    expect(config.password).toEqual({ minLength: 8 });
     expect(config.webhook).toEqual({ url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) });
-    expect(await config.password!.store.findOne('user', { id: 'x' })).toBeNull();
   });
 
   it('A14: names what is missing or wrong for e-mail & password sign-in', async () => {
@@ -88,13 +98,13 @@ describe('loadConfig', () => {
   it('DATABASE_URL=dynamodb:<table> uses the DynamoDB adapter, which only reaches AWS on first use', async () => {
     const config = await loadConfig({ ...env, ...hook, DATABASE_URL: 'dynamodb:madauth' });
 
-    expect(config.password?.store).toBeDefined();
+    expect(config.store).toBeDefined();
     await expect(loadConfig({ ...env, ...hook, DATABASE_URL: 'dynamodb:' })).rejects.toThrow(/needs a table name/);
     await expect(loadConfig({ ...env, ...hook, DATABASE_URL: 'dynamodb://madauth' })).rejects.toThrow(/DynamoDB table name/);
   });
 
-  it('K7: e-mail & password sign-in needs WEBHOOK_URL', async () => {
-    await expect(loadConfig({ ...env, DATABASE_URL: 'sqlite::memory:' })).rejects.toThrow(/WEBHOOK_URL is not set/);
+  it('K7: without a webhook there is no e-mail & password sign-in, and Google alone is fine', async () => {
+    expect((await loadConfig(env)).password).toBeUndefined();
   });
 
   it('K7: prints a usable secret when WEBHOOK_SECRET is missing, and rejects a bad one', async () => {
@@ -132,17 +142,18 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, WEBHOOK_URL, WEBHOOK_SECRET })).rejects.toThrow(/WEBHOOK_EVENTS is not set.*WEBHOOK_EVENTS=user.signed_in/s);
   });
 
-  it('K6: e-mail & password sign-in needs email.verify and email.reset among the events', async () => {
-    const withDb = { ...env, ...hook, DATABASE_URL: 'sqlite::memory:' };
+  it('K6: e-mail & password sign-in is on exactly when email.verify and email.reset are among the events', async () => {
+    expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.verify,user.created' })).password).toBeUndefined();
+    expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.reset,email.verify' })).password).toEqual({ minLength: 8 });
+    // A receiver that only wants events, on a Google-only server.
+    expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'user.signed_in' })).password).toBeUndefined();
+    await expect(loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, WEBHOOK_EVENTS: 'user.signed_in' })).rejects.toThrow(/No sign-in method/);
+  });
 
-    await expect(loadConfig({ ...withDb, WEBHOOK_EVENTS: 'email.verify,user.created' })).rejects.toThrow(
-      new ConfigError(
-        "WEBHOOK_EVENTS lacks email.reset. E-mail & password sign-in can't work without these e-mails, so your " +
-          'webhook receiver must send them:\n\nWEBHOOK_EVENTS=email.verify,user.created,email.reset\n',
-      ),
+  it('K6: names the new name of a type that was renamed', async () => {
+    await expect(loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.verify,password.reset' })).rejects.toThrow(
+      /unknown type password.reset. password.reset is now email.password_reset/,
     );
-    await expect(loadConfig({ ...withDb, WEBHOOK_EVENTS: 'signup.before' })).rejects.toThrow(/lacks email.verify and email.reset/);
-    expect((await loadConfig({ ...withDb, WEBHOOK_EVENTS: 'email.reset,email.verify' })).password).toBeDefined();
   });
 
   it('SESSION_RENEWAL_TTL is 30 days by default and never shorter than SESSION_TTL', async () => {
@@ -160,7 +171,8 @@ describe('loadConfig', () => {
 
     const config = await loadConfig({ ...env, ...hook, PASSWORD_MIN_LENGTH: '12' }, { store });
 
-    expect(config.password).toEqual({ minLength: 12, store });
+    expect(config.store).toBe(store);
+    expect(config.password).toEqual({ minLength: 12 });
   });
 
   it('documents every environment variable in docs/server.md', () => {

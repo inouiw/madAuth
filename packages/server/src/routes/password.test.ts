@@ -439,7 +439,7 @@ describe('password reset', () => {
 });
 
 describe('configuration', () => {
-  it('A13: the password routes are off without a store', async () => {
+  it('A13: the password routes are off without a webhook that sends the e-mails', async () => {
     const app = testApp();
 
     expect((await post(app, '/auth/password/signin', grace)).status).toBe(404);

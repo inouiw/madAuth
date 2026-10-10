@@ -24,6 +24,7 @@ function testUser(overrides: Row = {}): Row {
     sessionVersion: 0,
     lastMailAt: 0,
     wrongCodes: 0,
+    claims: null,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };
@@ -38,6 +39,7 @@ function testAccount(overrides: Row = {}): Row {
     secret: 'hash',
     failedAttempts: 0,
     lockedUntil: 0,
+    email: null,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };
