@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The events a receiver that sends the e-mails handles, e.g. the aws-ses-mailer of madAuth-webhooks. */
-export const EMAIL_EVENTS = ['email.verify', 'email.reset', 'email.already_registered'] as const;
+export const EMAIL_EVENTS = ['email.verify', 'email.reset', 'email.already_registered', 'email.no_password'] as const;
 
 /** How madAuth's Lambda functions are bundled: one ESM file, with the AWS SDK left to the runtime. */
 export const lambdaBundling: nodejs.BundlingOptions = {

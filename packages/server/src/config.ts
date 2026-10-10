@@ -169,7 +169,7 @@ export async function loadConfig(
       'No sign-in method is configured. Set GOOGLE_CLIENT_ID for Google sign-in, and/or a webhook that sends ' +
         `the e-mails for e-mail & password sign-in: for development, run the receiver at ${DEV_WEBHOOK_RECEIVER_URL} ` +
         'and set WEBHOOK_URL=http://localhost:8790/webhook and ' +
-        `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.already_registered. See docs/server.md.`,
+        `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.already_registered,email.no_password. See docs/server.md.`,
     );
   }
   const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
@@ -317,7 +317,7 @@ function webhookFromEnv(url: string | undefined, secret: string | undefined, eve
     throw new ConfigError(
       'WEBHOOK_EVENTS is not set. List the types your webhook receiver handles; only these are sent. ' +
         `E-mail & password sign-in is on when they include ${REQUIRED_EMAIL_TYPES.join(' and ')}. For a receiver ` +
-        'that sends the e-mails:\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.already_registered\n\n' +
+        'that sends the e-mails:\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.already_registered,email.no_password\n\n' +
         'For one that only wants to know who signed in:\n\nWEBHOOK_EVENTS=user.signed_in\n\n' +
         allTypes,
     );

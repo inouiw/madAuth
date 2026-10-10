@@ -8,7 +8,7 @@ import { loadConfig } from './config.js';
 import { DEV_WEBHOOK_RECEIVER_URL, checkWebhookSecret } from './webhooks.js';
 
 const CLIENT_ID = '123-test.apps.googleusercontent.com';
-const EMAIL_TYPES = 'email.verify,email.reset,email.already_registered';
+const EMAIL_TYPES = 'email.verify,email.reset,email.already_registered,email.no_password';
 
 const dirs: string[] = [];
 afterEach(() => {

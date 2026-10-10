@@ -136,7 +136,7 @@ describe('loadConfig', () => {
     const error = await loadConfig(withDb).catch((e: Error) => e);
 
     expect(error).toBeInstanceOf(ConfigError);
-    expect((error as Error).message).toContain('\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.already_registered\n\n');
+    expect((error as Error).message).toContain('\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.already_registered,email.no_password\n\n');
     await expect(loadConfig({ ...withDb, WEBHOOK_EVENTS: ' , ' })).rejects.toThrow(/WEBHOOK_EVENTS is not set/);
     // Without e-mail & password sign-in no e-mail type is needed, but the list still is.
     await expect(loadConfig({ ...env, WEBHOOK_URL, WEBHOOK_SECRET })).rejects.toThrow(/WEBHOOK_EVENTS is not set.*WEBHOOK_EVENTS=user.signed_in/s);

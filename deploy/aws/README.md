@@ -90,7 +90,7 @@ const madauth = new MadAuthServer(this, 'MadAuth', {
   issuer: 'https://example.com',
   googleClientId: '123.apps.googleusercontent.com',
   secretsPath: '/madauth',
-  webhook: { url: mailerUrl, events: ['email.verify', 'email.reset', 'email.already_registered'] },
+  webhook: { url: mailerUrl, events: ['email.verify', 'email.reset', 'email.already_registered', 'email.no_password'] },
   reservedConcurrentExecutions: 10,
 });
 // madauth.functionUrl, madauth.function, madauth.table
