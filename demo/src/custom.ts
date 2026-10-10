@@ -17,7 +17,9 @@ const titles: Record<View, string> = {
 let pending: { email: string; purpose: 'verify' | 'reset'; code?: string } | undefined;
 
 // ui: 'custom' — this page shows its own screen, so madAuth's dialog never opens.
-void Madauth.initialize({ providers: [new GoogleFedcm(), new Password()], ui: 'custom' }).then(() => {
+void Madauth.initialize({ providers: [new GoogleFedcm(), new Password()], ui: 'custom' }).then((result) => {
+  // Without Google on the server there is no Google button, so the hint about it goes.
+  $('#google-hint').hidden = result.leftOut.includes('google');
   // Opened from the link in a reset e-mail: ask for the new password right away.
   if (Madauth.password.pendingReset) show('reset');
   const policy = Madauth.password.policy;

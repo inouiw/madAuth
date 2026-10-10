@@ -243,7 +243,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 
 - `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
 - Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. E-mail & password sign-in is on when `email.verify` and `email.reset` are in the list; a receiver that only wants events (e.g. `user.signed_in`) is fine on a Google-only server.
-- Without `email.already_registered` in the list, a sign-up with an address that already has a confirmed account is answered like any other and no e-mail is sent; the same goes for `email.no_password` and "Forgot password?" for a user without a password. Without `signup.before`, every sign-up is allowed.
+- Without `email.already_registered` in the list, a sign-up with an address that already has a confirmed account is answered like any other and no e-mail is sent; the same goes for `email.no_password` and "Forgot password?" for a user without a password. Keep both in the list unless your receiver can't send them: without them the answer comes faster for such an address, see [Password security](password-security.md#no-account-enumeration). Without `signup.before`, every sign-up is allowed.
 - madAuth waits for each call before it answers the browser, because AWS Lambda stops a function as soon as it has answered. Keep receivers fast.
 
 ### Signatures
