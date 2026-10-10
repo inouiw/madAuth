@@ -57,6 +57,8 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 - The link opens `redirectTo`. After `initialize`, `pendingReset` is true: show a new-password field and call `confirmReset({ newPassword })`.
 - With the code, ask for it and the new password, and call `confirmReset({ newPassword, email, code })`.
 
+If Google is one of your methods, say on the form that a Google user has no password to reset and should use the Google button instead, as the dialog does. (The server tells such a user the same by e-mail: `email.no_password` in [Webhooks](server.md#webhooks).)
+
 A completed reset signs the user in and ends their sessions on other devices.
 
 ```ts

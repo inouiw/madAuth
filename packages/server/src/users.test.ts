@@ -137,12 +137,12 @@ describe('Google users', () => {
 
     expect(res.status).toBe(202);
     expect(hook.emails()).toEqual([
-      expect.objectContaining({ type: 'email.already_registered', data: expect.objectContaining({ to: 'ada@example.com', link: REDIRECT_TO, methods: ['google'] }) }),
+      expect.objectContaining({ type: 'email.no_password', data: expect.objectContaining({ to: 'ada@example.com', link: REDIRECT_TO, methods: ['google'] }) }),
     ]);
     expect((await store.findMany('account', { userId: google.id })).map((a) => a.key)).toEqual(['google:1001']);
   });
 
-  it('without the "already registered" e-mail in the list, a Google user asking for a reset gets nothing', async () => {
+  it('without email.no_password in the list, a Google user asking for a reset gets nothing', async () => {
     const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) } });
     await googleSignIn(app);
     hook.calls.length = 0;

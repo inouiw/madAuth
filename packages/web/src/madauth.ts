@@ -35,10 +35,11 @@ export interface SignInOptions {
 export type AuthStateListener = (user: MadauthUser | null) => void;
 
 /**
- * What `initialize` resolves to. On success, `leftOut` lists the methods whose providers were left out
- * because the server doesn't offer them (see {@link Madauth.initialize}); empty when every provider is in.
+ * What `initialize` resolves to: a {@link Result}, plus `leftOut`, the methods whose providers were left out
+ * because the server doesn't offer them (see {@link Madauth.initialize}). It is there on a failure as well,
+ * e.g. when a redirect sign-in failed although madAuth is ready; empty when nothing was left out.
  */
-export type InitializeResult = Result<{ leftOut: LoginMethodId[] }>;
+export type InitializeResult = Result & { leftOut: LoginMethodId[] };
 
 interface State {
   serverUrl: string;
@@ -155,7 +156,10 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
   const { serverUrl, providers } = target;
   const call = <T>(path: string, init?: RequestInit): Promise<HttpResult<T>> => request<T>(serverUrl, path, init);
 
-  const failed = (result: { isSuccess: false; error: MadauthError }) => ({ ready: result, result });
+  const failed = (error: { isSuccess: false; error: MadauthError }, leftOut: LoginMethodId[] = []) => ({
+    ready: error,
+    result: { ...error, leftOut },
+  });
 
   const [config, session] = await Promise.all([
     call<ServerConfig>('/auth/config'),
@@ -206,12 +210,12 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
     console.warn('[madauth]', result.error.code, `${result.error.message} Sign-in with "${provider.method}" is left out.`);
   }
   if (providers.size === 0 && notEnabled.length > 0) {
-    return failed(fail('flow_not_enabled', `No sign-in method is enabled on the madAuth server. ${notEnabled.join(' ')}`));
+    return failed(fail('flow_not_enabled', `No sign-in method is enabled on the madAuth server. ${notEnabled.join(' ')}`), leftOut);
   }
   // Opened from a password reset link: show the dialog's "new password" form once madAuth is ready.
   if (target.ui === 'dialog' && Madauth.password.pendingReset) queueMicrotask(() => void Madauth.signIn());
   // A failed redirect sign-in is reported by initialize, but madAuth itself is ready.
-  return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError } : ok({ leftOut }) };
+  return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError, leftOut } : { isSuccess: true, leftOut } };
 }
 
 async function whenReady(): Promise<Result> {
@@ -252,13 +256,16 @@ export const Madauth = {
     if (!valid.isSuccess) {
       state = { serverUrl: '', providers: new Map(), ui: 'dialog', ready: Promise.resolve(valid) };
       logError(valid);
-      return Promise.resolve(valid);
+      return Promise.resolve({ ...valid, leftOut: [] });
     }
     const next: State = { serverUrl: valid.serverUrl, providers: valid.providers, ui: valid.ui, ready: Promise.resolve(ok()) };
     state = next;
     const done = initialize(next, run);
     next.ready = done.then((d) => d.ready);
-    return done.then((d) => logError(d.result));
+    return done.then((d) => {
+      logError(d.result);
+      return d.result;
+    });
   },
 
   /**

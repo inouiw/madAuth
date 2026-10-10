@@ -20,6 +20,8 @@ let sessionUser: DemoUser | null = null;
 /** Who the next Google sign-in signs in as. */
 let signInAs: DemoUser = ada;
 let settings = { google: { available: true, enabled: true }, password: { available: true, enabled: false } };
+/** When set, the fake server answers settings/get only once it resolves. */
+let holdSettings: Promise<void> | undefined;
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -53,9 +55,13 @@ vi.stubGlobal(
       case 'POST /auth/admin/claims/set':
         return json({ email: body().email, userId: ada.id, claims: body().claims });
       case 'POST /auth/admin/settings/get':
+        await holdSettings;
         return json({ methods: settings });
       case 'POST /auth/admin/settings/set': {
         const { methods } = body();
+        if (methods.google === false && methods.password === false) {
+          return json({ error: 'invalid_settings', message: 'At least one sign-in method must stay on.' }, 400);
+        }
         settings = {
           google: { ...settings.google, enabled: methods.google ?? settings.google.enabled },
           password: { ...settings.password, enabled: methods.password ?? settings.password.enabled },
@@ -233,6 +239,39 @@ describe('demo page', () => {
     $<HTMLButtonElement>('#sign-out').click();
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     signInAs = ada;
+  });
+
+  it('leaves the boxes as the user set them when setSettings is refused', async () => {
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+
+    $<HTMLInputElement>('#method-google').checked = false;
+    $<HTMLInputElement>('#method-password').checked = false;
+    $<HTMLButtonElement>('[data-call="setSettings"]').click();
+
+    await expect.poll(() => $('#output').textContent).toContain('invalid_settings');
+    expect($<HTMLInputElement>('#method-google').checked).toBe(false);
+    expect($<HTMLInputElement>('#method-password').checked).toBe(false);
+    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+  });
+
+  it('drops settings that arrive after the admin signed out', async () => {
+    let release!: () => void;
+    holdSettings = new Promise((resolve) => (release = resolve));
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $('#api').hidden).toBe(false);
+
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    release();
+    holdSettings = undefined;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect($<HTMLInputElement>('#method-google').checked).toBe(false);
+    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(true);
   });
 
   it('switches between light and dark theme when the theme button is clicked', () => {

@@ -213,8 +213,9 @@ export class Users {
     await this.store.update('user', { id }, patch as Row);
   }
 
-  async updateAccount(id: string, patch: Partial<Omit<StoredAccount, 'id'>>): Promise<void> {
-    await this.store.update('account', { id }, patch as Row);
+  /** Changes an account. Resolves to false if it is gone meanwhile. */
+  async updateAccount(id: string, patch: Partial<Omit<StoredAccount, 'id'>>): Promise<boolean> {
+    return (await this.store.update('account', { id }, patch as Row)) === 1;
   }
 
   /**

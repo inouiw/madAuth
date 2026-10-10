@@ -31,7 +31,7 @@ describe('Madauth.initialize', () => {
     fakeServer();
 
     const badUrl = await Madauth.initialize({ serverUrl: 'not a url', providers: [] });
-    expect(badUrl).toEqual({ isSuccess: false, error: { code: 'invalid_options', message: expect.stringContaining('serverUrl') } });
+    expect(badUrl).toEqual({ isSuccess: false, error: { code: 'invalid_options', message: expect.stringContaining('serverUrl') }, leftOut: [] });
 
     const twoGoogle = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm(), new GoogleRedirect()] });
     expect(twoGoogle).toMatchObject({ isSuccess: false, error: { code: 'invalid_options' } });
@@ -116,7 +116,7 @@ describe('Madauth.initialize', () => {
 
     const result = await Madauth.initialize({ serverUrl: SERVER, providers: [provider] });
 
-    expect(result).toEqual({ isSuccess: false, error: { code: 'gis_load_failed', message: 'boom' } });
+    expect(result).toEqual({ isSuccess: false, error: { code: 'gis_load_failed', message: 'boom' }, leftOut: [] });
     expect(await Madauth.getSession()).toMatchObject({ isSuccess: false, error: { code: 'gis_load_failed' } });
   });
 });

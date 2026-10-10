@@ -47,6 +47,8 @@ export const en = {
   // Headings and texts of the other views
   resetPassword: 'Reset password',
   forgotLead: 'Enter your e-mail address. We will send you a link and a code to choose a new password.',
+  /** Under that lead when Google is one of the methods: a Google user has no password to reset. */
+  forgotGoogleHint: 'Signed up with Google? There is no password to reset: use the Google button instead.',
   checkInbox: 'Check your inbox',
   /** The e-mail address is shown between the two parts. */
   inboxLead: {
@@ -132,6 +134,7 @@ export const de: Strings = {
   resetPassword: 'Passwort zurücksetzen',
   forgotLead:
     'Geben Sie Ihre E-Mail-Adresse ein. Wir senden Ihnen einen Link und einen Bestätigungscode, mit denen Sie ein neues Passwort wählen können.',
+  forgotGoogleHint: 'Mit Google registriert? Es gibt kein Passwort zum Zurücksetzen: Verwenden Sie stattdessen den Google-Button.',
   checkInbox: 'Posteingang prüfen',
   inboxLead: {
     before: 'Wir haben eine E-Mail an ',

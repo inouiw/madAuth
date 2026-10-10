@@ -98,6 +98,23 @@ export function passwordRoutes(
     });
   };
 
+  /**
+   * Tells the owner of an address about the account it has and how it signs in: after a sign-up with it
+   * (`email.already_registered`) or a "forgot password" for a user without a password (`email.no_password`).
+   * Both are optional for the receiver: without the type in its list nothing is sent, and the answer is
+   * the same. Resolves to false if the webhook did not take the e-mail over.
+   */
+  const sendAccountEmail = async (
+    user: StoredUser,
+    type: 'email.already_registered' | 'email.no_password',
+    target: URL,
+    locale?: string,
+  ): Promise<boolean> => {
+    if (!webhook.wants(type)) return true;
+    const methods = await users.signInMethods(user.id);
+    return sendEmail(user, type, { link: target.href, site: target.host, locale, methods });
+  };
+
   type Consumed = Partial<CodeResult> & { userId: string | null; via: 'link' | 'code' };
 
   /** Resolves the user from `{ token }` (an e-mail link) or `{ email, code }`; null if invalid, expired or used. */
@@ -187,11 +204,7 @@ export function passwordRoutes(
     const existing = await users.findByEmail(normalizeEmail(email));
 
     if (existing?.emailVerified) {
-      // The note to the owner is optional; the answer is the same either way.
-      if (!webhook.wants('email.already_registered')) return accepted(c);
-      const methods = await users.signInMethods(existing.id);
-      const sent = await sendEmail(existing, 'email.already_registered', { link: target.href, site: target.host, locale, methods });
-      return sent ? accepted(c) : unavailable(c);
+      return (await sendAccountEmail(existing, 'email.already_registered', target, locale)) ? accepted(c) : unavailable(c);
     }
     if (existing) {
       // Nobody has confirmed this address yet, so the latest sign-up sets the password; only its e-mail works.
@@ -251,12 +264,10 @@ export function passwordRoutes(
     // Only a password can be reset; the answer is the same either way, so nothing is revealed.
     if (user && (await users.passwordAccount(user.id))) {
       if (!(await sendLinkEmail(user, 'reset', target, locale))) return unavailable(c);
-    } else if (user && webhook.wants('email.already_registered')) {
+    } else if (user) {
       // A user who signs in with Google alone has nothing to reset (Firebase Auth and Auth0 send nothing).
       // Rather than leave them waiting for an e-mail, the inbox's owner is told how they sign in.
-      const methods = await users.signInMethods(user.id);
-      const sent = await sendEmail(user, 'email.already_registered', { link: target.href, site: target.host, locale, methods });
-      if (!sent) return unavailable(c);
+      if (!(await sendAccountEmail(user, 'email.no_password', target, locale))) return unavailable(c);
     }
     return accepted(c);
   });
@@ -272,7 +283,9 @@ export function passwordRoutes(
     // A reset never adds a password: without one (dropped by a Google sign-in meanwhile) there is nothing to reset.
     if (!user || !account) return invalidVerification(c, consumed);
 
-    await users.updateAccount(account.id, { secret: await hashPassword(data.password as string), failedAttempts: 0, lockedUntil: 0 });
+    const secret = await hashPassword(data.password as string);
+    // The password may have gone while hashing (a Google sign-in dropping an unproven one): then nothing was reset.
+    if (!(await users.updateAccount(account.id, { secret, failedAttempts: 0, lockedUntil: 0 }))) return invalidVerification(c, consumed);
     // The reset proves access to the inbox, and the new session version ends all older sessions.
     const sessionVersion = user.sessionVersion + 1;
     await users.updateUser(user.id, { emailVerified: true, sessionVersion, wrongCodes: 0 });

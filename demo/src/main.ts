@@ -19,13 +19,14 @@ const google = flow === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();
 
 // The public demo gives nobody the role admin: an admin could change every visitor's claims and switch
 // sign-in methods off for everyone. Visitors are told so, and how to try the admin API on their machine.
-$('[data-hosted]').hidden = !location.hostname.endsWith('madauth.com');
+const { hostname } = location;
+$('[data-hosted]').hidden = !(hostname === 'madauth.com' || hostname.endsWith('.madauth.com'));
 
 // No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin.
 void Madauth.initialize({ providers: [google, new Password()] }).then((result) => {
   // The server offers the redirect flow only with a client secret (and Google switched on); otherwise
   // initialize left GoogleRedirect out and the dialog has no Google button.
-  if (flow === 'redirect' && result.isSuccess && result.leftOut.includes('google')) $('#flow-note').hidden = false;
+  if (flow === 'redirect' && result.leftOut.includes('google')) $('#flow-note').hidden = false;
 });
 Madauth.onAuthStateChanged(handleAuthStateChanged);
 
@@ -59,7 +60,10 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   // An admin sees the server's settings in the checkboxes before they can send them back.
   if (isAdmin(user) && settingsLoadedFor !== user.id) {
     settingsLoadedFor = user.id;
-    void Madauth.admin.getSettings().then(showSettings);
+    void Madauth.admin.getSettings().then((result) => {
+      // Not if they signed out meanwhile: the next user must not see them.
+      if (Madauth.currentUser?.id === user.id) showSettings(result);
+    });
   }
 }
 
@@ -72,6 +76,8 @@ const claimsEmail = () => $<HTMLInputElement>('#claims-email').value.trim();
 const methodBox = (method: 'google' | 'password') => $<HTMLInputElement>(`#method-${method}`);
 /** The user whose sign-in loaded the settings, so a claims change (which also notifies) doesn't load them again. */
 let settingsLoadedFor: string | undefined;
+/** Whether the boxes show the server's settings; only then may setSettings send them. */
+let settingsLoaded = false;
 
 /**
  * Shows the server's settings in the checkboxes and lets them be sent back; until then (or with null) the
@@ -84,7 +90,8 @@ function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSetti
     methodBox(method).checked = methods?.[method].enabled ?? false;
     methodBox(method).disabled = !methods?.[method].available;
   }
-  $<HTMLButtonElement>('[data-call="setSettings"]').disabled = !methods;
+  settingsLoaded = !!methods;
+  $<HTMLButtonElement>('[data-call="setSettings"]').disabled = !settingsLoaded;
   return result;
 }
 
@@ -111,7 +118,8 @@ const calls: Record<string, () => Promise<unknown>> = {
   setSettings: () =>
     Madauth.admin
       .setSettings({ methods: { google: methodBox('google').checked, password: methodBox('password').checked } })
-      .then(showSettings),
+      // A refused change (e.g. the last method switched off) leaves the boxes as the user set them.
+      .then((result) => (result.isSuccess ? showSettings(result) : result)),
 };
 
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-call]')) {
@@ -122,8 +130,8 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-call]')
       output.hidden = false;
       output.textContent = `${button.textContent}\n${typeof result === 'string' ? result : JSON.stringify(result, null, 2)}`;
     } finally {
-      // setSettings stays off until the settings were loaded (showSettings decides).
-      if (button.dataset.call !== 'setSettings') button.disabled = false;
+      // setSettings stays off until the settings were loaded.
+      button.disabled = button.dataset.call === 'setSettings' && !settingsLoaded;
     }
   });
 }
