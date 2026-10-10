@@ -2,9 +2,9 @@
 // independent of how the records are stored.
 import { madauthSchema, type FieldType, type Schema } from './schema.js';
 
-/** The SQL table that holds a model, e.g. `madauth_user`. */
+/** The SQL table that holds a model, e.g. `madauth_user`, or `madauth_recovery_code` for `recoveryCode`. */
 export function tableName(model: string): string {
-  return `madauth_${model}`;
+  return `madauth_${columnName(model)}`;
 }
 
 /** The SQL column that holds a field, e.g. `email_normalized` for `emailNormalized`. */
@@ -54,6 +54,15 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
         `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('email')} ${columnTypes[dialect].string};`,
         `DROP TABLE ${tableName('role')};`,
         createTablesSql(dialect, { version: 4, models: { setting: madauthSchema.models.setting } }),
+      ].join('\n'),
+  },
+  {
+    // The authenticator app: which code was used last, and the recovery codes.
+    version: 5,
+    sql: (dialect) =>
+      [
+        `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('lastUsedStep')} ${columnTypes[dialect].number} NOT NULL DEFAULT 0;`,
+        createTablesSql(dialect, { version: 5, models: { recoveryCode: madauthSchema.models.recoveryCode } }),
       ].join('\n'),
   },
 ];

@@ -2,24 +2,46 @@ import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
-import type { MadauthConfig } from './config.js';
+import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
 import { importSigningKeys, type SigningKeys } from './keys.js';
 import { deriveCodeKey, isValidEmail, normalizeEmail } from './password.js';
+import { emailRoutes } from './routes/email.js';
 import { googleRoutes } from './routes/google.js';
+import { body, error } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
-import { SIGN_IN_METHODS, Settings, anyOn, isOn, parseMethodSettings, type MethodSettings, type SignInMethod } from './settings.js';
+import { checkCode, setChallenge, totpRoutes, type NextStep, type TotpKeys } from './routes/totp.js';
+import {
+  SIGN_IN_METHODS,
+  Settings,
+  anyOn,
+  initialMethods,
+  isConfigured,
+  isOn,
+  parseMethodSettings,
+  policyOf,
+  authenticatorOn,
+  type MethodSettings,
+  type SignInMethod,
+} from './settings.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims } from './tokens.js';
+import { deriveTotpKey } from './totp.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
-import { Users } from './users.js';
+import { Users, toMadauthUser, totpAccountKey, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
 
-export { REDIRECT_ERROR_PARAM } from './routes/google.js';
+export { REDIRECT_ERROR_PARAM, REDIRECT_NEXT_PARAM } from './routes/google.js';
 
 /** The answer of the operator's sign-up check. */
 export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | { ok: false; reason: 'rejected'; message: string };
+
+/**
+ * What a primary sign-in method ends in: the user with their session; the next step with the
+ * authenticator app (the challenge cookie is set); or nothing, because the method is switched off.
+ */
+export type SignInStep = { user: MadauthUser } | { next: NextStep; method: SignInMethod } | { disabled: true };
 
 /** What the route modules share. */
 export interface AppContext {
@@ -30,13 +52,25 @@ export interface AppContext {
   isAllowedOrigin(origin: string | undefined): boolean;
   /** Parses an absolute URL whose origin is in ALLOWED_ORIGINS, without its hash; null otherwise. */
   allowedUrl(value: unknown): URL | null;
-  /** Sets the session cookies for the user, as the routes resolved them from the store. */
+  /** Sets the session cookies for the user, as the routes resolved them from the store; returns the user with `amr`. */
   startSession(c: Context, user: MadauthUser, amr: string[], extra?: { sv?: number }): Promise<MadauthUser>;
+  /**
+   * Finishes a primary sign-in method that succeeded: the session, or the next step with the authenticator
+   * app as the policy of `method` and the user's enrollment demand. `amr` is how the user signed in so far;
+   * `profile` is what the method knows beyond the record (e.g. Google's picture). Emits `user.signed_in`.
+   */
+  secondStep(c: Context, user: StoredUser, amr: string[], method: SignInMethod, profile?: { name?: string; picture?: string }): Promise<SignInStep>;
+  /** The user of the request's session, or null if there is none or it has ended; renews it on the way like GET /auth/session. */
+  currentUser(c: Context): Promise<MadauthUser | null>;
   users: Users;
   settings: Settings;
   /** Present when WEBHOOK_URL is configured. */
   webhook?: WebhookClient;
-  /** Whether a sign-in method is on: configured, and not switched off by an admin. Read from the store each time. */
+  /** Whether the server has what a method needs; only a configured method can be on. */
+  configured(method: SignInMethod): boolean;
+  /** Whether the webhook sends the e-mails that confirm an address, so people can sign up with one. */
+  emailVerification: boolean;
+  /** Whether a sign-in method is on: configured, and listed by an admin. Read from the store each time. */
   enabled(method: SignInMethod): Promise<boolean>;
   /** Asks the webhook whether someone may sign up (`signup.before`). Fails closed: without an answer, nobody signs up. */
   checkSignup(data: { email: string; name?: string; locale?: string; method: SignInMethod }): Promise<SignupCheck>;
@@ -54,10 +88,13 @@ export function createApp(config: MadauthConfig): Hono {
   // Browsers treat http://localhost as secure, but only mark cookies Secure when served over https.
   const secure = issuer.startsWith('https:');
   const isAllowedOrigin = (origin: string | undefined) => !!origin && allowedOrigins.includes(origin);
-  const users = new Users(config.store, deriveCodeKey(config.signingKey.d!));
-  const settings = new Settings(config.store);
-  /** Whether the method is configured at all; an admin can only switch a configured method off. */
-  const available = (method: SignInMethod) => (method === 'google' ? !!config.google : !!config.password);
+  const codeKey = deriveCodeKey(config.signingKey.d!);
+  const users = new Users(config.store, codeKey);
+  const methods = methodConfig(config);
+  const settings = new Settings(config.store, initialMethods(methods));
+  const configured = (method: SignInMethod) => isConfigured(methods, method);
+  const emailVerification = sendsVerificationEmails(config);
+  const totpKeys: TotpKeys = { totpKey: deriveTotpKey(config.signingKey.d!), codeKey };
 
   /**
    * Sets the cookies of a session: the session token for app backends, the renewal token for this server
@@ -99,95 +136,6 @@ export function createApp(config: MadauthConfig): Hono {
     deleteCookie(c, RENEWAL_COOKIE, { path: '/auth', secure });
     deleteCookie(c, EXPIRY_COOKIE, { path: '/', domain: cookieDomain, secure });
   };
-
-  const ctx: AppContext = {
-    config,
-    keys,
-    secure,
-    isAllowedOrigin,
-    allowedUrl(value) {
-      let url: URL;
-      try {
-        url = new URL(typeof value === 'string' ? value : '');
-      } catch {
-        return null;
-      }
-      if (!isAllowedOrigin(url.origin)) return null;
-      url.hash = '';
-      return url;
-    },
-    async startSession(c, user, amr, extra) {
-      await issueSession(c, user, amr, extra);
-      return user;
-    },
-    users,
-    settings,
-    webhook: config.webhook ? createWebhookClient(config.webhook, config.webhookFetch) : undefined,
-    async enabled(method) {
-      return isOn(method, available, await settings.methods());
-    },
-    async checkSignup(data) {
-      if (!this.webhook?.wants('signup.before')) return { ok: true };
-      const check = await this.webhook.call('signup.before', data, WEBHOOK_TIMEOUT_MS);
-      if (!check.ok) {
-        console.error(`[madauth] Webhook "signup.before" failed: ${check.reason}`);
-        return { ok: false, reason: 'unavailable' };
-      }
-      const answer = check.body as { allow?: unknown; message?: unknown } | undefined;
-      if (answer?.allow === false) {
-        const message = typeof answer.message === 'string' && answer.message ? answer.message : 'Sign-up is not possible with this e-mail address.';
-        return { ok: false, reason: 'rejected', message };
-      }
-      return { ok: true };
-    },
-    async emit(type, data) {
-      if (!this.webhook?.wants(type)) return;
-      const result = await this.webhook.call(type, data, EVENT_TIMEOUT_MS);
-      if (!result.ok) console.error(`[madauth] Webhook "${type}" failed: ${result.reason}`);
-    },
-  };
-
-  const app = new Hono();
-
-  app.use(
-    '/auth/*',
-    cors({
-      origin: (origin) => (isAllowedOrigin(origin) ? origin : null),
-      credentials: true,
-      allowMethods: ['GET', 'POST'],
-      allowHeaders: ['Content-Type'],
-      maxAge: 600,
-    }),
-  );
-
-  // Only the configured apps may start sign-ins or change the session.
-  app.use('/auth/*', async (c, next) => {
-    if (c.req.method === 'POST' && !isAllowedOrigin(c.req.header('origin'))) {
-      return c.json({ error: 'forbidden_origin' }, 403);
-    }
-    await next();
-  });
-
-  app.get('/health', (c) => c.text('ok'));
-
-  app.get('/.well-known/jwks.json', async (c) => {
-    const { publicJwk } = await keys;
-    c.header('Cache-Control', 'public, max-age=3600');
-    return c.json({ keys: [publicJwk] });
-  });
-
-  // The methods that are on right now, so the web library shows exactly those.
-  app.get('/auth/config', async (c) => {
-    const methods = await settings.methods();
-    const on = (method: SignInMethod) => isOn(method, available, methods);
-    return c.json({
-      google: on('google') ? { clientId: config.google!.clientId, codeFlow: !!config.google!.clientSecret } : null,
-      password: on('password') ? { minLength: config.password!.minLength } : null,
-    });
-  });
-
-  if (config.google) googleRoutes(app, ctx, config.google);
-  if (config.password && ctx.webhook) passwordRoutes(app, ctx, config.password, users, ctx.webhook);
 
   // --- Session ---
 
@@ -233,6 +181,121 @@ export function createApp(config: MadauthConfig): Hono {
     return user;
   };
 
+  const ctx: AppContext = {
+    config,
+    keys,
+    secure,
+    isAllowedOrigin,
+    allowedUrl(value) {
+      let url: URL;
+      try {
+        url = new URL(typeof value === 'string' ? value : '');
+      } catch {
+        return null;
+      }
+      if (!isAllowedOrigin(url.origin)) return null;
+      url.hash = '';
+      return url;
+    },
+    async startSession(c, user, amr, extra) {
+      await issueSession(c, user, amr, extra);
+      return { ...user, amr };
+    },
+    async secondStep(c, user, amr, method, profile) {
+      const methods = await settings.methods();
+      if (!isOn(method, configured, methods)) return { disabled: true };
+      const enrolled = await users.totpAccount(user.id);
+      // The app itself is the method of a sign-up with it: it is set up now, or asked for if it exists already.
+      const policy = method === 'totp' ? 'required' : policyOf(method, methods);
+      const next: NextStep | null = policy === 'none' ? null : enrolled ? 'totp' : policy === 'required' ? 'totp-setup' : null;
+      if (next) {
+        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next });
+        return { next, method };
+      }
+      const result = await this.startSession(c, toMadauthUser(user, profile), amr, { sv: user.sessionVersion });
+      await this.emit('user.signed_in', { user: result, method });
+      return { user: result };
+    },
+    currentUser: currentSession,
+    users,
+    settings,
+    webhook: config.webhook ? createWebhookClient(config.webhook, config.webhookFetch) : undefined,
+    configured,
+    emailVerification,
+    async enabled(method) {
+      return isOn(method, configured, await settings.methods());
+    },
+    async checkSignup(data) {
+      if (!this.webhook?.wants('signup.before')) return { ok: true };
+      const check = await this.webhook.call('signup.before', data, WEBHOOK_TIMEOUT_MS);
+      if (!check.ok) {
+        console.error(`[madauth] Webhook "signup.before" failed: ${check.reason}`);
+        return { ok: false, reason: 'unavailable' };
+      }
+      const answer = check.body as { allow?: unknown; message?: unknown } | undefined;
+      if (answer?.allow === false) {
+        const message = typeof answer.message === 'string' && answer.message ? answer.message : 'Sign-up is not possible with this e-mail address.';
+        return { ok: false, reason: 'rejected', message };
+      }
+      return { ok: true };
+    },
+    async emit(type, data) {
+      if (!this.webhook?.wants(type)) return;
+      // The user in an event is the user, not their session: `amr` (how the session was authenticated) stays out.
+      const user = data.user;
+      const payload = user && typeof user === 'object' && 'amr' in user ? { ...data, user: { ...(user as object), amr: undefined } } : data;
+      const result = await this.webhook.call(type, payload, EVENT_TIMEOUT_MS);
+      if (!result.ok) console.error(`[madauth] Webhook "${type}" failed: ${result.reason}`);
+    },
+  };
+
+  const app = new Hono();
+
+  app.use(
+    '/auth/*',
+    cors({
+      origin: (origin) => (isAllowedOrigin(origin) ? origin : null),
+      credentials: true,
+      allowMethods: ['GET', 'POST'],
+      allowHeaders: ['Content-Type'],
+      maxAge: 600,
+    }),
+  );
+
+  // Only the configured apps may start sign-ins or change the session.
+  app.use('/auth/*', async (c, next) => {
+    if (c.req.method === 'POST' && !isAllowedOrigin(c.req.header('origin'))) {
+      return c.json({ error: 'forbidden_origin' }, 403);
+    }
+    await next();
+  });
+
+  app.get('/health', (c) => c.text('ok'));
+
+  app.get('/.well-known/jwks.json', async (c) => {
+    const { publicJwk } = await keys;
+    c.header('Cache-Control', 'public, max-age=3600');
+    return c.json({ keys: [publicJwk] });
+  });
+
+  // The methods that are on right now, so the web library shows exactly those.
+  app.get('/auth/config', async (c) => {
+    const current = await settings.methods();
+    const on = (method: SignInMethod) => isOn(method, configured, current);
+    return c.json({
+      google: on('google') ? { clientId: config.google!.clientId, codeFlow: !!config.google!.clientSecret, secondFactor: policyOf('google', current) } : null,
+      password: on('password') ? { minLength: config.password!.minLength, secondFactor: policyOf('password', current) } : null,
+      // The app can be set up when it is in use at all; `signIn` says whether it signs in on its own.
+      totp: authenticatorOn(configured, current) ? { signIn: on('totp'), signUp: on('totp') && emailVerification } : null,
+      email: { verification: emailVerification },
+    });
+  });
+
+  if (emailVerification && ctx.webhook) emailRoutes(app, ctx, users, ctx.webhook);
+  if (config.google) googleRoutes(app, ctx, config.google);
+  if (config.password && ctx.webhook) passwordRoutes(app, ctx, config.password, users, ctx.webhook);
+  totpRoutes(app, ctx, totpKeys);
+
   app.get('/auth/session', async (c) => {
     const user = await currentSession(c);
     if (!user) {
@@ -253,6 +316,17 @@ export function createApp(config: MadauthConfig): Hono {
   app.post('/auth/account/delete', async (c) => {
     const user = await currentSession(c);
     if (!user) return c.json({ error: 'no_session' }, 401);
+    const stored = await users.findById(user.id);
+    const authenticator = stored ? await users.totpAccount(user.id) : null;
+    if (stored && authenticator) {
+      // Deleting the user removes their authenticator app too, so like removing it, it takes a current code.
+      const data = await body(c);
+      if (data.code === undefined && data.recoveryCode === undefined) {
+        return error(c, 401, 'code_required', 'Enter a code from your authenticator app (or a recovery code) to delete your account.');
+      }
+      const via = await checkCode(c, ctx, totpKeys, stored, authenticator, data);
+      if (via instanceof Response) return via;
+    }
     // The user with all their sign-in methods: the session proves who they are, whichever way they signed in.
     await users.deleteById(user.id);
     clearSession(c);
@@ -260,7 +334,7 @@ export function createApp(config: MadauthConfig): Hono {
     return c.body(null, 204);
   });
 
-  // --- Admin: claims and settings ---
+  // --- Admin: claims, settings and the authenticator app ---
 
   /** The admin's address if the request comes from one; otherwise the answer to send. */
   const admin = async (c: Context): Promise<{ email: string } | { answer: Response }> => {
@@ -274,10 +348,6 @@ export function createApp(config: MadauthConfig): Hono {
       return { answer: c.json({ error: 'forbidden', message }, 403) };
     }
     return { email };
-  };
-  const body = async (c: Context): Promise<Record<string, unknown>> => {
-    const data = await c.req.json<unknown>().catch(() => null);
-    return data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
   };
   const invalidEmail = (c: Context) => c.json({ error: 'invalid_email', message: 'This is not a valid e-mail address.' }, 400);
   const noUser = (c: Context) => c.json({ error: 'user_not_found', message: 'No user has this e-mail address.' }, 404);
@@ -318,10 +388,20 @@ export function createApp(config: MadauthConfig): Hono {
     return c.json({ email, userId: user.id, claims });
   });
 
-  /** The settings as the admin API answers them: for each method, whether it is configured and whether it is on. */
+  /**
+   * The settings as the admin API answers them: for each method, whether the server is configured for it,
+   * whether it is on, and (Google and password) whether it asks for the authenticator app.
+   */
   const settingsAnswer = (methods: MethodSettings) => ({
     methods: Object.fromEntries(
-      SIGN_IN_METHODS.map((method) => [method, { available: available(method), enabled: isOn(method, available, methods) }]),
+      SIGN_IN_METHODS.map((method) => [
+        method,
+        {
+          configured: configured(method),
+          enabled: isOn(method, configured, methods),
+          ...(method === 'totp' ? {} : { secondFactor: policyOf(method, methods) }),
+        },
+      ]),
     ),
   });
 
@@ -336,15 +416,32 @@ export function createApp(config: MadauthConfig): Hono {
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
-    const changes = parseMethodSettings(data.methods);
-    if (!changes) return invalid(`methods must be an object with true or false for ${SIGN_IN_METHODS.join(' and/or ')}.`);
-    // The guard runs on the value that is written: a change that lands in between is seen.
-    const methods = await settings.changeMethods((current) => {
-      const next = { ...current, ...changes };
-      return anyOn(available, next) ? next : null;
-    }, caller.email);
+    const next = parseMethodSettings(data.methods, { booleans: true });
+    if (!next) {
+      return invalid(
+        `methods must list the sign-in methods that are on (${SIGN_IN_METHODS.join(', ')}), each as true, {} or ` +
+          '{ "secondFactor": "none" | "optional" | "required" } (google and password), e.g. ' +
+          '{ "google": {}, "password": { "secondFactor": "optional" } }. A method that is not listed is off.',
+      );
+    }
+    // The whole list is replaced; the guard runs on the value that is written.
+    const methods = await settings.changeMethods(() => (anyOn(configured, next) ? next : null), caller.email);
     if (!methods) return invalid('At least one sign-in method must stay on.');
     return c.json(settingsAnswer(methods));
+  });
+
+  // The last resort for a user who lost the phone and the recovery codes.
+  app.post('/auth/admin/totp/remove', async (c) => {
+    const caller = await admin(c);
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    if (!isValidEmail(data.email)) return invalidEmail(c);
+    const user = await users.findByEmail(normalizeEmail(data.email));
+    if (!user) return noUser(c);
+    const removed = await users.unlinkAccount(totpAccountKey(user.id));
+    await users.clearRecoveryCodes(user.id);
+    if (removed) await ctx.emit('totp.disabled', { user: toMadauthUser(user), by: caller.email });
+    return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
   });
 
   return app;

@@ -8,8 +8,8 @@ export default defineConfig({
       fileName: 'index',
     },
     rollupOptions: {
-      // Let the consuming app dedupe lit instead of bundling a second copy.
-      external: [/^lit/],
+      // Let the consuming app dedupe lit instead of bundling a second copy; uqr is a dependency like it.
+      external: [/^lit/, 'uqr'],
     },
   },
 });

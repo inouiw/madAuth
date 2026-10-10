@@ -14,4 +14,12 @@ export {
 export { columnName, createTablesSql, tableName, upgradeTablesSql, type SqlDialect } from './store/sql.js';
 export type { MadauthUser } from './user.js';
 export { ADMIN_ROLE, parseClaims, parseRoles, type Claims } from './claims.js';
-export { SIGN_IN_METHODS, type MethodSettings, type SignInMethod } from './settings.js';
+export {
+  METHODS_WITH_SECOND_FACTOR,
+  SECOND_FACTOR_POLICIES,
+  SIGN_IN_METHODS,
+  type MethodSetting,
+  type MethodSettings,
+  type SecondFactorPolicy,
+  type SignInMethod,
+} from './settings.js';

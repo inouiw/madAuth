@@ -59,13 +59,29 @@ describe('Madauth.admin', () => {
 
     expect(await Madauth.admin.getSettings()).toEqual({
       isSuccess: true,
-      methods: { google: { available: true, enabled: true }, password: { available: true, enabled: true } },
+      methods: {
+        google: { configured: true, enabled: true, secondFactor: 'none' },
+        password: { configured: true, enabled: true, secondFactor: 'none' },
+        totp: { configured: true, enabled: false },
+      },
     });
-    expect(await Madauth.admin.setSettings({ methods: { password: false } })).toMatchObject({
+    // The list replaces what was on: password is left out, Google asks for the authenticator app, the app signs in alone.
+    expect(await Madauth.admin.setSettings({ methods: { google: { secondFactor: 'optional' }, totp: true } })).toMatchObject({
       isSuccess: true,
-      methods: { google: { enabled: true }, password: { available: true, enabled: false } },
+      methods: {
+        google: { enabled: true, secondFactor: 'optional' },
+        password: { configured: true, enabled: false },
+        totp: { configured: true, enabled: true },
+      },
     });
-    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/admin/settings/set`, body: { methods: { password: false } } });
+    expect(server.requests.at(-1)).toMatchObject({
+      url: `${SERVER}/auth/admin/settings/set`,
+      body: { methods: { google: { secondFactor: 'optional' }, totp: true } },
+    });
+    server.authenticators.add('grace@example.com');
+    expect(await Madauth.admin.removeAuthenticator('grace@example.com')).toEqual({ isSuccess: true, userId: 'usr_grace' });
+    expect(server.authenticators.has('grace@example.com')).toBe(false);
+    expect(await Madauth.admin.removeAuthenticator('nobody@example.com')).toMatchObject({ isSuccess: false, error: { code: 'user_not_found' } });
   });
 
   it('waits for initialize, and reports when madAuth is not set up', async () => {

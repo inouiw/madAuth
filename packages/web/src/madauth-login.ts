@@ -6,9 +6,12 @@ import {
   providerFor,
   readyForDialog,
   takePendingError,
+  takePendingStep,
   type SignInOptions,
 } from './madauth.js';
 import { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
+import type { PendingStep } from './providers/provider.js';
+import { qrModules, qrViewBox, type QrModules } from './qr.js';
 import type { MadauthError, MadauthErrorCode, MadauthUser, Result } from './result.js';
 import { languageOf, stringsFor, type Strings } from './strings.js';
 
@@ -19,8 +22,21 @@ export interface SignedInDetail {
 
 export type ErrorDetail = { method?: LoginMethodId } & MadauthError;
 
+/** The authenticator app was set up and the recovery codes shown. */
+export interface AuthenticatorEnabledDetail {
+  recoveryCodes: string[];
+}
+
 /** The screens of the dialog. */
-type View = 'signin' | 'signup' | 'check-inbox' | 'forgot' | 'reset';
+type View = 'signin' | 'signup' | 'check-inbox' | 'forgot' | 'reset' | 'totp' | 'totp-code' | 'totp-setup' | 'totp-codes';
+
+/** The step a sign-in goes on with, from the error that says so. */
+function nextStep(error: MadauthError): PendingStep['step'] | undefined {
+  return error.code === 'totp_required' ? 'code' : error.code === 'totp_setup_required' ? 'setup' : undefined;
+}
+
+/** The key in groups of four, as authenticator apps show it. */
+const groupSecret = (secret: string) => secret.replace(/(.{4})(?=.)/g, '$1 ');
 
 const closeIcon = html`
   <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -94,8 +110,9 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
  * It is built only on the public `Madauth` API, so a custom login screen can do everything it does.
  *
  * @fires madauth-signed-in - A user signed in. `detail` is a {@link SignedInDetail}.
- * @fires madauth-cancel - The dialog was closed without signing in.
+ * @fires madauth-cancel - The dialog was closed without signing in (or before the authenticator app was set up).
  * @fires madauth-error - A sign-in failed, or madAuth is not initialized. `detail` is an {@link ErrorDetail}.
+ * @fires madauth-authenticator-enabled - The signed-in user set up the authenticator app and saw the recovery codes. `detail` is an {@link AuthenticatorEnabledDetail}.
  *
  * @cssprop --madauth-primary - Fill color of the primary buttons.
  * @cssprop --madauth-radius - Corner radius of the dialog, buttons and fields.
@@ -104,9 +121,11 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
  * @csspart dialog - The `<dialog>` element.
  * @csspart method - Each sign-in method button.
  * @csspart error - The error message.
- * @csspart form - Each form (sign-in, create account, code, new password).
+ * @csspart form - Each form (sign-in, create account, code, new password, the authenticator app's).
  * @csspart input - Each text field.
  * @csspart link - The text buttons, e.g. "Forgot password?".
+ * @csspart qr - The QR code of the authenticator app's key (an inline SVG, dark on a white background).
+ * @csspart codes - The list of recovery codes.
  */
 export class MadauthLogin extends LitElement {
   static override properties = {
@@ -117,6 +136,9 @@ export class MadauthLogin extends LitElement {
     view: { state: true },
     busy: { state: true },
     email: { state: true },
+    setup: { state: true },
+    recoveryCodes: { state: true },
+    useRecovery: { state: true },
   };
 
   /** Title shown at the top of the dialog. Default: "Sign in" in the dialog's language. */
@@ -148,6 +170,22 @@ export class MadauthLogin extends LitElement {
   /** Length of the password last sent for a new account or a reset, to explain a `weak_password` error. */
   private passwordLength = 0;
 
+  /** The method whose sign-in is under way: for the second step, and for a sign-up with the authenticator app. */
+  private primary: LoginMethodId = 'password';
+
+  /** The authenticator app's setup in progress: the key to show as QR code and as text. */
+  private setup?: { secret: string; qr: QrModules };
+
+  /** Whether the setup is a step of a sign-in (the policy requires the app), as opposed to the signed-in user's choice. */
+  private setupForSignIn = false;
+
+  /** The recovery codes to show once the app is set up, and the user when the setup finished a sign-in. */
+  private recoveryCodes?: string[];
+  private setupUser?: MadauthUser;
+
+  /** A recovery code instead of a code from the app. */
+  private useRecovery = false;
+
   private stopFollowingLocale?: () => void;
 
   /** Google's button, rendered into the slot of the sign-in view. */
@@ -171,18 +209,59 @@ export class MadauthLogin extends LitElement {
   async open(options: SignInOptions = {}): Promise<void> {
     const email = typeof options.email === 'string' ? options.email.trim() : '';
     if (email) this.email = email;
-    await this.updateComplete;
-    this.dialog.showModal();
-    const ready = await readyForDialog();
-    if (!this.dialog.open) return;
-    this.usable = ready.isSuccess;
+    const ready = await this.show();
+    if (!ready) return;
     if (ready.isSuccess && Madauth.password.pendingReset) this.view = 'reset';
+    // A sign-in that started outside the dialog (the redirect flow, an e-mail link) goes on with the app.
+    const pending = ready.isSuccess ? takePendingStep() : undefined;
+    if (pending) this.continueWith(pending);
     const error = ready.isSuccess ? takePendingError() : ready.error;
     if (error) this.showError(error);
     // Reopened with nothing changed there is no re-render, so render Google's button here.
     await this.updateComplete;
     this.syncGoogleButton();
     if (email) this.prefill(email);
+  }
+
+  /**
+   * Opens the dialog on the "Set up authenticator app" screen for the signed-in user. Usually called
+   * through `Madauth.setUpAuthenticator()`, which resolves once the recovery codes were shown.
+   */
+  async openAuthenticatorSetup(): Promise<void> {
+    this.setupForSignIn = false;
+    this.view = 'totp-setup';
+    const ready = await this.show();
+    if (!ready) return;
+    if (!ready.isSuccess) {
+      this.showError(ready.error, 'totp');
+      return;
+    }
+    await this.startSetup();
+  }
+
+  /** Shows the dialog and waits for madAuth; undefined if the dialog was closed meanwhile. */
+  private async show(): Promise<Result | undefined> {
+    await this.updateComplete;
+    this.dialog.showModal();
+    const ready = await readyForDialog();
+    if (!this.dialog.open) return undefined;
+    this.usable = ready.isSuccess;
+    // What the views show depends on the providers and the server's settings, which a new initialize may have changed.
+    this.requestUpdate();
+    return ready;
+  }
+
+  /** Goes on with the authenticator app where a sign-in left off. */
+  private continueWith(pending: PendingStep): void {
+    this.primary = pending.method;
+    this.useRecovery = false;
+    if (pending.step === 'code') {
+      this.view = 'totp-code';
+      return;
+    }
+    this.setupForSignIn = true;
+    this.view = 'totp-setup';
+    void this.startSetup();
   }
 
   /** Shows `email` in the e-mail field, also if the field was edited since, and moves on to the password. */
@@ -228,6 +307,8 @@ export class MadauthLogin extends LitElement {
   private onDialogClose(): void {
     this.googleButton?.remove();
     this.googleButton = undefined;
+    // Closing the recovery codes counts as having seen them: the app is set up either way.
+    if (this.view === 'totp-codes') this.completeSetup();
     if (this.dialog.returnValue !== 'done') {
       this.dispatchEvent(new CustomEvent('madauth-cancel', { bubbles: true, composed: true }));
     }
@@ -237,11 +318,27 @@ export class MadauthLogin extends LitElement {
     this.view = 'signin';
     this.busy = false;
     this.resetCode = undefined;
+    this.primary = 'password';
+    this.setup = undefined;
+    this.setupForSignIn = false;
+    this.recoveryCodes = undefined;
+    this.setupUser = undefined;
+    this.useRecovery = false;
   }
 
-  /** Ends a sign-in attempt: closes on success, shows the error otherwise. */
+  /**
+   * Ends a sign-in attempt: closes on success, goes on with the authenticator app when the method's
+   * policy asks for it, and shows the error otherwise.
+   */
   private finish(method: LoginMethodId, result: Result<{ user: MadauthUser }>): void {
     if (!result.isSuccess) {
+      const step = nextStep(result.error);
+      if (step) {
+        this.continueWith({ step, method });
+        this.notice = undefined;
+        this.error = null;
+        return;
+      }
       this.showError(result.error, method);
       return;
     }
@@ -250,10 +347,26 @@ export class MadauthLogin extends LitElement {
     this.close();
   }
 
+  /** The recovery codes were seen: the setup is done, and a sign-in that waited for it is finished. */
+  private completeSetup(): void {
+    const recoveryCodes = this.recoveryCodes;
+    if (!recoveryCodes) return;
+    this.recoveryCodes = undefined;
+    if (this.setupUser) {
+      const detail: SignedInDetail = { method: this.primary, user: this.setupUser };
+      this.dispatchEvent(new CustomEvent('madauth-signed-in', { detail, bubbles: true, composed: true }));
+    } else {
+      const detail: AuthenticatorEnabledDetail = { recoveryCodes };
+      this.dispatchEvent(new CustomEvent('madauth-authenticator-enabled', { detail, bubbles: true, composed: true }));
+    }
+    this.dialog.returnValue = 'done';
+    if (this.dialog.open) this.dialog.close('done');
+  }
+
   private showError(error: MadauthError, method?: LoginMethodId): void {
     this.notice = undefined;
     this.error = { ...error, method };
-    const detail: ErrorDetail = { method, ...error };
+    const detail: ErrorDetail = { ...error, method };
     this.dispatchEvent(new CustomEvent('madauth-error', { detail, bubbles: true, composed: true }));
   }
 
@@ -266,11 +379,21 @@ export class MadauthLogin extends LitElement {
     if (!providerFor(m.id)) {
       this.error = null;
       this.notice = (strings) => strings.comingSoon(strings.methods[m.id].label);
+      return;
+    }
+    if (m.id === 'totp' && this.totpAvailable) {
+      this.useRecovery = false;
+      this.goTo('totp');
     }
   }
 
   private get passwordAvailable(): boolean {
     return this.usable && !!providerFor('password');
+  }
+
+  /** Whether the authenticator app signs in on its own here (the e-mail address and a code). */
+  private get totpAvailable(): boolean {
+    return this.usable && !!providerFor('totp') && !!Madauth.totp.policy?.signIn;
   }
 
   /** Switches the view, keeping the e-mail address typed so far. */
@@ -316,14 +439,24 @@ export class MadauthLogin extends LitElement {
     const { email = '', password = '', name = '' } = this.fields(e);
     this.email = email.trim();
     this.passwordLength = [...password].length;
-    const result = await this.run(() => Madauth.password.signUp({ email, password, name: name.trim() || undefined }));
+    const withApp = this.primary === 'totp';
+    const result = await this.run(() =>
+      withApp
+        ? Madauth.totp.signUp({ email, name: name.trim() || undefined })
+        : Madauth.password.signUp({ email, password, name: name.trim() || undefined }),
+    );
     if (!result) return;
     if (!result.isSuccess) {
-      this.showError(result.error, 'password');
+      this.showError(result.error, this.primary);
       return;
     }
     this.inboxPurpose = 'verify';
     this.view = 'check-inbox';
+  }
+
+  /** The scope that confirms the address of the sign-up under way: the password's, or the authenticator app's. */
+  private get signUpScope() {
+    return this.primary === 'totp' ? Madauth.totp : Madauth.password;
   }
 
   private async onForgot(e: Event): Promise<void> {
@@ -347,8 +480,8 @@ export class MadauthLogin extends LitElement {
       this.goTo('reset');
       return;
     }
-    const result = await this.run(() => Madauth.password.verifyEmail({ email: this.email, code }));
-    if (result) this.finish('password', result);
+    const result = await this.run(() => this.signUpScope.verifyEmail({ email: this.email, code }));
+    if (result) this.finish(this.primary, result);
   }
 
   private async onReset(e: Event): Promise<void> {
@@ -370,11 +503,11 @@ export class MadauthLogin extends LitElement {
   private async resend(purpose: 'verify' | 'reset'): Promise<void> {
     const email = this.email;
     const result = await this.run(() =>
-      purpose === 'verify' ? Madauth.password.sendVerificationEmail({ email }) : Madauth.password.sendResetEmail({ email }),
+      purpose === 'verify' ? this.signUpScope.sendVerificationEmail({ email }) : Madauth.password.sendResetEmail({ email }),
     );
     if (!result) return;
     if (!result.isSuccess) {
-      this.showError(result.error, 'password');
+      this.showError(result.error, purpose === 'verify' ? this.primary : 'password');
       return;
     }
     this.inboxPurpose = purpose;
@@ -393,6 +526,14 @@ export class MadauthLogin extends LitElement {
         return s.resetPassword;
       case 'reset':
         return s.chooseNewPassword;
+      case 'totp':
+        return s.methods.totp.label;
+      case 'totp-code':
+        return s.totpCode.heading;
+      case 'totp-setup':
+        return s.totpSetup.heading;
+      case 'totp-codes':
+        return s.totpCodes.heading;
       default:
         return this.heading || s.signIn;
     }
@@ -410,6 +551,11 @@ export class MadauthLogin extends LitElement {
     if (error.code === 'too_many_attempts') return s.tooManyAttempts(error.message);
     if (error.code === 'temporarily_unavailable') return this.view === 'signup' ? s.signUpUnavailable : s.emailsUnavailable;
     if (error.code === 'email_unverified' && error.method === 'password') return s.confirmEmailFirst;
+    if (error.code === 'invalid_credentials' && error.method === 'totp') return s.totpInvalid;
+    if (error.code === 'other_method' && error.methods?.length) {
+      const names: Partial<Record<string, string>> = s.methodNames;
+      return s.otherMethod(error.methods.map((method) => names[method] ?? method).join(s.and));
+    }
     const texts: Partial<Record<MadauthErrorCode, string>> = s.errors;
     return texts[error.code] ?? s.errorFallback;
   }
@@ -437,6 +583,7 @@ export class MadauthLogin extends LitElement {
 
   private renderError(error: MadauthError & { method?: LoginMethodId }) {
     const resend = error.code === 'email_unverified' && error.method === 'password' && this.view === 'signin';
+    const restart = error.code === 'setup_expired' && this.view === 'totp-setup';
     return html`
       <div class="notice error" part="error" role="alert" data-code=${error.code}>
         ${infoIcon}
@@ -445,6 +592,10 @@ export class MadauthLogin extends LitElement {
           ${resend
             ? html`<button class="link" part="link" type="button" data-action="resend-verification" ?disabled=${this.busy}
                 @click=${() => this.resend('verify')}>${this.strings.sendEmailAgain}</button>`
+            : null}
+          ${restart
+            ? html`<button class="link" part="link" type="button" data-action="restart-setup" ?disabled=${this.busy}
+                @click=${() => this.startSetup()}>${this.strings.totpSetup.startAgain}</button>`
             : null}
         </span>
       </div>
@@ -461,6 +612,14 @@ export class MadauthLogin extends LitElement {
         return this.renderForgot();
       case 'reset':
         return this.renderReset();
+      case 'totp':
+        return this.renderTotp();
+      case 'totp-code':
+        return this.renderTotpCode();
+      case 'totp-setup':
+        return this.renderTotpSetup();
+      case 'totp-codes':
+        return this.renderTotpCodes();
       default:
         return this.renderSignInView();
     }
@@ -469,7 +628,8 @@ export class MadauthLogin extends LitElement {
   private renderSignInView() {
     const google = loginMethods.find((m) => m.id === 'google');
     const password = loginMethods.find((m) => m.id === 'password');
-    const others = loginMethods.filter((m) => m !== google && m !== password);
+    // The authenticator app is listed when it signs in on its own; with its provider but without that, not at all.
+    const others = loginMethods.filter((m) => m !== google && m !== password && (m.id !== 'totp' || !providerFor('totp') || this.totpAvailable));
     const s = this.strings;
     return html`
       ${google ? this.renderGoogle(google) : null}
@@ -528,7 +688,7 @@ export class MadauthLogin extends LitElement {
               <button class="link" part="link" type="button" data-action="forgot" @click=${() => this.goTo('forgot')}>
                 ${s.forgotPassword}
               </button>
-              <button class="link" part="link" type="button" data-action="signup" @click=${() => this.goTo('signup')}>
+              <button class="link" part="link" type="button" data-action="signup" @click=${() => this.startSignUp('password')}>
                 ${s.createAccount}
               </button>
             </p>
@@ -537,26 +697,211 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
+  /** To the "Create account" form, with a password or with the authenticator app alone. */
+  private startSignUp(method: 'password' | 'totp'): void {
+    this.primary = method;
+    this.goTo('signup');
+  }
+
   private renderSignUp() {
     const s = this.strings;
+    const withApp = this.primary === 'totp';
     const minLength = Madauth.password.policy?.minLength;
     return html`
+      ${withApp ? html`<p class="hint">${s.totpSignUpHint}</p>` : null}
       <form part="form" class="signup" @submit=${this.onSignUp}>
         <div class="field">
           <label for="name">${s.name} <span class="optional">${s.optional}</span></label>
           <input part="input" id="name" name="name" type="text" autocomplete="name" />
         </div>
         ${this.emailField('email')}
-        <div class="field">
-          <label for="new-password">${s.password}</label>
-          <input part="input" id="new-password" name="password" type="password" autocomplete="new-password" />
-          ${minLength ? html`<p class="hint">${s.minLength(minLength)}</p>` : null}
-        </div>
+        ${withApp
+          ? null
+          : html`
+              <div class="field">
+                <label for="new-password">${s.password}</label>
+                <input part="input" id="new-password" name="password" type="password" autocomplete="new-password" />
+                ${minLength ? html`<p class="hint">${s.minLength(minLength)}</p>` : null}
+              </div>
+            `}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
           <span class="label">${s.createAccount}</span>
         </button>
       </form>
       ${this.backLink(s.haveAccount)}
+    `;
+  }
+
+  // --- The authenticator app ---
+
+  /** The field for the code from the app, or for a recovery code. */
+  private codeField() {
+    const s = this.strings;
+    return this.useRecovery
+      ? html`
+          <div class="field">
+            <label for="recovery-code">${s.recoveryCode}</label>
+            <input part="input" id="recovery-code" name="recoveryCode" type="text" autocomplete="off" spellcheck="false" />
+          </div>
+        `
+      : html`
+          <div class="field">
+            <label for="code">${s.appCode}</label>
+            <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" />
+            <p class="hint">${s.totpHint}</p>
+          </div>
+        `;
+  }
+
+  /** What was typed into {@link codeField}, as the scope takes it. */
+  private codeOptions(fields: Record<string, string>): { code: string } | { recoveryCode: string } {
+    return this.useRecovery ? { recoveryCode: (fields.recoveryCode ?? '').trim() } : { code: (fields.code ?? '').replace(/\s/g, '') };
+  }
+
+  private toggleRecoveryLink() {
+    const s = this.strings;
+    return html`
+      <button class="link" part="link" type="button" data-action="toggle-recovery" @click=${() => (this.useRecovery = !this.useRecovery)}>
+        ${this.useRecovery ? s.useApp : s.useRecoveryCode}
+      </button>
+    `;
+  }
+
+  /** Signing in with the app alone: the e-mail address and a code. */
+  private renderTotp() {
+    const s = this.strings;
+    return html`
+      <form part="form" class="totp" @submit=${this.onTotpSignIn}>
+        ${this.emailField('email')}
+        ${this.codeField()}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.signIn}</span>
+        </button>
+      </form>
+      <p class="links">
+        ${this.toggleRecoveryLink()}
+        ${Madauth.totp.policy?.signUp
+          ? html`<button class="link" part="link" type="button" data-action="signup" @click=${() => this.startSignUp('totp')}>${s.createAccount}</button>`
+          : null}
+        <button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${s.backToSignIn}</button>
+      </p>
+    `;
+  }
+
+  private async onTotpSignIn(e: Event): Promise<void> {
+    const fields = this.fields(e);
+    this.email = (fields.email ?? '').trim();
+    const result = await this.run(() => Madauth.totp.signIn({ email: this.email, ...this.codeOptions(fields) }));
+    if (result) this.finish('totp', result);
+  }
+
+  /** The second step after a password or Google sign-in. */
+  private renderTotpCode() {
+    const s = this.strings;
+    return html`
+      <p class="lead">${s.totpCode.lead}</p>
+      <form part="form" class="totp-code" @submit=${this.onTotpVerify}>
+        ${this.codeField()}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.continue}</span>
+        </button>
+      </form>
+      <p class="links">
+        ${this.toggleRecoveryLink()}
+        <button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${s.backToSignIn}</button>
+      </p>
+    `;
+  }
+
+  private async onTotpVerify(e: Event): Promise<void> {
+    const fields = this.fields(e);
+    const result = await this.run(() => Madauth.totp.verify(this.codeOptions(fields)));
+    if (!result) return;
+    if (!result.isSuccess && result.error.code === 'challenge_expired') {
+      // The sign-in starts over.
+      this.goTo('signin');
+      this.showError(result.error, this.primary);
+      return;
+    }
+    this.finish(this.primary, result);
+  }
+
+  /** Setting the app up: the QR code (and the key as text), and the first code from the app. */
+  private renderTotpSetup() {
+    const s = this.strings;
+    const setup = this.setup;
+    const policy = Madauth.totp.policy;
+    const asks = (policy?.secondFactorFor ?? []).map((method) => s.methods[method].label).join(s.and);
+    return html`
+      <p class="lead">${this.setupForSignIn ? s.totpSetup.requiredLead : s.totpSetup.lead}</p>
+      ${!this.setupForSignIn && asks ? html`<p class="hint">${s.totpSetup.effects.secondFactor(asks)}</p>` : null}
+      ${!this.setupForSignIn && policy?.signIn ? html`<p class="hint">${s.totpSetup.effects.standalone}</p>` : null}
+      ${setup
+        ? html`
+            <svg part="qr" class="qr" viewBox=${qrViewBox(setup.qr.size)} role="img" aria-label=${s.totpSetup.qrLabel} shape-rendering="crispEdges">
+              <path d=${setup.qr.d} fill="currentColor" />
+            </svg>
+            <p class="hint">${s.totpSetup.cantScan} <code class="secret">${groupSecret(setup.secret)}</code></p>
+            <form part="form" class="totp-setup" @submit=${this.onConfirmSetup}>
+              <div class="field">
+                <label for="code">${s.appCode}</label>
+                <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" />
+              </div>
+              <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+                <span class="label">${s.totpSetup.turnOn}</span>
+              </button>
+            </form>
+          `
+        : this.busy
+          ? html`<p class="hint" role="status">${s.loading}</p>`
+          : null}
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>
+      </p>
+    `;
+  }
+
+  /** Asks the server for a new key and shows it: the first step of the setup, also after "Start again". */
+  private async startSetup(): Promise<void> {
+    this.setup = undefined;
+    const result = await this.run(() => Madauth.totp.startSetup());
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, 'totp');
+      return;
+    }
+    this.setup = { secret: result.secret, qr: qrModules(result.uri) };
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLInputElement>('form.totp-setup input[name="code"]')?.focus();
+  }
+
+  private async onConfirmSetup(e: Event): Promise<void> {
+    const code = (this.fields(e).code ?? '').replace(/\s/g, '');
+    const result = await this.run(() => Madauth.totp.confirmSetup({ code }));
+    if (!result) return;
+    if (!result.isSuccess) {
+      // The key on the screen is of no use any more; "Start again" gets a new one.
+      if (result.error.code === 'setup_expired') this.setup = undefined;
+      this.showError(result.error, 'totp');
+      return;
+    }
+    this.recoveryCodes = result.recoveryCodes;
+    this.setupUser = result.user;
+    this.setup = undefined;
+    this.goTo('totp-codes');
+  }
+
+  /** The recovery codes, shown once. */
+  private renderTotpCodes() {
+    const s = this.strings;
+    return html`
+      <p class="lead">${s.totpCodes.lead}</p>
+      <ol part="codes" class="codes">
+        ${(this.recoveryCodes ?? []).map((code) => html`<li><code>${code}</code></li>`)}
+      </ol>
+      <button part="method" class="submit" type="button" data-action="saved" @click=${() => this.completeSetup()}>
+        <span class="label">${s.totpCodes.saved}</span>
+      </button>
     `;
   }
 
@@ -1022,6 +1367,42 @@ export class MadauthLogin extends LitElement {
       color: inherit;
     }
 
+    .qr {
+      display: block;
+      width: 176px;
+      height: 176px;
+      margin: 0 auto;
+      padding: 8px;
+      box-sizing: content-box;
+      border-radius: var(--_control-radius);
+      /* Dark on light in both themes: not every authenticator app reads an inverted code. */
+      color: #000;
+      background: #fff;
+    }
+
+    .secret,
+    .codes {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 0.06em;
+    }
+
+    .secret {
+      user-select: all;
+      color: var(--_text);
+    }
+
+    .codes {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 16px;
+      margin: 0;
+      padding: 12px 16px;
+      list-style: none;
+      line-height: 24px;
+      border: 1px solid var(--_line);
+      border-radius: var(--_group-radius);
+    }
+
     @media (max-width: 480px) {
       :host {
         --_control-height: 48px;
@@ -1047,5 +1428,6 @@ declare global {
     'madauth-signed-in': CustomEvent<SignedInDetail>;
     'madauth-cancel': CustomEvent<void>;
     'madauth-error': CustomEvent<ErrorDetail>;
+    'madauth-authenticator-enabled': CustomEvent<AuthenticatorEnabledDetail>;
   }
 }

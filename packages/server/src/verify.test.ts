@@ -18,10 +18,12 @@ describe('createSessionVerifier', () => {
     const { app, verifySession } = await setup();
     const token = await signIn(app);
 
-    expect(await verifySession(new Request('https://api.example.com', { headers: { Cookie: `a=1; madauth_session=${token}` } }))).toEqual(ada);
-    expect(await verifySession(new Request('https://api.example.com', { headers: { Authorization: `Bearer ${token}` } }))).toEqual(ada);
-    expect(await verifySession(`theme=dark; madauth_session=${token}`)).toEqual(ada);
-    expect(await verifySession(token)).toEqual(ada);
+    // With `amr`: how the session was authenticated, so a backend can ask for the authenticator app.
+    const expected = { ...ada, amr: ['google'] };
+    expect(await verifySession(new Request('https://api.example.com', { headers: { Cookie: `a=1; madauth_session=${token}` } }))).toEqual(expected);
+    expect(await verifySession(new Request('https://api.example.com', { headers: { Authorization: `Bearer ${token}` } }))).toEqual(expected);
+    expect(await verifySession(`theme=dark; madauth_session=${token}`)).toEqual(expected);
+    expect(await verifySession(token)).toEqual(expected);
   });
 
   it('V2: returns null for an expired, tampered or foreign token, or no session', async () => {

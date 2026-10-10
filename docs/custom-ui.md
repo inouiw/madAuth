@@ -3,13 +3,13 @@
 madAuth's dialog (`Madauth.signIn()`) is optional. Everything it does is available as methods, grouped by sign-in method, so you can build a login screen that fits your app. The dialog itself is built only on these methods.
 
 ```ts
-import { Madauth, GoogleFedcm, Password } from '@madauth/web';
+import { Madauth, GoogleFedcm, Password, Totp } from '@madauth/web';
 
-Madauth.initialize({ providers: [new GoogleFedcm(), new Password()], ui: 'custom' });
+Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp()], ui: 'custom' });
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 ```
 
-`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.signIn()` returns an `invalid_options` error.
+`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.signIn()` and `Madauth.setUpAuthenticator()` return an `invalid_options` error.
 
 All methods resolve to a result object and never throw for expected failures:
 
@@ -28,14 +28,14 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 
 | Method | Result | Errors |
 | --- | --- | --- |
-| `signIn({ email, password })` | `{ user }` | `invalid_credentials`, `email_unverified`, `too_many_attempts` |
+| `signIn({ email, password })` | `{ user }` | `invalid_credentials`, `email_unverified`, `too_many_attempts`; `totp_required` or `totp_setup_required` when the sign-in goes on with the [authenticator app](#authenticator-app-madauthtotp) |
 | `signUp({ email, password, name?, redirectTo? })` | — | `invalid_email`, `weak_password`, `signup_rejected`, `temporarily_unavailable` |
 | `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
-| `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked` |
+| `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `totp_required` or `totp_setup_required` like `signIn` |
 | `sendResetEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
-| `confirmReset({ newPassword, token? })` or `confirmReset({ newPassword, email, code })` | `{ user }` | `link_invalid`, `code_invalid`, `codes_locked`, `weak_password` |
+| `confirmReset({ newPassword, token? })` or `confirmReset({ newPassword, email, code })` | `{ user }` | `link_invalid`, `code_invalid`, `codes_locked`, `weak_password`; `totp_required` or `totp_setup_required` like `signIn` |
 | `pendingReset` | `boolean` | True when the page was opened from a reset link |
-| `policy` | `{ minLength } \| null` | The server's password rules, for a hint next to the field |
+| `policy` | `{ minLength, secondFactor } \| null` | The server's password rules, for a hint next to the field, and whether the method asks for the authenticator app (`none`, `optional`, `required`) |
 
 `signUp`, `sendVerificationEmail` and `sendResetEmail` succeed whether or not the address has an account (or a password to reset), so nobody can probe for accounts. Tell the user to check their inbox in every case.
 
@@ -86,7 +86,65 @@ Use these `autocomplete` values so browsers offer to save and fill passwords and
 | E-mail | `email` (or `username`) |
 | Password when signing in | `current-password` |
 | Password when signing up or resetting | `new-password` |
-| Code from the e-mail | `one-time-code` |
+| Code from the e-mail, or from the authenticator app | `one-time-code` |
+
+## Authenticator app: `Madauth.totp`
+
+Needs `new Totp()` in `initialize`, and the app in use on the server: as the second factor of a method whose [policy](server.md#sign-in-methods) is `optional` or `required`, or as a method of its own. Otherwise the methods fail with `flow_not_enabled` and `initialize` leaves the provider out.
+
+| Method | Result | Errors |
+| --- | --- | --- |
+| `verify({ code })` or `verify({ recoveryCode })` | `{ user }` | `code_invalid`, `too_many_attempts`, `challenge_expired` |
+| `startSetup()` | `{ secret, uri, qrSvg }` | `no_session` |
+| `confirmSetup({ code })` | `{ recoveryCodes, user? }` | `code_invalid`, `setup_expired`, `no_session` |
+| `remove({ code })` or `remove({ recoveryCode })` | — | `code_invalid`, `required_by_policy`, `no_session` |
+| `newRecoveryCodes({ code })` or `newRecoveryCodes({ recoveryCode })` | `{ recoveryCodes }` | `code_invalid`, `no_authenticator`, `no_session` |
+| `status()` | `{ enabled, recoveryCodesLeft }` | `no_session` |
+| `signIn({ email, code })` or `signIn({ email, recoveryCode })` | `{ user }` | `invalid_credentials`, `too_many_attempts`, `method_disabled` |
+| `signUp({ email, name?, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `temporarily_unavailable`, `method_disabled` |
+| `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
+| `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `totp_setup_required` for a sign-up with the app |
+| `pendingStep` | `{ step: 'code' \| 'setup', method } \| null` | What a sign-in under way still needs, e.g. after the redirect flow or an e-mail link |
+| `policy` | `{ signIn, signUp, secondFactorFor } \| null` | What the app does on this server: whether it signs in on its own, whether people can sign up with it, and which methods ask for it |
+
+### The second step
+
+When the policy of Google or password asks for the app, `password.signIn` (also `verifyEmail` and `confirmReset`) and the Google button's `onResult` end with `totp_required` instead of a user: the password was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. With `totp_setup_required` the user has no app yet and the policy requires one: run the setup below; `confirmSetup` then signs them in and returns `user` as well. A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
+
+A sign-in that started outside your screen, i.e. the redirect flow (`#madauth_next=…`) or the link in a confirmation e-mail, leaves its step in `pendingStep` after `initialize`: show the matching form.
+
+```ts
+const result = await Madauth.password.signIn({ email, password });
+if (!result.isSuccess && result.error.code === 'totp_required') showCodeForm();
+if (!result.isSuccess && result.error.code === 'totp_setup_required') showSetup();
+
+codeForm.onsubmit = async () => {
+  const done = await Madauth.totp.verify({ code: codeInput.value }); // or { recoveryCode }
+  if (!done.isSuccess) showError(done.error);
+};
+```
+
+### Setting the app up
+
+While the user is signed in (whichever way), or in the setup step of a sign-in, call `startSetup()`: it returns the key as `secret` (base32, to type into the app), `uri` (`otpauth://totp/...`) and `qrSvg`, the QR code of the URI as an SVG string. Put `qrSvg` into the page with `innerHTML`; it draws the dark modules in `currentColor` with no background, so give the container a white background and a size. Then ask for the first code the app shows and call `confirmSetup({ code })` within ten minutes; after that it fails with `setup_expired`, and you start again. Show the `recoveryCodes` it returns once, and tell the user to save them. Say on the screen what the app will do (`policy`): that signing in with the password or Google then asks for a code, and whether the app signs in on its own.
+
+```ts
+const setup = await Madauth.totp.startSetup();
+if (setup.isSuccess) {
+  qrContainer.innerHTML = setup.qrSvg;
+  keyElement.textContent = setup.secret;
+}
+confirmForm.onsubmit = async () => {
+  const done = await Madauth.totp.confirmSetup({ code: codeInput.value });
+  if (done.isSuccess) showRecoveryCodes(done.recoveryCodes);
+};
+```
+
+`status()` says whether the signed-in user has the app; `remove` and `newRecoveryCodes` take a current code from it or a recovery code. `Madauth.deleteAccount({ code })` needs one as well once the app is set up.
+
+### The app on its own
+
+When the server lists the app as a method (`policy.signIn`), `signIn({ email, code })` signs in with the address and a code from the app, with `invalid_credentials` for an unknown address, one without the app and a wrong code alike. With `policy.signUp`, `signUp({ email, name? })` creates an account that signs in with the app alone: it sends the confirmation e-mail, `verifyEmail` (or the link) ends with `totp_setup_required`, and the setup above signs the new user in.
 
 ## Google: `Madauth.google`
 
@@ -128,4 +186,4 @@ The locale is used for:
 
 ## Signing out and the session
 
-These work the same with or without the dialog: `Madauth.signOut()`, `Madauth.deleteAccount()`, `Madauth.getSession()`, `Madauth.sessionReady()`, `Madauth.currentUser`, `Madauth.onAuthStateChanged(listener)` and, for admins, `Madauth.admin`. See the [README](../README.md#using-madauth-in-your-app).
+These work the same with or without the dialog: `Madauth.signOut()`, `Madauth.deleteAccount()` (with `{ code }` once the authenticator app is set up), `Madauth.getSession()`, `Madauth.sessionReady()`, `Madauth.currentUser` (with `amr`, how the session was authenticated), `Madauth.onAuthStateChanged(listener)` and, for admins, `Madauth.admin`. See the [README](../README.md#using-madauth-in-your-app).

@@ -7,6 +7,11 @@ export interface MadauthUser {
   picture?: string;
   /** What admins attached to the user, e.g. `{ roles: ['admin'] }`. Absent without claims. */
   claims?: Record<string, unknown>;
+  /**
+   * How the session was authenticated (RFC 8176): `pwd` (password), `google`, `otp` (the authenticator app,
+   * on its own or as the second factor), e.g. `['pwd', 'otp']`. Present on a user that comes with a session.
+   */
+  amr?: string[];
 }
 
 const errorCodes = [
@@ -33,6 +38,14 @@ const errorCodes = [
   'invalid_claims',
   'user_not_found',
   'invalid_settings',
+  'totp_required',
+  'totp_setup_required',
+  'challenge_expired',
+  'setup_expired',
+  'required_by_policy',
+  'code_required',
+  'no_authenticator',
+  'other_method',
   'unknown',
 ] as const;
 
@@ -42,6 +55,10 @@ export interface MadauthError {
   code: MadauthErrorCode;
   /** Human-readable details, e.g. which option is invalid. */
   message: string;
+  /** With `totp_required` and `totp_setup_required`: the method whose sign-in goes on with the authenticator app. */
+  method?: string;
+  /** With `other_method`: how the address signs in instead, e.g. `['password']`. */
+  methods?: string[];
 }
 
 /** What every madAuth method resolves to. Expected failures are returned, never thrown. */

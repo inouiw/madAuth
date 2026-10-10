@@ -26,10 +26,11 @@ npx @madauth/server init
 | Google client ID | none | Turns on Google sign-in. See [Google Cloud Console setup](server.md#google-cloud-console-setup). |
 | Google client secret | none | Only asked with a client ID. Enables the redirect flow (`GoogleRedirect`). Without it, Google sign-in runs in the browser (`GoogleFedcm`). |
 | E-mail & password sign-in? | yes | |
+| Sign-up with the authenticator app alone? | no | Accounts without a password: the address is confirmed by e-mail, then the app is set up. The app as a second factor needs no answer here; admins set that [policy](server.md#sign-in-methods) while the server runs. |
 | Database | `sqlite:./madauth.db` | The SQLite file that stores the users, whichever way they sign in. |
-| Webhook URL | `http://localhost:8790/webhook` | Only with e-mail & password sign-in: where madAuth hands over its e-mails (step 4). |
+| Webhook URL | `http://localhost:8790/webhook` | Only with e-mail & password sign-in or sign-up with the app: where madAuth hands over its e-mails (step 4). |
 
-Choose at least one sign-in method. At the end, `init` prints the next steps for your answers. They are the steps below.
+Choose at least one way to create users. At the end, `init` prints the next steps for your answers. They are the steps below.
 
 Never commit `.env`: it holds the signing key and your secrets.
 
@@ -39,7 +40,7 @@ Every question is also an option, so a script needs no prompts. `--yes` takes th
 npx @madauth/server init --yes --app-url http://localhost:3000
 ```
 
-The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--password` or `--no-password`, `--database` and `--webhook-url`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
+The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--password` or `--no-password`, `--totp` or `--no-totp`, `--database` and `--webhook-url`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
 
 ## 3. Start the server
 
@@ -88,12 +89,12 @@ Other dev servers have a similar setting. In production, your reverse proxy or C
 
 ## 6. Sign users in
 
-Pass the providers that match your answers: `Password`, and `GoogleFedcm` or `GoogleRedirect`.
+Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, and `Totp` for the authenticator app (as a second factor once an admin sets the policy, or on its own once an admin lists it with `set-methods`; a user sets the app up from your app with `Madauth.setUpAuthenticator()`).
 
 ```ts
-import { Madauth, Password } from '@madauth/web';
+import { Madauth, Password, Totp } from '@madauth/web';
 
-Madauth.initialize({ providers: [new Password()] });
+Madauth.initialize({ providers: [new Password(), new Totp()] });
 Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
 signInButton.onclick = () => Madauth.signIn();
 ```
@@ -114,6 +115,12 @@ To make a user an admin, who can then manage [claims](server.md#claims) and [sig
 
 ```bash
 npx @madauth/server set-roles admin@example.com admin --env-file .env
+```
+
+To ask every password user for the authenticator app, from the command line (or as an admin from your app):
+
+```bash
+npx @madauth/server set-methods google password=required --env-file .env
 ```
 
 ## Next
