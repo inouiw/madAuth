@@ -38,7 +38,7 @@ jobs:
       - run: npm run build -w demo
         env:
           DEMO_BASE: /demo/
-      - run: npm ci && npm run typecheck && npm run build && npx cdk synth -q
+      - run: npm ci && npm run typecheck && npm run build && npx cdk synth -q -c issuer=https://example.com
         working-directory: deploy/aws
       - run: npm ci && npm run typecheck && npx cdk synth -q -c webhooksDir=$GITHUB_WORKSPACE/madAuth-webhooks
         working-directory: site/infra
