@@ -39,6 +39,8 @@ new SiteStack(app, 'MadAuthSite', {
 new GithubOidcStack(app, 'MadAuthSiteGithub', {
   env: { account, region },
   repo: context('githubRepo')!,
+  ownerId: context('githubOwnerId'),
+  repoId: context('githubRepoId'),
   environment: context('githubEnvironment')!,
   existingProviderArn: context('githubOidcProviderArn'),
 });

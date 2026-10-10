@@ -5,6 +5,8 @@
     "region": "eu-central-1",
     "googleClientId": "644214582-l1r8ltvhodf6r9g6fani7lkna6jjkonu.apps.googleusercontent.com",
     "githubRepo": "inouiw/madAuth",
+    "githubOwnerId": "12761049",
+    "githubRepoId": "1402044431",
     "githubEnvironment": "site",
     "@aws-cdk/core:defaultCrossStackReferences": "strong"
   }

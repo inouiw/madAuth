@@ -76,6 +76,7 @@ cd deploy/aws && npm ci && npm run build && cd ../../site/infra && npm ci
    - Create the environment `site` with yourself as required reviewer. Limit it to tags `v*` and the branch `main`.
    - Add the variable `AWS_DEPLOY_ROLE_ARN` (the output `DeployRoleArn` of `MadAuthSiteGithub`) and the secret `ALERT_EMAIL`.
    - If the account already has a GitHub OIDC provider (an account can only have one), deploy `MadAuthSiteGithub` with `-c githubOidcProviderArn=<its ARN>`.
+   - The role trusts the repository by GitHub's ids (`githubOwnerId` and `githubRepoId` in `cdk.json`, from `gh api repos/inouiw/madAuth --jq '[.owner.id, .id]'`), not by name: a repository with "immutable subject claims" on identifies itself by the ids, and a repository that later takes over the name can't deploy. Without the ids the role trusts the name, and a repository with immutable claims fails with "Not authorized to perform sts:AssumeRoleWithWebIdentity".
 
 ## Deploying
 
