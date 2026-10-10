@@ -26,8 +26,8 @@ npx @madauth/server init
 | Google client ID | none | Turns on Google sign-in. See [Google Cloud Console setup](server.md#google-cloud-console-setup). |
 | Google client secret | none | Only asked with a client ID. Enables the redirect flow (`GoogleRedirect`). Without it, Google sign-in runs in the browser (`GoogleFedcm`). |
 | E-mail & password sign-in? | yes | |
-| Database | `sqlite:./madauth.db` | The SQLite file that stores the users. |
-| Webhook URL | `http://localhost:8790/webhook` | Where madAuth hands over its e-mails (step 4). |
+| Database | `sqlite:./madauth.db` | The SQLite file that stores the users, whichever way they sign in. |
+| Webhook URL | `http://localhost:8790/webhook` | Only with e-mail & password sign-in: where madAuth hands over its e-mails (step 4). |
 
 Choose at least one sign-in method. At the end, `init` prints the next steps for your answers. They are the steps below.
 
@@ -104,15 +104,22 @@ With Google sign-in, add your app URL under **Authorized JavaScript origins** in
 
 Open your app and click your sign-in button. In the dialog, choose "Create account" and enter an e-mail address and a password. The confirmation e-mail appears in the receiver's terminal: open its link, or type its code into the dialog. You are signed in, and your `onAuthStateChanged` listener gets the user.
 
-To create a user without the e-mail, e.g. a first admin:
+To create a user without the e-mail:
 
 ```bash
 npx @madauth/server create-user admin@example.com --env-file .env
+```
+
+To make a user an admin, who can then manage [claims](server.md#claims) and [sign-in methods](server.md#sign-in-methods) from your app, after they signed in once:
+
+```bash
+npx @madauth/server set-roles admin@example.com admin --env-file .env
 ```
 
 ## Next
 
 - [Using madAuth in your app](../README.md#using-madauth-in-your-app): what `initialize`, `signIn` and the other methods do.
 - [Styling the login form](styling.md) and [Building your own login screen](custom-ui.md).
+- [Upgrading](upgrading.md) from an earlier madAuth.
 - [Running the madAuth server](server.md): all settings, sending real e-mails, hosting with Docker, AWS Lambda or Azure Functions, and verifying the session in your backend.
 - For production, run `init` again with your app's https URL. Each environment needs a signing key of its own.

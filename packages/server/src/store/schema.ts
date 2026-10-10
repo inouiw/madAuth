@@ -46,8 +46,9 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 3,
+  version: 4,
   models: {
+    /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
       fields: {
         id: { type: 'string', primaryKey: true },
@@ -59,10 +60,12 @@ export const madauthSchema = {
         lastMailAt: { type: 'number' },
         /** Wrong e-mail codes in a row, counted across e-mails (since version 2). */
         wrongCodes: { type: 'number' },
+        /** What admins attached to the user, as JSON, e.g. `{"roles":["admin"]}` (since version 4). */
+        claims: { type: 'string', nullable: true },
         createdAt: { type: 'number' },
       },
     },
-    /** How a user signs in. `key` is e.g. `password:<userId>`; later `google:<sub>` or `totp:<userId>`. */
+    /** How a user signs in. `key` is `password:<userId>` or `google:<sub>`; later e.g. `totp:<userId>`. */
     account: {
       fields: {
         id: { type: 'string', primaryKey: true },
@@ -71,6 +74,8 @@ export const madauthSchema = {
         secret: { type: 'string', nullable: true },
         failedAttempts: { type: 'number' },
         lockedUntil: { type: 'number' },
+        /** The address the provider reported at the last sign-in, e.g. Google's current primary address (since version 4). */
+        email: { type: 'string', nullable: true },
         createdAt: { type: 'number' },
       },
     },
@@ -85,16 +90,13 @@ export const madauthSchema = {
         expiresAt: { type: 'number' },
       },
     },
-    /**
-     * The roles of an e-mail address (since version 3). `id` is the normalized address, so the roles
-     * apply whichever way its owner signs in. `roles` holds the names separated by spaces.
-     */
-    role: {
+    /** A setting admins change at runtime, as JSON (since version 4), e.g. `methods`: which sign-in methods are on. */
+    setting: {
       fields: {
         id: { type: 'string', primaryKey: true },
-        roles: { type: 'string' },
+        value: { type: 'string' },
         updatedAt: { type: 'number' },
-        /** The address of the admin who set them; empty when set from the command line. */
+        /** The address of the admin who set it; empty when set from the command line. */
         updatedBy: { type: 'string', nullable: true },
       },
     },

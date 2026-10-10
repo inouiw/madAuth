@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 const ada = {
-  id: 'google:1001',
+  id: expect.stringMatching(/^usr_/),
   email: 'ada@example.com',
   name: 'Ada Lovelace',
   picture: 'https://example.com/ada.png',
@@ -284,7 +284,7 @@ describe('session', () => {
     const { payload, protectedHeader } = await jwtVerify(session, jwks, { issuer: ISSUER });
 
     expect(protectedHeader.alg).toBe('ES256');
-    expect(payload).toMatchObject({ sub: 'google:1001', email: 'ada@example.com', amr: ['google'] });
+    expect(payload).toMatchObject({ sub: expect.stringMatching(/^usr_/), email: 'ada@example.com', amr: ['google'] });
   });
 
   it('X2: sets an HttpOnly, Secure, SameSite=Lax cookie and honours COOKIE_DOMAIN', async () => {

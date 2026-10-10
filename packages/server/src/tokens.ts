@@ -50,10 +50,10 @@ export interface SessionClaims extends JWTPayload {
   name?: string;
   picture?: string;
   amr: string[];
-  /** Session version of users from the store; a password reset increments it and so ends older sessions. */
+  /** The user's session version; a password reset increments it and so ends older sessions. */
   sv?: number;
-  /** The roles of the e-mail address when the session was issued. */
-  roles?: string[];
+  /** The user's claims when the session was issued. */
+  claims?: Record<string, unknown>;
 }
 
 export function signSession(
@@ -71,14 +71,14 @@ export function signSession(
     email_verified: user.email ? true : undefined,
     name: user.name,
     picture: user.picture,
-    roles: user.roles?.length ? user.roles : undefined,
+    claims: user.claims && Object.keys(user.claims).length ? user.claims : undefined,
     amr,
   };
   return signToken(keys, issuer, SESSION_TYP, claims, ttlSeconds);
 }
 
 /**
- * Signs the renewal token of a session: who the user is and how they signed in, but not their roles,
+ * Signs the renewal token of a session: who the user is and how they signed in, but not their claims,
  * which are read again at every renewal.
  */
 export function signRenewal(
@@ -106,6 +106,6 @@ export function userFromClaims(claims: SessionClaims): MadauthUser {
   if (claims.email) user.email = claims.email;
   if (claims.name) user.name = claims.name;
   if (claims.picture) user.picture = claims.picture;
-  if (Array.isArray(claims.roles) && claims.roles.length) user.roles = claims.roles;
+  if (claims.claims && typeof claims.claims === 'object' && Object.keys(claims.claims).length) user.claims = claims.claims;
   return user;
 }

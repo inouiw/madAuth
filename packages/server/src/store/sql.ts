@@ -29,8 +29,32 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
       `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('wrongCodes')} ${columnTypes[dialect].number} NOT NULL DEFAULT 0;`,
   },
   {
+    // Roles were per e-mail address in their own table; since version 4 they are one of the user's claims.
     version: 3,
-    sql: (dialect) => createTablesSql(dialect, { version: 3, models: { role: madauthSchema.models.role } }),
+    sql: (dialect) =>
+      createTablesSql(dialect, {
+        version: 3,
+        models: {
+          role: {
+            fields: {
+              id: { type: 'string', primaryKey: true },
+              roles: { type: 'string' },
+              updatedAt: { type: 'number' },
+              updatedBy: { type: 'string', nullable: true },
+            },
+          },
+        },
+      }),
+  },
+  {
+    version: 4,
+    sql: (dialect) =>
+      [
+        `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('claims')} ${columnTypes[dialect].string};`,
+        `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('email')} ${columnTypes[dialect].string};`,
+        `DROP TABLE ${tableName('role')};`,
+        createTablesSql(dialect, { version: 4, models: { setting: madauthSchema.models.setting } }),
+      ].join('\n'),
   },
 ];
 

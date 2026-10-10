@@ -11,7 +11,7 @@ async function setup() {
   return { app, verifySession: createSessionVerifier({ issuer: ISSUER, jwks }) };
 }
 
-const ada = { id: 'google:1001', email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://example.com/ada.png' };
+const ada = { id: expect.stringMatching(/^usr_/), email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://example.com/ada.png' };
 
 describe('createSessionVerifier', () => {
   it('V1: accepts a Request with the cookie or a bearer token, a cookie header and a bare token', async () => {

@@ -3,8 +3,12 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { base64url } from 'jose';
 import type { AppContext } from '../app.js';
 import type { MadauthConfig } from '../config.js';
-import { verifyGoogleIdToken } from '../google.js';
+import { verifyGoogleIdToken, type GoogleProfile } from '../google.js';
+import { normalizeEmail } from '../password.js';
 import { randomString, readToken, signToken } from '../tokens.js';
+import type { MadauthUser } from '../user.js';
+import { googleAccountKey, toMadauthUser, type StoredUser } from '../users.js';
+import { localeOf } from '../webhooks.js';
 
 const NONCE_COOKIE = 'madauth_nonce';
 const NONCE_TYP = 'madauth-nonce+jwt';
@@ -25,7 +29,12 @@ interface OAuthState {
   nonce: string;
   verifier: string;
   returnTo: string;
+  locale?: string;
 }
+
+type SignInResult =
+  | { ok: true; user: MadauthUser; sv: number }
+  | { ok: false; error: 'signup_rejected' | 'temporarily_unavailable'; message: string };
 
 async function pkceChallenge(verifier: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
@@ -34,13 +43,77 @@ async function pkceChallenge(verifier: string): Promise<string> {
 
 /** Google sign-in: FedCM / One Tap, and the server-side code flow when a client secret is configured. */
 export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<MadauthConfig['google']>): void {
-  const { config, keys, secure } = ctx;
+  const { config, keys, secure, users } = ctx;
   const { issuer } = config;
   const callbackUrl = `${issuer}/auth/google/callback`;
+
+  /**
+   * The user behind a verified Google profile. A returning Google account is known by its `sub`; a new one
+   * joins the user with the same (verified) address, or becomes a new user after the operator's sign-up check.
+   */
+  const resolveUser = async (profile: GoogleProfile, locale: string | undefined): Promise<SignInResult> => {
+    const key = googleAccountKey(profile.sub);
+    const emailNormalized = normalizeEmail(profile.email);
+    const signedIn = (user: StoredUser) => ({ ok: true as const, user: toMadauthUser(user, profile), sv: user.sessionVersion });
+
+    const account = await users.findAccountByKey(key);
+    if (account) {
+      const user = await users.findById(account.userId);
+      if (user) {
+        // Google's address may change; the link to the user stays, and only the account notes the new one.
+        if (account.email !== profile.email) await users.updateAccount(account.id, { email: profile.email });
+        return signedIn(user);
+      }
+      // Left behind by a deletion that did not finish: it would hold the key forever.
+      await users.deleteAccount(account.id);
+    }
+
+    // Twice at most: a user created between the lookup and the create is found the second time.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const existing = await users.findByEmail(emailNormalized);
+      if (existing) {
+        // Google verified the address, so its owner owns this user: the Google account joins it. An
+        // unconfirmed password sign-up with the address was made by whoever, so its password goes.
+        await users.verifyByProvider(existing);
+        if (!(await users.linkAccount(existing.id, { key, email: profile.email }))) {
+          // The account appeared meanwhile; it belongs to whoever has it now.
+          const linked = await users.findAccountByKey(key);
+          const owner = linked && (await users.findById(linked.userId));
+          if (!owner) return { ok: false, error: 'temporarily_unavailable', message: 'Please try again.' };
+          return signedIn(owner);
+        }
+        return signedIn(existing);
+      }
+      if (attempt === 0) {
+        const check = await ctx.checkSignup({ email: profile.email, name: profile.name, locale, method: 'google' });
+        if (!check.ok) {
+          return check.reason === 'rejected'
+            ? { ok: false, error: 'signup_rejected', message: check.message }
+            : { ok: false, error: 'temporarily_unavailable', message: 'Signing up is not possible right now. Please try again later.' };
+        }
+      }
+      const user = await users.createUser({
+        email: profile.email,
+        emailNormalized,
+        name: profile.name ?? null,
+        emailVerified: true,
+        account: { key, email: profile.email },
+      });
+      if (user) {
+        await ctx.emit('user.created', { user: toMadauthUser(user), method: 'google' });
+        return signedIn(user);
+      }
+    }
+    return { ok: false, error: 'temporarily_unavailable', message: 'Please try again.' };
+  };
+
+  const disabled = (c: Context) =>
+    c.json({ error: 'method_disabled', message: 'Google sign-in is switched off.' }, 403);
 
   // --- FedCM / One Tap (the ID token is issued in the browser and verified here) ---
 
   app.post('/auth/google/nonce', async (c) => {
+    if (!(await ctx.enabled('google'))) return disabled(c);
     const nonce = randomString();
     const token = await signToken(await keys, issuer, NONCE_TYP, { nonce }, NONCE_TTL);
     setCookie(c, NONCE_COOKIE, token, {
@@ -54,7 +127,8 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
   });
 
   app.post('/auth/google/verify', async (c) => {
-    const body = await c.req.json<{ credential?: unknown }>().catch(() => ({}) as { credential?: unknown });
+    if (!(await ctx.enabled('google'))) return disabled(c);
+    const body = await c.req.json<{ credential?: unknown; locale?: unknown }>().catch(() => ({}) as { credential?: unknown; locale?: unknown });
     if (typeof body.credential !== 'string' || !body.credential) {
       return c.json({ error: 'verification_failed', message: 'credential is missing' }, 400);
     }
@@ -71,7 +145,11 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
       return c.json({ error: result.error, message: result.reason }, result.error === 'email_unverified' ? 403 : 401);
     }
     deleteCookie(c, NONCE_COOKIE, { path: '/auth/google', secure });
-    const user = await ctx.startSession(c, result.user, ['google']);
+    const resolved = await resolveUser(result.profile, localeOf(body.locale));
+    if (!resolved.ok) {
+      return c.json({ error: resolved.error, message: resolved.message }, resolved.error === 'signup_rejected' ? 403 : 503);
+    }
+    const user = await ctx.startSession(c, resolved.user, ['google'], { sv: resolved.sv });
     await ctx.emit('user.signed_in', { user, method: 'google' });
     return c.json({ user });
   });
@@ -80,6 +158,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
 
   const requireCodeFlow = async (c: Context, next: () => Promise<void>) => {
     if (!google.clientSecret) return c.json({ error: 'not_found' }, 404);
+    if (!(await ctx.enabled('google'))) return disabled(c);
     await next();
   };
 
@@ -92,6 +171,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
       nonce: randomString(),
       verifier: randomString(),
       returnTo: returnUrl.href,
+      locale: localeOf(c.req.query('locale')),
     };
     const token = await signToken(await keys, issuer, OAUTH_TYP, { ...oauth }, OAUTH_TTL);
     // Lax: the cookie must come back on the top-level redirect from Google to /callback.
@@ -159,7 +239,9 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
       keys: config.jwksResolver,
     });
     if (!result.ok) return back(result.error);
-    const user = await ctx.startSession(c, result.user, ['google']);
+    const resolved = await resolveUser(result.profile, typeof oauth.locale === 'string' ? oauth.locale : undefined);
+    if (!resolved.ok) return back(resolved.error);
+    const user = await ctx.startSession(c, resolved.user, ['google'], { sv: resolved.sv });
     await ctx.emit('user.signed_in', { user, method: 'google' });
     return back();
   });

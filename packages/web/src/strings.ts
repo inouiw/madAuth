@@ -68,6 +68,7 @@ export const en = {
     link_invalid: 'This link is invalid or has expired. Please ask for a new e-mail.',
     code_invalid: 'The code is wrong or has expired.',
     codes_locked: 'Too many wrong codes. Please ask for a new e-mail and use the link in it.',
+    method_disabled: 'This way of signing in is switched off at the moment.',
   } satisfies Partial<Record<MadauthErrorCode, string>>,
   /** For every other error code. */
   errorFallback: 'Sign-in is not available right now.',
@@ -88,6 +89,9 @@ export const en = {
     cancelled: 'The Google sign-in was cancelled.',
     verification_failed: 'The Google sign-in could not be verified. Please try again.',
     email_unverified: 'Your Google account’s e-mail address is not verified.',
+    signup_rejected: 'Signing up with this Google account is not possible.',
+    method_disabled: 'Google sign-in is switched off at the moment.',
+    temporarily_unavailable: 'Google sign-in is not available right now. Please try again later.',
   } satisfies Partial<Record<MadauthErrorCode, string>>,
   googleFailed: (code: string) => `Google sign-in failed (${code}).`,
 };
@@ -147,6 +151,7 @@ export const de: Strings = {
     link_invalid: 'Dieser Link ist ungültig oder abgelaufen. Bitte fordern Sie eine neue E-Mail an.',
     code_invalid: 'Der Bestätigungscode ist falsch oder abgelaufen.',
     codes_locked: 'Zu viele falsche Bestätigungscodes. Bitte fordern Sie eine neue E-Mail an und öffnen Sie den Link darin.',
+    method_disabled: 'Diese Anmeldeart ist derzeit abgeschaltet.',
   },
   errorFallback: 'Die Anmeldung ist derzeit nicht möglich.',
   confirmEmailFirst:
@@ -164,6 +169,9 @@ export const de: Strings = {
     cancelled: 'Die Anmeldung mit Google wurde abgebrochen.',
     verification_failed: 'Die Anmeldung mit Google konnte nicht überprüft werden. Bitte versuchen Sie es erneut.',
     email_unverified: 'Die E-Mail-Adresse Ihres Google-Kontos ist nicht bestätigt.',
+    signup_rejected: 'Mit diesem Google-Konto ist keine Registrierung möglich.',
+    method_disabled: 'Die Anmeldung mit Google ist derzeit abgeschaltet.',
+    temporarily_unavailable: 'Die Anmeldung mit Google ist derzeit nicht verfügbar. Bitte versuchen Sie es später erneut.',
   },
   googleFailed: (code) => `Die Anmeldung mit Google ist fehlgeschlagen (${code}).`,
 };
