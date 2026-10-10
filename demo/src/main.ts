@@ -17,6 +17,10 @@ for (const description of document.querySelectorAll<HTMLElement>('.flow-descript
 
 const google = flow === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();
 
+// The public demo gives nobody the role admin: an admin could change every visitor's claims and switch
+// sign-in methods off for everyone. Visitors are told so, and how to try the admin API on their machine.
+$('[data-hosted]').hidden = !location.hostname.endsWith('madauth.com');
+
 // No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin.
 void Madauth.initialize({ providers: [google, new Password()] }).then((result) => {
   // The server offers the redirect flow only with a client secret (and Google switched on); otherwise
@@ -51,6 +55,7 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
     return;
   }
   if (!email.value) email.value = user.email ?? '';
+  $('#admin-note').hidden = isAdmin(user);
   // An admin sees the server's settings in the checkboxes before they can send them back.
   if (isAdmin(user) && settingsLoadedFor !== user.id) {
     settingsLoadedFor = user.id;

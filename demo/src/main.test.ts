@@ -1,14 +1,24 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import html from '../index.html?raw';
 
+interface DemoUser {
+  id: string;
+  name: string;
+  email: string;
+  picture: string;
+  claims?: Record<string, unknown>;
+}
+
 const ada = {
   id: 'usr_1',
   name: 'Ada Lovelace',
   email: 'ada@example.com',
   picture: 'https://example.com/ada.png',
   claims: { roles: ['admin'] },
-};
-let sessionUser: typeof ada | null = null;
+} satisfies DemoUser;
+let sessionUser: DemoUser | null = null;
+/** Who the next Google sign-in signs in as. */
+let signInAs: DemoUser = ada;
 let settings = { google: { available: true, enabled: true }, password: { available: true, enabled: false } };
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
@@ -30,8 +40,8 @@ vi.stubGlobal(
       case 'POST /auth/google/nonce':
         return json({ nonce: 'n' });
       case 'POST /auth/google/verify':
-        sessionUser = ada;
-        return json({ user: ada });
+        sessionUser = signInAs;
+        return json({ user: signInAs });
       case 'POST /auth/logout':
         sessionUser = null;
         return new Response(null, { status: 204 });
@@ -128,6 +138,7 @@ describe('demo page', () => {
     // The admin fields start with the signed-in user's own address, and an admin's checkboxes with the
     // server's settings; only then can they be sent back.
     expect($<HTMLInputElement>('#claims-email').value).toBe('ada@example.com');
+    expect($('#admin-note').hidden).toBe(true);
     await expect.poll(() => $<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
     expect($<HTMLInputElement>('#method-google').checked).toBe(true);
     expect($<HTMLInputElement>('#method-password').checked).toBe(false);
@@ -202,6 +213,26 @@ describe('demo page', () => {
     expect(sessionUser).toBeNull();
     expect($('#output').textContent).toContain('Madauth.deleteAccount()');
     expect($('#output').textContent).toContain('"isSuccess": true');
+  });
+
+  it('tells a user without the role admin why the admin calls fail, and loads no settings for them', async () => {
+    const { claims: _, ...bob } = { ...ada, id: 'usr_2', name: 'Bob', email: 'bob@example.com' };
+    signInAs = bob;
+    const requestsBefore = vi.mocked(fetch).mock.calls.length;
+    gis.callback!({ credential: 'token' });
+
+    await expect.poll(() => $('#api').hidden).toBe(false);
+    expect($('#admin-note').hidden).toBe(false);
+    expect($('#admin-note').textContent).toContain('forbidden');
+    // The sentence about madauth.com is only for that host.
+    expect($('#admin-note [data-hosted]').hidden).toBe(true);
+    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(true);
+    const paths = vi.mocked(fetch).mock.calls.slice(requestsBefore).map(([url]) => new URL(String(url)).pathname);
+    expect(paths).not.toContain('/auth/admin/settings/get');
+
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    signInAs = ada;
   });
 
   it('switches between light and dark theme when the theme button is clicked', () => {

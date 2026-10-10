@@ -187,6 +187,16 @@ code {
   background: light-dark(#fff6e5, rgb(245 194 107 / 0.12));
 }
 
+.note a {
+  color: inherit;
+}
+
+#api .note {
+  margin: 0;
+  color: light-dark(#7a4b00, #f5c26b);
+  text-align: left;
+}
+
 /* The signed-in user's claims and the results of the API calls. */
 pre {
   margin: 0;

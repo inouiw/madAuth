@@ -58,8 +58,18 @@
         </p>
         <h2>Admin</h2>
         <p>
-          For users with the role <code>admin</code>. The first one is made on the server:
+          For users with the role <code>admin</code>, which is given on the server:
           <code>npx @madauth/server set-roles you@example.com admin</code>
+        </p>
+        <!-- Shown to a signed-in user without the role. madauth.com gives it to nobody: see src/main.ts. -->
+        <p id="admin-note" class="note" hidden>
+          You don't have the role, so these calls answer <code>forbidden</code>.
+          <span data-hosted hidden>
+            Nobody gets it on madauth.com: an admin could change every visitor's claims and switch sign-in methods
+            off for everyone.
+          </span>
+          To try the admin API, <a href="https://github.com/inouiw/madAuth#getting-started">run the demo on your machine</a>
+          and give yourself the role with the command above.
         </p>
         <label>E-mail <input id="claims-email" type="email" autocomplete="off" spellcheck="false" /></label>
         <label>Claims (JSON) <textarea id="claims-json" rows="2" spellcheck="false">{ "roles": ["admin"] }</textarea></label>
