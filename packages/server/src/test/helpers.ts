@@ -118,6 +118,16 @@ export async function signIn(app: App): Promise<string> {
   return cookies(res).madauth_session.value;
 }
 
+/**
+ * The token with one character of its payload changed, so its signature no longer matches. Not the signature's
+ * last characters: they are mostly padding bits, which decoders ignore, so now and then a "tampered" signature
+ * decodes to the same bytes and verifies. The signature covers the encoded payload, so any change there breaks it.
+ */
+export function tamperedToken(token: string): string {
+  const [header, payload, signature] = token.split('.');
+  return `${header}.${payload.slice(0, -1)}${payload.endsWith('A') ? 'B' : 'A'}.${signature}`;
+}
+
 // --- E-mail & password, webhooks ---
 
 export const WEBHOOK_URL = 'https://hooks.example.com/madauth';
