@@ -103,6 +103,12 @@ export const madauthSchema = {
          * factor. Unique, so a user has one primary method at most (since version 7; empty in older records).
          */
         primaryUserId: { type: 'string', nullable: true, unique: true },
+        /**
+         * Whether the account is a second factor (an authenticator app that is a step of the user's sign-in
+         * method, or a phone for SMS codes) rather than a sign-in method. Empty in records from before version 7,
+         * which madAuth tells apart by their key (since version 7).
+         */
+        secondFactor: { type: 'boolean', nullable: true },
         createdAt: { type: 'number' },
       },
     },

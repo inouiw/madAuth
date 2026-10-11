@@ -229,5 +229,7 @@ export async function signUpVerified(
  * account is the sign-in method, so both are. A user can't get a second sign-in method any more.
  */
 export async function linkGoogleAsBefore(store: StoreAdapter, userId: string, sub: string, email: string): Promise<void> {
-  await new Users(store).linkAccount(userId, { key: `google:${sub}`, email, primary: false });
+  const account = await new Users(store).linkAccount(userId, { key: `google:${sub}`, email, primary: false });
+  // Records from then say neither whether they sign in nor whether they are a second factor.
+  await store.update('account', { id: account!.id }, { secondFactor: null });
 }

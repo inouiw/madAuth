@@ -50,6 +50,11 @@ export interface StoredAccount {
    * Null in records from before schema version 7 as well: see {@link isPrimary}.
    */
   primaryUserId: string | null;
+  /**
+   * True for a second factor (an authenticator app that is a step of the user's sign-in method, or SMS codes),
+   * false for a sign-in method. Null in records from before schema version 7: see {@link isPrimary}.
+   */
+  secondFactor: boolean | null;
   createdAt: number;
 }
 
@@ -119,11 +124,13 @@ const ALWAYS_PRIMARY = ['password', 'google', 'email-link'];
 
 /**
  * Whether an account is how its user signs in, as opposed to a second factor; `accounts` are all of the
- * user's. Records from before schema version 7 don't say so: password, Google and the e-mail link always
- * are, SMS never is, and the authenticator app is when the user has none of the others (they signed up with it).
+ * user's. Records since schema version 7 say so. Older ones don't: password, Google and the e-mail link
+ * always are, SMS never is, and the authenticator app is when the user has none of the others (they signed
+ * up with it). Only those records are guessed, so a second factor never becomes a way in, whatever goes.
  */
 export function isPrimary(account: StoredAccount, accounts: StoredAccount[]): boolean {
   if (account.primaryUserId) return true;
+  if (account.secondFactor === true) return false;
   const method = methodOf(account);
   if (method !== 'totp') return ALWAYS_PRIMARY.includes(method);
   return !accounts.some((other) => ALWAYS_PRIMARY.includes(methodOf(other)));
@@ -370,6 +377,7 @@ export class Users {
       setupId: account.setupId ?? null,
       phone: account.phone ?? null,
       primaryUserId: primary ? userId : null,
+      secondFactor: !primary,
       createdAt: Date.now(),
     };
     return (await this.store.create('account', record as unknown as Row)) ? record : null;

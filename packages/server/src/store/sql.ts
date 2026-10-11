@@ -82,8 +82,9 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
       ].join('\n'),
   },
   {
-    // One primary sign-in method per user, and when a user's sign-up was complete. Older records stay empty:
-    // madAuth tells their primary method from the account's key, and counts their sign-up as complete.
+    // One primary sign-in method per user, which accounts are second factors, and when a user's sign-up was
+    // complete. Older records stay empty: madAuth tells them apart by the account's key, and counts their
+    // sign-up as complete.
     version: 7,
     sql: (dialect) =>
       [
@@ -91,6 +92,7 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
         // SQLite can't add a UNIQUE column, so the constraint is an index.
         `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('primaryUserId')} ${columnType(dialect, madauthSchema.models.account.fields.primaryUserId)};`,
         `CREATE UNIQUE INDEX ${tableName('account')}_${columnName('primaryUserId')} ON ${tableName('account')} (${columnName('primaryUserId')});`,
+        `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('secondFactor')} ${columnType(dialect, madauthSchema.models.account.fields.secondFactor)};`,
       ].join('\n'),
   },
 ];

@@ -46,6 +46,7 @@ function testAccount(overrides: Row = {}): Row {
     setupId: null,
     phone: null,
     primaryUserId: null,
+    secondFactor: null,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };

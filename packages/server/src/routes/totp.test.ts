@@ -150,7 +150,7 @@ describe('setting up the authenticator app while signed in', () => {
     expect(String(account!.secret)).not.toContain(secret.toString('base64url'));
     expect(await store.findMany('recoveryCode', { userId })).toHaveLength(10);
     // A second factor of her password: the account says it is not how she signs in.
-    expect(account).toMatchObject({ primaryUserId: null });
+    expect(account).toMatchObject({ primaryUserId: null, secondFactor: true });
     expect(await store.findOne('account', { key: `password:${userId}` })).toMatchObject({ primaryUserId: userId });
     expect(hook.calls.at(-1)).toEqual({ type: 'user.second_factor_enabled', data: { user: graceUser, method: 'totp' } });
     const status = await app.request('/auth/totp/status', { headers: withSession(session) });
@@ -253,6 +253,15 @@ describe('setting up the authenticator app while signed in', () => {
     expect(alone.status).toBe(401);
     expect(await alone.json()).toEqual({ error: 'invalid_credentials', message: 'E-mail or code is wrong.' });
     expect(hook.types()).toEqual([]);
+
+    // The account says it is a second factor: it stays one when her password goes, e.g. by a deletion that
+    // stopped partway, and never becomes a way in by itself.
+    const [{ id: userId }] = await store.findMany('user', {});
+    const password = await store.findOne('account', { key: `password:${userId}` });
+    await store.delete('account', { key: `password:${userId}` });
+    advance(60_000);
+    expect((await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).status).toBe(401);
+    await store.create('account', password!);
 
     // With password sign-in off, the app is no way in for her either, so it can go.
     await setMethods(store, { google: { secondFactor: 'none' }, totp: {} });
