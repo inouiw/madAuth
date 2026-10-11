@@ -528,7 +528,7 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
       const method = name as MethodId;
       if (policy !== undefined && (!hasSecondFactor(method) || !(SECOND_FACTOR_POLICIES as readonly string[]).includes(policy))) {
         return {
-          output: `"${arg}": google, password and email-link take a policy for the authenticator app as a second factor: ${SECOND_FACTOR_POLICIES.join(', ')}.`,
+          output: `"${arg}": google, password and email-link take a policy for the second factor: ${SECOND_FACTOR_POLICIES.join(', ')}.`,
           exitCode: 1,
         };
       }

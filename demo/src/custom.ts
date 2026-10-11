@@ -247,8 +247,10 @@ onSubmit('#totp-code-form', async ({ code }) => {
 /** Asks the server for a new key and shows it as a QR code (an SVG from the library) and as text. */
 async function startSetup(): Promise<void> {
   show('totp-setup');
-  // During a sign-in, a phone can be added instead of the app when the server has SMS codes on.
-  $('#use-phone').hidden = !(Madauth.totp.pendingStep?.step === 'setup' && Madauth.sms.available);
+  // During a sign-in, a phone can be added instead of the app when the server has SMS codes on; a sign-up
+  // with the app sets the app up, never a phone.
+  const pending = Madauth.totp.pendingStep;
+  $('#use-phone').hidden = !(pending?.step === 'setup' && pending.method !== 'totp' && Madauth.sms.available);
   $('#qr').innerHTML = '';
   $('#secret').textContent = '';
   let result = await Madauth.totp.startSetup();

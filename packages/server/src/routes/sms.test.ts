@@ -111,8 +111,9 @@ describe('adding a phone number', () => {
     expect(await store.findOne('account', { key: `sms:${userId}` })).toMatchObject({ userId, phone: PHONE, failedAttempts: 0 });
     expect(hook.calls.at(-1)).toEqual({ type: 'sms.enabled', data: { user: graceUser, phone: PHONE } });
     expect(await (await app.request('/auth/sms/status', { headers: withSession(session) })).json()).toEqual({ enabled: true, phone: MASKED });
-    // The code is used up.
-    expect((await post(app, '/auth/sms/confirm', { code }, withSession(session, setupCookie))).status).toBe(401);
+    // The code is used up, and the setup is over: its cookie no longer confirms anything now that there is a number.
+    expect(await store.findOne('verification', { userId, purpose: 'sms' })).toBeNull();
+    expect(await (await post(app, '/auth/sms/confirm', { code }, withSession(session, setupCookie))).json()).toMatchObject({ error: 'setup_expired' });
 
     for (const phone of ['0791234567', '+41', '+0791234567', '41791234567', 'call me', 12, undefined]) {
       const refused = await post(app, '/auth/sms/setup', { phone }, withSession(session));
@@ -159,8 +160,13 @@ describe('adding a phone number', () => {
     expect(sent.status).toBe(202);
     expect(await sent.json()).toEqual({ phone: MASKED });
     expect(hook.lastSms()!.data).toMatchObject({ to: PHONE, purpose: 'approve' });
-    // Approved: the code to the new number follows at once, the minute notwithstanding.
+    // Approved: the code to the new number follows at once, the minute notwithstanding. The clock ticks
+    // between the approval and that check, as a real one does.
+    const frozen = Date.now();
+    let ticks = 0;
+    const ticking = vi.spyOn(Date, 'now').mockImplementation(() => frozen + ++ticks);
     const setup = await post(app, '/auth/sms/setup', { phone: '+41790000099', code: lastCode(hook) }, withSession(session));
+    ticking.mockRestore();
     expect(setup.status).toBe(202);
     expect(hook.lastSms()!.data).toMatchObject({ to: '+41790000099', purpose: 'setup' });
     const setupCookie = `madauth_sms_setup=${cookies(setup).madauth_sms_setup.value}`;
@@ -181,6 +187,30 @@ describe('adding a phone number', () => {
     expect(hook.calls).toEqual([{ type: 'sms.disabled', data: { user: graceUser } }]);
     expect(await (await post(app, '/auth/sms/remove', { code }, withSession(session))).json()).toMatchObject({ error: 'no_phone' });
     expect(await (await post(app, '/auth/sms/send', {}, withSession(session))).json()).toMatchObject({ error: 'no_phone' });
+  });
+
+  it('S12: a setup started before the user had a number does not replace the one they added meanwhile', async () => {
+    startClock();
+    const { app, hook, store } = passwordApp();
+    await setMethods(store, { google: {}, password: { secondFactor: 'optional' }, sms: {} });
+    const session = await signUpVerified(app, hook);
+    advance(61_000);
+    // One browser starts adding a number and stops before the code.
+    const stale = await post(app, '/auth/sms/setup', { phone: '+41790000099' }, withSession(session));
+    expect(stale.status).toBe(202);
+    const staleCookie = `madauth_sms_setup=${cookies(stale).madauth_sms_setup.value}`;
+    advance(61_000);
+    // Another browser adds a number and confirms it.
+    expect((await addPhone(app, hook, session)).confirm.status).toBe(200);
+
+    const refused = await post(app, '/auth/sms/confirm', { code: lastCode(hook) }, withSession(session, staleCookie));
+
+    // The first setup never had the current number's approval, whatever code it brings.
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: 'setup_expired' });
+    expect(cookies(refused).madauth_sms_setup).toMatchObject({ value: '' });
+    const [{ id: userId }] = await store.findMany('user', {});
+    expect(await store.findOne('account', { key: `sms:${userId}` })).toMatchObject({ phone: PHONE });
   });
 
   it('S4: with a required policy the phone only goes while the app stays, and the app only while a phone stays', async () => {

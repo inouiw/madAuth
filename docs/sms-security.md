@@ -56,7 +56,7 @@ Code: `remove` in [`sms.ts`](../packages/server/src/routes/sms.ts), `POST /auth/
 
 ## Cross-site requests
 
-All SMS endpoints are `POST` requests accepted only from an `Origin` in `ALLOWED_ORIGINS`, and the challenge and setup cookies are `SameSite=Strict`.
+Every SMS endpoint that changes something is a `POST` request accepted only from an `Origin` in `ALLOWED_ORIGINS` (`GET /auth/sms/status` only reads), and the challenge and setup cookies are `SameSite=Strict`.
 
 ## Not covered yet
 

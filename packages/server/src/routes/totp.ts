@@ -23,7 +23,7 @@ import { newId, passwordAccountKey, toMadauthUser, totpAccountKey, type StoredAc
 import { localeOf } from '../webhooks.js';
 import { finishSignIn, methodOff, methodStillOn, pendingOrSignedIn, readChallenge } from './challenge.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
-import { accepted, body, error, nameOf, noSession, redirectTarget, unavailable, type Body } from './helpers.js';
+import { accepted, body, error, nameOf, noSession, originHost, redirectTarget, unavailable, type Body } from './helpers.js';
 import { countSignInAttempt } from './lockout.js';
 
 export { CHALLENGE_COOKIE, CHALLENGE_TTL, CHALLENGE_TYP, clearChallenge, setChallenge, type Challenge, type NextStep } from './challenge.js';
@@ -135,11 +135,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   };
 
   /** The name the app shows next to the account: TOTP_ISSUER, or the host of the app that asked. */
-  const issuerLabel = (c: Context): string => {
-    if (config.totpIssuer) return config.totpIssuer;
-    const origin = c.req.header('origin');
-    return URL.canParse(origin ?? '') ? new URL(origin!).hostname : new URL(issuer).hostname;
-  };
+  const issuerLabel = (c: Context): string => config.totpIssuer || originHost(ctx, c);
 
   app.post(`${COOKIE_PATH}/setup`, async (c) => {
     const who = await whoSetsUp(c);

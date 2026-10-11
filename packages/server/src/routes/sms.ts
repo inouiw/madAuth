@@ -122,6 +122,8 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
     // cookie, so a code sent again (or a mistyped number) costs no second approval.
     const existing = await users.smsAccount(user.id);
     let approved: number | undefined;
+    /** The current number agreed in this request: its code was just sent, so the one to the new number may follow at once. */
+    let justApproved = false;
     if (existing) {
       const previous = await readToken<SetupClaims>(await ctx.keys, config.issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
       const holds = previous?.sub === user.id && typeof previous.approved === 'number' && Date.now() - previous.approved < SETUP_TTL * 1000;
@@ -132,10 +134,10 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
         const wrong = await checkCode(c, user, existing, data);
         if (wrong) return wrong;
         approved = Date.now();
+        justApproved = true;
       }
     }
-    // The code to the current number was just sent: the one to the new number may follow at once.
-    if (approved !== Date.now() && sentRecently(user)) return tooSoon(c);
+    if (!justApproved && sentRecently(user)) return tooSoon(c);
     if (!(await sendCode(c, user, phone, 'setup', localeOf(data.locale)))) return smsUnavailable(c);
     const token = await signToken(await ctx.keys, config.issuer, SETUP_TYP, { sub: user.id, phone, ...(approved ? { approved } : {}) }, SETUP_TTL);
     setCookie(c, SETUP_COOKIE, token, { ...cookie, maxAge: SETUP_TTL });
@@ -152,6 +154,12 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
       return error(c, 400, 'setup_expired', 'The setup has expired or was started in another browser. Please start again.');
     }
     const existing = await users.smsAccount(user.id);
+    // Replacing a number takes the current one's approval (see `setup`): a setup started while the user had
+    // no number does not replace one they added meanwhile, whatever code it has.
+    if (existing && typeof setup.approved !== 'number') {
+      deleteCookie(c, SETUP_COOKIE, cookie);
+      return error(c, 400, 'setup_expired', 'Your phone number was changed elsewhere meanwhile. Please start again.');
+    }
     // The setup cookie stays, so a mistyped code can be tried again; the code's attempts are limited.
     const wrong = await checkCode(c, user, existing, await body(c));
     if (wrong) return wrong;

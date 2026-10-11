@@ -917,7 +917,8 @@ export class MadauthLogin extends LitElement {
           ? html`<p class="hint" role="status">${s.loading}</p>`
           : null}
       <p class="links">
-        ${this.setupForSignIn && Madauth.sms.available
+        ${/* A sign-up with the app sets the app up, never a phone: the server refuses the phone for it. */
+        this.setupForSignIn && this.primary !== 'totp' && Madauth.sms.available
           ? html`<button class="link" part="link" type="button" data-action="use-phone" @click=${() => this.goTo('sms-setup')}>${s.smsSetup.usePhone}</button>`
           : null}
         <button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>

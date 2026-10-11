@@ -268,6 +268,22 @@ describe('<madauth-login> and SMS codes', () => {
     expect(server.phones.get(grace.email!)).toBe('+41790000099');
   });
 
+  it('D29: a sign-up with the app sets the app up, never a phone: its setup has no phone link', async () => {
+    const server = smsServer();
+    server.methods.totp = true;
+    void openDialog();
+    await settle();
+    await click('[data-method="totp"]');
+    await click('[data-action="signup"]');
+    fill({ email: 'new@example.com', name: 'New User' });
+    await submit('signup');
+    fill({ code: CODE });
+    await submit('code');
+
+    expect(text('h2')).toBe('Set up authenticator app');
+    expect($('[data-action="use-phone"]')).toBeNull();
+  });
+
   it('D28: an expired step and the redirect flow with the SMS step', async () => {
     const server = smsServer();
     void openDialog();

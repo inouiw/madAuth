@@ -225,10 +225,12 @@ export function createApp(config: MadauthConfig): Hono {
       let next: NextStep | null = null;
       let factors: Factor[] = [];
       if (policy !== 'none') {
-        const app = await users.totpAccount(user.id);
         // A phone counts when SMS codes are on; a sign-up with the app is finished with the app. The app comes
         // first when the user has both: the client can switch to the SMS.
-        const phone = method !== 'totp' && isOn('sms', configured, methods) ? await users.smsAccount(user.id) : null;
+        const [app, phone] = await Promise.all([
+          users.totpAccount(user.id),
+          method !== 'totp' && isOn('sms', configured, methods) ? users.smsAccount(user.id) : null,
+        ]);
         factors = [...(app ? (['totp'] as const) : []), ...(phone ? (['sms'] as const) : [])];
         next = app ? 'totp' : phone ? 'sms' : policy === 'required' ? 'totp-setup' : null;
       }
