@@ -89,6 +89,7 @@ To change more than the look, e.g. the layout or the texts, build your own scree
 | Attribute | Default | Description |
 | --- | --- | --- |
 | `heading` | `Sign in`, in the dialog's language | Title shown at the top of the dialog. A heading you set is shown as it is in every language. |
+| `code-autocomplete` | `off` | `autocomplete` of the fields for the code from the authenticator app. `one-time-code` lets Apple Passwords, 1Password or Bitwarden offer a stored code, but the iCloud Passwords extension for Chrome then opens its panel on the field even with nothing stored. See [Password managers](custom-ui.md#password-managers). |
 
 ```html
 <madauth-login heading="Log in to projectmatch"></madauth-login>
