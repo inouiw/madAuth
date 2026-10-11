@@ -8,7 +8,7 @@ export interface MadauthUser {
   /** What admins attached to the user, e.g. `{ roles: ['admin'] }`. Absent without claims. */
   claims?: Record<string, unknown>;
   /**
-   * How the session was authenticated (RFC 8176): `pwd` (password), `google`, `email` (the e-mail link),
+   * How the session was authenticated (RFC 8176): `pwd` (password), `google`, `github`, `email` (the e-mail link),
    * `otp` (the authenticator app, on its own or as the second factor), `sms` (a code by SMS as the second
    * factor), e.g. `['pwd', 'otp']`. Present on a user that comes with a session.
    */

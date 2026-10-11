@@ -11,6 +11,8 @@ export type SecondFactorPolicy = 'none' | 'optional' | 'required';
 /** Public settings from the server's `GET /auth/config`; a method is null when the server doesn't offer it. */
 export interface ServerConfig {
   google: { clientId: string; codeFlow: boolean; secondFactor: SecondFactorPolicy } | null;
+  /** GitHub sign-in (the redirect flow), with its policy for the second factor. */
+  github: { secondFactor: SecondFactorPolicy } | null;
   /** `minLength` and `minScore`: the rules for new passwords, see `Madauth.password.policy`. */
   password: { minLength: number; minScore: number; secondFactor: SecondFactorPolicy } | null;
   /**

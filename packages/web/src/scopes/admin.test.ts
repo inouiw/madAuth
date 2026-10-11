@@ -62,6 +62,7 @@ describe('Madauth.admin', () => {
       password: { minLength: 8, minScore: 2 },
       methods: {
         google: { configured: true, enabled: true, secondFactor: 'none' },
+        github: { configured: false, enabled: false, secondFactor: 'none' },
         password: { configured: true, enabled: true, secondFactor: 'none' },
         totp: { configured: true, enabled: false },
         'email-link': { configured: true, enabled: false, secondFactor: 'none' },

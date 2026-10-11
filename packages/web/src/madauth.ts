@@ -1,17 +1,19 @@
-import { EXPIRY_COOKIE, REDIRECT_FACTORS_PARAM, REDIRECT_NEXT_PARAM, SIGNIN_LINK_PARAM, VERIFY_LINK_PARAM } from './constants.js';
+import { EXPIRY_COOKIE, REDIRECT_ERROR_PARAM, REDIRECT_FACTORS_PARAM, REDIRECT_METHOD_PARAM, REDIRECT_NEXT_PARAM, SIGNIN_LINK_PARAM, VERIFY_LINK_PARAM } from './constants.js';
 import { takeHashParam } from './hash.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
 import type { AuthenticatorEnabledDetail, AuthenticatorFailedDetail, SmsEnabledDetail, SmsFailedDetail } from './madauth-login.js';
 import { isLoginMethodId, type LoginMethodId } from './methods.js';
 import { pendingStepOf, type DeletedAccount, type PendingStep, type ProviderContext, type ServerConfig, type SignInProvider } from './providers/provider.js';
-import { fail, ok, type MadauthError, type MadauthUser, type Result, type SecondFactor } from './result.js';
+import { fail, ok, toErrorCode, type MadauthError, type MadauthUser, type Result, type SecondFactor } from './result.js';
 import type { Core } from './scopes/core.js';
 import { createAdminApi } from './scopes/admin.js';
 import { createEmailLinkApi } from './scopes/email-link.js';
+import { createGitHubApi } from './scopes/github.js';
 import { createGoogleApi } from './scopes/google.js';
 import { createPasswordApi } from './scopes/password.js';
 import { createSmsApi } from './scopes/sms.js';
 import { createTotpApi } from './scopes/totp.js';
+import { stringsFor, type Strings } from './strings.js';
 
 export interface MadauthOptions {
   /** Base URL of the madAuth server. Default: the page's own origin (e.g. behind a reverse proxy). */
@@ -21,7 +23,7 @@ export interface MadauthOptions {
   /**
    * `'dialog'` (default): madAuth's sign-in dialog, opened with `Madauth.signIn()`; it also opens by itself
    * when the page was opened from a password reset link, or when a sign-in goes on with a second step.
-   * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.totp`,
+   * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.github`, `Madauth.totp`,
    * `Madauth.emailLink` and `Madauth.sms`; the dialog never opens.
    */
   ui?: 'dialog' | 'custom';
@@ -212,12 +214,27 @@ async function handleSignInLink(ctx: ProviderContext, providers: Map<LoginMethod
   else ctx.signInFailed(res.error);
 }
 
-/** Back from the redirect flow with the first step done: a code (from the app, or by SMS) or the app's setup is next. */
-function handleNextStep(ctx: ProviderContext): void {
+/**
+ * Back from a redirect sign-in (Google's code flow, GitHub): with its error, or with the first step done and
+ * a code (from the app, or by SMS) or the app's setup next. The server names the method next to either; a
+ * server before 0.5 names none, and only Google had a redirect flow then. The URL is tidied up either way.
+ */
+function handleRedirectReturn(ctx: ProviderContext): void {
+  const error = takeHashParam(REDIRECT_ERROR_PARAM);
   const next = takeHashParam(REDIRECT_NEXT_PARAM);
   const named = (takeHashParam(REDIRECT_FACTORS_PARAM) ?? '').split(',').filter((f): f is SecondFactor => f === 'totp' || f === 'sms');
-  if (next === 'totp' || next === 'sms') ctx.signInContinues({ step: next === 'totp' ? 'code' : 'sms', method: 'google', factors: named.length ? named : [next] });
-  else if (next === 'totp-setup') ctx.signInContinues({ step: 'setup', method: 'google' });
+  const via = takeHashParam(REDIRECT_METHOD_PARAM);
+  const method: LoginMethodId = isLoginMethodId(via) ? via : 'google';
+  if (error) {
+    const code = toErrorCode(error);
+    const s = stringsFor(ctx.locale);
+    const name = s.methodNames[method];
+    const message = Object.hasOwn(s.redirectErrors, code) ? s.redirectErrors[code as keyof Strings['redirectErrors']](name) : s.redirectFailed(name, error);
+    ctx.signInFailed({ code, message });
+    return;
+  }
+  if (next === 'totp' || next === 'sms') ctx.signInContinues({ step: next === 'totp' ? 'code' : 'sms', method, factors: named.length ? named : [next] });
+  else if (next === 'totp-setup') ctx.signInContinues({ step: 'setup', method });
 }
 
 async function initialize(target: State, run: number): Promise<{ ready: Result; result: InitializeResult }> {
@@ -274,7 +291,7 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
   };
   await handleVerifyLink(ctx);
   await handleSignInLink(ctx, providers);
-  handleNextStep(ctx);
+  handleRedirectReturn(ctx);
   // A provider for a method the server doesn't offer (e.g. GoogleRedirect without a Google client on
   // the server) is left out, so the page works with the other methods: the server's configuration
   // decides what is on, and a development server often has less than production. Other failures
@@ -557,6 +574,9 @@ export const Madauth = {
 
   /** Google sign-in for custom login screens. Needs `new GoogleFedcm()` or `new GoogleRedirect()`. */
   google: createGoogleApi(core),
+
+  /** GitHub sign-in for custom login screens. Needs `new GitHub()`. */
+  github: createGitHubApi(core),
 
   /** The authenticator app for custom login screens: sign-in, the second step, the setup. Needs `new Totp()`. */
   totp: createTotpApi(core),

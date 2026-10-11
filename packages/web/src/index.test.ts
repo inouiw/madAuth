@@ -13,7 +13,7 @@ afterEach(resetAll);
 describe('@madauth/web', () => {
   it('W7: exports exactly the public API', () => {
     expect(Object.keys(madauth).sort()).toEqual(
-      ['EmailLink', 'GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'Password', 'Totp', 'loginMethods'].sort(),
+      ['EmailLink', 'GitHub', 'GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'Password', 'Totp', 'loginMethods'].sort(),
     );
     expect(Object.keys(madauth.Madauth).sort()).toEqual(
       [
@@ -22,6 +22,7 @@ describe('@madauth/web', () => {
         'deleteAccount',
         'emailLink',
         'getSession',
+        'github',
         'google',
         'initialize',
         'onAuthStateChanged',
@@ -44,6 +45,7 @@ describe('@madauth/web', () => {
       ['confirmReset', 'loadRating', 'pendingReset', 'policy', 'sendResetEmail', 'sendVerificationEmail', 'signIn', 'signUp', 'verifyEmail'].sort(),
     );
     expect(Object.keys(madauth.Madauth.google)).toEqual(['renderButton']);
+    expect(Object.keys(madauth.Madauth.github)).toEqual(['renderButton']);
     expect(Object.keys(madauth.Madauth.totp).sort()).toEqual(
       ['confirmSetup', 'newRecoveryCodes', 'pendingStep', 'policy', 'remove', 'sendVerificationEmail', 'signIn', 'signUp', 'startSetup', 'status', 'verify', 'verifyEmail'].sort(),
     );
@@ -53,6 +55,7 @@ describe('@madauth/web', () => {
     expectTypeOf(madauth.Madauth.emailLink).toEqualTypeOf<madauth.EmailLinkApi>();
     expectTypeOf(madauth.Madauth.sms).toEqualTypeOf<madauth.SmsApi>();
     expectTypeOf(madauth.Madauth.google).toEqualTypeOf<madauth.GoogleApi>();
+    expectTypeOf(madauth.Madauth.github).toEqualTypeOf<madauth.GitHubApi>();
     expectTypeOf(madauth.Madauth.totp).toEqualTypeOf<madauth.TotpApi>();
   });
 });

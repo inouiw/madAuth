@@ -2,20 +2,22 @@ import type { LoginMethodId } from './methods.js';
 import type { MadauthErrorCode } from './result.js';
 
 /**
- * Every text madAuth shows to the user: the sign-in dialog's, and the button and the errors of
- * `GoogleRedirect`. `de` has the same shape, so a text that is missing in one language fails the type check.
+ * Every text madAuth shows to the user: the sign-in dialog's, and the buttons and the errors of the redirect
+ * sign-ins (`GoogleRedirect`, `GitHub`). `de` has the same shape, so a text that is missing in one language
+ * fails the type check.
  */
 export const en = {
   /** Default heading of the dialog, and the button of the sign-in form. */
   signIn: 'Sign in',
   /** Accessible name of the button with the cross. */
   close: 'Close',
-  /** Between Google's button and the e-mail & password form. */
+  /** Between the providers' buttons (Google, GitHub) and the e-mail & password form. */
   or: 'or',
   otherWays: 'Other ways to sign in',
   /** The sign-in methods: `label` is the text of the button, `description` its tooltip. */
   methods: {
     google: { label: 'Continue with Google', description: 'Use your Google account' },
+    github: { label: 'Continue with GitHub', description: 'Use your GitHub account' },
     password: { label: 'E-mail & password', description: 'Sign in with your e-mail address and password' },
     totp: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
     'email-link': { label: 'E-mail link', description: 'Passwordless sign-in by e-mail' },
@@ -50,8 +52,8 @@ export const en = {
   // Headings and texts of the other views
   resetPassword: 'Reset password',
   forgotLead: 'Enter your e-mail address. We will send you a link and a code to choose a new password.',
-  /** Under that lead when Google is one of the methods: a Google user has no password to reset. */
-  forgotGoogleHint: 'Signed up with Google? There is no password to reset: use the Google button instead.',
+  /** Under that lead when a provider (Google, GitHub) is one of the methods: its users have no password to reset. `names` is e.g. "Google or GitHub". */
+  forgotProviderHint: (names: string) => `Signed up with ${names}? There is no password to reset: use that button instead.`,
   checkInbox: 'Check your inbox',
   /** The e-mail address is shown between the two parts. */
   inboxLead: {
@@ -144,9 +146,9 @@ export const en = {
     /** What the phone will do, from the server's policy. */
     effect: (methods: string) => `From then on, signing in with ${methods} can also ask for a code sent to your phone.`,
   },
-  /** `other_method` with the methods the server named, e.g. "a password". */
-  otherMethod: (how: string) => `This e-mail address signs in with ${how}. Use that instead of Google.`,
-  methodNames: { google: 'Google', password: 'a password', totp: 'an authenticator app', 'email-link': 'an e-mail link' },
+  /** `other_method` with the methods the server named, e.g. "a password", and the provider that was refused, if known. */
+  otherMethod: (how: string, instead?: string) => `This e-mail address signs in with ${how}. Use that instead${instead ? ` of ${instead}` : ''}.`,
+  methodNames: { google: 'Google', github: 'GitHub', password: 'a password', totp: 'an authenticator app', 'email-link': 'an e-mail link' },
   and: ' and ',
   /** Between alternatives in a sentence. */
   orList: ' or ',
@@ -171,7 +173,7 @@ export const en = {
     code_required: 'Please enter a code from your authenticator app.',
     no_authenticator: 'No authenticator app is set up.',
     only_method: 'The authenticator app is the only way you sign in, so it can’t be removed.',
-    other_method: 'This e-mail address signs in another way. Use that instead of Google.',
+    other_method: 'This e-mail address signs in another way. Use that instead.',
     invalid_phone: 'Please enter a valid mobile number with the country code, e.g. +41 79 123 45 67.',
     no_phone: 'No phone number is set up.',
     too_soon: 'We sent a code less than a minute ago. Enter that one, or wait a minute for a new one.',
@@ -192,17 +194,17 @@ export const en = {
   weakPassword: (serverMessage: string, _rule?: { minLength?: number; minScore?: number }) => serverMessage,
   tooManyAttempts: (serverMessage: string) => serverMessage,
 
-  /** `GoogleRedirect`: why the sign-in failed, by the error code the server reported. */
-  googleErrors: {
-    cancelled: 'The Google sign-in was cancelled.',
-    verification_failed: 'The Google sign-in could not be verified. Please try again.',
-    email_unverified: 'Your Google account’s e-mail address is not verified.',
-    signup_rejected: 'Signing up with this Google account is not possible.',
-    method_disabled: 'Google sign-in is switched off at the moment.',
-    temporarily_unavailable: 'Google sign-in is not available right now. Please try again later.',
-    other_method: 'This e-mail address signs in another way. Use that instead of Google.',
-  } satisfies Partial<Record<MadauthErrorCode, string>>,
-  googleFailed: (code: string) => `Google sign-in failed (${code}).`,
+  /** The redirect sign-ins (`GoogleRedirect`, `GitHub`): why the sign-in failed, by the error code the server reported; `name` is the provider's. */
+  redirectErrors: {
+    cancelled: (name: string) => `The ${name} sign-in was cancelled.`,
+    verification_failed: (name: string) => `The ${name} sign-in could not be verified. Please try again.`,
+    email_unverified: (name: string) => `Your ${name} account’s e-mail address is not verified.`,
+    signup_rejected: (name: string) => `Signing up with this ${name} account is not possible.`,
+    method_disabled: (name: string) => `${name} sign-in is switched off at the moment.`,
+    temporarily_unavailable: (name: string) => `${name} sign-in is not available right now. Please try again later.`,
+    other_method: (name: string) => `This e-mail address signs in another way. Use that instead of ${name}.`,
+  } satisfies Partial<Record<MadauthErrorCode, (name: string) => string>>,
+  redirectFailed: (name: string, code: string) => `${name} sign-in failed (${code}).`,
 };
 
 export type Strings = typeof en;
@@ -214,6 +216,7 @@ export const de: Strings = {
   otherWays: 'Weitere Anmeldemöglichkeiten',
   methods: {
     google: { label: 'Weiter mit Google', description: 'Mit Ihrem Google-Konto anmelden' },
+    github: { label: 'Weiter mit GitHub', description: 'Mit Ihrem GitHub-Konto anmelden' },
     password: { label: 'E-Mail-Adresse und Passwort', description: 'Mit E-Mail-Adresse und Passwort anmelden' },
     totp: { label: 'Authentifizierungs-App', description: 'Einmalcode aus Ihrer Authentifizierungs-App' },
     'email-link': { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
@@ -244,7 +247,7 @@ export const de: Strings = {
   resetPassword: 'Passwort zurücksetzen',
   forgotLead:
     'Geben Sie Ihre E-Mail-Adresse ein. Wir senden Ihnen einen Link und einen Bestätigungscode, mit denen Sie ein neues Passwort wählen können.',
-  forgotGoogleHint: 'Mit Google registriert? Es gibt kein Passwort zum Zurücksetzen: Verwenden Sie stattdessen den Google-Button.',
+  forgotProviderHint: (names) => `Mit ${names} registriert? Es gibt kein Passwort zum Zurücksetzen: Verwenden Sie stattdessen diesen Button.`,
   checkInbox: 'Posteingang prüfen',
   inboxLead: {
     before: 'Wir haben eine E-Mail an ',
@@ -320,8 +323,8 @@ export const de: Strings = {
     useAppInstead: 'Stattdessen eine Authentifizierungs-App einrichten',
     effect: (methods) => `Die Anmeldung mit ${methods} kann dann zusätzlich nach einem Code fragen, der an Ihr Mobiltelefon gesendet wird.`,
   },
-  otherMethod: (how) => `Diese E-Mail-Adresse meldet sich mit ${how} an. Verwenden Sie das statt Google.`,
-  methodNames: { google: 'Google', password: 'einem Passwort', totp: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link' },
+  otherMethod: (how, instead) => `Diese E-Mail-Adresse meldet sich mit ${how} an. Verwenden Sie das ${instead ? `statt ${instead}` : 'stattdessen'}.`,
+  methodNames: { google: 'Google', github: 'GitHub', password: 'einem Passwort', totp: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link' },
   and: ' und ',
   orList: ' oder ',
 
@@ -344,7 +347,7 @@ export const de: Strings = {
     code_required: 'Bitte geben Sie einen Code aus Ihrer Authentifizierungs-App ein.',
     no_authenticator: 'Es ist keine Authentifizierungs-App eingerichtet.',
     only_method: 'Die Authentifizierungs-App ist Ihre einzige Anmeldemethode, daher kann sie nicht entfernt werden.',
-    other_method: 'Diese E-Mail-Adresse meldet sich auf andere Weise an. Verwenden Sie diese statt Google.',
+    other_method: 'Diese E-Mail-Adresse meldet sich auf andere Weise an. Verwenden Sie diese stattdessen.',
     invalid_phone: 'Bitte geben Sie eine gültige Mobilnummer mit Ländervorwahl ein, z. B. +41 79 123 45 67.',
     no_phone: 'Es ist keine Mobilnummer eingerichtet.',
     too_soon: 'Wir haben vor weniger als einer Minute einen Code gesendet. Geben Sie diesen ein, oder warten Sie eine Minute auf einen neuen.',
@@ -364,16 +367,16 @@ export const de: Strings = {
         : 'Dieses Passwort ist nicht zulässig. Bitte wählen Sie ein anderes.',
   tooManyAttempts: () => 'Zu viele Versuche. Bitte warten Sie einen Moment und versuchen Sie es erneut.',
 
-  googleErrors: {
-    cancelled: 'Die Anmeldung mit Google wurde abgebrochen.',
-    verification_failed: 'Die Anmeldung mit Google konnte nicht überprüft werden. Bitte versuchen Sie es erneut.',
-    email_unverified: 'Die E-Mail-Adresse Ihres Google-Kontos ist nicht bestätigt.',
-    signup_rejected: 'Mit diesem Google-Konto ist keine Registrierung möglich.',
-    method_disabled: 'Die Anmeldung mit Google ist derzeit abgeschaltet.',
-    temporarily_unavailable: 'Die Anmeldung mit Google ist derzeit nicht verfügbar. Bitte versuchen Sie es später erneut.',
-    other_method: 'Diese E-Mail-Adresse meldet sich auf andere Weise an. Verwenden Sie diese statt Google.',
+  redirectErrors: {
+    cancelled: (name) => `Die Anmeldung mit ${name} wurde abgebrochen.`,
+    verification_failed: (name) => `Die Anmeldung mit ${name} konnte nicht überprüft werden. Bitte versuchen Sie es erneut.`,
+    email_unverified: (name) => `Die E-Mail-Adresse Ihres ${name}-Kontos ist nicht bestätigt.`,
+    signup_rejected: (name) => `Mit diesem ${name}-Konto ist keine Registrierung möglich.`,
+    method_disabled: (name) => `Die Anmeldung mit ${name} ist derzeit abgeschaltet.`,
+    temporarily_unavailable: (name) => `Die Anmeldung mit ${name} ist derzeit nicht verfügbar. Bitte versuchen Sie es später erneut.`,
+    other_method: (name) => `Diese E-Mail-Adresse meldet sich auf andere Weise an. Verwenden Sie diese statt ${name}.`,
   },
-  googleFailed: (code) => `Die Anmeldung mit Google ist fehlgeschlagen (${code}).`,
+  redirectFailed: (name, code) => `Die Anmeldung mit ${name} ist fehlgeschlagen (${code}).`,
 };
 
 const languages = { en, de };

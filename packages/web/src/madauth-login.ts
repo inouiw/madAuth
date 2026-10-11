@@ -10,6 +10,7 @@ import {
   type SignInOptions,
 } from './madauth.js';
 import { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
+import type { ButtonApi } from './scopes/button.js';
 import { secondStepOf, type PendingStep } from './providers/provider.js';
 import type { CodeOptions } from './scopes/totp.js';
 import { qrModules, qrViewBox, type QrModules } from './qr.js';
@@ -85,6 +86,9 @@ const infoIcon = html`
     <path d="M12 8h.01" />
   </svg>
 `;
+
+/** The scopes that render a provider's button (Google, GitHub), by method: the dialog stays on the public API. */
+const buttonScopes: Partial<Record<LoginMethodId, () => ButtonApi>> = { google: () => Madauth.google, github: () => Madauth.github };
 
 /** Icons of the methods listed under "Other ways to sign in". */
 const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
@@ -217,8 +221,8 @@ export class MadauthLogin extends LitElement {
 
   private stopFollowingLocale?: () => void;
 
-  /** Google's button, rendered into the slot of the sign-in view. */
-  private googleButton?: { slot: Element; remove(): void };
+  /** The providers' buttons (Google, GitHub), rendered into the slots of the sign-in view, by slot. */
+  private buttons = new Map<HTMLElement, { method: LoginMethodId; remove(): void }>();
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -245,9 +249,9 @@ export class MadauthLogin extends LitElement {
     if (pending) this.continueWith(pending);
     const error = ready.isSuccess ? takePendingError() : ready.error;
     if (error) this.showError(error);
-    // Reopened with nothing changed there is no re-render, so render Google's button here.
+    // Reopened with nothing changed there is no re-render, so render the providers' buttons here.
     await this.updateComplete;
-    this.syncGoogleButton();
+    this.syncButtons();
     if (email) this.prefill(email);
   }
 
@@ -334,25 +338,29 @@ export class MadauthLogin extends LitElement {
   }
 
   override updated(): void {
-    this.syncGoogleButton();
+    this.syncButtons();
   }
 
-  /** Renders Google's button while the sign-in view is shown, and removes it otherwise. */
-  private syncGoogleButton(): void {
-    const slot = this.dialog.open ? this.renderRoot.querySelector('.google-slot') : null;
-    if (this.googleButton && this.googleButton.slot !== slot) {
-      this.googleButton.remove();
-      this.googleButton = undefined;
+  /** Renders the providers' buttons into their slots while the sign-in view is shown, and removes them otherwise. */
+  private syncButtons(): void {
+    const slots = this.dialog.open ? [...this.renderRoot.querySelectorAll<HTMLElement>('.button-slot')] : [];
+    for (const [slot, button] of this.buttons) {
+      if (!slots.includes(slot)) {
+        button.remove();
+        this.buttons.delete(slot);
+      }
     }
-    if (slot instanceof HTMLElement && !this.googleButton) {
-      const rendered = Madauth.google.renderButton(slot, { onResult: (result) => this.finish('google', result) });
-      if (rendered.isSuccess) this.googleButton = { slot, remove: rendered.remove };
+    for (const slot of slots) {
+      if (this.buttons.has(slot)) continue;
+      const method = slot.dataset.button as LoginMethodId;
+      const rendered = buttonScopes[method]?.().renderButton(slot, { onResult: (result) => this.finish(method, result) });
+      if (rendered?.isSuccess) this.buttons.set(slot, { method, remove: rendered.remove });
     }
   }
 
   private onDialogClose(): void {
-    this.googleButton?.remove();
-    this.googleButton = undefined;
+    for (const button of this.buttons.values()) button.remove();
+    this.buttons.clear();
     // Closing the recovery codes counts as having seen them: the app is set up either way.
     if (this.view === 'totp-codes') this.completeSetup();
     if (this.dialog.returnValue !== 'done') {
@@ -732,18 +740,19 @@ export class MadauthLogin extends LitElement {
           (m) => providerFor(m.id) && (m.id !== 'totp' || this.totpAvailable) && (m.id !== 'email-link' || this.emailLinkAvailable),
         )
       : [];
-    const google = offered.find((m) => m.id === 'google');
+    // The providers with a button of their own (Google, GitHub) come first, in the order of loginMethods.
+    const branded = offered.filter((m) => !!providerFor(m.id)?.renderButton);
     const password = offered.find((m) => m.id === 'password');
-    const others = offered.filter((m) => m !== google && m !== password);
+    const others = offered.filter((m) => !branded.includes(m) && m !== password);
     const s = this.strings;
     return html`
-      ${google ? this.renderGoogle(google) : null}
-      ${google && password ? html`<div class="divider">${s.or}</div>` : null}
+      ${branded.length ? html`<div class="buttons">${branded.map((m) => this.renderButtonSlot(m))}</div>` : null}
+      ${branded.length && password ? html`<div class="divider">${s.or}</div>` : null}
       ${password ? this.renderPassword(password) : null}
       ${others.length
         ? html`
             <section class="others">
-              ${google || password ? html`<h3>${s.otherWays}</h3>` : null}
+              ${branded.length || password ? html`<h3>${s.otherWays}</h3>` : null}
               <ul>
                 ${others.map((m) => html`<li>${this.renderRow(m)}</li>`)}
               </ul>
@@ -753,9 +762,9 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
-  private renderGoogle(m: LoginMethod) {
-    // Google's button is rendered here through Madauth.google.renderButton.
-    return html`<div class="google-slot" title=${this.strings.methods[m.id].description}></div>`;
+  private renderButtonSlot(m: LoginMethod) {
+    // The provider's button is rendered here through its scope (Madauth.google, Madauth.github), see syncButtons.
+    return html`<div class="button-slot ${m.id}-slot" data-button=${m.id} title=${this.strings.methods[m.id].description}></div>`;
   }
 
   private renderPassword(m: LoginMethod) {
@@ -1255,9 +1264,11 @@ export class MadauthLogin extends LitElement {
 
   private renderForgot() {
     const s = this.strings;
+    // Users of a provider (Google, GitHub) have no password to reset: name the ones offered here.
+    const providerNames = (['google', 'github'] as const).filter((id) => providerFor(id)).map((id) => s.methodNames[id]);
     return html`
       <p class="lead">${s.forgotLead}</p>
-      ${providerFor('google') ? html`<p class="hint">${s.forgotGoogleHint}</p>` : null}
+      ${providerNames.length ? html`<p class="hint">${s.forgotProviderHint(providerNames.join(s.orList))}</p>` : null}
       <form part="form" class="forgot" @submit=${this.onForgot}>
         ${this.emailField('email')}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
@@ -1511,7 +1522,13 @@ export class MadauthLogin extends LitElement {
       background: light-dark(#fef3f2, rgb(240 68 56 / 0.12));
     }
 
-    .google-slot {
+    .buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .button-slot {
       display: flex;
       justify-content: center;
       min-height: var(--_control-height);

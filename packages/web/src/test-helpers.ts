@@ -44,8 +44,9 @@ export interface FakeAccount {
 }
 
 export interface FakeServer {
-  /** Whether the server offers Google, e-mail & password sign-in and the e-mail link. */
+  /** Whether the server offers Google, GitHub, e-mail & password sign-in and the e-mail link. */
   google: boolean;
+  github: boolean;
   password: boolean;
   emailLink: boolean;
   codeFlow: boolean;
@@ -73,14 +74,14 @@ export interface FakeServer {
   /** Claims by e-mail address, as set through the admin API. */
   claims: Map<string, Record<string, unknown>>;
   /** Which sign-in methods are on (the list an admin sets); `totp` is the app on its own, `sms` SMS codes as a second factor. */
-  methods: { google: boolean; password: boolean; totp: boolean; 'email-link': boolean; sms: boolean };
-  /** Whether Google, password and the e-mail link ask for the authenticator app as a second factor. */
-  policy: { google: SecondFactorPolicy; password: SecondFactorPolicy; 'email-link': SecondFactorPolicy };
+  methods: { google: boolean; github: boolean; password: boolean; totp: boolean; 'email-link': boolean; sms: boolean };
+  /** Whether Google, GitHub, password and the e-mail link ask for the authenticator app as a second factor. */
+  policy: { google: SecondFactorPolicy; github: SecondFactorPolicy; password: SecondFactorPolicy; 'email-link': SecondFactorPolicy };
   /** The addresses whose users have set up the authenticator app, and their recovery codes left. */
   authenticators: Set<string>;
   recoveryCodes: Map<string, string[]>;
   /** A sign-in whose first step is done, waiting for a code or a setup (the challenge cookie), with the factors that can finish it. */
-  challenge: { email: string; next: 'totp' | 'totp-setup' | 'sms'; method: 'google' | 'password' | 'totp' | 'email-link'; factors: ('totp' | 'sms')[] } | undefined;
+  challenge: { email: string; next: 'totp' | 'totp-setup' | 'sms'; method: 'google' | 'github' | 'password' | 'totp' | 'email-link'; factors: ('totp' | 'sms')[] } | undefined;
   /** A setup under way (the setup cookie); set to undefined to simulate its expiry. */
   totpSetup: { email: string } | undefined;
   /** The phone numbers of the users who added one, by e-mail address. */
@@ -107,6 +108,7 @@ export function setExpiryCookie(expiresAt: number | null): void {
 export function fakeServer(): FakeServer {
   const server: FakeServer = {
     google: true,
+    github: false,
     password: true,
     emailLink: true,
     codeFlow: false,
@@ -123,8 +125,8 @@ export function fakeServer(): FakeServer {
     nonces: 0,
     requests: [],
     claims: new Map(),
-    methods: { google: true, password: true, totp: false, 'email-link': false, sms: false },
-    policy: { google: 'none', password: 'none', 'email-link': 'none' },
+    methods: { google: true, github: true, password: true, totp: false, 'email-link': false, sms: false },
+    policy: { google: 'none', github: 'none', password: 'none', 'email-link': 'none' },
     authenticators: new Set(),
     recoveryCodes: new Map(),
     challenge: undefined,
@@ -153,9 +155,9 @@ export function fakeServer(): FakeServer {
     return json({ user: server.user });
   };
   /** The authenticator app is in use at all: on its own, or as the second factor of a method. */
-  const totpOn = () => server.methods.totp || server.policy.google !== 'none' || server.policy.password !== 'none' || server.policy['email-link'] !== 'none';
+  const totpOn = () => server.methods.totp || server.policy.google !== 'none' || server.policy.github !== 'none' || server.policy.password !== 'none' || server.policy['email-link'] !== 'none';
   /** What follows a primary method that succeeded: the session, or a code (from the app, or by SMS) or the app's setup. */
-  const afterPrimary = (email: string, method: 'google' | 'password' | 'email-link') => {
+  const afterPrimary = (email: string, method: 'google' | 'github' | 'password' | 'email-link') => {
     const policy = server.policy[method];
     const app = server.authenticators.has(email);
     const phone = server.methods.sms && server.phones.has(email);
@@ -207,6 +209,7 @@ export function fakeServer(): FakeServer {
       case 'GET /auth/config':
         return json({
           google: server.google && server.methods.google ? { clientId: CLIENT_ID, codeFlow: server.codeFlow, secondFactor: server.policy.google } : null,
+          github: server.github && server.methods.github ? { secondFactor: server.policy.github } : null,
           password: server.password && server.methods.password ? { ...server.passwordRules, secondFactor: server.policy.password } : null,
           totp: totpOn() ? { signIn: server.methods.totp, signUp: server.methods.totp && server.password } : null,
           email: { verification: server.password },
@@ -498,13 +501,14 @@ export function fakeServer(): FakeServer {
           const on = (value: unknown) => value === true || (!!value && typeof value === 'object');
           const policyOf = (value: unknown): SecondFactorPolicy =>
             value && typeof value === 'object' && 'secondFactor' in value ? ((value as { secondFactor: SecondFactorPolicy }).secondFactor ?? 'none') : 'none';
-          server.methods = { google: on(methods.google), password: on(methods.password), totp: on(methods.totp), 'email-link': on(methods['email-link']), sms: on(methods.sms) };
-          server.policy = { google: policyOf(methods.google), password: policyOf(methods.password), 'email-link': policyOf(methods['email-link']) };
+          server.methods = { google: on(methods.google), github: on(methods.github), password: on(methods.password), totp: on(methods.totp), 'email-link': on(methods['email-link']), sms: on(methods.sms) };
+          server.policy = { google: policyOf(methods.google), github: policyOf(methods.github), password: policyOf(methods.password), 'email-link': policyOf(methods['email-link']) };
         }
         return json({
           password: server.passwordRules,
           methods: {
             google: { configured: server.google, enabled: server.google && server.methods.google, secondFactor: server.policy.google },
+            github: { configured: server.github, enabled: server.github && server.methods.github, secondFactor: server.policy.github },
             password: { configured: server.password, enabled: server.password && server.methods.password, secondFactor: server.policy.password },
             totp: { configured: true, enabled: server.methods.totp },
             'email-link': { configured: server.emailLink, enabled: server.emailLink && server.methods['email-link'], secondFactor: server.policy['email-link'] },
