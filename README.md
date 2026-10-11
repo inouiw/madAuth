@@ -11,6 +11,8 @@ A self-hostable alternative to Cognito / Auth0. Sign-in methods:
 | Passwordless e-mail link (a link and a code by e-mail, sign-up on first use) | available |
 | SMS code (as a second factor, next to the authenticator app) | available |
 
+**Try it: [madauth.com/demo](https://madauth.com/demo/)** – the live demo: sign in and see the signed-in user's claims.
+
 ## Repository layout
 
 ```
