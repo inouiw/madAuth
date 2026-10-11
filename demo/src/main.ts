@@ -12,7 +12,16 @@ for (const link of document.querySelectorAll<HTMLAnchorElement>('#flow a')) {
   if (link.dataset.flow === flow) link.setAttribute('aria-current', 'page');
 }
 for (const description of document.querySelectorAll<HTMLElement>('.flow-description')) {
-  description.hidden = description.dataset.flow !== flow;
+  if (description.dataset.flow === flow) description.setAttribute('aria-current', 'true');
+}
+
+// The info buttons: each shows and hides the explanation it controls.
+for (const button of document.querySelectorAll<HTMLButtonElement>('button.info')) {
+  const text = document.getElementById(button.getAttribute('aria-controls')!)!;
+  button.addEventListener('click', () => {
+    text.hidden = !text.hidden;
+    button.setAttribute('aria-expanded', String(!text.hidden));
+  });
 }
 
 const google = flow === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();

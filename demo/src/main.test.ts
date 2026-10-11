@@ -119,8 +119,8 @@ beforeAll(async () => {
 });
 
 describe('demo page', () => {
-  it('shows only a sign-in button while signed out', () => {
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>('main button')].filter((b) => !b.closest('[hidden]'));
+  it('shows only a sign-in button while signed out, besides the info buttons', () => {
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('main button:not(.info)')].filter((b) => !b.closest('[hidden]'));
     expect(buttons).toHaveLength(1);
     expect(buttons[0].textContent).toBe('Sign in');
   });
@@ -131,9 +131,19 @@ describe('demo page', () => {
     expect(links[0].getAttribute('aria-current')).toBe('page');
     expect(links[1].getAttribute('aria-current')).toBeNull();
     expect(new URL(links[1].href).search).toBe('?google=redirect');
-    expect($('.flow-description[data-flow="fedcm"]').hidden).toBe(false);
-    expect($('.flow-description[data-flow="redirect"]').hidden).toBe(true);
     expect($('#flow-note').hidden).toBe(true);
+    // The explanation of the two flows is behind the info button, with the current flow marked.
+    expect($('#flow-info').hidden).toBe(true);
+    const info = $<HTMLButtonElement>('.google-flow .info');
+    info.click();
+    expect($('#flow-info').hidden).toBe(false);
+    expect(info.getAttribute('aria-expanded')).toBe('true');
+    expect($('.flow-description[data-flow="fedcm"]').getAttribute('aria-current')).toBe('true');
+    expect($('.flow-description[data-flow="redirect"]').getAttribute('aria-current')).toBeNull();
+    expect($('#flow-info').textContent).toContain('new GoogleFedcm()');
+    info.click();
+    expect($('#flow-info').hidden).toBe(true);
+    expect(info.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('prompts Google One Tap on load', async () => {
@@ -161,6 +171,12 @@ describe('demo page', () => {
     expect($('#user-email').textContent).toBe('ada@example.com');
     expect($<HTMLImageElement>('#avatar').src).toBe(ada.picture);
     expect($('#claims').textContent).toBe(JSON.stringify(ada.claims, null, 2));
+    // The claims explanation is behind its info button.
+    expect($('#claims-info').hidden).toBe(true);
+    $<HTMLButtonElement>('.claims .info').click();
+    expect($('#claims-info').hidden).toBe(false);
+    expect($('#claims-info').textContent).toContain('session token');
+    expect($('#claims-info').textContent).toContain('admin');
     expect($('#api').hidden).toBe(false);
     // The admin fields start with the signed-in user's own address, and an admin's checkboxes with the
     // server's settings; only then can they be sent back.

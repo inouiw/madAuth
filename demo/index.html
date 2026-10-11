@@ -17,19 +17,38 @@
       </svg>
     </button>
     <main>
-      <!-- Two demos: Google sign-in in the browser (One Tap / FedCM) or through the server (redirect). See src/main.ts. -->
-      <nav id="flow" aria-label="Google sign-in flow">
-        <a href="?google=fedcm" data-flow="fedcm">One Tap / FedCM</a>
-        <a href="?google=redirect" data-flow="redirect">Server-side redirect</a>
-      </nav>
-      <p class="flow-description" data-flow="fedcm">
-        <code>new GoogleFedcm()</code>: the browser shows “Continue as …” (One Tap) and the madAuth server verifies
-        Google's ID token.
-      </p>
-      <p class="flow-description" data-flow="redirect" hidden>
-        <code>new GoogleRedirect()</code>: the browser is redirected to Google and back, and the madAuth server
-        exchanges the code. Needs <code>GOOGLE_CLIENT_SECRET</code> on the server.
-      </p>
+      <!--
+        Two ways to sign in with Google: in the browser (One Tap / FedCM) or through the server (the redirect
+        flow). The links switch between them; the info button explains the difference. See src/main.ts.
+      -->
+      <div class="google-flow">
+        <span class="caption">
+          Google sign-in
+          <button type="button" class="info" aria-label="About the two Google sign-in flows" aria-expanded="false" aria-controls="flow-info">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5M12 7.5v.01" /></svg>
+          </button>
+        </span>
+        <nav id="flow" aria-label="Google sign-in flow">
+          <a href="?google=fedcm" data-flow="fedcm">One Tap / FedCM</a>
+          <a href="?google=redirect" data-flow="redirect">Server-side redirect</a>
+        </nav>
+        <div id="flow-info" class="info-text" hidden>
+          <p>
+            Both sign the user in with their Google account; they differ in where Google is talked to. The current
+            one is what the dialog's Google button uses.
+          </p>
+          <p class="flow-description" data-flow="fedcm">
+            <strong>One Tap / FedCM</strong>, <code>new GoogleFedcm()</code>: the browser shows “Continue as …” (One
+            Tap) and hands madAuth Google's ID token, which the madAuth server verifies. No redirect, and the page
+            keeps its state.
+          </p>
+          <p class="flow-description" data-flow="redirect">
+            <strong>Server-side redirect</strong>, <code>new GoogleRedirect()</code>: the browser is redirected to
+            Google and back, and the madAuth server exchanges the code for the token. Works where One Tap doesn't
+            (e.g. some in-app browsers) and needs <code>GOOGLE_CLIENT_SECRET</code> on the server.
+          </p>
+        </div>
+      </div>
       <p id="flow-note" class="note" hidden>
         This madAuth server doesn't offer the redirect flow: it needs <code>GOOGLE_CLIENT_ID</code> and
         <code>GOOGLE_CLIENT_SECRET</code>, with Google switched on. The dialog offers e-mail &amp; password only.
@@ -42,8 +61,19 @@
         <p><strong id="user-name"></strong><span id="user-email"></span></p>
         <!-- What admins attached to the user (Madauth.currentUser.claims); the session token carries it to your backends too. -->
         <div class="claims">
-          <span class="caption">Claims</span>
+          <span class="caption">
+            Claims
+            <button type="button" class="info" aria-label="About claims" aria-expanded="false" aria-controls="claims-info">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5M12 7.5v.01" /></svg>
+            </button>
+          </span>
           <pre id="claims"></pre>
+          <p id="claims-info" class="info-text" hidden>
+            Claims are what admins attached to this user, e.g. their roles. They are stored in the session token, so
+            your own backends read them from the token without asking madAuth. Users with the role
+            <code>admin</code> set them through the API, <code>Madauth.admin.setClaims(email, claims)</code>, see the
+            Admin section below; the first admin gets the role on the server's command line.
+          </p>
         </div>
         <!-- How this session was authenticated (Madauth.currentUser.amr), e.g. pwd and otp. -->
         <p class="amr">Signed in with <code id="amr"></code></p>

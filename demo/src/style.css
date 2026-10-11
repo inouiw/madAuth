@@ -143,6 +143,74 @@ code {
   font-size: 0.9em;
 }
 
+/* The two Google demos: a labelled area with the switch, and an explanation behind the info button. */
+.google-flow {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+/* An info button next to a caption: a small circle with an "i" that shows the explanation it controls. */
+.info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  vertical-align: -5px;
+  color: light-dark(#5c6066, #a6a9af);
+  background: transparent;
+  cursor: pointer;
+}
+
+.info svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.info:hover,
+.info[aria-expanded='true'] {
+  color: light-dark(#17181a, #f1f2f3);
+}
+
+.info-text {
+  display: grid;
+  gap: 8px;
+  width: min(560px, 100%);
+  box-sizing: border-box;
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  text-align: left;
+  color: light-dark(#5c6066, #a6a9af);
+  border: 1px solid light-dark(#d0d2d6, #3d4045);
+  border-radius: 8px;
+  background: light-dark(#fff, #232428);
+}
+
+.info-text p {
+  margin: 0;
+}
+
+.info-text strong {
+  color: light-dark(#17181a, #f1f2f3);
+}
+
+/* The flow the page runs is marked in the explanation. */
+.flow-description[aria-current] {
+  padding-left: 10px;
+  border-left: 3px solid light-dark(#17181a, #f1f2f3);
+}
+
 /* The switch between the two Google demos. */
 #flow {
   display: flex;
@@ -170,7 +238,6 @@ code {
   background: light-dark(#17181a, #f1f2f3);
 }
 
-.flow-description,
 .note {
   max-width: 560px;
   margin: -8px 0 0;
