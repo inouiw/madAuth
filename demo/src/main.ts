@@ -54,8 +54,6 @@ void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new 
   // The server offers the redirect flow only with a client secret (and Google switched on); otherwise
   // initialize left GoogleRedirect out and the dialog has no Google button.
   if (flow === 'redirect' && result.leftOut.includes('google')) $('#flow-note').hidden = false;
-  // GitHub sign-in needs GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET on the server, and GitHub switched on; otherwise no GitHub button.
-  if (result.leftOut.includes('github')) $('#github-note').hidden = false;
 });
 Madauth.onAuthStateChanged(handleAuthStateChanged);
 
@@ -250,14 +248,18 @@ let settingsLoaded = false;
  */
 function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSettings>> | null>(result: T): T {
   const methods: Settings['methods'] | undefined = result?.isSuccess ? result.methods : undefined;
+  // A method the server doesn't list (an older server) counts as not configured.
   for (const method of ['google', 'github', 'password', 'totp', 'email-link', 'sms'] as const) {
-    methodBox(method).checked = methods?.[method].enabled ?? false;
-    methodBox(method).disabled = !methods?.[method].configured;
+    methodBox(method).checked = methods?.[method]?.enabled ?? false;
+    methodBox(method).disabled = !methods?.[method]?.configured;
   }
   for (const method of ['google', 'github', 'password', 'email-link'] as const) {
-    policySelect(method).value = methods?.[method].secondFactor ?? 'none';
-    policySelect(method).disabled = !methods?.[method].configured;
+    policySelect(method).value = methods?.[method]?.secondFactor ?? 'none';
+    policySelect(method).disabled = !methods?.[method]?.configured;
   }
+  // Only the admin settings tell "not configured" from "switched off"; off is a valid choice, so only the
+  // first gets a note. GitHub sign-in needs GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET on the server.
+  $('#github-note').hidden = !methods || !!methods.github?.configured;
   settingsLoaded = !!methods;
   $('#settings-unloaded').hidden = settingsLoaded;
   executeButton('setSettings').disabled = !settingsLoaded;
