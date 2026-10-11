@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './index.js';
 import { Madauth, type MadauthOptions } from './madauth.js';
 import type { MadauthLogin } from './madauth-login.js';
+import { GoogleRedirect } from './providers/google-redirect.js';
 import { Password } from './providers/password.js';
 import { Totp } from './providers/totp.js';
+import { de } from './strings.js';
 import { CODE, RESET_TOKEN, SERVER, fakeServer, grace, resetAll, settle } from './test-helpers.js';
 
 beforeEach(() => {
@@ -123,11 +125,12 @@ describe('<madauth-login> in German', () => {
   it('shows the sign-in view', async () => {
     const server = fakeServer();
     server.methods.totp = true;
-    await openDialog({ providers: [new Password(), new Totp()], locale: 'de' });
+    server.codeFlow = true;
+    await openDialog({ providers: [new GoogleRedirect(), new Password(), new Totp()], locale: 'de' });
 
     expect(text('h2')).toBe('Anmelden');
     expect($('.close')!.getAttribute('aria-label')).toBe('Schließen');
-    expect(text('.google .label')).toBe('Weiter mit Google');
+    expect(text('.google-slot button')).toBe('Weiter mit Google');
     expect(text('.divider')).toBe('oder');
     expect(text('label[for="email"]')).toBe('E-Mail-Adresse');
     expect(text('label[for="password"]')).toBe('Passwort');
@@ -137,13 +140,8 @@ describe('<madauth-login> in German', () => {
     expect(text('.others h3')).toBe('Weitere Anmeldemöglichkeiten');
     expect([...login().shadowRoot!.querySelectorAll('.row .label')].map((label) => label.textContent)).toEqual([
       'Authentifizierungs-App',
-      'E-Mail-Link',
-      'SMS-Code',
     ]);
-    expect($('[data-method="sms"]')!.title).toBe('Einmalcode per SMS an Ihr Mobiltelefon');
-
-    await click('[data-method="sms"]');
-    expect(text('.notice')).toBe('„SMS-Code“ ist bald verfügbar.');
+    expect($('[data-method="totp"]')!.title).toBe(de.methods.totp.description);
   });
 
   it('keeps a heading set by the page', async () => {
@@ -427,16 +425,19 @@ describe('Madauth.setLocale', () => {
   it('shows an open dialog in the new language, with its notice', async () => {
     fakeServer();
     await openDialog();
-    await click('[data-method="sms"]');
-    expect(text('h2')).toBe('Sign in');
-    expect(text('.notice')).toBe('“SMS code” is coming soon.');
+    await click('[data-action="signup"]');
+    fill({ email: 'new@example.com', password: 'long enough' });
+    await submit('signup');
+    await click('[data-action="resend"]');
+    expect(text('h2')).toBe('Check your inbox');
+    expect(text('.notice[role="status"]')).toBe('We sent the e-mail again.');
 
     Madauth.setLocale('de');
     await login().updateComplete;
 
-    expect(text('h2')).toBe('Anmelden');
-    expect(text('label[for="email"]')).toBe('E-Mail-Adresse');
-    expect(text('.notice')).toBe('„SMS-Code“ ist bald verfügbar.');
+    expect(text('h2')).toBe('Posteingang prüfen');
+    expect(text('label[for="code"]')).toBe('Bestätigungscode');
+    expect(text('.notice[role="status"]')).toBe('Wir haben die E-Mail erneut gesendet.');
     expect($('dialog')!.getAttribute('lang')).toBe('de');
     expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
   });

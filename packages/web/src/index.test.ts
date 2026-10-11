@@ -63,9 +63,7 @@ describe('<madauth-login> with madAuth', () => {
     fakeServer().codeFlow = true;
     await Madauth.initialize({ serverUrl: SERVER, providers: [] });
     let login = await open();
-    login.shadowRoot!.querySelector<HTMLButtonElement>('[data-method="google"]')!.click();
-    await login.updateComplete;
-    expect(login.shadowRoot!.querySelector('.notice')!.textContent).toContain('coming soon');
+    expect(login.shadowRoot!.querySelector('[data-method="google"], .google-slot')).toBeNull();
     login.remove();
 
     vi.spyOn(window.location, 'assign').mockImplementation(() => {});
@@ -75,10 +73,8 @@ describe('<madauth-login> with madAuth', () => {
     await login.updateComplete;
     expect(login.shadowRoot!.querySelector('.notice')).toBeNull();
     expect(window.location.assign).toHaveBeenCalledOnce();
-    // Other methods have no provider yet.
-    login.shadowRoot!.querySelector<HTMLButtonElement>('[data-method="sms"]')!.click();
-    await login.updateComplete;
-    expect(login.shadowRoot!.querySelector('.notice')!.textContent).toContain('coming soon');
+    // Methods without a provider are not listed.
+    expect(login.shadowRoot!.querySelectorAll('[data-method]')).toHaveLength(0);
   });
 
   it('W5: shows and fires an error when madAuth is not initialized', async () => {

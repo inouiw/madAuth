@@ -62,6 +62,17 @@ async function openDialog(providers: SignInProvider[] = [new Password(), new Tot
 }
 
 describe('<madauth-login> and the authenticator app on its own', () => {
+  it('D8: lists the app alone without an "Other ways to sign in" heading', async () => {
+    const server = fakeServer();
+    server.methods.totp = true;
+    void openDialog([new Totp()]);
+    await settle();
+
+    expect($('[data-method="totp"]')).not.toBeNull();
+    expect($('.others h3')).toBeNull();
+    expect($('form.signin')).toBeNull();
+  });
+
   it('D8: lists the app only when it signs in on its own, and shows its form', async () => {
     const server = fakeServer();
     server.policy.password = 'optional';
@@ -70,7 +81,7 @@ describe('<madauth-login> and the authenticator app on its own', () => {
     await settle();
     expect($('[data-method="totp"]')).toBeNull();
     login().close();
-    // Without the provider as well: the app is implemented, so it is never "coming soon" once initialized.
+    // Without the provider as well.
     void openDialog([new Password()]);
     await settle();
     expect($('[data-method="totp"]')).toBeNull();

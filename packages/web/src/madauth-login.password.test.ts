@@ -54,9 +54,9 @@ describe('<madauth-login> with e-mail & password', () => {
     fakeGis();
     void openDialog([new GoogleFedcm({ autoPrompt: false })]);
     await settle();
+    expect($('form.signin')).toBeNull();
     expect($('[data-action="forgot"]')).toBeNull();
-    await click('[data-method="password"]');
-    expect($('.notice')!.textContent).toContain('coming soon');
+    expect($('[data-action="signup"]')).toBeNull();
     login().close();
 
     void openDialog();
@@ -64,6 +64,36 @@ describe('<madauth-login> with e-mail & password', () => {
     expect($('form.signin input[name="email"]')).not.toBeNull();
     expect($('[data-action="forgot"]')).not.toBeNull();
     expect($('[data-action="signup"]')).not.toBeNull();
+  });
+
+  it('D1: opened while madAuth gets ready, the dialog shows up with the form already in place', async () => {
+    const server = fakeServer();
+    let answer!: () => void;
+    server.held = new Promise((resolve) => (answer = resolve));
+    void Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    document.body.append(document.createElement('madauth-login'));
+    const opened = login().open();
+    await settle();
+    expect($<HTMLDialogElement>('dialog')!.open).toBe(false);
+
+    answer();
+    await opened;
+
+    expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
+    expect($('form.signin')).not.toBeNull();
+  });
+
+  it('D1: offers no form when madAuth could not get ready, only the error', async () => {
+    const server = fakeServer();
+    server.down = true;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    document.body.append(document.createElement('madauth-login'));
+    await login().open();
+    await settle();
+
+    expect($('[part="error"]')!.dataset.code).toBe('network');
+    expect($('form.signin')).toBeNull();
+    expect($('[data-method]')).toBeNull();
   });
 
   it('D2: signs in through the form and closes', async () => {
@@ -280,6 +310,11 @@ describe('<madauth-login> with e-mail & password', () => {
     expect(server.mails).toEqual([{ purpose: 'verify', to: 'new@example.com', redirectTo: 'https://app.example.com/page' }]);
     expect($('h2')!.textContent).toBe('Check your inbox');
     expect($('.notice[role="status"]')!.textContent).toContain('We sent the e-mail again.');
+
+    login().close();
+    void openDialog();
+    await settle();
+    expect($('.notice')).toBeNull();
   });
 
   it('D6: uses only the public Madauth API', async () => {
@@ -384,7 +419,7 @@ describe('<madauth-login> with e-mail & password', () => {
     expect(element.shadowRoot!.activeElement).toBe($('form.signin input[name="password"]'));
   });
 
-  it('signIn({ email }) fills the field without the Password provider, but leaves the focus alone', async () => {
+  it('signIn({ email }) opens the dialog without the Password provider, which has no e-mail field then', async () => {
     fakeServer();
     fakeGis();
 
@@ -394,8 +429,8 @@ describe('<madauth-login> with e-mail & password', () => {
     void Madauth.signIn({ email: 'grace@example.com' });
     await settle();
 
-    expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('grace@example.com');
-    expect(login().shadowRoot!.activeElement).not.toBe($('form.signin input[name="password"]'));
+    expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
+    expect($('input[name="email"]')).toBeNull();
   });
 
   it('signIn() without an e-mail leaves the field and the focus alone', async () => {

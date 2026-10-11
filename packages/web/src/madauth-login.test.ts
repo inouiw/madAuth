@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import './index.js';
 import { MadauthLogin } from './madauth-login.js';
-import { loginMethods } from './methods.js';
 
 let login: MadauthLogin;
 let onCancel: Mock<() => void>;
@@ -54,52 +53,14 @@ describe('<madauth-login>', () => {
     expect($('h2').textContent).toBe('Log in to projectmatch');
   });
 
-  it('lists every login method in registry order', () => {
-    const ids = [...login.shadowRoot!.querySelectorAll<HTMLButtonElement>('[data-method]')].map(
-      (b) => b.dataset.method,
-    );
-    expect(ids).toEqual(loginMethods.map((m) => m.id));
+  it('lists no method without providers (madAuth not initialized)', () => {
+    expect(login.shadowRoot!.querySelectorAll('[data-method]')).toHaveLength(0);
+    expect($('form.signin')).toBeNull();
+    expect($('.others')).toBeNull();
   });
 
   it('shows no notice until a method is chosen', () => {
     expect($('.notice')).toBeNull();
-  });
-
-  it('tells the user that a coming-soon method is coming soon when it is chosen', async () => {
-    // Without providers (madAuth not initialized) every method is coming soon.
-    for (const m of loginMethods) {
-      const button = $<HTMLButtonElement>(`[data-method="${m.id}"]`);
-      expect(button.disabled).toBe(false);
-
-      button.click();
-      await login.updateComplete;
-
-      expect($('.notice span').textContent).toBe(`“${m.label}” is coming soon.`);
-    }
-  });
-
-  it('clears the notice when the dialog is closed', async () => {
-    await login.open();
-    $<HTMLButtonElement>('[data-method="google"]').click();
-    await login.updateComplete;
-
-    $<HTMLButtonElement>('.close').click();
-
-    await vi.waitFor(() => expect($('.notice')).toBeNull());
-  });
-
-  it('labels each method button', () => {
-    for (const m of loginMethods) {
-      const label = m.id === 'password' ? 'Sign in' : m.label;
-      expect($(`[data-method="${m.id}"] .label`).textContent).toBe(label);
-    }
-  });
-
-  it('offers a labelled e-mail and password form', () => {
-    for (const id of ['email', 'password']) {
-      expect($(`form input#${id}`)).not.toBeNull();
-      expect($(`label[for="${id}"]`)).not.toBeNull();
-    }
   });
 
   it('closes and fires madauth-cancel when the close button is clicked', async () => {
