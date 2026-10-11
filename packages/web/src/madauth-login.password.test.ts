@@ -66,6 +66,19 @@ describe('<madauth-login> with e-mail & password', () => {
     expect($('[data-action="signup"]')).not.toBeNull();
   });
 
+  it('D1: offers no form when madAuth could not get ready, only the error', async () => {
+    const server = fakeServer();
+    server.down = true;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    document.body.append(document.createElement('madauth-login'));
+    await login().open();
+    await settle();
+
+    expect($('[part="error"]')!.dataset.code).toBe('network');
+    expect($('form.signin')).toBeNull();
+    expect($('[data-method]')).toBeNull();
+  });
+
   it('D2: signs in through the form and closes', async () => {
     fakeServer();
     const result = openDialog();
@@ -246,6 +259,11 @@ describe('<madauth-login> with e-mail & password', () => {
     expect(server.mails).toEqual([{ purpose: 'verify', to: 'new@example.com', redirectTo: 'https://app.example.com/page' }]);
     expect($('h2')!.textContent).toBe('Check your inbox');
     expect($('.notice[role="status"]')!.textContent).toContain('We sent the e-mail again.');
+
+    login().close();
+    void openDialog();
+    await settle();
+    expect($('.notice')).toBeNull();
   });
 
   it('D6: uses only the public Madauth API', async () => {

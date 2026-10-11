@@ -21,7 +21,6 @@ export const en = {
     email: { label: 'E-mail link', description: 'Passwordless sign-in by e-mail' },
     sms: { label: 'SMS code', description: 'One-time code sent to your phone' },
   } satisfies Record<LoginMethodId, { label: string; description: string }>,
-  /** After picking a method that has no provider yet. */
 
   // Fields
   email: 'E-mail',

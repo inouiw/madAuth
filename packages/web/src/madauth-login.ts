@@ -65,27 +65,6 @@ const infoIcon = html`
   </svg>
 `;
 
-const googleLogo = html`
-  <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
-    <path
-      fill="#ea4335"
-      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-    />
-    <path
-      fill="#4285f4"
-      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-    />
-    <path
-      fill="#fbbc05"
-      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-    />
-    <path
-      fill="#34a853"
-      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-    />
-  </svg>
-`;
-
 /** Icons of the methods listed under "Other ways to sign in". */
 const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
   totp: html`
@@ -425,12 +404,8 @@ export class MadauthLogin extends LitElement {
     return Object.fromEntries([...data.entries()].map(([k, v]) => [k, String(v)]));
   }
 
-  private async onSignIn(e: Event, m: LoginMethod): Promise<void> {
+  private async onSignIn(e: Event): Promise<void> {
     const { email = '', password = '' } = this.fields(e);
-    if (!this.passwordAvailable) {
-      this.onMethodChosen(m);
-      return;
-    }
     this.email = email.trim();
     const result = await this.run(() => Madauth.password.signIn({ email, password }));
     if (result) this.finish('password', result);
@@ -627,9 +602,10 @@ export class MadauthLogin extends LitElement {
   }
 
   private renderSignInView() {
-    // Only the methods whose provider was passed to Madauth.initialize (and not left out because the server
-    // doesn't offer them) are listed. The authenticator app is listed only when it signs in on its own here.
-    const offered = loginMethods.filter((m) => providerFor(m.id) && (m.id !== 'totp' || this.totpAvailable));
+    // Once madAuth is ready, only the methods whose provider was passed to Madauth.initialize (and not left out
+    // because the server doesn't offer them) are listed, all at once. The authenticator app is listed only when
+    // it signs in on its own here.
+    const offered = this.usable ? loginMethods.filter((m) => providerFor(m.id) && (m.id !== 'totp' || this.totpAvailable)) : [];
     const google = offered.find((m) => m.id === 'google');
     const password = offered.find((m) => m.id === 'password');
     const others = offered.filter((m) => m !== google && m !== password);
@@ -641,7 +617,7 @@ export class MadauthLogin extends LitElement {
       ${others.length
         ? html`
             <section class="others">
-              <h3>${s.otherWays}</h3>
+              ${google || password ? html`<h3>${s.otherWays}</h3>` : null}
               <ul>
                 ${others.map((m) => html`<li>${this.renderRow(m)}</li>`)}
               </ul>
@@ -652,30 +628,14 @@ export class MadauthLogin extends LitElement {
   }
 
   private renderGoogle(m: LoginMethod) {
-    const { label, description } = this.strings.methods[m.id];
-    if (this.usable && providerFor('google')) {
-      // Google's button is rendered here through Madauth.google.renderButton.
-      return html`<div class="google-slot" title=${description}></div>`;
-    }
-    return html`
-      <button
-        part="method"
-        class="google"
-        type="button"
-        title=${description}
-        data-method=${m.id}
-        @click=${() => this.onMethodChosen(m)}
-      >
-        ${googleLogo}
-        <span class="label">${label}</span>
-      </button>
-    `;
+    // Google's button is rendered here through Madauth.google.renderButton.
+    return html`<div class="google-slot" title=${this.strings.methods[m.id].description}></div>`;
   }
 
   private renderPassword(m: LoginMethod) {
     const s = this.strings;
     return html`
-      <form part="form" class="signin" @submit=${(e: Event) => this.onSignIn(e, m)}>
+      <form part="form" class="signin" @submit=${(e: Event) => this.onSignIn(e)}>
         ${this.emailField('email')}
         <div class="field">
           <label for="password">${s.password}</label>
@@ -1121,12 +1081,6 @@ export class MadauthLogin extends LitElement {
       stroke-linejoin: round;
     }
 
-    .logo {
-      flex-shrink: 0;
-      width: 18px;
-      height: 18px;
-    }
-
     .close {
       position: absolute;
       top: 8px;
@@ -1149,19 +1103,6 @@ export class MadauthLogin extends LitElement {
 
     .close .icon {
       stroke-width: 2;
-    }
-
-    .google {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      height: var(--_control-height);
-      padding: 0 16px;
-      font-weight: 500;
-      border: 1px solid var(--_button-border);
-      border-radius: var(--_control-radius);
-      background: var(--_button-bg);
     }
 
     .notice {
@@ -1192,11 +1133,6 @@ export class MadauthLogin extends LitElement {
       display: flex;
       justify-content: center;
       min-height: var(--_control-height);
-    }
-
-    .google:hover {
-      border-color: var(--_subtle);
-      background: var(--_hover);
     }
 
     .divider {
