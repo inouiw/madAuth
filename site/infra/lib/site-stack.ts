@@ -105,7 +105,8 @@ export class SiteStack extends Stack {
       googleClientId: props.googleClientId || undefined,
       githubClientId: props.githubClientId || undefined,
       secretsPath: SECRETS_PATH,
-      webhook: { url: mailerUrl.url, events: EMAIL_EVENTS },
+      // The sign-in e-mails of the e-mail link too, so an admin can switch that method on.
+      webhook: { url: mailerUrl.url, events: [...EMAIL_EVENTS, 'email.send_signin_link'] },
       // A public demo: cap what abuse can cost.
       reservedConcurrentExecutions: 5,
       serverPackageDir: join(repoRoot, 'packages/server'),

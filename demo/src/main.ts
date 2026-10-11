@@ -47,14 +47,14 @@ const { hostname } = location;
 $('[data-hosted]').hidden = !(hostname === 'madauth.com' || hostname.endsWith('.madauth.com'));
 
 // No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin. GitHub is left out
-// when the server has no OAuth App for it, the authenticator app when the server has it switched off (no
+// when the server has no OAuth App for it or an admin has it off, the authenticator app when the server has it switched off (no
 // policy asks for it, and it signs in nobody alone), and the e-mail link when the server's webhook doesn't
 // send its e-mails or an admin has it off.
 void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new Totp(), new EmailLink()] }).then((result) => {
   // The server offers the redirect flow only with a client secret (and Google switched on); otherwise
   // initialize left GoogleRedirect out and the dialog has no Google button.
   if (flow === 'redirect' && result.leftOut.includes('google')) $('#flow-note').hidden = false;
-  // GitHub sign-in needs GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET on the server; without them, no GitHub button.
+  // GitHub sign-in needs GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET on the server, and GitHub switched on; otherwise no GitHub button.
   if (result.leftOut.includes('github')) $('#github-note').hidden = false;
 });
 Madauth.onAuthStateChanged(handleAuthStateChanged);
