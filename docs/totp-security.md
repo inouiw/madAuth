@@ -27,7 +27,7 @@ Code: `deriveTotpKey`, `encryptSecret` and `decryptSecret` in [`totp.ts`](../pac
 ## Setting the app up
 
 - Only a signed-in user sets the app up, or a sign-in whose first step is done (a `required` policy, or a sign-up with the app whose address was just confirmed). Nobody can set an app up for someone else. When both are at one browser (someone is signed in, and another sign-in waits for its setup), the setup is for the sign-in that waits, and any session that starts, or signing out, ends the wait.
-- A user who has an app gives a current code from it (or a recovery code) before a new key is issued: a new app replaces the old one and its recovery codes, and a stolen session alone must not swap them for the thief's.
+- A user who has an app gives a current code from it (or a recovery code) before a new key is issued: a new app replaces the old one and its recovery codes, and a stolen session alone must not swap them for the thief's. The approval holds for ten minutes in the setup cookie, so starting the setup again costs no second code and no second recovery code.
 - The new secret is not stored until the first code proves that the app has it. Until then it travels in a cookie (`madauth_totp_setup`, HttpOnly, ten minutes, only sent to `/auth/totp`), as a signed token that carries the user's id and the encrypted secret. A setup expires, is bound to its user, and can't be confirmed from another browser or by another user.
 - A new setup replaces the earlier app and its recovery codes, and resets the failed attempts.
 - The setup screen says what the app will do: that signing in with the password (or Google) then asks for a code, and whether the app signs in on its own. Setting it up is the user's consent; an admin's policy can't make an account weaker than what the user agreed to, only ask for more.
@@ -50,6 +50,7 @@ After Google or a password whose policy asks for the app, the first step gives n
 
 - The challenge is bound to the user and to its step: a challenge for the setup can't be used to skip the setup with a code, and the other way round.
 - It finishes only while its method is still on: an admin who switches Google or password off also ends the sign-ins that were between their two steps.
+- Issuing it clears the session there was at that browser: a sign-in that reaches the second step signs out whoever was signed in until the step is done, so an abandoned step can't be taken for that user's own setup later.
 - A password reset in between ends the challenge (the session version changed), as it ends every session.
 - The session issued afterwards says how it was authenticated: `amr: ["pwd", "otp"]` or `["google", "otp"]`. The web library's `user.amr` and `createSessionVerifier` expose it, so a backend can require `otp` before a sensitive action. A webhook `user.signed_in` carries `secondFactor: "totp"` or `"recovery_code"`.
 
@@ -71,7 +72,7 @@ Code: [`packages/server/src/routes/lockout.ts`](../packages/server/src/routes/lo
 
 ## Removing the app
 
-Removing the app, and new recovery codes, take a current code from the app or a recovery code: a stolen session alone can't switch the protection off. While the policy of any method that is on is `required`, nobody can remove the app (`403 required_by_policy`); they can only replace it. A user who signed up with the app alone can't remove their only way in either (`403 only_method`): without it, nobody could sign in as them, and the record would be taken over by the next sign-up for the address; they delete the account instead. Deleting the whole account takes a code as well once the app is set up, for the same reason; an app that an admin switched off server-wide protects nothing and is not asked for. An admin can remove a user's app without a code: `POST /auth/admin/totp/remove`, which tells the webhook who did it (`totp.disabled` with `by`), or `remove-totp` on the command line, which calls no webhook.
+Removing the app, and new recovery codes, take a current code from the app or a recovery code: a stolen session alone can't switch the protection off. While the policy of any method that is on is `required`, nobody can remove the app (`403 required_by_policy`); they can only replace it. A user whose only way in that is on is the app can't remove it either (`403 only_method`; a method an admin switched off is no way in): without it, nobody could sign in as them, and the record would be taken over by the next sign-up for the address; they delete the account instead. Deleting the whole account takes a code as well once the app is set up, for the same reason; an app that an admin switched off server-wide protects nothing and is not asked for. An admin can remove a user's app without a code: `POST /auth/admin/totp/remove`, which tells the webhook who did it (`totp.disabled` with `by`), or `remove-totp` on the command line, which calls no webhook.
 
 ## A method signs in only users who have it
 

@@ -71,8 +71,10 @@ export interface AppContext {
   configured(method: SignInMethod): boolean;
   /** Whether the webhook sends the e-mails that confirm an address, so people can sign up with one. */
   emailVerification: boolean;
-  /** Whether a sign-in method is on: configured, and listed by an admin. Read from the store each time. */
-  enabled(method: SignInMethod): Promise<boolean>;
+  /** The sign-in methods that are on, as an admin set them: read from the store once per request. */
+  methods(c: Context): Promise<MethodSettings>;
+  /** Whether a sign-in method is on: configured, and listed by an admin. */
+  enabled(c: Context, method: SignInMethod): Promise<boolean>;
   /** Asks the webhook whether someone may sign up (`signup.before`). Fails closed: without an answer, nobody signs up. */
   checkSignup(data: { email: string; name?: string; locale?: string; method: SignInMethod }): Promise<SignupCheck>;
   /** Tells the webhook that something happened. Awaited (Lambda stops after the answer), but never fails. */
@@ -183,6 +185,9 @@ export function createApp(config: MadauthConfig): Hono {
     return user;
   };
 
+  // The settings of a request, read once: every route that needs them shares the read.
+  const methodsOf = new WeakMap<Request, Promise<MethodSettings>>();
+
   const ctx: AppContext = {
     config,
     keys,
@@ -206,14 +211,19 @@ export function createApp(config: MadauthConfig): Hono {
       return { ...user, amr };
     },
     async secondStep(c, user, amr, method, profile) {
-      const methods = await settings.methods();
+      const methods = await this.methods(c);
       if (!isOn(method, configured, methods)) return { disabled: true };
       const enrolled = await users.totpAccount(user.id);
       // The app itself is the method of a sign-up with it: it is set up now, or asked for if it exists already.
       const policy = method === 'totp' ? 'required' : policyOf(method, methods);
       const next: NextStep | null = policy === 'none' ? null : enrolled ? 'totp' : policy === 'required' ? 'totp-setup' : null;
       if (next) {
-        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, ...(profile ? { profile } : {}) });
+        // A sign-in that goes on with the app ends the session there was at this browser, if any: whoever
+        // was signed in is signed out until the step is done, so the setup can't be taken for theirs.
+        clearSession(c);
+        // Only what the session will show; the cookie is signed, not encrypted.
+        const known = { ...(profile?.name ? { name: profile.name } : {}), ...(profile?.picture ? { picture: profile.picture } : {}) };
+        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, ...(Object.keys(known).length ? { profile: known } : {}) });
         return { next, method };
       }
       const result = await this.startSession(c, toMadauthUser(user, profile), amr, { sv: user.sessionVersion });
@@ -226,8 +236,16 @@ export function createApp(config: MadauthConfig): Hono {
     webhook: config.webhook ? createWebhookClient(config.webhook, config.webhookFetch) : undefined,
     configured,
     emailVerification,
-    async enabled(method) {
-      return isOn(method, configured, await settings.methods());
+    methods(c) {
+      let reading = methodsOf.get(c.req.raw);
+      if (!reading) {
+        reading = settings.methods();
+        methodsOf.set(c.req.raw, reading);
+      }
+      return reading;
+    },
+    async enabled(c, method) {
+      return isOn(method, configured, await this.methods(c));
     },
     async checkSignup(data) {
       if (!this.webhook?.wants('signup.before')) return { ok: true };
@@ -284,7 +302,7 @@ export function createApp(config: MadauthConfig): Hono {
 
   // The methods that are on right now, so the web library shows exactly those.
   app.get('/auth/config', async (c) => {
-    const current = await settings.methods();
+    const current = await ctx.methods(c);
     const on = (method: SignInMethod) => isOn(method, configured, current);
     return c.json({
       google: on('google') ? { clientId: config.google!.clientId, codeFlow: !!config.google!.clientSecret, secondFactor: policyOf('google', current) } : null,
@@ -323,7 +341,7 @@ export function createApp(config: MadauthConfig): Hono {
     if (!user) return c.json({ error: 'no_session' }, 401);
     const stored = await users.findById(user.id);
     // An app that is switched off server-wide protects nothing, so it is not asked for either.
-    const protects = stored && authenticatorOn(configured, await settings.methods());
+    const protects = stored && authenticatorOn(configured, await ctx.methods(c));
     const authenticator = protects ? await users.totpAccount(user.id) : null;
     if (stored && authenticator) {
       // Deleting the user removes their authenticator app too, so like removing it, it takes a current code.

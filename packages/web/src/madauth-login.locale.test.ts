@@ -121,8 +121,9 @@ describe('the language of <madauth-login>', () => {
 
 describe('<madauth-login> in German', () => {
   it('shows the sign-in view', async () => {
-    fakeServer();
-    await openDialog({ locale: 'de' });
+    const server = fakeServer();
+    server.methods.totp = true;
+    await openDialog({ providers: [new Password(), new Totp()], locale: 'de' });
 
     expect(text('h2')).toBe('Anmelden');
     expect($('.close')!.getAttribute('aria-label')).toBe('Schließen');

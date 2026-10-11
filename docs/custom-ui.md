@@ -90,7 +90,7 @@ Use these `autocomplete` values so browsers offer to save and fill passwords and
 
 ## Authenticator app: `Madauth.totp`
 
-The methods work whenever the app is in use on the server: as the second factor of a method whose [policy](server.md#sign-in-methods) is `optional` or `required`, or as a method of its own; otherwise they fail with `flow_not_enabled`. `signIn` and `signUp`, the app on its own, also need `new Totp()` in `initialize` (left out with a warning when the server has the app switched off); the second step and the account methods need no provider, so an admin's policy applies to every app.
+The methods work whenever the app is in use on the server: as the second factor of a method whose [policy](server.md#sign-in-methods) is `optional` or `required`, or as a method of its own; otherwise they fail with `flow_not_enabled`. `signIn` and `signUp`, the app on its own, also need `new Totp()` in `initialize`, which is left out with a warning when the server does not let the app sign in on its own; the second step and the account methods need no provider, so an admin's policy applies to every app. A sign-in that reaches the second step signs out whoever was signed in (`onAuthStateChanged` gets `null`) until the step is done.
 
 | Method | Result | Errors |
 | --- | --- | --- |

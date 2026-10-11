@@ -44,21 +44,23 @@ describe('e-mail confirmation', () => {
   it('E3: a user whose method is switched off can neither confirm nor get the e-mail again', async () => {
     const { app, hook, store } = passwordApp();
     await post(app, '/auth/password/signup', { email: 'grace@example.com', password: 'correct horse battery', redirectTo: REDIRECT_TO });
-    const { token } = linkAndCode(hook.lastEmail());
+    const { token, code } = linkAndCode(hook.lastEmail());
     await store.create('setting', { id: 'methods', value: JSON.stringify({ google: {} }), updatedAt: 1, updatedBy: null });
     hook.calls.length = 0;
 
     const verify = await post(app, '/auth/email/verify', { token });
+    const byCode = await post(app, '/auth/email/verify', { email: 'grace@example.com', code });
     const again = await post(app, '/auth/email/send-verification', { email: 'grace@example.com', redirectTo: REDIRECT_TO });
 
     expect(verify.status).toBe(403);
     expect(await verify.json()).toMatchObject({ error: 'method_disabled' });
+    expect(byCode.status).toBe(403);
     expect(again.status).toBe(202);
     expect(hook.emails()).toEqual([]);
 
-    // The link was not used up: it works once the method is on again.
+    // Neither the link nor the code was used up: they work once the method is on again.
     await store.update('setting', { id: 'methods' }, { value: JSON.stringify({ google: {}, password: {} }) });
-    expect((await post(app, '/auth/email/verify', { token })).status).toBe(200);
+    expect((await post(app, '/auth/email/verify', { email: 'grace@example.com', code })).status).toBe(200);
   });
 
   it('E4: a POST from another origin is refused, like every other', async () => {

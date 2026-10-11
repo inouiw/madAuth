@@ -5,7 +5,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
-import { METHODS_WITH_SECOND_FACTOR, authenticatorOn, isOn, policyOf, type MethodSettings, type SignInMethod } from '../settings.js';
+import { METHODS_WITH_SECOND_FACTOR, authenticatorOn, isOn, policyOf, type SignInMethod } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import {
   TOTP_WINDOW,
@@ -56,10 +56,14 @@ export interface Challenge {
 }
 
 type ChallengeClaims = Challenge & JWTPayload;
-/** The setup cookie: whose setup it is, and the secret as it will be stored (encrypted). */
+/**
+ * The setup cookie: whose setup it is, the secret as it will be stored (encrypted), and, when it replaces an
+ * app, when the current app agreed (a code): the approval holds for SETUP_TTL, also for a setup started again.
+ */
 interface SetupClaims extends JWTPayload {
   sub: string;
   secret: string;
+  approved?: number;
 }
 
 /** The keys of the authenticator app: one encrypts the secrets, the other (the e-mail codes' key) hashes the recovery codes. */
@@ -134,15 +138,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   const { config, secure, users } = ctx;
   const { issuer } = config;
   const cookie = cookieOptions(secure);
-  // The settings are read once per request: the guard below reads them, the routes reuse them.
-  const methodsOf = new WeakMap<Request, MethodSettings>();
-  const methodsNow = async (c: Context): Promise<MethodSettings> => {
-    const known = methodsOf.get(c.req.raw);
-    if (known) return known;
-    const methods = await ctx.settings.methods();
-    methodsOf.set(c.req.raw, methods);
-    return methods;
-  };
+  const methodsNow = (c: Context) => ctx.methods(c);
 
   // Every route: an admin switched the authenticator app off, on its own and as a second factor.
   app.use(`${COOKIE_PATH}/*`, async (c, next) => {
@@ -208,18 +204,28 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     if (!who) return noSession(c);
     if (who.challenge && !(await methodStillOn(c, who.challenge))) return methodOff(c);
     // Replacing an app takes a current code from it (or a recovery code), like removing it: a stolen
-    // session alone must not swap the app and the recovery codes for the thief's.
+    // session alone must not swap the app and the recovery codes for the thief's. The approval holds for
+    // SETUP_TTL in the setup cookie, so starting again (or a closed dialog) costs no second code.
     const existing = await users.totpAccount(who.user.id);
+    let approved: number | undefined;
     if (existing) {
-      const data = await body(c);
-      if (data.code === undefined && data.recoveryCode === undefined) {
-        return error(c, 401, 'code_required', 'Enter a code from your current authenticator app (or a recovery code) to replace it.');
+      const previous = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
+      const holds = previous?.sub === who.user.id && typeof previous.approved === 'number' && Date.now() - previous.approved < SETUP_TTL * 1000;
+      if (holds) {
+        approved = previous.approved;
+      } else {
+        const data = await body(c);
+        if (data.code === undefined && data.recoveryCode === undefined) {
+          return error(c, 401, 'code_required', 'Enter a code from your current authenticator app (or a recovery code) to replace it.');
+        }
+        const via = await checkCode(c, ctx, keys, who.user, existing, data);
+        if (via instanceof Response) return via;
+        approved = Date.now();
       }
-      const via = await checkCode(c, ctx, keys, who.user, existing, data);
-      if (via instanceof Response) return via;
     }
     const secret = generateTotpSecret();
-    const token = await signToken(await ctx.keys, issuer, SETUP_TYP, { sub: who.user.id, secret: encryptSecret(keys.totpKey, secret) }, SETUP_TTL);
+    const claims = { sub: who.user.id, secret: encryptSecret(keys.totpKey, secret), ...(approved ? { approved } : {}) };
+    const token = await signToken(await ctx.keys, issuer, SETUP_TYP, claims, SETUP_TTL);
     setCookie(c, SETUP_COOKIE, token, { ...cookie, maxAge: SETUP_TTL });
     // Nothing is stored until the first code proves that the app has the secret.
     return c.json({ secret: base32Encode(secret), uri: otpauthUri({ issuer: issuerLabel(c), account: who.user.email, secret }) });
@@ -297,8 +303,9 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     }
     const account = await users.totpAccount(user.id);
     if (!account) return c.json({});
-    // A user who signed up with the app has no other way in: without it, nobody could sign in as them.
-    if (!(await users.signInMethods(user.id, methods)).some((method) => method !== 'totp')) {
+    // A user who signed up with the app has no other way in: without it, nobody could sign in as them. A
+    // method that is switched off is no way in either.
+    if (!(await users.signInMethods(user.id, methods)).some((method) => method !== 'totp' && isOn(method, ctx.configured, methods))) {
       return error(c, 403, 'only_method', 'The authenticator app is the only way you sign in, so it can\'t be removed. Delete your account instead.');
     }
     // Removing the app takes a current code: a stolen session alone can't switch the protection off.

@@ -39,7 +39,8 @@ export class GoogleFedcm implements SignInProvider {
     } catch (e) {
       return fail('gis_load_failed', `Google sign-in could not be loaded: ${(e as Error).message}`);
     }
-    if (this.#autoPrompt && !ctx.currentUser) void this.#prompt();
+    // Not while a sign-in waits for the authenticator app: One Tap on top of the code step would start another.
+    if (this.#autoPrompt && !ctx.currentUser && !ctx.signInPending) void this.#prompt();
     return ok();
   }
 
@@ -86,7 +87,7 @@ export class GoogleFedcm implements SignInProvider {
       console.error('[madauth]', prepared.error.code, prepared.error.message);
       return;
     }
-    if (!this.#button && !this.#ctx!.currentUser) this.#gis!.prompt();
+    if (!this.#button && !this.#ctx!.currentUser && !this.#ctx!.signInPending) this.#gis!.prompt();
   }
 
   async #renderButton(mount: ButtonMount): Promise<void> {

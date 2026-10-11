@@ -195,6 +195,42 @@ describe('setting up the authenticator app while signed in', () => {
     expect((await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).status).toBe(200);
   });
 
+  it('T30: the current app\'s approval holds for ten minutes, so starting again costs no second code', async () => {
+    const { app, store, session, userId, recoveryCodes } = await enrolled(standalone);
+    advance(60_000);
+    const first = await post(app, '/auth/totp/setup', { recoveryCode: recoveryCodes[0] }, withSession(session));
+    expect(first.status).toBe(200);
+    expect(await store.findMany('recoveryCode', { userId })).toHaveLength(9);
+    const approval = `madauth_totp_setup=${cookies(first).madauth_totp_setup.value}`;
+
+    // Starting again within ten minutes: the earlier approval counts, no code is used up.
+    advance(5 * 60_000);
+    const again = await post(app, '/auth/totp/setup', {}, withSession(session, approval));
+    expect(again.status).toBe(200);
+    expect(await store.findMany('recoveryCode', { userId })).toHaveLength(9);
+    // Another browser, without the setup cookie, needs a code.
+    expect((await post(app, '/auth/totp/setup', {}, withSession(session))).status).toBe(401);
+    // Ten minutes after the code, a code is needed again, although the latest setup cookie is still valid.
+    advance(6 * 60_000);
+    const late = await post(app, '/auth/totp/setup', {}, withSession(session, `madauth_totp_setup=${cookies(again).madauth_totp_setup.value}`));
+    expect(late.status).toBe(401);
+    expect(await late.json()).toMatchObject({ error: 'code_required' });
+  });
+
+  it('T31: a method that is switched off is no way in, so the app can\'t be removed next to it', async () => {
+    const { app, store, session, secret } = await enrolled(standalone);
+    // Password sign-in goes off: Grace's password is no way in while it is, only the app.
+    await setMethods(store, { google: { secondFactor: 'none' }, totp: {} });
+    advance(60_000);
+
+    const refused = await post(app, '/auth/totp/remove', { code: codeFor(secret) }, withSession(session));
+
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ error: 'only_method' });
+    await setMethods(store, standalone);
+    expect((await post(app, '/auth/totp/remove', { code: codeFor(secret) }, withSession(session))).status).toBe(200);
+  });
+
   it('T5: removing the app and renewing the recovery codes take a current code; a required policy forbids removing', async () => {
     const { app, hook, store, session, userId, secret, recoveryCodes } = await enrolled(standalone);
     const status = () => Promise.resolve(app.request('/auth/totp/status', { headers: withSession(session) })).then((r) => r.json());
@@ -433,7 +469,7 @@ describe('the second step after a password or Google', () => {
 
     expect(first.status).toBe(401);
     expect(await first.json()).toMatchObject({ error: 'totp_required' });
-    expect(cookies(first).madauth_session).toBeUndefined();
+    expect(cookies(first).madauth_session?.value ?? '').toBe('');
     const challenge = cookies(first).madauth_challenge;
     expect(challenge.attrs).toMatchObject({ httponly: true, secure: true, samesite: 'Strict', path: '/auth/totp', 'max-age': '600' });
     expect(hook.types()).toEqual([]);
@@ -548,6 +584,10 @@ describe('the second step after a password or Google', () => {
     const fedcm = await signInResponse(app);
     expect(fedcm.status).toBe(401);
     expect(await fedcm.json()).toMatchObject({ error: 'totp_required' });
+    // The challenge carries what the session will show, and nothing else of Google's profile.
+    const jwks = createLocalJWKSet(await (await app.request('/.well-known/jwks.json')).json());
+    const challengeClaims = (await jwtVerify(cookies(fedcm).madauth_challenge.value, jwks, { issuer: ISSUER })).payload;
+    expect(challengeClaims.profile).toEqual({ name: 'Ada Lovelace', picture: 'https://example.com/ada.png' });
     const second = await post(app, '/auth/totp/verify', { code: codeFor(secret, 1) }, { Cookie: `madauth_challenge=${cookies(fedcm).madauth_challenge.value}` });
     expect(second.status).toBe(200);
     // What Google told about the user is in the session, as without the code step.
@@ -562,7 +602,7 @@ describe('the second step after a password or Google', () => {
       headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` },
     });
     expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=totp`);
-    expect(cookies(back).madauth_session).toBeUndefined();
+    expect(cookies(back).madauth_session?.value ?? '').toBe('');
     expect(cookies(back).madauth_challenge.value).toBeTruthy();
 
     // Without a policy for Google, Google alone is enough.
@@ -597,13 +637,13 @@ describe('the second step after a password or Google', () => {
 
     expect(refused.status).toBe(403);
     expect(await refused.json()).toMatchObject({ error: 'method_disabled' });
-    expect(cookies(refused).madauth_session).toBeUndefined();
+    expect(cookies(refused).madauth_session?.value ?? '').toBe('');
     expect(hook.types()).toEqual([]);
 
     // The same for a setup a sign-in waits for.
     await setMethods(store, { google: { secondFactor: 'optional' }, password: { secondFactor: 'required' } });
-    const ada = await signUpVerified(app, hook, 'ada@example.com', 'adas password!').catch(() => null);
-    expect(ada).toBeNull();
+    // Ada's sign-up ends in the setup step instead of a session.
+    await signUpVerified(app, hook, 'ada@example.com', 'adas password!').catch(() => null);
     const step = await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'adas password!' });
     expect(await step.json()).toMatchObject({ error: 'totp_setup_required' });
     await setMethods(store, { google: { secondFactor: 'optional' } });
@@ -619,9 +659,12 @@ describe('the second step after a password or Google', () => {
     await signUpVerified(app, hook, 'ada@example.com', 'adas password!');
     await setMethods(store, { google: { secondFactor: 'none' }, password: { secondFactor: 'required' } });
     // Grace is signed in; Ada signs in at the same browser and has to set the app up.
-    const adaStep = await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'adas password!' });
+    const adaStep = await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'adas password!' }, withSession(graceSession));
     expect(await adaStep.json()).toMatchObject({ error: 'totp_setup_required' });
     const challenge = `madauth_challenge=${cookies(adaStep).madauth_challenge.value}`;
+    // Grace is signed out by Ada's sign-in: the browser drops her session, so an abandoned step can't be
+    // taken for her own setup later.
+    expect(cookies(adaStep).madauth_session.attrs['max-age']).toBe('0');
 
     const setup = await post(app, '/auth/totp/setup', {}, withSession(graceSession, challenge));
     const key = (await setup.json()) as { secret: string; uri: string };
@@ -715,7 +758,7 @@ describe('signing up with the app alone', () => {
     const confirmed = await post(app, '/auth/email/verify', { token });
     expect(confirmed.status).toBe(401);
     expect(await confirmed.json()).toMatchObject({ error: 'totp_setup_required' });
-    expect(cookies(confirmed).madauth_session).toBeUndefined();
+    expect(cookies(confirmed).madauth_session?.value ?? '').toBe('');
     expect(await store.findOne('user', { id: user.id })).toMatchObject({ emailVerified: true });
     const challenge = `madauth_challenge=${cookies(confirmed).madauth_challenge.value}`;
     hook.calls.length = 0;

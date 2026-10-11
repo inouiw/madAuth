@@ -79,6 +79,24 @@ describe('Madauth.totp', () => {
     expect(await Madauth.totp.status()).toMatchObject({ isSuccess: true, enabled: true });
   });
 
+  it('H26: a sign-in that reaches the second step signs out whoever was signed in', async () => {
+    const server = fakeServer();
+    server.policy.password = 'optional';
+    server.user = grace;
+    server.accounts.set('ada@example.com', { password: 'adas password!', verified: true, name: 'Ada' });
+    server.authenticators.add('ada@example.com');
+    await init();
+    expect(Madauth.currentUser).toEqual(grace);
+
+    const result = await Madauth.password.signIn({ email: 'ada@example.com', password: 'adas password!' });
+
+    expect(result).toMatchObject({ isSuccess: false, error: { code: 'totp_required' } });
+    expect(Madauth.currentUser).toBeNull();
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password' });
+    expect(await Madauth.totp.verify({ code: CODE })).toMatchObject({ isSuccess: true, user: { email: 'ada@example.com' } });
+    expect(Madauth.currentUser?.email).toBe('ada@example.com');
+  });
+
   it('H25: replacing an app takes a code from the current one', async () => {
     const server = fakeServer();
     server.policy.password = 'optional';
@@ -92,14 +110,17 @@ describe('Madauth.totp', () => {
     expect(await Madauth.totp.confirmSetup({ code: CODE })).toEqual({ isSuccess: true, recoveryCodes: RECOVERY_CODES });
   });
 
-  it('H15: the provider is left out when the server has the app switched off', async () => {
-    fakeServer();
+  it('H15: the provider is left out when the server does not let the app sign in on its own', async () => {
+    const server = fakeServer();
 
     const result = await init();
 
     expect(result).toEqual({ isSuccess: true, leftOut: ['totp'] });
-    expect(warnLog).toHaveBeenCalledWith('[madauth]', 'flow_not_enabled', expect.stringContaining('switched off'));
-    expect(await Madauth.totp.status()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+    expect(warnLog).toHaveBeenCalledWith('[madauth]', 'flow_not_enabled', expect.stringContaining('sign in on its own'));
+    expect(await Madauth.totp.status()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('switched off') } });
+    // A policy alone does not list it either; the second step works without the provider (H14).
+    server.policy.password = 'optional';
+    expect(await init()).toEqual({ isSuccess: true, leftOut: ['totp'] });
     expect(await Madauth.password.signIn(credentials)).toEqual({ isSuccess: true, user: grace });
 
     const alone = await Madauth.initialize({ serverUrl: SERVER, providers: [new Totp()] });

@@ -131,8 +131,17 @@ function nextStepOf(error: MadauthError): PendingStep | undefined {
 
 /** A sign-in outside the dialog goes on with the authenticator app: the dialog opens on that step. */
 function continueSignIn(pending: PendingStep): void {
-  pendingStep = pending;
+  stepPending(pending);
   if (state?.ui === 'dialog') queueMicrotask(() => void Madauth.signIn());
+}
+
+/**
+ * A sign-in goes on with the authenticator app. The server ended the session there was at this browser,
+ * so whoever was signed in is signed out until the step is done (then the new session arrives).
+ */
+function stepPending(pending: PendingStep | null): void {
+  pendingStep = pending ?? undefined;
+  if (pending && user) setUser(null);
 }
 
 function validate(
@@ -220,6 +229,9 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
     get currentUser() {
       return user;
     },
+    get signInPending() {
+      return pendingStep !== undefined;
+    },
     get locale() {
       return currentLocale();
     },
@@ -286,9 +298,7 @@ const core: Core = {
     setUser(signedIn);
   },
   pendingStep: () => pendingStep ?? null,
-  setPendingStep: (pending) => {
-    pendingStep = pending ?? undefined;
-  },
+  setPendingStep: stepPending,
 };
 
 /** The page's `<madauth-login>`, created when it has none. */

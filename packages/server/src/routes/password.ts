@@ -32,7 +32,7 @@ export function passwordRoutes(
 
   // Every route of the method: an admin switched it off for sign-ups and sign-ins alike.
   app.use('/auth/password/*', async (c, next) => {
-    if (!(await ctx.enabled('password'))) return error(c, 403, 'method_disabled', 'E-mail & password sign-in is switched off.');
+    if (!(await ctx.enabled(c, 'password'))) return error(c, 403, 'method_disabled', 'E-mail & password sign-in is switched off.');
     await next();
   });
 

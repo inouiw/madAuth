@@ -43,6 +43,7 @@ Two things are still visible:
 
 - After five wrong passwords for an address, the answer becomes `too_many_attempts`, and after ten wrong e-mail codes `codes_locked`. Both only happen for existing accounts. Per-IP limits in front of madAuth (see below) make this slow to use.
 - A Google sign-in with the address of a password user is refused with `other_method`, which says that the address signs in with a password. Google has verified that the person owns the address, so this tells the owner, not a stranger. See [Authenticator app security](totp-security.md#a-method-signs-in-only-users-who-have-it).
+- While a sign-up method is switched off, confirming an address with a code answers `method_disabled` for an address with a pending sign-up of that method, instead of using the code up: the link and the code keep working once the method is on again. This shows only while the method is off, and only for addresses nobody has confirmed.
 - While your [webhook](server.md#webhooks) receiver is down, "send a reset e-mail" and "send the confirmation e-mail again" fail with `temporarily_unavailable` for existing accounts, but answer `202` for unknown addresses, which get no e-mail. Answering `202` for existing accounts too would leave users waiting for an e-mail that never comes. Sign-up is not affected: every sign-up sends an e-mail, so it fails the same way for every address.
 
 ## Sign-up check

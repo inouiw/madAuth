@@ -24,7 +24,7 @@ export interface MethodsToSet {
   google?: boolean | { secondFactor?: SecondFactorPolicy };
   password?: boolean | { secondFactor?: SecondFactorPolicy };
   /** The authenticator app on its own: the e-mail address and a code sign in. */
-  totp?: boolean | {};
+  totp?: boolean | Record<string, never>;
 }
 
 /**

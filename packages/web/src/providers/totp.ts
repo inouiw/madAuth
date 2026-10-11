@@ -14,8 +14,11 @@ export class Totp implements SignInProvider {
   readonly method = 'totp' as const;
 
   async setup(ctx: ProviderContext): Promise<Result> {
-    if (!ctx.config.totp) {
-      return fail('flow_not_enabled', 'The madAuth server has the authenticator app switched off: no sign-in method is set to ask for it, and it does not sign in on its own.');
+    if (!ctx.config.totp?.signIn) {
+      return fail(
+        'flow_not_enabled',
+        'The madAuth server does not let the authenticator app sign in on its own (an admin lists it with set-methods). As a second factor it works without this provider.',
+      );
     }
     return ok();
   }

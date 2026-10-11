@@ -565,7 +565,7 @@ export class MadauthLogin extends LitElement {
     if (error.code === 'invalid_credentials' && error.method === 'totp') return s.totpInvalid;
     if (error.code === 'other_method' && error.methods?.length) {
       const names: Partial<Record<string, string>> = s.methodNames;
-      return s.otherMethod(error.methods.map((method) => names[method] ?? method).join(s.and));
+      return s.otherMethod(error.methods.map((method) => names[method] ?? method).join(s.orList));
     }
     const texts: Partial<Record<MadauthErrorCode, string>> = s.errors;
     return texts[error.code] ?? s.errorFallback;
@@ -640,7 +640,9 @@ export class MadauthLogin extends LitElement {
     const google = loginMethods.find((m) => m.id === 'google');
     const password = loginMethods.find((m) => m.id === 'password');
     // The authenticator app is listed when it signs in on its own; with its provider but without that, not at all.
-    const others = loginMethods.filter((m) => m !== google && m !== password && (m.id !== 'totp' || !providerFor('totp') || this.totpAvailable));
+    // Once madAuth is initialized, the app is listed only when it signs in on its own here: it is implemented,
+    // so it is never "coming soon" then.
+    const others = loginMethods.filter((m) => m !== google && m !== password && (m.id !== 'totp' || !this.usable || this.totpAvailable));
     const s = this.strings;
     return html`
       ${google ? this.renderGoogle(google) : null}

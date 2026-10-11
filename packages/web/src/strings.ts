@@ -103,6 +103,8 @@ export const en = {
   otherMethod: (how: string) => `This e-mail address signs in with ${how}. Use that instead of Google.`,
   methodNames: { google: 'Google', password: 'a password', totp: 'an authenticator app' },
   and: ' and ',
+  /** Between alternatives in a sentence. */
+  orList: ' or ',
 
   /** What the dialog shows for an error code. */
   errors: {
@@ -235,6 +237,7 @@ export const de: Strings = {
   otherMethod: (how) => `Diese E-Mail-Adresse meldet sich mit ${how} an. Verwenden Sie das statt Google.`,
   methodNames: { google: 'Google', password: 'einem Passwort', totp: 'einer Authentifizierungs-App' },
   and: ' und ',
+  orList: ' oder ',
 
   errors: {
     network: 'Der Anmeldedienst ist nicht erreichbar. Bitte prüfen Sie Ihre Internetverbindung und versuchen Sie es erneut.',

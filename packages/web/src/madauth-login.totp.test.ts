@@ -70,11 +70,10 @@ describe('<madauth-login> and the authenticator app on its own', () => {
     await settle();
     expect($('[data-method="totp"]')).toBeNull();
     login().close();
-    // Without the provider: coming soon, as for every method without one.
+    // Without the provider as well: the app is implemented, so it is never "coming soon" once initialized.
     void openDialog([new Password()]);
     await settle();
-    await click('[data-method="totp"]');
-    expect($('.notice')!.textContent).toContain('coming soon');
+    expect($('[data-method="totp"]')).toBeNull();
     login().close();
     await settle();
 

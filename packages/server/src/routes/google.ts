@@ -126,7 +126,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
   // --- FedCM / One Tap (the ID token is issued in the browser and verified here) ---
 
   app.post('/auth/google/nonce', async (c) => {
-    if (!(await ctx.enabled('google'))) return disabled(c);
+    if (!(await ctx.enabled(c, 'google'))) return disabled(c);
     const nonce = randomString();
     const token = await signToken(await keys, issuer, NONCE_TYP, { nonce }, NONCE_TTL);
     setCookie(c, NONCE_COOKIE, token, {
@@ -140,7 +140,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
   });
 
   app.post('/auth/google/verify', async (c) => {
-    if (!(await ctx.enabled('google'))) return disabled(c);
+    if (!(await ctx.enabled(c, 'google'))) return disabled(c);
     const body = await c.req.json<{ credential?: unknown; locale?: unknown }>().catch(() => ({}) as { credential?: unknown; locale?: unknown });
     if (typeof body.credential !== 'string' || !body.credential) {
       return c.json({ error: 'verification_failed', message: 'credential is missing' }, 400);
@@ -170,7 +170,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
 
   const requireCodeFlow = async (c: Context, next: () => Promise<void>) => {
     if (!google.clientSecret) return c.json({ error: 'not_found' }, 404);
-    if (!(await ctx.enabled('google'))) return disabled(c);
+    if (!(await ctx.enabled(c, 'google'))) return disabled(c);
     await next();
   };
 
