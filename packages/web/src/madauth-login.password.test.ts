@@ -438,6 +438,26 @@ describe('<madauth-login> with e-mail & password', () => {
     expect($('form.signup .reveal')!.getAttribute('aria-controls')).toBe('new-password');
   });
 
+  it('hides a shown password when the form is sent, and when the dialog closes', async () => {
+    fakeServer();
+    void openDialog();
+    await settle();
+    const field = () => $<HTMLInputElement>('#password')!;
+
+    await click('form.signin .reveal');
+    await fill({ email: 'grace@example.com', password: 'wrong password' });
+    await submit('signin');
+    // Sent as a password field, so password managers offer to save it.
+    expect([field().type, $('form.signin .reveal')!.getAttribute('aria-pressed')]).toEqual(['password', 'false']);
+
+    await click('form.signin .reveal');
+    $<HTMLButtonElement>('.close')!.click();
+    void Madauth.signIn();
+    await settle();
+    // The sign-in view's fields stay for the next opening; the password is not shown there.
+    expect([field().type, $('form.signin .reveal')!.getAttribute('aria-pressed')]).toEqual(['password', 'false']);
+  });
+
   it('reads the rule for a new password out with the field', async () => {
     fakeServer();
     void openDialog();

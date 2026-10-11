@@ -86,6 +86,17 @@ const eyeIcons = html`
   </svg>
 `;
 
+/** Shows or hides the password of an eye button's field (the button's previous sibling). */
+function setPasswordShown(button: Element, shown: boolean): void {
+  (button.previousElementSibling as HTMLInputElement).type = shown ? 'text' : 'password';
+  button.setAttribute('aria-pressed', String(shown));
+}
+
+/** Hides every shown password under `root`. */
+function hidePasswords(root: ParentNode): void {
+  for (const button of root.querySelectorAll('.reveal[aria-pressed="true"]')) setPasswordShown(button, false);
+}
+
 const chevronIcon = html`
   <svg class="icon chevron" viewBox="0 0 24 24" aria-hidden="true">
     <path d="m9 18 6-6-6-6" />
@@ -374,6 +385,8 @@ export class MadauthLogin extends LitElement {
   }
 
   private onDialogClose(): void {
+    // The sign-in view's fields stay for the next opening: a shown password must not.
+    hidePasswords(this.renderRoot);
     this.googleButton?.remove();
     this.googleButton = undefined;
     // Closing the recovery codes counts as having seen them: the app is set up either way.
@@ -517,6 +530,8 @@ export class MadauthLogin extends LitElement {
 
   private fields(e: Event): Record<string, string> {
     e.preventDefault();
+    // Sent as a password field, so password managers offer to save it.
+    hidePasswords(e.target as HTMLFormElement);
     const data = new FormData(e.target as HTMLFormElement);
     return Object.fromEntries([...data.entries()].map(([k, v]) => [k, String(v)]));
   }
@@ -1379,13 +1394,10 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
-  /** The eye button: shows or hides the password in the field it controls. */
+  /** The eye button: shows or hides the password in the field before it. */
   private togglePassword(e: Event): void {
     const button = e.currentTarget as HTMLButtonElement;
-    const field = this.renderRoot.querySelector<HTMLInputElement>(`#${button.getAttribute('aria-controls')}`)!;
-    const show = field.type === 'password';
-    field.type = show ? 'text' : 'password';
-    button.setAttribute('aria-pressed', String(show));
+    setPasswordShown(button, button.getAttribute('aria-pressed') !== 'true');
   }
 
   /** A link that asks a question and names the action, e.g. "No account? Create one": only the action is underlined. */
@@ -1816,7 +1828,8 @@ export class MadauthLogin extends LitElement {
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
-      gap: 8px 16px;
+      /* 12px between wrapped rows: the links' tap targets reach 6px beyond their text (see .link). */
+      gap: 12px 16px;
       margin: -4px 0 0;
     }
 
