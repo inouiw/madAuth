@@ -26,6 +26,9 @@ let settings = {
 };
 /** When set, the fake server answers settings/get only once it resolves. */
 let holdSettings: Promise<void> | undefined;
+/** The same for claims/get and totp/remove: late responses, after the user changed. */
+let holdClaims: Promise<void> | undefined;
+let holdRemove: Promise<void> | undefined;
 /** Whether the signed-in user has the authenticator app. */
 let authenticator = false;
 
@@ -70,6 +73,7 @@ vi.stubGlobal(
       case 'GET /auth/totp/status':
         return sessionUser ? json({ enabled: authenticator, recoveryCodesLeft: authenticator ? 10 : 0 }) : json({ error: 'no_session' }, 401);
       case 'POST /auth/totp/remove':
+        await holdRemove;
         if (body().code !== '123456') return json({ error: 'code_invalid', message: 'wrong' }, 401);
         authenticator = false;
         return json({});
@@ -85,6 +89,7 @@ vi.stubGlobal(
         sessionUser = null;
         return new Response(null, { status: 204 });
       case 'POST /auth/admin/claims/get':
+        await holdClaims;
         return json({ email: body().email, userId: ada.id, claims: ada.claims });
       case 'POST /auth/admin/claims/set':
         return json({ email: body().email, userId: ada.id, claims: body().claims });
@@ -156,7 +161,9 @@ describe('demo page', () => {
     expect($('#flow-info').hidden).toBe(false);
     expect(info.getAttribute('aria-expanded')).toBe('true');
     expect($('.flow-description[data-flow="fedcm"]').getAttribute('aria-current')).toBe('true');
+    expect($('.flow-description[data-flow="fedcm"]').textContent).toContain('One Tap / FedCM (current)');
     expect($('.flow-description[data-flow="redirect"]').getAttribute('aria-current')).toBeNull();
+    expect($('.flow-description[data-flow="redirect"]').textContent).not.toContain('(current)');
     expect($('#flow-info').textContent).toContain('new GoogleFedcm()');
     info.click();
     expect($('#flow-info').hidden).toBe(true);
@@ -412,6 +419,64 @@ describe('demo page', () => {
 
     $<HTMLButtonElement>('#sign-out').click();
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
+  });
+
+  it('shows a late response below the sign-in button when nobody is signed in, and drops it once someone else is', async () => {
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $('#api').hidden).toBe(false);
+    let release!: () => void;
+    holdClaims = new Promise((resolve) => (release = resolve));
+    open('getClaims');
+    execute('getClaims').click();
+    expect(execute('getClaims').getAttribute('aria-disabled')).toBe('true');
+
+    // Signed out before the answer: the user still sees it, below the sign-in button.
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    release();
+    await expect.poll(() => $('#last-response').hidden).toBe(false);
+    expect($('#last-response').textContent).toContain('Madauth.admin.getClaims(email)');
+    expect($('#last-response').textContent).toContain('"userId": "usr_1"');
+    expect(response('getClaims')).toBe('');
+    expect(execute('getClaims').getAttribute('aria-disabled')).toBeNull();
+
+    // Someone else signed in before the answer: it is not theirs, and it is dropped.
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $('#api').hidden).toBe(false);
+    expect($('#last-response').hidden).toBe(true);
+    holdClaims = new Promise((resolve) => (release = resolve));
+    open('getClaims');
+    execute('getClaims').click();
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    const { claims: _, ...bob } = { ...ada, id: 'usr_2', name: 'Bob', email: 'bob@example.com' };
+    signInAs = bob;
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $('#api').hidden).toBe(false);
+    release();
+    holdClaims = undefined;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect($('#last-response').hidden).toBe(true);
+    expect(response('getClaims')).toBe('');
+
+    // The account calls drop a late result the same way (it may hold recovery codes).
+    authenticator = true;
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    signInAs = ada;
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $('#totp-status').textContent).toBe('Set up, 10 recovery codes left.');
+    holdRemove = new Promise((resolve) => (release = resolve));
+    $<HTMLInputElement>('#totp-code').value = '123456';
+    $<HTMLButtonElement>('[data-call="removeAuthenticator"]').click();
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    release();
+    holdRemove = undefined;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect($('#totp-output').hidden).toBe(true);
+    expect($('#output').textContent).toBe('');
+    authenticator = false;
   });
 
   it('drops settings that arrive after the admin signed out', async () => {

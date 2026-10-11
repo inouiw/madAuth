@@ -462,7 +462,7 @@ pre {
 }
 
 /* A call under way: the button waits, like a disabled one. */
-.api-method[data-busy] .api-execute {
+.api-execute[aria-disabled='true'] {
   opacity: 0.6;
   cursor: default;
 }

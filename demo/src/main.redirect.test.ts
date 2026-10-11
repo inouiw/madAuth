@@ -41,6 +41,7 @@ describe('demo page with the server-side redirect flow', () => {
   it('marks the redirect demo as the current one', () => {
     expect($<HTMLAnchorElement>('#flow a[aria-current="page"]').dataset.flow).toBe('redirect');
     expect($('.flow-description[data-flow="redirect"]').getAttribute('aria-current')).toBe('true');
+    expect($('.flow-description[data-flow="redirect"]').textContent).toContain('Server-side redirect (current)');
     expect($('.flow-description[data-flow="fedcm"]').getAttribute('aria-current')).toBeNull();
   });
 
