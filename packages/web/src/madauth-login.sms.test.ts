@@ -199,7 +199,7 @@ describe('<madauth-login> and SMS codes', () => {
 
     expect(text('h2')).toBe('Add your phone number');
     expect(text('p.lead')).toBe('Enter your mobile number. We will send you a code to confirm it.');
-    expect(text('p.hint')).toContain('signing in with E-mail & password can also ask for a code sent to your phone');
+    expect(text('p.hint')).toContain('signing in with Email & password can also ask for a code sent to your phone');
     expect($('[data-action="use-app-setup"]')).toBeNull();
     fill({ phone: 'nope' });
     await submit('sms-setup');

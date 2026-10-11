@@ -104,7 +104,9 @@ main {
 
 #sign-in:focus-visible,
 #sign-out:focus-visible,
-#theme-toggle:focus-visible {
+#theme-toggle:focus-visible,
+#flow a:focus-visible,
+.info:focus-visible {
   outline: 2px solid light-dark(#17181a, #f1f2f3);
   outline-offset: 2px;
 }
@@ -155,13 +157,13 @@ code {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  margin-left: 2px;
+  width: 24px;
+  height: 24px;
+  margin-left: 0;
   padding: 0;
   border: none;
   border-radius: 50%;
-  vertical-align: -5px;
+  vertical-align: -7px;
   color: light-dark(#5c6066, #a6a9af);
   background: transparent;
   cursor: pointer;
@@ -219,15 +221,22 @@ code {
 /* The switch between the two Google demos. */
 #flow {
   display: flex;
+  width: min(360px, 100%);
+  box-sizing: border-box;
   padding: 4px;
   border: 1px solid light-dark(#d0d2d6, #3d4045);
   border-radius: 10px;
   background: light-dark(#fff, #232428);
 }
 
+/* Equal halves, each a label over the technical name. */
 #flow a {
-  padding: 8px 16px;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px;
   border-radius: 7px;
+  text-align: center;
   font-size: 0.875rem;
   font-weight: 600;
   color: light-dark(#5c6066, #a6a9af);
@@ -238,9 +247,21 @@ code {
   color: light-dark(#17181a, #f1f2f3);
 }
 
+#flow a small {
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+/* Selected, not primary: a raised surface, so the sign-in button stays the one filled element. */
 #flow a[aria-current] {
-  color: light-dark(#fff, #17181a);
-  background: light-dark(#17181a, #f1f2f3);
+  color: light-dark(#17181a, #f1f2f3);
+  background: light-dark(#e8e9eb, #3d4045);
+}
+
+.google-flow .hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: light-dark(#5c6066, #a6a9af);
 }
 
 .note {
