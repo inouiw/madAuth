@@ -290,7 +290,7 @@ describe('GoogleRedirect', () => {
     expect(shadow('.notice')).toBeNull();
   });
 
-  it('D3: reports a failed redirect sign-in, tidies the URL and shows it in the dialog', async () => {
+  it('D3: reports a failed redirect sign-in, tidies the URL and opens the dialog with it', async () => {
     fakeServer().codeFlow = true;
     history.replaceState(null, '', '/page?x=1#madauth_error=verification_failed');
 
@@ -298,10 +298,20 @@ describe('GoogleRedirect', () => {
 
     expect(result).toMatchObject({ isSuccess: false, error: { code: 'verification_failed' } });
     expect(location.href).toBe('https://app.example.com/page?x=1');
-    // madAuth stays usable: the dialog opens and shows the error.
-    void Madauth.signIn();
+    // madAuth stays usable: the dialog the user left opens by itself and shows the error.
     await settle();
+    expect(shadow<HTMLDialogElement>('dialog')?.open).toBe(true);
     expect(shadow('.error')?.getAttribute('data-code')).toBe('verification_failed');
+  });
+
+  it('D3: leaves the dialog closed after a failed redirect sign-in with ui: custom', async () => {
+    fakeServer().codeFlow = true;
+    history.replaceState(null, '', '/page#madauth_error=verification_failed');
+
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()], ui: 'custom' });
+    await settle();
+
+    expect(document.querySelector('madauth-login')).toBeNull();
   });
 
   it('labels the dialog’s button in the dialog’s language and follows setLocale', async () => {

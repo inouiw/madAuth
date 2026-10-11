@@ -22,7 +22,8 @@ export interface MadauthOptions {
   providers: SignInProvider[];
   /**
    * `'dialog'` (default): madAuth's sign-in dialog, opened with `Madauth.signIn()`; it also opens by itself
-   * when the page was opened from a password reset link, or when a sign-in goes on with a second step.
+   * when the page was opened from a password reset link, when a sign-in goes on with a second step, or with
+   * the error of a redirect sign-in or a link that failed.
    * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.github`, `Madauth.totp`,
    * `Madauth.emailLink` and `Madauth.sms`; the dialog never opens.
    */
@@ -313,6 +314,9 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
   }
   // Opened from a password reset link: show the dialog's "new password" form once madAuth is ready.
   if (target.ui === 'dialog' && Madauth.password.pendingReset) queueMicrotask(() => void Madauth.signIn());
+  // Back from a sign-in that failed outside the page (a redirect, a link): the dialog opens with the error,
+  // since the user left it to sign in.
+  else if (target.ui === 'dialog' && signInError) queueMicrotask(() => void Madauth.signIn());
   // A failed redirect sign-in is reported by initialize, but madAuth itself is ready.
   return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError, leftOut } : { isSuccess: true, leftOut } };
 }
