@@ -62,6 +62,7 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
     sql: (dialect) =>
       [
         `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('lastUsedStep')} ${columnTypes[dialect].number} NOT NULL DEFAULT 0;`,
+        `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('setupId')} ${columnTypes[dialect].string};`,
         createTablesSql(dialect, { version: 5, models: { recoveryCode: madauthSchema.models.recoveryCode } }),
       ].join('\n'),
   },

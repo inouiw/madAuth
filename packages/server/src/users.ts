@@ -34,6 +34,8 @@ export interface StoredAccount {
   email: string | null;
   /** The time step of the last authenticator code that was accepted (totp accounts). Empty in records from before schema version 5. */
   lastUsedStep: number | null;
+  /** The setup the authenticator secret came from; its recovery codes carry the same id. Empty for other accounts. */
+  setupId: string | null;
   createdAt: number;
 }
 
@@ -63,7 +65,8 @@ export interface CodeResult {
   locked: boolean;
 }
 
-const newId = (prefix: string) => `${prefix}_${randomBytes(16).toString('base64url')}`;
+/** A new random id with a type prefix, e.g. `usr_…`. */
+export const newId = (prefix: string): string => `${prefix}_${randomBytes(16).toString('base64url')}`;
 
 export function passwordAccountKey(userId: string): string {
   return `password:${userId}`;
@@ -98,6 +101,8 @@ export interface NewAccount {
   email?: string;
   /** For an authenticator app: the time step of the code that proved the setup, so that code can't sign in. */
   lastUsedStep?: number;
+  /** For an authenticator app: the setup the secret came from. */
+  setupId?: string;
 }
 
 export class Users {
@@ -223,9 +228,19 @@ export class Users {
       lockedUntil: 0,
       email: account.email ?? null,
       lastUsedStep: account.lastUsedStep ?? 0,
+      setupId: account.setupId ?? null,
       createdAt: Date.now(),
     };
     return (await this.store.create('account', record as unknown as Row)) ? record : null;
+  }
+
+  /**
+   * Writes the secret of a confirmed setup over the authenticator account, only if the account still has the
+   * setup it had when this setup started (`replaces`): the write count decides, so of two setups confirmed
+   * at once exactly one wins, and the other is told to start again.
+   */
+  async confirmTotpSetup(accountId: string, replaces: string | null, patch: Pick<StoredAccount, 'secret' | 'setupId' | 'failedAttempts' | 'lockedUntil' | 'lastUsedStep'>): Promise<boolean> {
+    return (await this.store.update('account', { id: accountId, setupId: replaces }, patch)) === 1;
   }
 
   /**
@@ -243,26 +258,46 @@ export class Users {
   }
 
   /** Replaces the user's recovery codes with new ones, given as their hashes. */
-  async replaceRecoveryCodes(userId: string, hashes: string[]): Promise<void> {
-    await this.store.delete('recoveryCode', { userId });
+  /** Stores the recovery codes of a setup (their hashes), next to whatever codes the user has. */
+  async addRecoveryCodes(userId: string, setupId: string, hashes: string[]): Promise<void> {
     const createdAt = Date.now();
-    for (const id of hashes) await this.store.create('recoveryCode', { id, userId, createdAt });
+    for (const id of hashes) await this.store.create('recoveryCode', { id, userId, setupId, createdAt });
   }
 
-  /** Uses up the user's recovery code with this hash. Resolves to false if it is not theirs or was used already. */
-  async consumeRecoveryCode(userId: string, hash: string): Promise<boolean> {
+  /** New recovery codes for the user's current app: the codes they had before stop working. */
+  async replaceRecoveryCodes(account: StoredAccount, hashes: string[]): Promise<void> {
+    const before = await this.store.findMany('recoveryCode', { userId: account.userId });
+    await this.addRecoveryCodes(account.userId, account.setupId ?? '', hashes);
+    for (const old of before) await this.store.delete('recoveryCode', { id: old.id });
+  }
+
+  /**
+   * Uses up the recovery code with this hash for the user's authenticator account. Resolves to false if it
+   * is not theirs, belongs to another setup than the account's, or was used already.
+   */
+  async consumeRecoveryCode(account: StoredAccount, hash: string): Promise<boolean> {
     const record = await this.store.findOne('recoveryCode', { id: hash });
-    if (!record || record.userId !== userId) return false;
+    if (!record || record.userId !== account.userId || record.setupId !== (account.setupId ?? '')) return false;
     // The delete count decides, so the same code sent twice is accepted once.
     return (await this.store.delete('recoveryCode', { id: hash })) === 1;
   }
 
-  async countRecoveryCodes(userId: string): Promise<number> {
-    return (await this.store.findMany('recoveryCode', { userId })).length;
+  /** How many recovery codes of the account's setup are left. */
+  async countRecoveryCodes(account: StoredAccount): Promise<number> {
+    const codes = await this.store.findMany('recoveryCode', { userId: account.userId });
+    return codes.filter((code) => code.setupId === (account.setupId ?? '')).length;
   }
 
-  async clearRecoveryCodes(userId: string): Promise<void> {
-    await this.store.delete('recoveryCode', { userId });
+  /** Deletes the user's recovery codes: all of them, or only those of one setup, or all but one setup's. */
+  async clearRecoveryCodes(userId: string, which: { only?: string; except?: string } = {}): Promise<void> {
+    if (which.only === undefined && which.except === undefined) {
+      await this.store.delete('recoveryCode', { userId });
+      return;
+    }
+    for (const code of await this.store.findMany('recoveryCode', { userId })) {
+      const match = which.only !== undefined ? code.setupId === which.only : code.setupId !== which.except;
+      if (match) await this.store.delete('recoveryCode', { id: code.id });
+    }
   }
 
   /**

@@ -19,7 +19,7 @@ import {
   otpauthUri,
   verifyTotp,
 } from '../totp.js';
-import { passwordAccountKey, toMadauthUser, totpAccountKey, type StoredAccount, type StoredUser } from '../users.js';
+import { newId, passwordAccountKey, toMadauthUser, totpAccountKey, type StoredAccount, type StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
 import { accepted, body, error, nameOf, noSession, redirectTarget, unavailable, type Body } from './helpers.js';
@@ -57,12 +57,16 @@ export interface Challenge {
 
 type ChallengeClaims = Challenge & JWTPayload;
 /**
- * The setup cookie: whose setup it is, the secret as it will be stored (encrypted), and, when it replaces an
- * app, when the current app agreed (a code): the approval holds for SETUP_TTL, also for a setup started again.
+ * The setup cookie: whose setup it is (`sub`), its id, the secret as it will be stored (encrypted), the id of
+ * the setup the account had when this one started (`replaces`; absent without an account, null for one
+ * without a setup id), and, when it replaces an app, when the current app agreed (a code): the approval
+ * holds for SETUP_TTL, also for a setup started again.
  */
 interface SetupClaims extends JWTPayload {
   sub: string;
+  setup: string;
   secret: string;
+  replaces?: string | null;
   approved?: number;
 }
 
@@ -114,9 +118,9 @@ export async function checkCode(
 
   if (typeof data.recoveryCode === 'string') {
     const code = normalizeRecoveryCode(data.recoveryCode);
-    if (!code || !(await users.consumeRecoveryCode(user.id, hashRecoveryCode(keys.codeKey, code)))) return wrong();
+    if (!code || !(await users.consumeRecoveryCode(account, hashRecoveryCode(keys.codeKey, code)))) return wrong();
     await users.updateAccount(account.id, { failedAttempts: 0, lockedUntil: 0 });
-    const remaining = await users.countRecoveryCodes(user.id);
+    const remaining = await users.countRecoveryCodes(account);
     await ctx.emit('totp.recovery_code_used', { user: toMadauthUser(user), remaining });
     return 'recovery_code';
   }
@@ -174,14 +178,10 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     return user ? { user, challenge: null } : null;
   };
 
-  /** New recovery codes for the user; the old ones stop working. */
-  const issueRecoveryCodes = async (userId: string): Promise<string[]> => {
+  /** New recovery codes, with what is stored for them. */
+  const newRecoveryCodes = () => {
     const recoveryCodes = generateRecoveryCodes();
-    await users.replaceRecoveryCodes(
-      userId,
-      recoveryCodes.map((code) => hashRecoveryCode(keys.codeKey, normalizeRecoveryCode(code)!)),
-    );
-    return recoveryCodes;
+    return { recoveryCodes, hashes: recoveryCodes.map((code) => hashRecoveryCode(keys.codeKey, normalizeRecoveryCode(code)!)) };
   };
 
   /** The name the app shows next to the account: TOTP_ISSUER, or the host of the app that asked. */
@@ -224,7 +224,13 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
       }
     }
     const secret = generateTotpSecret();
-    const claims = { sub: who.user.id, secret: encryptSecret(keys.totpKey, secret), ...(approved ? { approved } : {}) };
+    const claims = {
+      sub: who.user.id,
+      setup: newId('tsu'),
+      secret: encryptSecret(keys.totpKey, secret),
+      ...(existing ? { replaces: existing.setupId } : {}),
+      ...(approved ? { approved } : {}),
+    };
     const token = await signToken(await ctx.keys, issuer, SETUP_TYP, claims, SETUP_TTL);
     setCookie(c, SETUP_COOKIE, token, { ...cookie, maxAge: SETUP_TTL });
     // Nothing is stored until the first code proves that the app has the secret.
@@ -238,23 +244,31 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     if (challenge && !(await methodStillOn(c, challenge))) return methodOff(c);
     const data = await body(c);
     const setup = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
-    const secret = setup && setup.sub === user.id && typeof setup.secret === 'string' ? decryptSecret(keys.totpKey, setup.secret) : null;
+    const secret =
+      setup && setup.sub === user.id && typeof setup.secret === 'string' && typeof setup.setup === 'string' ? decryptSecret(keys.totpKey, setup.secret) : null;
     if (!setup || !secret) return error(c, 400, 'setup_expired', 'The setup has expired or was started in another browser. Please start again.');
     const step = typeof data.code === 'string' ? verifyTotp(secret, data.code, Date.now(), TOTP_WINDOW) : null;
     // The setup cookie stays, so a mistyped code can be tried again.
     if (step === null) return error(c, 400, 'code_invalid', 'The code is wrong. Enter the current code from the app.');
 
-    // A new app replaces an earlier one, and starts without failed attempts; the code just used can't sign in.
-    const patch = { secret: setup.secret, failedAttempts: 0, lockedUntil: 0, lastUsedStep: step };
-    const existing = await users.totpAccount(user.id);
-    if (!existing || !(await users.updateAccount(existing.id, patch))) {
-      if (!(await users.linkAccount(user.id, { key: totpAccountKey(user.id), ...patch }))) {
-        // Set up in two places at once: the other one just won, and this app replaces it.
-        const other = await users.totpAccount(user.id);
-        if (other) await users.updateAccount(other.id, patch);
-      }
+    // The app and its recovery codes always belong together: the codes are written first, under this
+    // setup's id, and the secret only if the account still has the setup it had when this one started.
+    // Of two setups confirmed at once, exactly one wins; the other drops its codes and starts again. A new
+    // app starts without failed attempts, and the code just used can't sign in.
+    const { recoveryCodes, hashes } = newRecoveryCodes();
+    await users.addRecoveryCodes(user.id, setup.setup, hashes);
+    const patch = { secret: setup.secret, setupId: setup.setup, failedAttempts: 0, lockedUntil: 0, lastUsedStep: step };
+    const current = setup.replaces === undefined ? null : await users.totpAccount(user.id);
+    const written =
+      setup.replaces === undefined
+        ? !!(await users.linkAccount(user.id, { key: totpAccountKey(user.id), ...patch }))
+        : !!current && (await users.confirmTotpSetup(current.id, setup.replaces, patch));
+    if (!written) {
+      await users.clearRecoveryCodes(user.id, { only: setup.setup });
+      deleteCookie(c, SETUP_COOKIE, cookie);
+      return error(c, 400, 'setup_expired', 'Your authenticator app was set up or removed elsewhere meanwhile. Please start again.');
     }
-    const recoveryCodes = await issueRecoveryCodes(user.id);
+    await users.clearRecoveryCodes(user.id, { except: setup.setup });
     deleteCookie(c, SETUP_COOKIE, cookie);
     await ctx.emit('totp.enabled', { user: toMadauthUser(user) });
     if (!challenge) return c.json({ recoveryCodes });
@@ -323,14 +337,16 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     if (!account) return error(c, 400, 'no_authenticator', 'No authenticator app is set up.');
     const via = await checkCode(c, ctx, keys, user, account, await body(c));
     if (via instanceof Response) return via;
-    return c.json({ recoveryCodes: await issueRecoveryCodes(user.id) });
+    const { recoveryCodes, hashes } = newRecoveryCodes();
+    await users.replaceRecoveryCodes(account, hashes);
+    return c.json({ recoveryCodes });
   });
 
   app.get(`${COOKIE_PATH}/status`, async (c) => {
     const user = await signedIn(c);
     if (!user) return noSession(c);
     const account = await users.totpAccount(user.id);
-    return c.json({ enabled: !!account, recoveryCodesLeft: account ? await users.countRecoveryCodes(user.id) : 0 });
+    return c.json({ enabled: !!account, recoveryCodesLeft: account ? await users.countRecoveryCodes(account) : 0 });
   });
 
   // --- Sign-up with the app alone: the address is confirmed by e-mail, then the app is set up ---

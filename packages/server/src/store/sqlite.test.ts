@@ -57,7 +57,7 @@ describe('SQLite adapter', () => {
     // Schema version 1: users had no count of wrong codes and no claims, accounts no e-mail and no last code,
     // and there were no settings and no recovery codes.
     const { wrongCodes: _, claims: __, ...v1Fields } = madauthSchema.models.user.fields;
-    const { email: ___, lastUsedStep: _____, ...v1AccountFields } = madauthSchema.models.account.fields;
+    const { email: ___, lastUsedStep: _____, setupId: _______, ...v1AccountFields } = madauthSchema.models.account.fields;
     const { setting: ____, recoveryCode: ______, ...v1Models } = madauthSchema.models;
     const v1 = { version: 1, models: { ...v1Models, user: { fields: v1Fields }, account: { fields: v1AccountFields } } };
     const db = new DatabaseSync(path);
@@ -73,9 +73,9 @@ describe('SQLite adapter', () => {
     expect(await store.update('user', { id: 'usr_1', wrongCodes: 0 }, { wrongCodes: 1 })).toBe(1);
     expect(await store.create('setting', { id: 'methods', value: '{}', updatedAt: 1, updatedBy: null })).toBe(true);
     // An account from before version 5 reads as if no authenticator code was ever used.
-    expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ email: null, lastUsedStep: 0 });
+    expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ email: null, lastUsedStep: 0, setupId: null });
     expect(await store.update('account', { id: 'acc_1', lastUsedStep: 0 }, { lastUsedStep: 7 })).toBe(1);
-    expect(await store.create('recoveryCode', { id: 'hash', userId: 'usr_1', createdAt: 1 })).toBe(true);
+    expect(await store.create('recoveryCode', { id: 'hash', userId: 'usr_1', setupId: 'tsu_1', createdAt: 1 })).toBe(true);
     // Opening it again changes nothing more.
     const reopened = createSqliteAdapter(path);
     expect((await reopened.findOne('user', { id: 'usr_1' }))?.wrongCodes).toBe(1);
@@ -137,7 +137,8 @@ describe('createTablesSql', () => {
     // Version 5 added the authenticator app: the last used code on the account, and recovery codes.
     expect(upgradeTablesSql('postgres', 4)).toBe(
       'ALTER TABLE madauth_account ADD COLUMN last_used_step DOUBLE PRECISION NOT NULL DEFAULT 0;\n' +
-        'CREATE TABLE madauth_recovery_code (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL\n);\n' +
+        'ALTER TABLE madauth_account ADD COLUMN setup_id TEXT;\n' +
+        'CREATE TABLE madauth_recovery_code (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  setup_id TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL\n);\n' +
         'CREATE INDEX madauth_recovery_code_user_id ON madauth_recovery_code (user_id);',
     );
     expect(upgradeTablesSql('mysql', 4).split('\n')[0]).toBe('ALTER TABLE madauth_account ADD COLUMN last_used_step DOUBLE NOT NULL DEFAULT 0;');

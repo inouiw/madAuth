@@ -41,6 +41,7 @@ function testAccount(overrides: Row = {}): Row {
     lockedUntil: 0,
     email: null,
     lastUsedStep: 0,
+    setupId: null,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };

@@ -81,14 +81,23 @@ export const madauthSchema = {
         email: { type: 'string', nullable: true },
         /** The time step of the last authenticator code that was accepted, so a code works once; 0 before (since version 5). */
         lastUsedStep: { type: 'number' },
+        /**
+         * The setup an authenticator secret came from; its recovery codes carry the same id, so the app and
+         * its codes always belong together. Empty for other accounts (since version 5).
+         */
+        setupId: { type: 'string', nullable: true },
         createdAt: { type: 'number' },
       },
     },
-    /** A recovery code of a user's authenticator app (since version 5). `id` is the code's keyed hash; the record goes when the code is used. */
+    /**
+     * A recovery code of a user's authenticator app (since version 5). `id` is the code's keyed hash; the
+     * record goes when the code is used. It works only while the account's `setupId` is its own.
+     */
     recoveryCode: {
       fields: {
         id: { type: 'string', primaryKey: true },
         userId: { type: 'string', index: true },
+        setupId: { type: 'string' },
         createdAt: { type: 'number' },
       },
     },

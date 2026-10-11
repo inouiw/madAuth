@@ -231,6 +231,49 @@ describe('setting up the authenticator app while signed in', () => {
     expect((await post(app, '/auth/totp/remove', { code: codeFor(secret) }, withSession(session))).status).toBe(200);
   });
 
+  it('T32: a setup confirms only the state it started in, so the app and its recovery codes always belong together', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: START });
+    const { app, hook, store } = passwordApp();
+    await setMethods(store, standalone);
+    const session = await signUpVerified(app, hook);
+    const [{ id: userId }] = await store.findMany('user', {});
+    const start = async (body: Record<string, unknown> = {}, cookie = '') => {
+      const res = await post(app, '/auth/totp/setup', body, withSession(session, cookie));
+      expect(res.status).toBe(200);
+      return { secret: base32Decode(((await res.json()) as { secret: string }).secret)!, cookie: `madauth_totp_setup=${cookies(res).madauth_totp_setup.value}` };
+    };
+    const confirm = (secret: Buffer, cookie: string) => post(app, '/auth/totp/confirm', { code: codeFor(secret) }, withSession(session, cookie));
+    const codesOf = async () => (await store.findMany('recoveryCode', { userId })).map((code) => code.setupId);
+
+    // Two tabs start a setup; the first one to confirm wins, the second is told to start again.
+    const a = await start();
+    const b = await start();
+    expect((await confirm(a.secret, a.cookie)).status).toBe(200);
+    const account = (await store.findOne('account', { key: `totp:${userId}` }))!;
+    expect(account.setupId).toMatch(/^tsu_/);
+    expect(await codesOf()).toEqual(Array(10).fill(account.setupId));
+    const lost = await confirm(b.secret, b.cookie);
+    expect(lost.status).toBe(400);
+    expect(await lost.json()).toMatchObject({ error: 'setup_expired', message: expect.stringContaining('elsewhere') });
+    expect(cookies(lost).madauth_totp_setup.attrs['max-age']).toBe('0');
+    expect(await store.findOne('account', { key: `totp:${userId}` })).toMatchObject({ secret: account.secret, setupId: account.setupId });
+    expect(await codesOf()).toEqual(Array(10).fill(account.setupId));
+    expect(hook.types().filter((type) => type === 'totp.enabled')).toHaveLength(1);
+
+    // A setup that started before the app was removed is refused as well.
+    advance(60_000);
+    const stale = await start({ code: codeFor(a.secret) });
+    advance(60_000);
+    const removed = await post(app, '/auth/totp/remove', { code: codeFor(a.secret) }, withSession(session));
+    expect(removed.status).toBe(200);
+    expect((await confirm(stale.secret, stale.cookie)).status).toBe(400);
+    expect(await codesOf()).toEqual([]);
+    // Starting again works: there is no app now, so no code is asked for.
+    const fresh = await start();
+    expect((await confirm(fresh.secret, fresh.cookie)).status).toBe(200);
+    expect(await codesOf()).toHaveLength(10);
+  });
+
   it('T5: removing the app and renewing the recovery codes take a current code; a required policy forbids removing', async () => {
     const { app, hook, store, session, userId, secret, recoveryCodes } = await enrolled(standalone);
     const status = () => Promise.resolve(app.request('/auth/totp/status', { headers: withSession(session) })).then((r) => r.json());
