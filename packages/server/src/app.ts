@@ -7,6 +7,7 @@ import { importSigningKeys, type SigningKeys } from './keys.js';
 import { deriveCodeKey, isValidEmail, normalizeEmail } from './password.js';
 import { emailRoutes } from './routes/email.js';
 import { emailLinkRoutes } from './routes/email-link.js';
+import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
 import { body, error } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
@@ -35,7 +36,7 @@ import {
   type SignInMethod,
 } from './settings.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims } from './tokens.js';
-import { deriveTotpKey } from './totp.js';
+import { deriveTokenKey, deriveTotpKey } from './totp.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 import { Users, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
@@ -110,6 +111,7 @@ export function createApp(config: MadauthConfig): Hono {
   const signsUp = (method: SignInMethod) => canSignUp(methods, method);
   const emailVerification = sendsVerificationEmails(config);
   const totpKeys: TotpKeys = { totpKey: deriveTotpKey(config.signingKey.d!), codeKey };
+  const tokenKey = deriveTokenKey(config.signingKey.d!);
 
   /**
    * Sets the cookies of a session: the session token for app backends, the renewal token for this server
@@ -343,6 +345,7 @@ export function createApp(config: MadauthConfig): Hono {
   if (configured('email-link') && ctx.webhook) emailLinkRoutes(app, ctx, users, ctx.webhook);
   if (configured('sms') && ctx.webhook) smsRoutes(app, ctx, users, ctx.webhook);
   if (config.google) googleRoutes(app, ctx, config.google);
+  if (config.github) githubRoutes(app, ctx, config.github, tokenKey);
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, users, ctx.webhook);
   totpRoutes(app, ctx, totpKeys);
 
@@ -383,6 +386,8 @@ export function createApp(config: MadauthConfig): Hono {
     }
     // Read before the deletion: the web library revokes the app's access to this Google account with it.
     const googleSub = await users.googleSub(user.id);
+    // GitHub's authorization is revoked here, with the token kept from the last sign-in.
+    if (config.github) await revokeGrant(config.github, tokenKey, await users.githubAccount(user.id));
     // The user with all their sign-in methods: the session proves who they are, whichever way they signed in.
     await users.deleteById(user.id);
     clearSession(c);

@@ -110,6 +110,14 @@ export function deriveTotpKey(signingKeyD: string): Buffer {
   return Buffer.from(hkdfSync('sha256', Buffer.from(signingKeyD, 'base64url'), '', 'madauth totp secret', 32));
 }
 
+/**
+ * The key that encrypts the access tokens a provider hands out (GitHub's), kept on the account to revoke the
+ * provider's grant when the user goes. Its own derivation keeps it apart from the authenticator secrets'.
+ */
+export function deriveTokenKey(signingKeyD: string): Buffer {
+  return Buffer.from(hkdfSync('sha256', Buffer.from(signingKeyD, 'base64url'), '', 'madauth provider token', 32));
+}
+
 /** Encrypts a secret for the store: `v1.<iv>.<ciphertext>.<tag>` in base64url, AES-256-GCM with a random IV. */
 export function encryptSecret(key: Buffer, secret: Uint8Array): string {
   const iv = randomBytes(IV_BYTES);
