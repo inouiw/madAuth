@@ -8,11 +8,14 @@ import {
   ISSUER,
   REDIRECT_TO,
   cookies,
+  getNonce,
+  googleIdToken,
   linkAndCode,
   passwordApp,
   post,
   signUpVerified,
   testApp,
+  verify,
 } from '../test/helpers.js';
 import { RESET_TTL_MS, VERIFY_TTL_MS } from './password.js';
 
@@ -151,6 +154,43 @@ describe('sign-up and e-mail verification', () => {
     await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
     expect((await signIn(app, { password: 'second password' })).status).toBe(200);
     expect((await signIn(app, { password: 'first password' })).status).toBe(401);
+  });
+});
+
+describe('a confirmed user without a sign-in method', () => {
+  // Left by an interrupted Google sign-up: the user, but not the Google account, was written.
+  async function interruptedGoogleSignUp() {
+    const made = passwordApp();
+    const { nonce, cookie } = await getNonce(made.app);
+    await verify(made.app, await googleIdToken({ nonce, email: grace.email }), cookie);
+    const [{ id: userId }] = await made.store.findMany('user', {});
+    await made.store.delete('account', { userId });
+    return { ...made, userId };
+  }
+
+  it('a password sign-up for it signs in only once its confirmation e-mail is used', async () => {
+    const { app, hook } = await interruptedGoogleSignUp();
+    advance(61_000);
+
+    expect((await signUp(app)).status).toBe(202);
+
+    const early = await signIn(app);
+    expect(early.status).toBe(403);
+    expect(await early.json()).toMatchObject({ error: 'email_unverified' });
+    expect((await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token })).status).toBe(200);
+    expect((await signIn(app)).status).toBe(200);
+  });
+
+  it('a Google sign-in before the e-mail is used drops the password nobody confirmed', async () => {
+    const { app, store, userId } = await interruptedGoogleSignUp();
+    advance(61_000);
+    await signUp(app);
+
+    const { nonce, cookie } = await getNonce(app);
+    expect((await verify(app, await googleIdToken({ nonce, email: grace.email }), cookie)).status).toBe(200);
+
+    expect(await store.findMany('account', { userId })).toEqual([expect.objectContaining({ key: 'google:1001' })]);
+    expect((await signIn(app)).status).toBe(401);
   });
 });
 

@@ -178,7 +178,8 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   app.post(`${COOKIE_PATH}/confirm`, async (c) => {
     const who = await whoSetsUp(c);
     if (!who) return noSession(c);
-    const { user, challenge } = who;
+    const { challenge } = who;
+    let { user } = who;
     if (challenge && !(await methodStillOn(c, ctx, challenge))) return methodOff(c);
     const data = await body(c);
     const setup = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
@@ -196,6 +197,13 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     // A sign-up with the app sets up how the user signs in; every other setup is a second factor of the method
     // they have. A user has one way to sign in: if they got another meanwhile, the sign-up's app is refused.
     const signUp = challenge?.method === 'totp';
+    // The challenge of a sign-up with the app comes from a used confirmation link. A password sign-up for the
+    // address meanwhile took the confirmation back until its own e-mail is used; nobody has, so the app wins
+    // and the password goes, as for any unconfirmed sign-up.
+    if (signUp && !user.emailVerified) {
+      await users.verifyByProvider(user);
+      user = { ...user, emailVerified: true, wrongCodes: 0 };
+    }
     const { recoveryCodes, hashes } = newRecoveryCodes();
     await users.addRecoveryCodes(user.id, setup.setup, hashes);
     const patch = { secret: setup.secret, setupId: setup.setup, failedAttempts: 0, lockedUntil: 0, lastUsedStep: step };
