@@ -20,6 +20,11 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const SECRETS_PATH = '/madauth-site';
+/**
+ * The tag on every resource of madauth.com (bin/site.ts puts it on the stacks); the budget counts only the costs
+ * that carry it. The key must be activated once as a cost allocation tag (see README.md).
+ */
+export const PROJECT_TAG = { key: 'Project', value: 'madauth-site' };
 
 export interface SiteProps extends StackProps {
   readonly domain: string;
@@ -192,6 +197,9 @@ function handler(event) {
           budgetType: 'COST',
           timeUnit: 'MONTHLY',
           budgetLimit: { amount: 10, unit: 'USD' },
+          // Only what is tagged as madauth.com's, not the account's other projects (taxes carry no tag).
+          filterExpression: { tags: { key: PROJECT_TAG.key, values: [PROJECT_TAG.value], matchOptions: ['EQUALS'] } },
+          metrics: ['UnblendedCost'],
         },
         notificationsWithSubscribers: [
           {
