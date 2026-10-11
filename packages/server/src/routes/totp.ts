@@ -19,7 +19,7 @@ import {
   otpauthUri,
   verifyTotp,
 } from '../totp.js';
-import { newId, passwordAccountKey, toMadauthUser, totpAccountKey, type StoredAccount, type StoredUser } from '../users.js';
+import { newId, toMadauthUser, totpAccountKey, type StoredAccount, type StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
 import { accepted, body, error, nameOf, noSession, redirectTarget, unavailable, type Body } from './helpers.js';
@@ -373,9 +373,9 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
       }
       if (existing) {
         // Nobody has proven this address yet, or nobody can sign in with it: the sign-up starts afresh. A
-        // password an earlier, unconfirmed sign-up set (perhaps by someone else) goes with it.
+        // password or an e-mail link an earlier, unconfirmed sign-up set (perhaps by someone else) goes with it.
         if (Date.now() - existing.lastMailAt < MAIL_INTERVAL_MS) return accepted(c);
-        if (!existing.emailVerified) await users.unlinkAccount(passwordAccountKey(existing.id));
+        if (!existing.emailVerified) await users.dropUnprovenAccounts(existing.id);
         await users.updateUser(existing.id, { name });
         return (await emails.sendLinkEmail({ ...existing, name }, 'verify', target, locale)) ? accepted(c) : unavailable(c);
       }

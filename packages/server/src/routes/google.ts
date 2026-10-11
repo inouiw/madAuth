@@ -88,7 +88,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
           return { ok: false, error: 'other_method', message: `This e-mail address signs in with ${how || 'another method'}. Use that instead of Google.`, methods };
         }
         // Google verified the address, and nobody has proven this user yet (an unconfirmed sign-up, whose
-        // password goes) or nobody can sign in as them: the Google account takes the user over.
+        // password or e-mail link goes) or nobody can sign in as them: the Google account takes the user over.
         await users.verifyByProvider(existing);
         if (!(await users.linkAccount(existing.id, { key, email: profile.email }))) {
           // The account appeared meanwhile; it belongs to whoever has it now.

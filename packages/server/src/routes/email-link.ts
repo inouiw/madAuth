@@ -3,7 +3,7 @@
 import type { Hono } from 'hono';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
-import { emailLinkAccountKey, passwordAccountKey, toMadauthUser, type StoredUser, type Users } from '../users.js';
+import { emailLinkAccountKey, toMadauthUser, type StoredUser, type Users } from '../users.js';
 import { localeOf, type WebhookClient } from '../webhooks.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
 import { accepted, body, error, redirectTarget, signInAnswer, unavailable } from './helpers.js';
@@ -46,7 +46,7 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
     if (existing) {
       if (Date.now() - existing.lastMailAt < MAIL_INTERVAL_MS) return accepted(c);
       // A password an earlier, unconfirmed sign-up set (perhaps by someone else) goes with it.
-      if (!existing.emailVerified) await users.unlinkAccount(passwordAccountKey(existing.id));
+      if (!existing.emailVerified) await users.dropUnprovenAccounts(existing.id, 'email-link');
       await users.linkAccount(existing.id, { key: emailLinkAccountKey(existing.id) });
       return send(existing);
     }
@@ -70,7 +70,7 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
     if (!user.emailVerified) {
       // The link proves access to the inbox, and nobody had proven the address before: a password an
       // unconfirmed sign-up set meanwhile (perhaps by someone else) goes, with its links and codes.
-      await users.verifyByProvider(user);
+      await users.verifyByProvider(user, 'email-link');
       await ctx.emit('email.verified', { user: toMadauthUser({ ...user, emailVerified: true }), via: consumed.via });
     } else {
       // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.

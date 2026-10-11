@@ -1,7 +1,7 @@
 // Behaviour described in docs/email-link-security.md; update the doc when changing it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Settings, type MethodSettings } from '../settings.js';
-import { REDIRECT_TO, WEBHOOK_SECRET, WEBHOOK_URL, cookies, linkAndCode, passwordApp, post, signUpVerified } from '../test/helpers.js';
+import { REDIRECT_TO, WEBHOOK_SECRET, WEBHOOK_URL, cookies, getNonce, googleIdToken, linkAndCode, passwordApp, post, signUpVerified, verify } from '../test/helpers.js';
 import { base32Decode, stepOf, totp } from '../totp.js';
 
 type Made = ReturnType<typeof passwordApp>;
@@ -120,7 +120,7 @@ describe('e-mail link', () => {
     expect(hook.types()).toEqual(['email.no_password']);
   });
 
-  it('L4: a sign-up nobody finished is taken over: its password goes, also one set between the link and its use', async () => {
+  it('L4: a sign-up nobody finished is taken over: its password goes; a password sign-up afterwards takes the user back', async () => {
     startClock();
     const { app, hook, store } = passwordApp();
     await post(app, '/auth/password/signup', { email: LINDA, password: 'correct horse battery', redirectTo: REDIRECT_TO });
@@ -135,10 +135,6 @@ describe('e-mail link', () => {
     expect((await store.findMany('account', { userId: user.id })).map((a) => a.key)).toEqual([`email-link:${user.id}`]);
     const { token } = linkAndCode(hook.lastEmail());
 
-    // Someone sets a password on the unconfirmed user before the link is used.
-    advance(61_000);
-    await post(app, '/auth/password/signup', { email: LINDA, password: 'another password', redirectTo: REDIRECT_TO });
-    expect((await store.findMany('account', { userId: user.id })).length).toBe(2);
     hook.calls.length = 0;
 
     const res = await verifyLink(app, { token });
@@ -147,7 +143,57 @@ describe('e-mail link', () => {
     expect(hook.types()).toEqual(['email.verified', 'user.signed_in']);
     expect((await store.findMany('account', { userId: user.id })).map((a) => a.key)).toEqual([`email-link:${user.id}`]);
     expect(await store.findMany('verification', { userId: user.id })).toEqual([]);
-    expect((await post(app, '/auth/password/signin', { email: LINDA, password: 'another password' })).status).toBe(401);
+    expect((await post(app, '/auth/password/signin', { email: LINDA, password: 'correct horse battery' })).status).toBe(401);
+
+    // Before the link is used, someone signs the address up with a password: the latest sign-up counts, as
+    // between two password sign-ups, so the link account goes and the link with it.
+    const again = passwordApp();
+    await send(again.app);
+    const unused = linkAndCode(again.hook.lastEmail()).token;
+    advance(61_000);
+    await post(again.app, '/auth/password/signup', { email: LINDA, password: 'another password', redirectTo: REDIRECT_TO });
+    const [other] = await again.store.findMany('user', {});
+    expect((await again.store.findMany('account', { userId: other.id })).map((a) => a.key)).toEqual([`password:${other.id}`]);
+    expect(await (await verifyLink(again.app, { token: unused })).json()).toMatchObject({ error: 'link_invalid' });
+  });
+
+  it('L10: a link sign-up nobody finished is taken over by a password, by the app or by Google: the link account goes', async () => {
+    startClock();
+    const { app, hook, store } = passwordApp();
+    await send(app);
+    const { token } = linkAndCode(hook.lastEmail());
+    advance(61_000);
+
+    // A password sign-up with the address, confirmed with its own e-mail.
+    await post(app, '/auth/password/signup', { email: LINDA, password: 'correct horse battery', redirectTo: REDIRECT_TO });
+    const confirmed = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
+
+    expect(confirmed.status).toBe(200);
+    expect((await confirmed.json()).user).toMatchObject({ email: LINDA, amr: ['pwd'] });
+    const [user] = await store.findMany('user', {});
+    expect((await store.findMany('account', { userId: user.id })).map((a) => a.key)).toEqual([`password:${user.id}`]);
+    // The link from before no longer signs in, and no new one is sent: the address signs in with the password.
+    expect(await (await verifyLink(app, { token })).json()).toMatchObject({ error: 'link_invalid' });
+    advance(61_000);
+    hook.calls.length = 0;
+    expect((await send(app)).status).toBe(202);
+    expect(hook.types()).toEqual(['email.already_registered']);
+    expect(hook.lastEmail()!.data.methods).toEqual(['password']);
+
+    // A sign-up with the authenticator app drops the link account as well.
+    const withApp = passwordApp();
+    await setMethods(withApp.store, { google: {}, password: {}, totp: {}, 'email-link': { secondFactor: 'none' } });
+    await send(withApp.app);
+    advance(61_000);
+    expect((await post(withApp.app, '/auth/totp/signup', { email: LINDA, redirectTo: REDIRECT_TO })).status).toBe(202);
+    expect(await withApp.store.findMany('account', {})).toEqual([]);
+
+    // Google takes over a link sign-up nobody finished, too.
+    const other = passwordApp();
+    await send(other.app, 'ada@example.com');
+    const { nonce, cookie } = await getNonce(other.app);
+    expect((await verify(other.app, await googleIdToken({ nonce }), cookie)).status).toBe(200);
+    expect((await other.store.findMany('account', {})).map((a) => a.key)).toEqual(['google:1001']);
   });
 
   it('L5: the sign-up check decides for new addresses and fails closed; known users are not checked', async () => {

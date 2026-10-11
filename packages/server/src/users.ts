@@ -51,6 +51,9 @@ interface StoredVerification {
 /** What a link and code are for: confirming an address, resetting the password, or signing in (the e-mail link). */
 export type VerificationPurpose = 'verify' | 'reset' | 'signin';
 
+/** The methods an unconfirmed sign-up can set an account for before the address is proven, see {@link Users.dropUnprovenAccounts}. */
+export type UnprovenMethod = 'password' | 'email-link';
+
 /** Wrong codes allowed per e-mail before the code (and its link) stop working. */
 export const MAX_CODE_ATTEMPTS = 5;
 /**
@@ -208,12 +211,25 @@ export class Users {
   }
 
   /**
-   * A provider verified the user's address: an unconfirmed password sign-up with it, whose password nobody
-   * has proven, is dropped (the account and its pending links and codes), and the user counts as verified.
+   * Removes what an unconfirmed sign-up set without proving it: the password, and the e-mail link account of
+   * a first link nobody used. Only `except`'s own account stays: the method that proves the address, or
+   * signs it up anew, is the one the user ends up with.
    */
-  async verifyByProvider(user: StoredUser): Promise<void> {
+  async dropUnprovenAccounts(userId: string, except?: UnprovenMethod): Promise<void> {
+    const keys: Record<UnprovenMethod, string> = { password: passwordAccountKey(userId), 'email-link': emailLinkAccountKey(userId) };
+    for (const [method, key] of Object.entries(keys)) {
+      if (method !== except) await this.store.delete('account', { key });
+    }
+  }
+
+  /**
+   * A provider verified the user's address: an unconfirmed sign-up with it, whose password or e-mail link
+   * nobody has proven, is dropped (its accounts, except `proven`'s own, and its pending links and codes),
+   * and the user counts as verified.
+   */
+  async verifyByProvider(user: StoredUser, proven?: UnprovenMethod): Promise<void> {
     if (user.emailVerified) return;
-    await this.store.delete('account', { key: passwordAccountKey(user.id) });
+    await this.dropUnprovenAccounts(user.id, proven);
     await this.clearVerifications(user.id);
     await this.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
   }
