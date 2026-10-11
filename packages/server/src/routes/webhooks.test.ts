@@ -103,7 +103,7 @@ describe('e-mails through the webhook', () => {
     quietErrors();
     hook.fail = 'network';
 
-    const res = await post(app, '/auth/password/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
+    const res = await post(app, '/auth/email/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
 
     expect(res.status).toBe(503);
   });

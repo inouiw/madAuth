@@ -1,6 +1,7 @@
-// Every sign-in belongs to a stored user: Google accounts are known by their `sub` and join the user with
-// their verified address. See "How it works" and "Sessions" in docs/server.md.
+// Every sign-in belongs to a stored user: Google accounts are known by their `sub`, and a primary method
+// signs in only users who have it. See "How it works" and "Sessions" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Users } from './users.js';
 import {
   APP_ORIGIN,
   REDIRECT_TO,
@@ -48,7 +49,7 @@ describe('Google users', () => {
     expect(await store.findMany('account', {})).toEqual([
       expect.objectContaining({ userId: user.id, key: 'google:1001', secret: null, email: 'ada@example.com' }),
     ]);
-    expect((await res.json()).user).toEqual({ id: user.id, email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://example.com/ada.png' });
+    expect((await res.json()).user).toEqual({ id: user.id, email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://example.com/ada.png', amr: ['google'] });
   });
 
   it('a returning Google account is known by its sub, even when its address changed', async () => {
@@ -63,20 +64,44 @@ describe('Google users', () => {
     expect(await store.findOne('account', { key: 'google:1001' })).toMatchObject({ userId: first.id, email: 'ada@newmail.example' });
   });
 
-  it('two Google accounts are two users, and one address links a Google account to its password user', async () => {
+  it('a Google sign-in never joins a user who signs in another way: the address is refused, and told how it signs in', async () => {
     const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook, 'Ada@Example.com');
     const [password] = await store.findMany('user', {});
 
-    const ada = (await (await googleSignIn(app)).json()).user;
+    const refused = await googleSignIn(app);
     const other = (await (await googleSignIn(app, { sub: '2002', email: 'other@example.com' })).json()).user;
 
-    expect(ada.id).toBe(password.id);
+    // Whoever controls the Google account must not get past her password (and authenticator app).
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: 'other_method', message: expect.stringContaining('a password'), methods: ['password'] });
+    expect(cookies(refused).madauth_session).toBeUndefined();
+    expect((await store.findMany('account', { userId: password.id })).map((a) => a.key)).toEqual([`password:${password.id}`]);
+    // Another address is a user of its own, as before.
     expect(other.id).not.toBe(password.id);
     expect(await store.findMany('user', {})).toHaveLength(2);
-    expect((await store.findMany('account', { userId: password.id })).map((a) => a.key).sort()).toEqual([`google:1001`, `password:${password.id}`]);
-    // She signs in with the password as the same user, with the Google name kept as hers.
     expect((await (await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'correct horse battery' })).json()).user.id).toBe(password.id);
+    // The redirect flow refuses the same way.
+    const started = await app.request(`/auth/google/start?return_to=${encodeURIComponent(`${APP_ORIGIN}/page`)}`);
+    const location = new URL(started.headers.get('location')!);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id_token: await googleIdToken({ nonce: location.searchParams.get('nonce')! }) })));
+    const back = await app.request(`/auth/google/callback?code=c&state=${location.searchParams.get('state')}`, {
+      headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` },
+    });
+    expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=other_method`);
+    expect(cookies(back).madauth_session).toBeUndefined();
+  });
+
+  it('a user who has both a password and a Google account (linked in the store) signs in either way as one user', async () => {
+    const { app, hook, store } = passwordApp();
+    await signUpVerified(app, hook, 'Ada@Example.com');
+    const [user] = await store.findMany('user', {});
+    await new Users(store).linkAccount(user.id as string, { key: 'google:1001', email: 'ada@example.com' });
+
+    const google = (await (await googleSignIn(app)).json()).user;
+
+    expect(google.id).toBe(user.id);
+    expect((await (await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'correct horse battery' })).json()).user.id).toBe(user.id);
   });
 
   it('a password sign-up with the address of a Google user adds a password to that user', async () => {
@@ -107,10 +132,10 @@ describe('Google users', () => {
     expect(await store.findMany('verification', {})).toEqual([]);
     // The unproven password is gone, and the old confirmation link signs nobody in.
     expect((await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'attackers choice' })).status).toBe(401);
-    expect((await post(app, '/auth/password/verify-email', { token: linkAndCode(hook.lastEmail()).token })).status).toBe(400);
+    expect((await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token })).status).toBe(400);
     // Nothing is sent again for a confirmed user without a password.
     hook.calls.length = 0;
-    await post(app, '/auth/password/send-verification', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
+    await post(app, '/auth/email/send-verification', { email: 'ada@example.com', redirectTo: REDIRECT_TO });
     expect(hook.emails()).toEqual([]);
   });
 
@@ -170,9 +195,12 @@ describe('Google users', () => {
   });
 
   it('a password reset ends the Google sessions of the same user', async () => {
-    const { app, hook } = passwordApp();
+    const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook);
+    const [user] = await store.findMany('user', {});
+    await new Users(store).linkAccount(user.id as string, { key: 'google:3003', email: 'grace@example.com' });
     const google = await googleSignIn(app, { email: 'grace@example.com', sub: '3003' });
+    expect(google.status).toBe(200);
     advance(61_000);
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
     await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new password!' });

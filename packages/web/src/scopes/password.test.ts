@@ -65,7 +65,7 @@ describe('Madauth.password', () => {
   it('H3: reports a server without e-mail & password sign-in', async () => {
     fakeServer().password = false;
 
-    expect(await init()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('DATABASE_URL') } });
+    expect(await init()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('webhook') } });
   });
 
   it('H4: the e-mails link to the current page without its hash by default', async () => {
@@ -261,7 +261,7 @@ describe('Madauth.password', () => {
 
     await settle();
 
-    expect(Madauth.password.policy).toEqual({ minLength: 8 });
+    expect(Madauth.password.policy).toEqual({ minLength: 8, secondFactor: 'none' });
   });
 
   it('methods wait for initialize and fail with not_initialized without it', async () => {

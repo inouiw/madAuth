@@ -1,6 +1,6 @@
 # @madauth/server
 
-The server of [madAuth](https://github.com/inouiw/madAuth), a self-hostable alternative to Cognito / Auth0: Google and e-mail & password sign-in with madAuth sessions. It runs with Node, in Docker, on AWS Lambda, on Azure Functions or inside your own Node server.
+The server of [madAuth](https://github.com/inouiw/madAuth), a self-hostable alternative to Cognito / Auth0: Google, e-mail & password and authenticator-app (TOTP) sign-in with madAuth sessions. It runs with Node, in Docker, on AWS Lambda, on Azure Functions or inside your own Node server.
 
 The browser side is [`@madauth/web`](https://www.npmjs.com/package/@madauth/web).
 
@@ -53,7 +53,8 @@ The package also contains self-contained bundles for AWS Lambda (`dist/standalon
 ## Documentation
 
 - [Getting started](https://github.com/inouiw/madAuth/blob/main/docs/getting-started.md): set up madAuth on your machine, step by step.
-- [Running the madAuth server](https://github.com/inouiw/madAuth/blob/main/docs/server.md): the configuration, Google Cloud Console setup, webhooks, hosting and custom store adapters.
+- [Running the madAuth server](https://github.com/inouiw/madAuth/blob/main/docs/server.md): the configuration, Google Cloud Console setup, the sign-in methods and their policies, the authenticator app, webhooks, hosting and custom store adapters.
+- [Password security](https://github.com/inouiw/madAuth/blob/main/docs/password-security.md) and [Authenticator app security](https://github.com/inouiw/madAuth/blob/main/docs/totp-security.md): what the server does to protect accounts.
 
 ## License
 

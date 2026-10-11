@@ -65,6 +65,15 @@ describe('GoogleFedcm', () => {
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm({ autoPrompt: false })] });
     await settle();
     expect(gis.id.prompt).toHaveBeenCalledOnce();
+
+    // Not while a sign-in waits for the authenticator app, e.g. back from the redirect flow: One Tap on
+    // top of the code step would start another sign-in.
+    server.policy.google = 'optional';
+    history.replaceState(null, '', '/page#madauth_next=totp');
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()], ui: 'custom' });
+    await settle();
+    expect(gis.id.prompt).toHaveBeenCalledOnce();
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'google' });
   });
 
   it('G4: a One Tap sign-in signs the user in without the app doing anything', async () => {

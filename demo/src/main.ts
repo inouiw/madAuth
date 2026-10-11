@@ -1,4 +1,4 @@
-import { GoogleFedcm, GoogleRedirect, Madauth, Password, type MadauthUser, type Settings } from '@madauth/web';
+import { GoogleFedcm, GoogleRedirect, Madauth, Password, Totp, type MadauthUser, type MethodsToSet, type Settings } from '@madauth/web';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -22,8 +22,9 @@ const google = flow === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();
 const { hostname } = location;
 $('[data-hosted]').hidden = !(hostname === 'madauth.com' || hostname.endsWith('.madauth.com'));
 
-// No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin.
-void Madauth.initialize({ providers: [google, new Password()] }).then((result) => {
+// No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin. The authenticator
+// app is left out when the server has it switched off (no policy asks for it, and it signs in nobody alone).
+void Madauth.initialize({ providers: [google, new Password(), new Totp()] }).then((result) => {
   // The server offers the redirect flow only with a client secret (and Google switched on); otherwise
   // initialize left GoogleRedirect out and the dialog has no Google button.
   if (flow === 'redirect' && result.leftOut.includes('google')) $('#flow-note').hidden = false;
@@ -44,6 +45,8 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   if (user?.picture) avatar.src = user.picture;
   // What admins attached to the user, e.g. { roles: ['admin'] }; the session token carries it to your backends too.
   $('#claims').textContent = user?.claims ? JSON.stringify(user.claims, null, 2) : 'none';
+  // How the session was authenticated, e.g. pwd and otp: a backend can ask for otp before a sensitive action.
+  $('#amr').textContent = user?.amr?.join(', ') ?? '';
 
   const email = $<HTMLInputElement>('#claims-email');
   if (!user) {
@@ -51,13 +54,15 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
     email.value = '';
     $('#output').hidden = true;
     $('#output').textContent = '';
+    $<HTMLInputElement>('#totp-code').value = '';
     settingsLoadedFor = undefined;
     showSettings(null);
     return;
   }
   if (!email.value) email.value = user.email ?? '';
   $('#admin-note').hidden = isAdmin(user);
-  // An admin sees the server's settings in the checkboxes before they can send them back.
+  void refreshAuthenticator();
+  // An admin sees the server's settings in the controls before they can send them back.
   if (isAdmin(user) && settingsLoadedFor !== user.id) {
     settingsLoadedFor = user.id;
     void Madauth.admin.getSettings().then((result) => {
@@ -69,40 +74,91 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
 
 const isAdmin = (user: MadauthUser) => Array.isArray(user.claims?.roles) && user.claims.roles.includes('admin');
 
+// --- The authenticator app of the signed-in user ---
+
+/** Whether the signed-in user has the app; decides which buttons make sense, and whether deleting the account takes a code. */
+let authenticatorOn = false;
+
+/** Shows whether the user has the app, and the buttons that apply. */
+async function refreshAuthenticator(): Promise<void> {
+  const user = Madauth.currentUser;
+  const status = await Madauth.totp.status();
+  if (Madauth.currentUser?.id !== user?.id) return;
+  authenticatorOn = status.isSuccess && status.enabled;
+  const offered = status.isSuccess || status.error.code !== 'flow_not_enabled';
+  $('#totp-status').textContent = !status.isSuccess
+    ? status.error.code === 'flow_not_enabled'
+      ? 'Not offered by this madAuth server: no sign-in method asks for it, and it signs in nobody on its own.'
+      : status.error.message
+    : status.enabled
+      ? `Set up, ${status.recoveryCodesLeft} recovery codes left.`
+      : 'Not set up.';
+  $('.authenticator .code-field').hidden = !authenticatorOn;
+  $('[data-call="setUpAuthenticator"]').hidden = !offered;
+  $('[data-call="newRecoveryCodes"]').hidden = !authenticatorOn;
+  $('[data-call="removeAuthenticator"]').hidden = !authenticatorOn;
+}
+
+/** The code typed next to the buttons: a 6-digit code from the app, or a recovery code (with a dash). */
+function codeOptions(): { code: string } | { recoveryCode: string } {
+  const value = $<HTMLInputElement>('#totp-code').value.trim();
+  return value.includes('-') || value.length > 7 ? { recoveryCode: value } : { code: value.replace(/\s/g, '') };
+}
+
 // --- The rest of the API a signed-in user can call. Each button shows what the call resolved to. ---
 
 const output = $('#output');
 const claimsEmail = () => $<HTMLInputElement>('#claims-email').value.trim();
-const methodBox = (method: 'google' | 'password') => $<HTMLInputElement>(`#method-${method}`);
+const methodBox = (method: 'google' | 'password' | 'totp') => $<HTMLInputElement>(`#method-${method}`);
+const policySelect = (method: 'google' | 'password') => $<HTMLSelectElement>(`#policy-${method}`);
 /** The user whose sign-in loaded the settings, so a claims change (which also notifies) doesn't load them again. */
 let settingsLoadedFor: string | undefined;
-/** Whether the boxes show the server's settings; only then may setSettings send them. */
+/** Whether the controls show the server's settings; only then may setSettings send them. */
 let settingsLoaded = false;
 
 /**
- * Shows the server's settings in the checkboxes and lets them be sent back; until then (or with null) the
- * boxes are empty and setSettings is off, so the page never sends defaults the server doesn't have. A method
- * the server is not configured for can't be switched on.
+ * Shows the server's settings in the controls and lets them be sent back; until then (or with null) the
+ * controls are empty and setSettings is off, so the page never sends defaults the server doesn't have. A
+ * method the server is not configured for can't be switched on.
  */
 function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSettings>> | null>(result: T): T {
   const methods: Settings['methods'] | undefined = result?.isSuccess ? result.methods : undefined;
-  for (const method of ['google', 'password'] as const) {
+  for (const method of ['google', 'password', 'totp'] as const) {
     methodBox(method).checked = methods?.[method].enabled ?? false;
-    methodBox(method).disabled = !methods?.[method].available;
+    methodBox(method).disabled = !methods?.[method].configured;
+  }
+  for (const method of ['google', 'password'] as const) {
+    policySelect(method).value = methods?.[method].secondFactor ?? 'none';
+    policySelect(method).disabled = !methods?.[method].configured;
   }
   settingsLoaded = !!methods;
   $<HTMLButtonElement>('[data-call="setSettings"]').disabled = !settingsLoaded;
   return result;
 }
 
+/** The list to send: what is checked is on, with the policy next to it; the rest is off. */
+function methodsToSet(): MethodsToSet {
+  const policy = (method: 'google' | 'password') => ({ secondFactor: policySelect(method).value as 'none' | 'optional' | 'required' });
+  return {
+    google: methodBox('google').checked ? policy('google') : false,
+    password: methodBox('password').checked ? policy('password') : false,
+    totp: methodBox('totp').checked,
+  };
+}
+
 const calls: Record<string, () => Promise<unknown>> = {
   getSession: () => Madauth.getSession(),
   sessionReady: () => Madauth.sessionReady(),
   // One click would be too easy on a public demo: the user, their claims and their sign-in methods go for good.
+  // Once the authenticator app is set up, the server also wants a current code from it.
   deleteAccount: async () =>
     confirm('Delete your account on this madAuth server? Your user, claims and sign-in methods are deleted for good.')
-      ? Madauth.deleteAccount()
+      ? Madauth.deleteAccount(authenticatorOn ? codeOptions() : undefined)
       : 'Cancelled.',
+  // The dialog shows the QR code, asks for the first code and shows the recovery codes.
+  setUpAuthenticator: () => Madauth.setUpAuthenticator().then(async (result) => (await refreshAuthenticator(), result)),
+  newRecoveryCodes: () => Madauth.totp.newRecoveryCodes(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
+  removeAuthenticator: () => Madauth.totp.remove(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
   getClaims: () => Madauth.admin.getClaims(claimsEmail()),
   setClaims: async () => {
     let claims: unknown;
@@ -117,8 +173,8 @@ const calls: Record<string, () => Promise<unknown>> = {
   getSettings: () => Madauth.admin.getSettings().then(showSettings),
   setSettings: () =>
     Madauth.admin
-      .setSettings({ methods: { google: methodBox('google').checked, password: methodBox('password').checked } })
-      // A refused change (e.g. the last method switched off) leaves the boxes as the user set them.
+      .setSettings({ methods: methodsToSet() })
+      // A refused change (e.g. every method switched off) leaves the controls as the user set them.
       .then((result) => (result.isSuccess ? showSettings(result) : result)),
 };
 

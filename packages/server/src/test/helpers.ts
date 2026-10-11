@@ -217,6 +217,6 @@ export async function signUpVerified(
   password = 'correct horse battery',
 ): Promise<string> {
   await post(app, '/auth/password/signup', { email, password, name: 'Grace Hopper', redirectTo: REDIRECT_TO });
-  const res = await post(app, '/auth/password/verify-email', { token: linkAndCode(hook.lastEmail()).token });
+  const res = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
   return cookies(res).madauth_session.value;
 }

@@ -34,7 +34,7 @@ describe('Google ID token verification (shared by both flows)', () => {
     const res = await verify(app, await googleIdToken({ nonce }), cookie);
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ user: ada });
+    expect(await res.json()).toEqual({ user: { ...ada, amr: ['google'] } });
     expect(cookies(res).madauth_session.value).toBeTruthy();
   });
 
@@ -269,7 +269,12 @@ describe('code (redirect) flow', () => {
 
     expect((await app.request(`/auth/google/start?return_to=${APP_ORIGIN}/`)).status).toBe(404);
     expect((await app.request('/auth/google/callback')).status).toBe(404);
-    expect(await (await app.request('/auth/config')).json()).toEqual({ google: { clientId: CLIENT_ID, codeFlow: false }, password: null });
+    expect(await (await app.request('/auth/config')).json()).toEqual({
+      google: { clientId: CLIENT_ID, codeFlow: false, secondFactor: 'none' },
+      password: null,
+      totp: null,
+      email: { verification: false },
+    });
     // The FedCM flow still works.
     expect((await getNonce(app)).nonce).toBeTruthy();
   });
@@ -309,7 +314,7 @@ describe('session', () => {
 
     const ok = await get(`madauth_session=${session}`);
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ user: ada });
+    expect(await ok.json()).toEqual({ user: { ...ada, amr: ['google'] } });
     expect((await get()).status).toBe(401);
     expect((await get(`madauth_session=${tampered}`)).status).toBe(401);
   });
@@ -368,7 +373,12 @@ describe('public endpoints', () => {
   it('C1: /auth/config exposes only public information', async () => {
     const res = await testApp().request('/auth/config');
 
-    expect(await res.json()).toEqual({ google: { clientId: CLIENT_ID, codeFlow: true }, password: null });
+    expect(await res.json()).toEqual({
+      google: { clientId: CLIENT_ID, codeFlow: true, secondFactor: 'none' },
+      password: null,
+      totp: null,
+      email: { verification: false },
+    });
   });
 
   it('H5: /health returns 200', async () => {

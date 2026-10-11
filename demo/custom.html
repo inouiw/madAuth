@@ -9,7 +9,7 @@
   </head>
   <body>
     <main>
-      <!-- A login screen built with the headless API (Madauth.password, Madauth.google). See src/custom.ts. -->
+      <!-- A login screen built with the headless API (Madauth.password, Madauth.google, Madauth.totp). See src/custom.ts. -->
       <section id="login" class="card" hidden>
         <h1 id="title">Sign in</h1>
         <p id="message" hidden></p>
@@ -26,6 +26,8 @@
             <button type="button" data-go="forgot">Forgot password?</button>
             <button type="button" data-go="signup">Create account</button>
           </p>
+          <!-- Only when the server lets the authenticator app sign in on its own. -->
+          <p class="links"><button type="button" data-go="totp" id="go-totp" hidden>Sign in with the authenticator app</button></p>
         </div>
 
         <div data-view="signup" hidden>
@@ -65,11 +67,70 @@
             <button type="submit">Set password</button>
           </form>
         </div>
+
+        <!-- The authenticator app on its own: the e-mail address and a code (Madauth.totp.signIn). -->
+        <div data-view="totp" hidden>
+          <form id="totp-form">
+            <label>E-mail <input name="email" type="email" autocomplete="email" required /></label>
+            <label>Code from the app, or a recovery code <input name="code" autocomplete="one-time-code" required /></label>
+            <button type="submit">Sign in</button>
+          </form>
+          <p class="links">
+            <button type="button" data-go="totp-signup" id="go-totp-signup" hidden>Create account</button>
+            <button type="button" data-go="signin">Back to sign in</button>
+          </p>
+        </div>
+
+        <!-- A sign-up with the app alone (Madauth.totp.signUp): no password, the app is set up after the confirmation. -->
+        <div data-view="totp-signup" hidden>
+          <p class="hint">You will set up your authenticator app after confirming your e-mail address.</p>
+          <form id="totp-signup-form">
+            <label>Name <input name="name" autocomplete="name" /></label>
+            <label>E-mail <input name="email" type="email" autocomplete="email" required /></label>
+            <button type="submit">Create account</button>
+          </form>
+          <p class="links"><button type="button" data-go="signin">Back to sign in</button></p>
+        </div>
+
+        <!-- The second step after a password or Google sign-in that ended with totp_required (Madauth.totp.verify). -->
+        <div data-view="totp-code" hidden>
+          <p>Enter the code from your authenticator app, or a recovery code, to finish signing in.</p>
+          <form id="totp-code-form">
+            <label>Code <input name="code" autocomplete="one-time-code" required /></label>
+            <button type="submit">Continue</button>
+          </form>
+          <p class="links"><button type="button" data-go="signin">Back to sign in</button></p>
+        </div>
+
+        <!-- Setting the app up (Madauth.totp.startSetup and confirmSetup): for a sign-in that requires it, and for the signed-in user. -->
+        <div data-view="totp-setup" hidden>
+          <p>Scan this QR code with your authenticator app, then enter the code it shows.</p>
+          <div id="qr"></div>
+          <p class="hint">Can't scan? Enter this key in the app: <code id="secret"></code></p>
+          <form id="totp-setup-form">
+            <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" required /></label>
+            <button type="submit">Turn on</button>
+          </form>
+          <p class="links"><button type="button" id="totp-setup-cancel">Cancel</button></p>
+        </div>
+
+        <!-- The recovery codes, shown once. -->
+        <div data-view="totp-codes" hidden>
+          <p>Save these recovery codes somewhere safe. If you lose your authenticator app, each of them signs you in once.</p>
+          <ol id="recovery-codes"></ol>
+          <button type="button" id="codes-saved">I have saved them</button>
+        </div>
       </section>
 
       <section id="account" hidden>
         <p><strong id="user-name"></strong><span id="user-email"></span></p>
         <pre id="claims" hidden></pre>
+        <!-- The authenticator app of the signed-in user: Madauth.totp.status, the setup above, and remove with a code. -->
+        <p id="totp-status"></p>
+        <p class="links">
+          <button type="button" id="totp-setup" hidden>Set up the authenticator app</button>
+          <button type="button" id="totp-remove" hidden>Remove the authenticator app</button>
+        </p>
         <button id="sign-out" type="button">Sign out</button>
       </section>
     </main>

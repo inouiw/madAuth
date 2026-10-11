@@ -13,10 +13,25 @@ afterEach(resetAll);
 describe('@madauth/web', () => {
   it('W7: exports exactly the public API', () => {
     expect(Object.keys(madauth).sort()).toEqual(
-      ['GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'Password', 'loginMethods'].sort(),
+      ['GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'Password', 'Totp', 'loginMethods'].sort(),
     );
     expect(Object.keys(madauth.Madauth).sort()).toEqual(
-      ['admin', 'currentUser', 'deleteAccount', 'getSession', 'google', 'initialize', 'onAuthStateChanged', 'password', 'sessionReady', 'setLocale', 'signIn', 'signOut'].sort(),
+      [
+        'admin',
+        'currentUser',
+        'deleteAccount',
+        'getSession',
+        'google',
+        'initialize',
+        'onAuthStateChanged',
+        'password',
+        'sessionReady',
+        'setLocale',
+        'setUpAuthenticator',
+        'signIn',
+        'signOut',
+        'totp',
+      ].sort(),
     );
     expect('tryOneTapSignIn' in madauth.Madauth).toBe(false);
   });
@@ -26,8 +41,12 @@ describe('@madauth/web', () => {
       ['confirmReset', 'pendingReset', 'policy', 'sendResetEmail', 'sendVerificationEmail', 'signIn', 'signUp', 'verifyEmail'].sort(),
     );
     expect(Object.keys(madauth.Madauth.google)).toEqual(['renderButton']);
+    expect(Object.keys(madauth.Madauth.totp).sort()).toEqual(
+      ['confirmSetup', 'newRecoveryCodes', 'pendingStep', 'policy', 'remove', 'sendVerificationEmail', 'signIn', 'signUp', 'startSetup', 'status', 'verify', 'verifyEmail'].sort(),
+    );
     expectTypeOf(madauth.Madauth.password).toEqualTypeOf<madauth.PasswordApi>();
     expectTypeOf(madauth.Madauth.google).toEqualTypeOf<madauth.GoogleApi>();
+    expectTypeOf(madauth.Madauth.totp).toEqualTypeOf<madauth.TotpApi>();
   });
 });
 

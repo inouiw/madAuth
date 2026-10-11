@@ -107,5 +107,6 @@ export function userFromClaims(claims: SessionClaims): MadauthUser {
   if (claims.name) user.name = claims.name;
   if (claims.picture) user.picture = claims.picture;
   if (claims.claims && typeof claims.claims === 'object' && Object.keys(claims.claims).length) user.claims = claims.claims;
+  if (Array.isArray(claims.amr)) user.amr = claims.amr.filter((value): value is string => typeof value === 'string');
   return user;
 }

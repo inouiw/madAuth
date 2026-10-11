@@ -1,6 +1,10 @@
 import { Password, clearResetToken, pendingResetToken } from '../providers/password.js';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
+import type { SecondFactorPolicy } from '../providers/provider.js';
 import type { Core } from './core.js';
+import { currentPage, emailConfirmation, signedIn, type SendEmailOptions } from './email.js';
+
+export type { SendEmailOptions } from './email.js';
 
 export interface SignInWithPasswordOptions {
   email: string;
@@ -16,12 +20,6 @@ export interface SignUpOptions {
   redirectTo?: string;
 }
 
-export interface SendEmailOptions {
-  email: string;
-  /** The page the link in the e-mail opens. Default: the current page. Its origin must be in ALLOWED_ORIGINS. */
-  redirectTo?: string;
-}
-
 export type ConfirmResetOptions =
   /** With the link the page was opened from, or an explicit `token` from such a link. */
   | { newPassword: string; token?: string }
@@ -30,7 +28,11 @@ export type ConfirmResetOptions =
 
 /** E-mail & password sign-in for custom login screens. Needs `new Password()` in `Madauth.initialize`. */
 export interface PasswordApi {
-  /** Signs in. Fails with `invalid_credentials`, `email_unverified` or `too_many_attempts`. */
+  /**
+   * Signs in. Fails with `invalid_credentials`, `email_unverified` or `too_many_attempts`; with
+   * `totp_required` or `totp_setup_required` the password was right and the sign-in goes on with the
+   * authenticator app: `Madauth.totp.verify`, or the setup (`Madauth.totp.startSetup` and `confirmSetup`).
+   */
   signIn(options: SignInWithPasswordOptions): Promise<Result<{ user: MadauthUser }>>;
   /**
    * Creates an account and sends an e-mail with a link and a code to confirm the address. Succeeds even if
@@ -42,8 +44,8 @@ export interface PasswordApi {
   /** Sends the confirmation e-mail again. Fails with `temporarily_unavailable` if it could not be sent. */
   sendVerificationEmail(options: SendEmailOptions): Promise<Result>;
   /**
-   * Confirms the address with the code from the e-mail and signs in. Fails with `code_invalid`.
-   * Links are handled by `Madauth.initialize` when the page opens.
+   * Confirms the address with the code from the e-mail and signs in (or goes on with the authenticator
+   * app, like {@link signIn}). Fails with `code_invalid`. Links are handled by `Madauth.initialize`.
    */
   verifyEmail(options: { email: string; code: string }): Promise<Result<{ user: MadauthUser }>>;
   /**
@@ -54,15 +56,17 @@ export interface PasswordApi {
   /** True when the page was opened from a reset link; then ask for a new password and call {@link confirmReset}. */
   readonly pendingReset: boolean;
   /**
-   * Sets a new password and signs in. Uses the reset link the page was opened from unless `token`, or
-   * `email` and `code`, are given. Fails with `link_invalid`, `code_invalid` or `weak_password`.
+   * Sets a new password and signs in (or goes on with the authenticator app, like {@link signIn}). Uses the
+   * reset link the page was opened from unless `token`, or `email` and `code`, are given. Fails with
+   * `link_invalid`, `code_invalid` or `weak_password`.
    */
   confirmReset(options: ConfirmResetOptions): Promise<Result<{ user: MadauthUser }>>;
-  /** The server's password rules, for hints in your form; null until initialized. */
-  readonly policy: { minLength: number } | null;
+  /**
+   * The server's password rules, for hints in your form, and whether the method asks for the authenticator
+   * app as a second factor (`none`, `optional`, `required`); null until initialized.
+   */
+  readonly policy: { minLength: number; secondFactor: SecondFactorPolicy } | null;
 }
-
-const currentPage = () => location.href.split('#')[0];
 
 const notRegistered = () => fail('flow_not_enabled', 'Pass new Password() to Madauth.initialize to use Madauth.password.');
 
@@ -81,17 +85,11 @@ export function createPasswordApi(core: Core): PasswordApi {
     return res.ok ? ok(res.data) : { isSuccess: false, error: res.error };
   }
 
-  function signedIn(result: Result<{ user: MadauthUser }>): Result<{ user: MadauthUser }> {
-    if (result.isSuccess) {
-      core.signedIn(result.user);
-      return { isSuccess: true, user: result.user };
-    }
-    return result;
-  }
+  const confirmation = emailConfirmation(core, 'password', call);
 
   return {
     async signIn({ email, password }) {
-      return signedIn(await call('/auth/password/signin', { email, password }));
+      return signedIn(core, 'password', await call('/auth/password/signin', { email, password }));
     },
 
     async signUp({ email, password, name, redirectTo }) {
@@ -105,14 +103,8 @@ export function createPasswordApi(core: Core): PasswordApi {
       return result.isSuccess ? ok() : result;
     },
 
-    async sendVerificationEmail({ email, redirectTo }) {
-      const result = await call('/auth/password/send-verification', { email, redirectTo: redirectTo ?? currentPage(), locale: core.locale() });
-      return result.isSuccess ? ok() : result;
-    },
-
-    async verifyEmail({ email, code }) {
-      return signedIn(await call('/auth/password/verify-email', { email, code }));
-    },
+    sendVerificationEmail: confirmation.sendVerificationEmail,
+    verifyEmail: confirmation.verifyEmail,
 
     async sendResetEmail({ email, redirectTo }) {
       const result = await call('/auth/password/send-reset', { email, redirectTo: redirectTo ?? currentPage(), locale: core.locale() });
@@ -137,9 +129,10 @@ export function createPasswordApi(core: Core): PasswordApi {
         if (!token) return fail('link_invalid', 'No reset link: pass token, or email and code, to confirmReset.');
         body = { password: options.newPassword, token };
       }
-      const result = signedIn(await call('/auth/password/reset', body));
+      const result = signedIn(core, 'password', await call('/auth/password/reset', body));
       // A used or expired link stays useless, so forget it either way; a weak password can be retried.
-      if (result.isSuccess || result.error.code === 'link_invalid') clearResetToken(p);
+      const over = result.isSuccess || result.error.code === 'link_invalid' || result.error.code === 'totp_required' || result.error.code === 'totp_setup_required';
+      if (over) clearResetToken(p);
       return result;
     },
 

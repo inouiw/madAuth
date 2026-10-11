@@ -1,6 +1,7 @@
 // Deleting the account: POST /auth/account/delete. See "HTTP API" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_ORIGIN, REDIRECT_TO, cookies, linkAndCode, passwordApp, post, signIn, signUpVerified, type testApp } from './test/helpers.js';
+import { Users } from './users.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -62,7 +63,8 @@ describe('deleting the account', () => {
     const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook, 'Ada@Example.com');
     const [{ id: userId }] = await store.findMany('user', {});
-    // Google's verified address is Ada's: the Google account joins her user.
+    // Ada has both methods (a Google account linked in the store, as a sign-in alone never joins a user).
+    await new Users(store).linkAccount(userId as string, { key: 'google:1001', email: 'ada@example.com' });
     const google = await signIn(app);
     expect(await store.findMany('account', {})).toHaveLength(2);
 

@@ -95,16 +95,16 @@ describe('sign-up and e-mail verification', () => {
     await signUp(app);
     const { token } = linkAndCode(hook.lastEmail());
 
-    const res = await post(app, '/auth/password/verify-email', { token });
+    const res = await post(app, '/auth/email/verify', { token });
 
     expect(res.status).toBe(200);
     const { user } = (await res.json()) as { user: { id: string } };
-    expect(user).toEqual({ id: expect.stringMatching(/^usr_/), email: 'grace@example.com', name: 'Grace Hopper' });
+    expect(user).toEqual({ id: expect.stringMatching(/^usr_/), email: 'grace@example.com', name: 'Grace Hopper', amr: ['pwd'] });
     const jwks = createLocalJWKSet(await (await app.request('/.well-known/jwks.json')).json());
     const { payload } = await jwtVerify(cookies(res).madauth_session.value, jwks, { issuer: ISSUER });
     expect(payload).toMatchObject({ sub: user.id, amr: ['pwd'], sv: 0 });
 
-    expect(await (await post(app, '/auth/password/verify-email', { token })).json()).toMatchObject({ error: 'link_invalid' });
+    expect(await (await post(app, '/auth/email/verify', { token })).json()).toMatchObject({ error: 'link_invalid' });
     expect((await signIn(app)).status).toBe(200);
   });
 
@@ -113,11 +113,11 @@ describe('sign-up and e-mail verification', () => {
     await signUp(app);
     const { code } = linkAndCode(hook.lastEmail());
 
-    const res = await post(app, '/auth/password/verify-email', { email: 'Grace@Example.com', code: `${code.slice(0, 3)} ${code.slice(3)}` });
+    const res = await post(app, '/auth/email/verify', { email: 'Grace@Example.com', code: `${code.slice(0, 3)} ${code.slice(3)}` });
 
     expect(res.status).toBe(200);
     expect(cookies(res).madauth_session).toBeDefined();
-    expect(await (await post(app, '/auth/password/verify-email', { email: grace.email, code })).json()).toMatchObject({
+    expect(await (await post(app, '/auth/email/verify', { email: grace.email, code })).json()).toMatchObject({
       error: 'code_invalid',
     });
   });
@@ -127,13 +127,13 @@ describe('sign-up and e-mail verification', () => {
     await signUp(app);
     advance(61_000);
 
-    await post(app, '/auth/password/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
+    await post(app, '/auth/email/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
 
     expect(hook.emails()).toHaveLength(2);
     expect(linkAndCode(hook.emails()[1]).token).not.toBe(linkAndCode(hook.emails()[0]).token);
-    await post(app, '/auth/password/verify-email', { token: linkAndCode(hook.lastEmail()).token });
+    await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
     advance(122_000);
-    const res = await post(app, '/auth/password/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
+    const res = await post(app, '/auth/email/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
     expect(res.status).toBe(202);
     expect(hook.emails()).toHaveLength(2);
   });
@@ -147,8 +147,8 @@ describe('sign-up and e-mail verification', () => {
     await signUp(app, { password: 'second password' });
 
     expect(hook.emails()).toHaveLength(2);
-    expect((await post(app, '/auth/password/verify-email', { token: first.token })).status).toBe(400);
-    await post(app, '/auth/password/verify-email', { token: linkAndCode(hook.lastEmail()).token });
+    expect((await post(app, '/auth/email/verify', { token: first.token })).status).toBe(400);
+    await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
     expect((await signIn(app, { password: 'second password' })).status).toBe(200);
     expect((await signIn(app, { password: 'first password' })).status).toBe(401);
   });
@@ -281,7 +281,7 @@ describe('password reset', () => {
 
     expect((await post(app, '/auth/password/reset', { token, password: 'new password!' })).status).toBe(200);
 
-    const res = await post(app, '/auth/password/verify-email', { token: verifyToken });
+    const res = await post(app, '/auth/email/verify', { token: verifyToken });
     expect(await res.json()).toMatchObject({ error: 'link_invalid' });
   });
 
@@ -301,7 +301,7 @@ describe('password reset', () => {
     await signUp(app);
     const verify = linkAndCode(hook.lastEmail());
     advance(VERIFY_TTL_MS + 60_000);
-    expect(await (await post(app, '/auth/password/verify-email', { token: verify.token })).json()).toMatchObject({ error: 'link_invalid' });
+    expect(await (await post(app, '/auth/email/verify', { token: verify.token })).json()).toMatchObject({ error: 'link_invalid' });
 
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
     const reset = linkAndCode(hook.lastEmail());
@@ -386,7 +386,7 @@ describe('password reset', () => {
 
   it('a stranger signing up with someone else’s address gets 10 guesses, not 5 per e-mail', async () => {
     const { app, hook, store } = passwordApp();
-    const guess = (code: string) => post(app, '/auth/password/verify-email', { email: grace.email, code });
+    const guess = (code: string) => post(app, '/auth/email/verify', { email: grace.email, code });
     // The stranger signs up again and again to get new codes sent to the owner's inbox.
     let lastAnswer = '';
     for (let mail = 0; mail < 3; mail++) {
@@ -404,7 +404,7 @@ describe('password reset', () => {
     await signUp(app);
     const { code, token } = linkAndCode(hook.lastEmail());
     expect((await guess(code)).status).toBe(429);
-    expect((await post(app, '/auth/password/verify-email', { token })).status).toBe(200);
+    expect((await post(app, '/auth/email/verify', { token })).status).toBe(200);
     expect((await store.findOne('user', { emailNormalized: grace.email }))?.wrongCodes).toBe(0);
     expect((await signIn(app)).status).toBe(200);
   });
@@ -414,10 +414,10 @@ describe('password reset', () => {
     await signUp(app);
     const { code } = linkAndCode(hook.lastEmail());
     const wrong = code === '000000' ? '111111' : '000000';
-    for (let i = 0; i < 4; i++) await post(app, '/auth/password/verify-email', { email: grace.email, code: wrong });
+    for (let i = 0; i < 4; i++) await post(app, '/auth/email/verify', { email: grace.email, code: wrong });
     expect((await store.findOne('user', { emailNormalized: grace.email }))?.wrongCodes).toBe(4);
 
-    expect((await post(app, '/auth/password/verify-email', { email: grace.email, code })).status).toBe(200);
+    expect((await post(app, '/auth/email/verify', { email: grace.email, code })).status).toBe(200);
 
     expect((await store.findOne('user', { emailNormalized: grace.email }))?.wrongCodes).toBe(0);
   });
@@ -449,7 +449,12 @@ describe('configuration', () => {
   it('reports the password policy and works without Google', async () => {
     const { app } = passwordApp({ google: undefined });
 
-    expect(await (await app.request('/auth/config')).json()).toEqual({ google: null, password: { minLength: 8 } });
+    expect(await (await app.request('/auth/config')).json()).toEqual({
+      google: null,
+      password: { minLength: 8, secondFactor: 'none' },
+      totp: null,
+      email: { verification: true },
+    });
     expect((await app.request('/auth/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } })).status).toBe(404);
   });
 });

@@ -159,6 +159,7 @@ describe('init', () => {
       'Google client ID (empty: no Google sign-in)',
       'Google client secret (empty: no redirect flow): ',
       'E-mail & password sign-in? (yes/no)',
+      'Sign-up with the authenticator app alone, without a password? (yes/no)',
       'Database for the users',
     ]);
     expect(readEnvFile(file)).toMatchObject({
@@ -182,6 +183,7 @@ describe('init', () => {
       'App URL, the address your users open',
       'Google client ID (empty: no Google sign-in)',
       'E-mail & password sign-in? (yes/no)',
+      'Sign-up with the authenticator app alone, without a password? (yes/no)',
     ]);
     expect(answered).toEqual({ exitCode: 1, output: expect.stringContaining('No sign-in method is chosen') });
     expect(withOptions).toEqual(answered);

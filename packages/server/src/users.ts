@@ -2,7 +2,7 @@
 import { randomBytes } from 'node:crypto';
 import { claimsFromJson } from './claims.js';
 import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
-import { SIGN_IN_METHODS, type SignInMethod } from './settings.js';
+import { SIGN_IN_METHODS, type MethodSettings, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 import type { MadauthUser } from './user.js';
 
@@ -24,13 +24,18 @@ export interface StoredUser {
 export interface StoredAccount {
   id: string;
   userId: string;
-  /** `password:<userId>` or `google:<sub>`. */
+  /** `password:<userId>`, `google:<sub>` or `totp:<userId>`. */
   key: string;
+  /** The password hash, or the encrypted secret of the authenticator app. Empty for Google. */
   secret: string | null;
   failedAttempts: number;
   lockedUntil: number;
   /** The address the provider reported at the last sign-in. Empty for password accounts and before schema version 4. */
   email: string | null;
+  /** The time step of the last authenticator code that was accepted (totp accounts). Empty in records from before schema version 5. */
+  lastUsedStep: number | null;
+  /** The setup the authenticator secret came from; its recovery codes carry the same id. Empty for other accounts. */
+  setupId: string | null;
   createdAt: number;
 }
 
@@ -60,7 +65,8 @@ export interface CodeResult {
   locked: boolean;
 }
 
-const newId = (prefix: string) => `${prefix}_${randomBytes(16).toString('base64url')}`;
+/** A new random id with a type prefix, e.g. `usr_…`. */
+export const newId = (prefix: string): string => `${prefix}_${randomBytes(16).toString('base64url')}`;
 
 export function passwordAccountKey(userId: string): string {
   return `password:${userId}`;
@@ -68,6 +74,10 @@ export function passwordAccountKey(userId: string): string {
 
 export function googleAccountKey(sub: string): string {
   return `google:${sub}`;
+}
+
+export function totpAccountKey(userId: string): string {
+  return `totp:${userId}`;
 }
 
 /**
@@ -84,11 +94,15 @@ export function toMadauthUser(user: StoredUser, profile: { name?: string; pictur
   return result;
 }
 
-/** A new account's sign-in method: its key, and its secret (the password hash) or the provider's address. */
+/** A new account's sign-in method: its key, and its secret (the password hash or the encrypted authenticator secret) or the provider's address. */
 export interface NewAccount {
   key: string;
   secret?: string;
   email?: string;
+  /** For an authenticator app: the time step of the code that proved the setup, so that code can't sign in. */
+  lastUsedStep?: number;
+  /** For an authenticator app: the setup the secret came from. */
+  setupId?: string;
 }
 
 export class Users {
@@ -115,11 +129,25 @@ export class Users {
     return this.findAccountByKey(passwordAccountKey(userId));
   }
 
-  /** How the user signs in, from their accounts: e.g. `['google']` for a user without a password. */
-  async signInMethods(userId: string): Promise<SignInMethod[]> {
+  /** The user's authenticator app, if they set one up. */
+  async totpAccount(userId: string): Promise<StoredAccount | null> {
+    return this.findAccountByKey(totpAccountKey(userId));
+  }
+
+  /** Whether the user has any way to sign in; a sign-up with the authenticator app has none until it is set up. */
+  async hasAccounts(userId: string): Promise<boolean> {
+    return (await this.store.findMany('account', { userId }, { limit: 1 })).length > 0;
+  }
+
+  /**
+   * The ways the user can sign in, from their accounts: e.g. `['google']` for a user without a password.
+   * The authenticator app counts only when it signs in on its own (`methods` lists it); as a second
+   * factor it is a step of another method, not a way in.
+   */
+  async signInMethods(userId: string, methods: MethodSettings): Promise<SignInMethod[]> {
     const accounts = await this.store.findMany('account', { userId });
-    const methods = accounts.map((account) => String(account.key).split(':')[0]);
-    return SIGN_IN_METHODS.filter((method) => methods.includes(method));
+    const keys = accounts.map((account) => String(account.key).split(':')[0]);
+    return SIGN_IN_METHODS.filter((method) => keys.includes(method) && (method !== 'totp' || methods.totp !== undefined));
   }
 
   async findAccountByKey(key: string): Promise<StoredAccount | null> {
@@ -127,15 +155,17 @@ export class Users {
   }
 
   /**
-   * Creates a user with their first account. Resolves to null if the e-mail address or the account key is
-   * taken. `account.key` is `password:<userId>` for a password (its hash as `secret`), or e.g. `google:<sub>`.
+   * Creates a user, with their first account if given. Resolves to null if the e-mail address or the
+   * account key is taken. `account.key` is `password:<userId>` for a password (its hash as `secret`), or
+   * e.g. `google:<sub>`. A sign-up with the authenticator app creates the user without an account: the app
+   * is set up once the address is confirmed.
    */
   async createUser(data: {
     email: string;
     emailNormalized: string;
     name: string | null;
     emailVerified: boolean;
-    account: NewAccount | ((userId: string) => NewAccount);
+    account?: NewAccount | ((userId: string) => NewAccount);
   }): Promise<StoredUser | null> {
     const user: StoredUser = {
       id: newId('usr'),
@@ -150,6 +180,7 @@ export class Users {
       createdAt: Date.now(),
     };
     if (!(await this.store.create('user', user as unknown as Row))) return null;
+    if (!data.account) return user;
     const account = typeof data.account === 'function' ? data.account(user.id) : data.account;
     if (!(await this.linkAccount(user.id, account))) {
       await this.store.delete('user', { id: user.id });
@@ -174,6 +205,18 @@ export class Users {
     await this.store.delete('account', { id });
   }
 
+  /** Removes a sign-in method by its key. Resolves to false if there was none. */
+  async unlinkAccount(key: string): Promise<boolean> {
+    return (await this.store.delete('account', { key })) === 1;
+  }
+
+  /** Removes the user's authenticator app and recovery codes. Resolves to false if they had no app. */
+  async removeTotp(userId: string): Promise<boolean> {
+    const removed = await this.unlinkAccount(totpAccountKey(userId));
+    await this.clearRecoveryCodes(userId);
+    return removed;
+  }
+
   /** Adds a sign-in method to a user. Resolves to null if the account key is taken. */
   async linkAccount(userId: string, account: NewAccount): Promise<StoredAccount | null> {
     const record: StoredAccount = {
@@ -184,9 +227,77 @@ export class Users {
       failedAttempts: 0,
       lockedUntil: 0,
       email: account.email ?? null,
+      lastUsedStep: account.lastUsedStep ?? 0,
+      setupId: account.setupId ?? null,
       createdAt: Date.now(),
     };
     return (await this.store.create('account', record as unknown as Row)) ? record : null;
+  }
+
+  /**
+   * Writes the secret of a confirmed setup over the authenticator account, only if the account still has the
+   * setup it had when this setup started (`replaces`): the write count decides, so of two setups confirmed
+   * at once exactly one wins, and the other is told to start again.
+   */
+  async confirmTotpSetup(accountId: string, replaces: string | null, patch: Pick<StoredAccount, 'secret' | 'setupId' | 'failedAttempts' | 'lockedUntil' | 'lastUsedStep'>): Promise<boolean> {
+    return (await this.store.update('account', { id: accountId, setupId: replaces }, patch)) === 1;
+  }
+
+  /**
+   * Marks the time step of an accepted authenticator code as used and resets the failed attempts, only if
+   * no other request accepted a code meanwhile: the write count decides, so the same code sent twice signs
+   * in once.
+   */
+  async useTotpStep(account: StoredAccount, step: number): Promise<boolean> {
+    const changed = await this.store.update(
+      'account',
+      { id: account.id, lastUsedStep: account.lastUsedStep ?? null },
+      { lastUsedStep: step, failedAttempts: 0, lockedUntil: 0 },
+    );
+    return changed === 1;
+  }
+
+  /** Replaces the user's recovery codes with new ones, given as their hashes. */
+  /** Stores the recovery codes of a setup (their hashes), next to whatever codes the user has. */
+  async addRecoveryCodes(userId: string, setupId: string, hashes: string[]): Promise<void> {
+    const createdAt = Date.now();
+    for (const id of hashes) await this.store.create('recoveryCode', { id, userId, setupId, createdAt });
+  }
+
+  /** New recovery codes for the user's current app: the codes they had before stop working. */
+  async replaceRecoveryCodes(account: StoredAccount, hashes: string[]): Promise<void> {
+    const before = await this.store.findMany('recoveryCode', { userId: account.userId });
+    await this.addRecoveryCodes(account.userId, account.setupId ?? '', hashes);
+    for (const old of before) await this.store.delete('recoveryCode', { id: old.id });
+  }
+
+  /**
+   * Uses up the recovery code with this hash for the user's authenticator account. Resolves to false if it
+   * is not theirs, belongs to another setup than the account's, or was used already.
+   */
+  async consumeRecoveryCode(account: StoredAccount, hash: string): Promise<boolean> {
+    const record = await this.store.findOne('recoveryCode', { id: hash });
+    if (!record || record.userId !== account.userId || record.setupId !== (account.setupId ?? '')) return false;
+    // The delete count decides, so the same code sent twice is accepted once.
+    return (await this.store.delete('recoveryCode', { id: hash })) === 1;
+  }
+
+  /** How many recovery codes of the account's setup are left. */
+  async countRecoveryCodes(account: StoredAccount): Promise<number> {
+    const codes = await this.store.findMany('recoveryCode', { userId: account.userId });
+    return codes.filter((code) => code.setupId === (account.setupId ?? '')).length;
+  }
+
+  /** Deletes the user's recovery codes: all of them, or only those of one setup, or all but one setup's. */
+  async clearRecoveryCodes(userId: string, which: { only?: string; except?: string } = {}): Promise<void> {
+    if (which.only === undefined && which.except === undefined) {
+      await this.store.delete('recoveryCode', { userId });
+      return;
+    }
+    for (const code of await this.store.findMany('recoveryCode', { userId })) {
+      const match = which.only !== undefined ? code.setupId === which.only : code.setupId !== which.except;
+      if (match) await this.store.delete('recoveryCode', { id: code.id });
+    }
   }
 
   /**
@@ -203,6 +314,7 @@ export class Users {
     try {
       await this.store.delete('account', { userId: user.id });
       await this.store.delete('verification', { userId: user.id });
+      await this.store.delete('recoveryCode', { userId: user.id });
     } catch (e) {
       console.error(`[madauth] Deleted user ${user.id}, but not all of their records: ${(e as Error).message}`);
     }
@@ -250,6 +362,12 @@ export class Users {
     };
     await this.store.create('verification', record as unknown as Row);
     return { token, code };
+  }
+
+  /** The user ID a link token belongs to, without using the verification up; null if invalid, expired or used. */
+  async peekLinkToken(token: string, purpose: VerificationPurpose): Promise<string | null> {
+    const record = (await this.store.findOne('verification', { id: hashLinkToken(token), purpose })) as StoredVerification | null;
+    return record && record.expiresAt > Date.now() ? record.userId : null;
   }
 
   /** Uses up the verification a link token belongs to. Resolves to its user ID, or null if invalid, expired or used. */

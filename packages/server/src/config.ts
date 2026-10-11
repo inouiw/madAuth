@@ -1,5 +1,6 @@
 import type { JWK, JWTVerifyGetKey } from 'jose';
 import { assertPrivateSigningJwk, generateSigningKey } from './keys.js';
+import type { MethodConfig } from './settings.js';
 import type { StoreAdapter } from './store/schema.js';
 import {
   DEV_WEBHOOK_RECEIVER_URL,
@@ -23,6 +24,8 @@ export interface MadauthConfig {
   renewalTtlSeconds: number;
   /** Cookie domain, e.g. `.example.com` (COOKIE_DOMAIN). */
   cookieDomain?: string;
+  /** The name authenticator apps show next to the account (TOTP_ISSUER). Default: the host of the app that asked for the setup. */
+  totpIssuer?: string;
   /** Google sign-in; off when GOOGLE_CLIENT_ID is not set. */
   google?: {
     /** OAuth web client ID (GOOGLE_CLIENT_ID). */
@@ -45,6 +48,16 @@ export interface MadauthConfig {
   webhookFetch?: typeof fetch;
 }
 
+/** Whether the webhook sends the e-mails that confirm an address (`email.verify`), so people can sign up with one. */
+export function sendsVerificationEmails(config: Pick<MadauthConfig, 'webhook'>): boolean {
+  return !!config.webhook?.events.has('email.verify');
+}
+
+/** What decides which methods the server is configured for, see `isConfigured` and `initialMethods`. */
+export function methodConfig(config: MadauthConfig): MethodConfig {
+  return { google: config.google, password: config.password, emailVerification: sendsVerificationEmails(config) };
+}
+
 /** Every environment variable read by {@link loadConfig}, with whether it is required. */
 export const envVars = {
   MADAUTH_ISSUER: true,
@@ -54,6 +67,7 @@ export const envVars = {
   GOOGLE_CLIENT_SECRET: false,
   DATABASE_URL: true,
   PASSWORD_MIN_LENGTH: false,
+  TOTP_ISSUER: false,
   WEBHOOK_URL: false,
   WEBHOOK_SECRET: false,
   WEBHOOK_EVENTS: false,
@@ -163,11 +177,14 @@ export async function loadConfig(
   // E-mail & password sign-in needs its e-mails sent, so it is on exactly when the webhook handles them.
   const sendsEmails = !!webhook && REQUIRED_EMAIL_TYPES.every((type) => webhook.events.has(type));
   const password = sendsEmails ? { minLength: passwordMinLength(read('PASSWORD_MIN_LENGTH')) } : undefined;
+  // Sign-up with the authenticator app only needs the address confirmed.
+  const emailVerification = !!webhook && webhook.events.has('email.verify');
 
-  if (!clientId && !password) {
+  if (!clientId && !password && !emailVerification) {
     throw new ConfigError(
       'No sign-in method is configured. Set GOOGLE_CLIENT_ID for Google sign-in, and/or a webhook that sends ' +
-        `the e-mails for e-mail & password sign-in: for development, run the receiver at ${DEV_WEBHOOK_RECEIVER_URL} ` +
+        'the e-mails: e-mail & password sign-in needs email.verify and email.reset, sign-up with the authenticator ' +
+        `app needs email.verify. For development, run the receiver at ${DEV_WEBHOOK_RECEIVER_URL} ` +
         'and set WEBHOOK_URL=http://localhost:8790/webhook and ' +
         `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.already_registered,email.no_password. See docs/server.md.`,
     );
@@ -201,6 +218,7 @@ export async function loadConfig(
     sessionTtlSeconds,
     renewalTtlSeconds,
     cookieDomain: read('COOKIE_DOMAIN'),
+    totpIssuer: read('TOTP_ISSUER'),
     google: clientId ? { clientId, clientSecret: read('GOOGLE_CLIENT_SECRET') } : undefined,
     store,
     password,

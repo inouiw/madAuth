@@ -15,6 +15,9 @@ export const WEBHOOK_TYPES = [
   'user.signed_in',
   'user.deleted',
   'user.claims_changed',
+  'totp.enabled',
+  'totp.disabled',
+  'totp.recovery_code_used',
 ] as const;
 
 /** The calls that hand over an e-mail (as opposed to events and checks). */

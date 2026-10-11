@@ -1,9 +1,9 @@
 import type { HttpResult, RequestInit } from '../http.js';
 import type { LoginMethodId } from '../methods.js';
-import type { ServerConfig, SignInProvider } from '../providers/provider.js';
+import type { PendingStep, ServerConfig, SignInProvider } from '../providers/provider.js';
 import type { MadauthUser, Result } from '../result.js';
 
-/** What the method scopes (`Madauth.password`, `Madauth.google`) need from the madAuth core. */
+/** What the method scopes (`Madauth.password`, `Madauth.google`, `Madauth.totp`) need from the madAuth core. */
 export interface Core {
   /** Whether `initialize` was called. */
   isConfigured(): boolean;
@@ -19,4 +19,8 @@ export interface Core {
   locale(): string | undefined;
   request<T>(path: string, init?: RequestInit): Promise<HttpResult<T>>;
   signedIn(user: MadauthUser): void;
+  /** What a sign-in still needs with the authenticator app, if one is under way. */
+  pendingStep(): PendingStep | null;
+  /** A sign-in's first step is done and the authenticator app is next, or (null) the sign-in is over. */
+  setPendingStep(pending: PendingStep | null): void;
 }

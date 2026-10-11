@@ -24,7 +24,9 @@ export async function request<T>(serverUrl: string, path: string, init: RequestI
       error: { code: 'network', message: `Could not reach the madAuth server at ${serverUrl}: ${(e as Error).message}` },
     };
   }
-  const data = (await response.json().catch(() => undefined)) as (T & { error?: unknown; message?: unknown }) | undefined;
+  const data = (await response.json().catch(() => undefined)) as
+    | (T & { error?: unknown; message?: unknown; method?: unknown; methods?: unknown })
+    | undefined;
   if (response.ok) {
     // E.g. an SPA fallback page answering for /auth/... because the server is not behind this URL.
     if (data === undefined && response.status !== 204) {
@@ -36,12 +38,12 @@ export async function request<T>(serverUrl: string, path: string, init: RequestI
     }
     return { ok: true, data: data as T };
   }
-  return {
-    ok: false,
-    status: response.status,
-    error: {
-      code: toErrorCode(data?.error),
-      message: typeof data?.message === 'string' ? data.message : `${path} failed with HTTP ${response.status}`,
-    },
+  const error: MadauthError = {
+    code: toErrorCode(data?.error),
+    message: typeof data?.message === 'string' ? data.message : `${path} failed with HTTP ${response.status}`,
   };
+  // What some answers say besides the code: the method a sign-in goes on with, or how an address signs in.
+  if (typeof data?.method === 'string') error.method = data.method;
+  if (Array.isArray(data?.methods)) error.methods = data.methods.filter((m): m is string => typeof m === 'string');
+  return { ok: false, status: response.status, error };
 }
