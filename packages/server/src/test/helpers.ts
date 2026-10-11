@@ -132,7 +132,7 @@ export interface WebhookCall {
 /**
  * A webhook receiver for tests: checks each call's signature, records it and answers 2xx. Set `fail` to
  * answer with an error status or to fail like an unreachable or slow receiver; `respond` to answer
- * with a body (e.g. for signup.before).
+ * with a body (e.g. for user.signing_up).
  */
 export function recordingWebhook() {
   const calls: WebhookCall[] = [];
@@ -222,4 +222,14 @@ export async function signUpVerified(
   await post(app, '/auth/password/signup', { email, password, name: 'Grace Hopper', redirectTo: REDIRECT_TO });
   const res = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
   return cookies(res).madauth_session.value;
+}
+
+/**
+ * Links a Google account to a user who has a password, as madAuth before 0.4 did: such records don't say which
+ * account is the sign-in method, so both are. A user can't get a second sign-in method any more.
+ */
+export async function linkGoogleAsBefore(store: StoreAdapter, userId: string, sub: string, email: string): Promise<void> {
+  const account = await new Users(store).linkAccount(userId, { key: `google:${sub}`, email, primary: false });
+  // Records from then say neither whether they sign in nor whether they are a second factor.
+  await store.update('account', { id: account!.id }, { secondFactor: null });
 }

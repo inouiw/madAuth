@@ -7,7 +7,7 @@ import { verifyGoogleIdToken, type GoogleProfile } from '../google.js';
 import { normalizeEmail } from '../password.js';
 import type { SignInMethod } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
-import { googleAccountKey, toMadauthUser, type StoredUser } from '../users.js';
+import { googleAccountKey, type StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
 import { signInAnswer } from './helpers.js';
 
@@ -82,7 +82,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     for (let attempt = 0; attempt < 2; attempt++) {
       const existing = await users.findByEmail(emailNormalized);
       if (existing) {
-        if (existing.emailVerified && (await users.hasAccounts(existing.id))) {
+        if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) {
           const methods = await users.signInMethods(existing.id, await ctx.settings.methods());
           const how = methods
             .map((method) => ({ password: 'a password', totp: 'an authenticator app', google: 'Google', 'email-link': 'an e-mail link' })[method])
@@ -91,15 +91,17 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
         }
         // Google verified the address, and nobody has proven this user yet (an unconfirmed sign-up, whose
         // password or e-mail link goes) or nobody can sign in as them: the Google account takes the user over.
-        await users.verifyByProvider(existing);
-        if (!(await users.linkAccount(existing.id, { key, email: profile.email }))) {
+        // Its sign-up ends with this sign-in: one from before `user.signed_up` existed gets it too.
+        const taken = await users.reopenSignUp(existing);
+        await users.verifyByProvider(taken);
+        if (!(await users.linkAccount(taken.id, { key, email: profile.email }))) {
           // The account appeared meanwhile; it belongs to whoever has it now.
           const linked = await users.findAccountByKey(key);
           const owner = linked && (await users.findById(linked.userId));
           if (!owner) return { ok: false, error: 'temporarily_unavailable', message: 'Please try again.' };
           return signedIn(owner);
         }
-        return signedIn(existing);
+        return signedIn({ ...taken, emailVerified: true });
       }
       if (attempt === 0) {
         const check = await ctx.checkSignup({ email: profile.email, name: profile.name, locale, method: 'google' });
@@ -117,7 +119,6 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
         account: { key, email: profile.email },
       });
       if (user) {
-        await ctx.emit('user.created', { user: toMadauthUser(user), method: 'google' });
         return signedIn(user);
       }
     }

@@ -1,6 +1,6 @@
 // Helpers for adapters that store madAuth's records in an SQL database. The schema itself (schema.ts) is
 // independent of how the records are stored.
-import { madauthSchema, type FieldType, type Schema } from './schema.js';
+import { madauthSchema, type FieldDef, type FieldType, type Schema } from './schema.js';
 
 /** The SQL table that holds a model, e.g. `madauth_user`, or `madauth_recovery_code` for `recoveryCode`. */
 export function tableName(model: string): string {
@@ -20,6 +20,12 @@ const columnTypes: Record<SqlDialect, Record<FieldType, string>> = {
   postgres: { string: 'TEXT', number: 'DOUBLE PRECISION', boolean: 'BOOLEAN' },
   mysql: { string: 'TEXT', number: 'DOUBLE', boolean: 'BOOLEAN' },
 };
+
+/** The SQL type of a field. MySQL can only index or constrain strings of a fixed maximum length. */
+function columnType(dialect: SqlDialect, def: FieldDef): string {
+  const keyed = def.primaryKey || def.unique || def.index;
+  return dialect === 'mysql' && def.type === 'string' && keyed ? 'VARCHAR(255)' : columnTypes[dialect][def.type];
+}
 
 /** What each schema version after the first one added, as SQL for tables created by an older version. */
 const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
@@ -75,6 +81,20 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
         `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('lastSmsAt')} ${columnTypes[dialect].number};`,
       ].join('\n'),
   },
+  {
+    // One primary sign-in method per user, which accounts are second factors, and when a user's sign-up was
+    // complete. Older records stay empty: madAuth tells them apart by the account's key, and counts their
+    // sign-up as complete.
+    version: 7,
+    sql: (dialect) =>
+      [
+        `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('signedUpAt')} ${columnTypes[dialect].number};`,
+        // SQLite can't add a UNIQUE column, so the constraint is an index.
+        `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('primaryUserId')} ${columnType(dialect, madauthSchema.models.account.fields.primaryUserId)};`,
+        `CREATE UNIQUE INDEX ${tableName('account')}_${columnName('primaryUserId')} ON ${tableName('account')} (${columnName('primaryUserId')});`,
+        `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('secondFactor')} ${columnType(dialect, madauthSchema.models.account.fields.secondFactor)};`,
+      ].join('\n'),
+  },
 ];
 
 /**
@@ -94,9 +114,7 @@ export function createTablesSql(dialect: SqlDialect, schema: Schema = madauthSch
   for (const [model, { fields }] of Object.entries(schema.models)) {
     const table = tableName(model);
     const columns = Object.entries(fields).map(([field, def]) => {
-      // MySQL can only index or constrain strings of a fixed maximum length.
-      const keyed = def.primaryKey || def.unique || def.index;
-      const type = dialect === 'mysql' && def.type === 'string' && keyed ? 'VARCHAR(255)' : columnTypes[dialect][def.type];
+      const type = columnType(dialect, def);
       const constraints = def.primaryKey ? ' PRIMARY KEY' : `${def.nullable ? '' : ' NOT NULL'}${def.unique ? ' UNIQUE' : ''}`;
       return `  ${columnName(field)} ${type}${constraints}`;
     });

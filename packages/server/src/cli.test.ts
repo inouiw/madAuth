@@ -8,7 +8,7 @@ import { loadConfig } from './config.js';
 import { DEV_WEBHOOK_RECEIVER_URL, checkWebhookSecret } from './webhooks.js';
 
 const CLIENT_ID = '123-test.apps.googleusercontent.com';
-const EMAIL_TYPES = 'email.verify,email.reset,email.already_registered,email.no_password';
+const EMAIL_TYPES = 'email.send_verification,email.send_password_reset,email.send_already_registered,email.send_password_reset_no_password';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -131,9 +131,9 @@ describe('init', () => {
     const withPassword = await runCli(['init', '--yes', '--email-link', '--out', link], noQuestions);
     const linkOnly = await runCli(['init', '--yes', '--no-password', '--email-link', '--out', alone], noQuestions);
 
-    expect(readEnvFile(link).WEBHOOK_EVENTS).toBe(`${EMAIL_TYPES},email.signin`);
+    expect(readEnvFile(link).WEBHOOK_EVENTS).toBe(`${EMAIL_TYPES},email.send_signin_link`);
     expect(withPassword.output).toContain('providers: [new Password(), new EmailLink()]');
-    expect(readEnvFile(alone).WEBHOOK_EVENTS).toBe('email.signin,email.already_registered');
+    expect(readEnvFile(alone).WEBHOOK_EVENTS).toBe('email.send_signin_link,email.send_already_registered');
     expect(linkOnly).toMatchObject({ exitCode: 0, output: expect.stringContaining('providers: [new EmailLink()]') });
     // The webhook that sends the e-mails is still needed.
     expect(await loadConfig({ ...readEnvFile(alone), DATABASE_URL: `sqlite:${tempFile('madauth.db')}` })).toMatchObject({ password: undefined });

@@ -81,7 +81,7 @@ describe('adding a phone number', () => {
     expect(cookies(setup).madauth_sms_setup.attrs).toMatchObject({ httponly: true, secure: true, samesite: 'Strict', path: '/auth/sms', 'max-age': '600' });
     expect(hook.calls).toEqual([
       {
-        type: 'sms.code',
+        type: 'sms.send_code',
         data: {
           to: PHONE,
           code: expect.stringMatching(/^\d{6}$/),
@@ -109,7 +109,7 @@ describe('adding a phone number', () => {
     expect(cookies(confirm).madauth_sms_setup).toMatchObject({ value: '', attrs: { 'max-age': '0' } });
     const [{ id: userId }] = await store.findMany('user', {});
     expect(await store.findOne('account', { key: `sms:${userId}` })).toMatchObject({ userId, phone: PHONE, failedAttempts: 0 });
-    expect(hook.calls.at(-1)).toEqual({ type: 'sms.enabled', data: { user: graceUser, phone: PHONE } });
+    expect(hook.calls.at(-1)).toEqual({ type: 'user.second_factor_enabled', data: { user: graceUser, method: 'sms', phone: PHONE } });
     expect(await (await app.request('/auth/sms/status', { headers: withSession(session) })).json()).toEqual({ enabled: true, phone: MASKED });
     // The code is used up, and the setup is over: its cookie no longer confirms anything now that there is a number.
     expect(await store.findOne('verification', { userId, purpose: 'sms' })).toBeNull();
@@ -136,7 +136,7 @@ describe('adding a phone number', () => {
     hook.calls.length = 0;
     advance(61_000);
     hook.fail = 503;
-    hook.failOnly = (type) => type === 'sms.code';
+    hook.failOnly = (type) => type === 'sms.send_code';
     const failed = await post(app, '/auth/sms/setup', { phone: PHONE }, withSession(session));
     expect(failed.status).toBe(503);
     expect(await failed.json()).toMatchObject({ error: 'temporarily_unavailable', message: expect.stringContaining('SMS') });
@@ -184,7 +184,7 @@ describe('adding a phone number', () => {
 
     expect(removed.status).toBe(200);
     expect(await store.findOne('account', { key: `sms:${userId}` })).toBeNull();
-    expect(hook.calls).toEqual([{ type: 'sms.disabled', data: { user: graceUser } }]);
+    expect(hook.calls).toEqual([{ type: 'user.second_factor_disabled', data: { user: graceUser, method: 'sms' } }]);
     expect(await (await post(app, '/auth/sms/remove', { code }, withSession(session))).json()).toMatchObject({ error: 'no_phone' });
     expect(await (await post(app, '/auth/sms/send', {}, withSession(session))).json()).toMatchObject({ error: 'no_phone' });
   });
@@ -320,7 +320,8 @@ describe('SMS codes as the second step', () => {
     expect((await confirm.json()).user).toMatchObject({ email: 'grace@example.com', amr: ['pwd', 'sms'] });
     expect(cookies(confirm).madauth_session.value).toBeTruthy();
     expect(cookies(confirm).madauth_challenge).toMatchObject({ value: '' });
-    expect(hook.types().slice(-2)).toEqual(['sms.enabled', 'user.signed_in']);
+    // Her first session, with the phone the policy asks for: the sign-up is complete only now.
+    expect(hook.types().slice(-3)).toEqual(['user.second_factor_enabled', 'user.signed_up', 'user.signed_in']);
     expect(hook.calls.at(-1)!.data).toMatchObject({ method: 'password', secondFactor: 'sms' });
     // From then on: the SMS step.
     advance(61_000);
@@ -383,7 +384,7 @@ describe('SMS codes as the second step', () => {
     await setMethods(store, { google: {}, password: { secondFactor: 'optional' } });
     expect((await post(app, '/auth/sms/verify', { code: '000000' }, withChallenge(waiting))).status).toBe(403);
 
-    const without = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) } });
+    const without = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.send_verification', 'email.send_password_reset']) } });
     expect((await post(without.app, '/auth/sms/setup', { phone: PHONE })).status).toBe(404);
     expect(await (await without.app.request('/auth/config')).json()).toMatchObject({ sms: false });
     void hook;
@@ -397,7 +398,7 @@ describe('SMS codes as the second step', () => {
 
     expect(removed.status).toBe(200);
     expect(await removed.json()).toEqual({ email: 'grace@example.com', userId: expect.stringMatching(/^usr_/), enabled: false });
-    expect(hook.calls.at(-1)).toMatchObject({ type: 'sms.disabled', data: { user: { email: 'grace@example.com' }, by: 'grace@example.com' } });
+    expect(hook.calls.at(-1)).toMatchObject({ type: 'user.second_factor_disabled', data: { user: { email: 'grace@example.com' }, method: 'sms', by: 'grace@example.com' } });
     expect(await (await app.request('/auth/sms/status', { headers: withSession(session) })).json()).toEqual({ enabled: false, phone: null });
     expect(await (await post(app, '/auth/admin/sms/remove', { email: 'nobody@example.com' }, withSession(session))).json()).toMatchObject({ error: 'user_not_found' });
 

@@ -30,9 +30,9 @@ describe('e-mail link', () => {
     const sent = await send(app);
 
     expect(sent.status).toBe(202);
-    expect(hook.types()).toEqual(['signup.before', 'user.created', 'email.signin']);
+    // Nobody can sign in as Linda before the link is used: the user is not reported yet.
+    expect(hook.types()).toEqual(['user.signing_up', 'email.send_signin_link']);
     expect(hook.calls[0].data).toEqual({ email: LINDA, locale: 'de', method: 'email-link' });
-    expect(hook.calls[1].data).toMatchObject({ method: 'email-link', user: { email: LINDA } });
     const mail = hook.lastEmail()!;
     expect(mail.data).toMatchObject({
       to: LINDA,
@@ -50,9 +50,10 @@ describe('e-mail link', () => {
     expect(res.status).toBe(200);
     expect((await res.json()).user).toMatchObject({ email: LINDA, amr: ['email'] });
     expect(cookies(res).madauth_session.value).toBeTruthy();
-    expect(hook.types()).toEqual(['email.verified', 'user.signed_in']);
+    expect(hook.types()).toEqual(['user.email_verified', 'user.signed_up', 'user.signed_in']);
     expect(hook.calls[0].data).toMatchObject({ via: 'link', user: { email: LINDA } });
     expect(hook.calls[1].data).toMatchObject({ method: 'email-link', user: { email: LINDA } });
+    expect(hook.calls[2].data).toMatchObject({ method: 'email-link', user: { email: LINDA } });
     expect(hook.calls[1].data.user).not.toHaveProperty('amr');
     const [user] = await store.findMany('user', {});
     expect(user).toMatchObject({ emailVerified: true, name: null });
@@ -71,12 +72,12 @@ describe('e-mail link', () => {
     const res = await verifyLink(app, { email: LINDA, code: ` ${code.slice(0, 3)} ${code.slice(3)} ` });
 
     expect(res.status).toBe(200);
-    expect(hook.calls[0]).toMatchObject({ type: 'email.verified', data: { via: 'code' } });
+    expect(hook.calls[0]).toMatchObject({ type: 'user.email_verified', data: { via: 'code' } });
 
     advance(61_000);
     hook.calls.length = 0;
     expect((await send(app)).status).toBe(202);
-    expect(hook.types()).toEqual(['email.signin']);
+    expect(hook.types()).toEqual(['email.send_signin_link']);
     expect(hook.lastEmail()!.data.expiresAt).toBe(Date.now() + 15 * 60 * 1000);
     const { token } = linkAndCode(hook.lastEmail());
     hook.calls.length = 0;
@@ -84,11 +85,11 @@ describe('e-mail link', () => {
     const late = await verifyLink(app, { token });
     expect(late.status).toBe(400);
     expect(await late.json()).toMatchObject({ error: 'link_invalid' });
-    // A returning user's address is confirmed already: no second email.verified.
+    // A returning user's address is confirmed already: no second user.email_verified.
     advance(61_000);
     await send(app);
     expect((await verifyLink(app, { token: linkAndCode(hook.lastEmail()).token })).status).toBe(200);
-    expect(hook.types()).toEqual(['email.signin', 'user.signed_in']);
+    expect(hook.types()).toEqual(['email.send_signin_link', 'user.signed_in']);
   });
 
   it('L3: a method signs in only users who have it: the owner of another kind of account is told so, both ways', async () => {
@@ -101,7 +102,7 @@ describe('e-mail link', () => {
     const res = await send(app, 'grace@example.com');
 
     expect(res.status).toBe(202);
-    expect(hook.types()).toEqual(['email.already_registered']);
+    expect(hook.types()).toEqual(['email.send_already_registered']);
     expect(hook.lastEmail()!.data).toMatchObject({ to: 'grace@example.com', methods: ['password'], link: REDIRECT_TO, locale: 'de' });
     // The password still signs Grace in, and only it.
     expect((await post(app, '/auth/password/signin', { email: 'grace@example.com', password: 'correct horse battery' })).status).toBe(200);
@@ -111,13 +112,13 @@ describe('e-mail link', () => {
     advance(61_000);
     hook.calls.length = 0;
     await post(app, '/auth/password/signup', { email: LINDA, password: 'correct horse battery', redirectTo: REDIRECT_TO });
-    expect(hook.types()).toEqual(['signup.before', 'email.already_registered']);
+    expect(hook.types()).toEqual(['user.signing_up', 'email.send_already_registered']);
     expect(hook.lastEmail()!.data.methods).toEqual(['email-link']);
     // No password was added: "forgot password" says so.
     advance(61_000);
     hook.calls.length = 0;
     await post(app, '/auth/password/send-reset', { email: LINDA, redirectTo: REDIRECT_TO });
-    expect(hook.types()).toEqual(['email.no_password']);
+    expect(hook.types()).toEqual(['email.send_password_reset_no_password']);
   });
 
   it('L4: a sign-up nobody finished is taken over: its password goes; a password sign-up afterwards takes the user back', async () => {
@@ -130,7 +131,7 @@ describe('e-mail link', () => {
     expect((await send(app)).status).toBe(202);
 
     // The user exists already: checked, but not created again.
-    expect(hook.types()).toEqual(['signup.before', 'email.signin']);
+    expect(hook.types()).toEqual(['user.signing_up', 'email.send_signin_link']);
     const [user] = await store.findMany('user', {});
     expect((await store.findMany('account', { userId: user.id })).map((a) => a.key)).toEqual([`email-link:${user.id}`]);
     const { token } = linkAndCode(hook.lastEmail());
@@ -140,7 +141,9 @@ describe('e-mail link', () => {
     const res = await verifyLink(app, { token });
 
     expect(res.status).toBe(200);
-    expect(hook.types()).toEqual(['email.verified', 'user.signed_in']);
+    // The link makes the sign-up nobody finished hers: her first session completes it.
+    expect(hook.types()).toEqual(['user.email_verified', 'user.signed_up', 'user.signed_in']);
+    expect(hook.calls[0].data).toMatchObject({ method: 'email-link', via: 'link' });
     expect((await store.findMany('account', { userId: user.id })).map((a) => a.key)).toEqual([`email-link:${user.id}`]);
     expect(await store.findMany('verification', { userId: user.id })).toEqual([]);
     expect((await post(app, '/auth/password/signin', { email: LINDA, password: 'correct horse battery' })).status).toBe(401);
@@ -177,7 +180,7 @@ describe('e-mail link', () => {
     advance(61_000);
     hook.calls.length = 0;
     expect((await send(app)).status).toBe(202);
-    expect(hook.types()).toEqual(['email.already_registered']);
+    expect(hook.types()).toEqual(['email.send_already_registered']);
     expect(hook.lastEmail()!.data.methods).toEqual(['password']);
 
     // A sign-up with the authenticator app drops the link account as well.
@@ -199,7 +202,7 @@ describe('e-mail link', () => {
   it('L5: the sign-up check decides for new addresses and fails closed; known users are not checked', async () => {
     startClock();
     const { app, hook, store } = passwordApp();
-    hook.respond = (call) => (call.type === 'signup.before' ? { allow: false, message: 'Invited users only.' } : undefined);
+    hook.respond = (call) => (call.type === 'user.signing_up' ? { allow: false, message: 'Invited users only.' } : undefined);
 
     const refused = await send(app);
 
@@ -209,7 +212,7 @@ describe('e-mail link', () => {
 
     hook.respond = undefined;
     hook.fail = 500;
-    hook.failOnly = (type) => type === 'signup.before';
+    hook.failOnly = (type) => type === 'user.signing_up';
     expect((await send(app)).status).toBe(503);
     expect(await store.findMany('user', {})).toEqual([]);
 
@@ -220,7 +223,7 @@ describe('e-mail link', () => {
     hook.calls.length = 0;
     hook.respond = () => ({ allow: false });
     expect((await send(app)).status).toBe(202);
-    expect(hook.types()).toEqual(['email.signin']);
+    expect(hook.types()).toEqual(['email.send_signin_link']);
   });
 
   it('L6: one e-mail per minute; invalid input is refused; a webhook that fails is reported', async () => {
@@ -261,8 +264,8 @@ describe('e-mail link', () => {
     expect((await verifyLink(app, { token })).status).toBe(200);
     expect(await (await app.request('/auth/config')).json()).toMatchObject({ emailLink: { secondFactor: 'none' } });
 
-    // Without email.signin among the webhook's types, the method is not configured: no routes, and an admin can't list it.
-    const without = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) } });
+    // Without email.send_signin_link among the webhook's types, the method is not configured: no routes, and an admin can't list it.
+    const without = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.send_verification', 'email.send_password_reset']) } });
     expect((await send(without.app)).status).toBe(404);
     expect(await (await without.app.request('/auth/config')).json()).toMatchObject({ emailLink: null, password: { minLength: 8 } });
   });

@@ -56,7 +56,7 @@ Set your values in [`cdk.json`](cdk.json) under `context`:
 | `googleClientId` | `123….apps.googleusercontent.com` | Empty: no Google sign-in |
 | `secretsPath` | `/madauth` | Where step 2 stored the secrets |
 | `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: Google sign-in only |
-| `webhookEvents` | `email.verify,email.reset,email.already_registered` | What the receiver handles. This default turns on e-mail & password sign-in. |
+| `webhookEvents` | `email.send_verification,email.send_password_reset,email.send_already_registered` | What the receiver handles. This default turns on e-mail & password sign-in. |
 
 Then deploy:
 
@@ -90,7 +90,7 @@ const madauth = new MadAuthServer(this, 'MadAuth', {
   issuer: 'https://example.com',
   googleClientId: '123.apps.googleusercontent.com',
   secretsPath: '/madauth',
-  webhook: { url: mailerUrl, events: ['email.verify', 'email.reset', 'email.already_registered', 'email.no_password'] },
+  webhook: { url: mailerUrl, events: ['email.send_verification', 'email.send_password_reset', 'email.send_already_registered', 'email.send_password_reset_no_password'] },
   reservedConcurrentExecutions: 10,
 });
 // madauth.functionUrl, madauth.function, madauth.table

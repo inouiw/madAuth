@@ -384,7 +384,8 @@ describe('Madauth.setUpAuthenticator', () => {
     const result = Madauth.setUpAuthenticator();
     await settle();
     expect(text('.hint')).toBe('From then on, signing in with Email & password also asks for a code from the app.');
-    expect($$('.hint')[1].textContent!.trim()).toBe('You can then sign in with your email address and a code from the app.');
+    // The app signs in on its own on this server, but only for people who signed up with it: for Grace it is a step of her password.
+    expect($$('.hint').map((hint) => hint.textContent!.trim())).not.toContain('You can then sign in with your email address and a code from the app.');
     fill({ code: CODE });
     await submit('totp-setup');
     await click('.close');

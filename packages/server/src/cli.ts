@@ -357,10 +357,10 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
     : '';
   // The types each chosen method needs, once each.
   const events = [
-    ...(password ? ['email.verify', 'email.reset', 'email.already_registered', 'email.no_password'] : []),
-    ...(totp ? ['email.verify', 'email.already_registered'] : []),
-    ...(emailLink ? ['email.signin', 'email.already_registered'] : []),
-    ...(sms ? ['sms.code', 'sms.enabled', 'sms.disabled'] : []),
+    ...(password ? ['email.send_verification', 'email.send_password_reset', 'email.send_already_registered', 'email.send_password_reset_no_password'] : []),
+    ...(totp ? ['email.send_verification', 'email.send_already_registered'] : []),
+    ...(emailLink ? ['email.send_signin_link', 'email.send_already_registered'] : []),
+    ...(sms ? ['sms.send_code', 'user.second_factor_enabled', 'user.second_factor_disabled'] : []),
   ]
     .filter((type, i, all) => all.indexOf(type) === i)
     .join(',');
@@ -389,7 +389,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
     webhook && variable('WEBHOOK_URL', webhookUrl, `Your webhook receiver. madAuth hands its ${sms ? 'e-mails and SMS' : 'e-mails'} to it.`),
     webhook && variable('WEBHOOK_SECRET', generateWebhookSecret(), 'Signs every webhook call. Your receiver needs the same one.'),
     webhook &&
-      variable('WEBHOOK_EVENTS', events, 'The types your webhook receiver handles; only these are sent. Add e.g. signup.before or user.created.'),
+      variable('WEBHOOK_EVENTS', events, 'The types your webhook receiver handles; only these are sent. Add e.g. user.signing_up or user.signed_up.'),
     variable('PORT', String(PORT), 'Port the server listens on.'),
   ]
     .filter(Boolean)

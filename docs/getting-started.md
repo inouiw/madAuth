@@ -28,7 +28,7 @@ npx @madauth/server init
 | E-mail & password sign-in? | yes | |
 | Sign-up with the authenticator app alone? | no | Accounts without a password: the address is confirmed by e-mail, then the app is set up. The app as a second factor needs no answer here; admins set that [policy](server.md#sign-in-methods) while the server runs. |
 | Passwordless sign-in with an e-mail link? | no | The user enters their address and gets an e-mail with a link that signs them in and a code. A new address is signed up on first use. |
-| SMS codes as a second factor? | no | Your webhook receiver sends the SMS (`sms.code`). A signed-in user adds a phone number; the policy then asks for a code sent to it, next to the authenticator app. |
+| SMS codes as a second factor? | no | Your webhook receiver sends the SMS (`sms.send_code`). A signed-in user adds a phone number; the policy then asks for a code sent to it, next to the authenticator app. |
 | Database | `sqlite:./madauth.db` | The SQLite file that stores the users, whichever way they sign in. |
 | Webhook URL | `http://localhost:8790/webhook` | Only with e-mail & password sign-in, the e-mail link, sign-up with the app or SMS codes: where madAuth hands over its e-mails and SMS (step 4). |
 

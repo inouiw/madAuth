@@ -83,6 +83,23 @@ async function enrolled(methods: MethodSettings = { google: { secondFactor: 'non
 
 const standalone: MethodSettings = { google: { secondFactor: 'none' }, password: { secondFactor: 'optional' }, totp: {} };
 
+/** Grace, who signed up with the app alone: it is how she signs in, not a second factor. */
+async function appUser(methods: MethodSettings = standalone) {
+  vi.useFakeTimers({ toFake: ['Date'], now: START });
+  const made = passwordApp();
+  await setMethods(made.store, methods);
+  await post(made.app, '/auth/totp/signup', { email: grace.email, name: 'Grace Hopper', redirectTo: REDIRECT_TO });
+  const confirmed = await post(made.app, '/auth/email/verify', { token: linkAndCode(made.hook.lastEmail()).token });
+  const challenge = `madauth_challenge=${cookies(confirmed).madauth_challenge.value}`;
+  const setup = await post(made.app, '/auth/totp/setup', {}, { Cookie: challenge });
+  const secret = base32Decode(((await setup.json()) as { secret: string }).secret)!;
+  const confirm = await post(made.app, '/auth/totp/confirm', { code: codeFor(secret) }, { Cookie: `${challenge}; madauth_totp_setup=${cookies(setup).madauth_totp_setup.value}` });
+  const { recoveryCodes } = (await confirm.json()) as { recoveryCodes: string[] };
+  const [{ id: userId }] = await made.store.findMany('user', {});
+  made.hook.calls.length = 0;
+  return { ...made, session: cookies(confirm).madauth_session.value, userId: userId as string, secret, recoveryCodes };
+}
+
 const signInWithApp = (app: App, body: Record<string, unknown>) => post(app, '/auth/totp/signin', body);
 
 const sessionClaims = async (app: App, res: Response) => {
@@ -106,7 +123,7 @@ describe('setting up the authenticator app while signed in', () => {
     expect(uri).toBe(`otpauth://totp/app.example.com:grace%40example.com?secret=${secret}&issuer=app.example.com&algorithm=SHA1&digits=6&period=30`);
     expect(cookies(res).madauth_totp_setup.attrs).toMatchObject({ httponly: true, secure: true, samesite: 'Strict', path: '/auth/totp', 'max-age': '600' });
     expect(await store.findMany('account', {})).toHaveLength(1);
-    expect(hook.types()).not.toContain('totp.enabled');
+    expect(hook.types()).not.toContain('user.second_factor_enabled');
 
     const named = passwordApp({ totpIssuer: 'My App' });
     await setMethods(named.store, { password: { secondFactor: 'optional' } });
@@ -132,9 +149,17 @@ describe('setting up the authenticator app while signed in', () => {
     expect(String(account!.secret)).toMatch(/^v1\./);
     expect(String(account!.secret)).not.toContain(secret.toString('base64url'));
     expect(await store.findMany('recoveryCode', { userId })).toHaveLength(10);
-    expect(hook.calls.at(-1)).toEqual({ type: 'totp.enabled', data: { user: graceUser } });
+    // A second factor of her password: the account says it is not how she signs in.
+    expect(account).toMatchObject({ primaryUserId: null, secondFactor: true });
+    expect(await store.findOne('account', { key: `password:${userId}` })).toMatchObject({ primaryUserId: userId });
+    expect(hook.calls.at(-1)).toEqual({ type: 'user.second_factor_enabled', data: { user: graceUser, method: 'totp' } });
     const status = await app.request('/auth/totp/status', { headers: withSession(session) });
     expect(await status.json()).toEqual({ enabled: true, recoveryCodesLeft: 10 });
+    // Replacing it is told the same way.
+    hook.calls.length = 0;
+    advance(60_000);
+    expect((await setUp(app, session, { code: codeFor(secret) })).confirm.status).toBe(200);
+    expect(hook.calls).toEqual([{ type: 'user.second_factor_enabled', data: { user: graceUser, method: 'totp' } }]);
   });
 
   it('T3: a setup is confirmed only by its own user, with the current code, within ten minutes', async () => {
@@ -169,7 +194,7 @@ describe('setting up the authenticator app while signed in', () => {
   });
 
   it('T4: setting the app up again takes a current code, and replaces the old one, its codes and its lock', async () => {
-    const { app, hook, store, session, userId, secret: old, recoveryCodes: oldCodes } = await enrolled(standalone);
+    const { app, hook, store, session, userId, secret: old, recoveryCodes: oldCodes } = await appUser();
     await store.update('account', { key: `totp:${userId}` }, { failedAttempts: 3, lockedUntil: 0 });
     advance(60_000);
 
@@ -185,8 +210,9 @@ describe('setting up the authenticator app while signed in', () => {
     const { secret, recoveryCodes } = await setUp(app, session, { code: codeFor(old) });
 
     expect(await store.findOne('account', { key: `totp:${userId}` })).toMatchObject({ failedAttempts: 0, lockedUntil: 0 });
-    expect(await store.findMany('account', { userId })).toHaveLength(2);
-    expect(hook.types()).toEqual(['totp.enabled']);
+    // Still the one account she signs in with; it is no second factor, so nothing is told.
+    expect(await store.findMany('account', { userId })).toEqual([expect.objectContaining({ key: `totp:${userId}`, primaryUserId: userId })]);
+    expect(hook.types()).toEqual([]);
     advance(60_000);
     expect((await signInWithApp(app, { email: grace.email, code: codeFor(old) })).status).toBe(401);
     expect((await signInWithApp(app, { email: grace.email, recoveryCode: oldCodes[0] })).status).toBe(401);
@@ -217,17 +243,29 @@ describe('setting up the authenticator app while signed in', () => {
     expect(await late.json()).toMatchObject({ error: 'code_required' });
   });
 
-  it('T31: a method that is switched off is no way in, so the app can\'t be removed next to it', async () => {
-    const { app, store, session, secret } = await enrolled(standalone);
-    // Password sign-in goes off: Grace's password is no way in while it is, only the app.
-    await setMethods(store, { google: { secondFactor: 'none' }, totp: {} });
+  it('T31: the app as a second factor never signs in alone, and can be removed whatever is switched on', async () => {
+    const { app, hook, store, session, secret } = await enrolled(standalone);
     advance(60_000);
 
-    const refused = await post(app, '/auth/totp/remove', { code: codeFor(secret) }, withSession(session));
+    // The app signs in on its own on this server, but not for Grace: she signs in with her password, and
+    // the app is a step of it. The answer is the one for an address without an app.
+    const alone = await signInWithApp(app, { email: grace.email, code: codeFor(secret) });
+    expect(alone.status).toBe(401);
+    expect(await alone.json()).toEqual({ error: 'invalid_credentials', message: 'E-mail or code is wrong.' });
+    expect(hook.types()).toEqual([]);
 
-    expect(refused.status).toBe(403);
-    expect(await refused.json()).toMatchObject({ error: 'only_method' });
-    await setMethods(store, standalone);
+    // The account says it is a second factor: it stays one when her password goes, e.g. by a deletion that
+    // stopped partway, and never becomes a way in by itself.
+    const [{ id: userId }] = await store.findMany('user', {});
+    const password = await store.findOne('account', { key: `password:${userId}` });
+    await store.delete('account', { key: `password:${userId}` });
+    advance(60_000);
+    expect((await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).status).toBe(401);
+    await store.create('account', password!);
+
+    // With password sign-in off, the app is no way in for her either, so it can go.
+    await setMethods(store, { google: { secondFactor: 'none' }, totp: {} });
+    advance(60_000);
     expect((await post(app, '/auth/totp/remove', { code: codeFor(secret) }, withSession(session))).status).toBe(200);
   });
 
@@ -258,7 +296,7 @@ describe('setting up the authenticator app while signed in', () => {
     expect(cookies(lost).madauth_totp_setup.attrs['max-age']).toBe('0');
     expect(await store.findOne('account', { key: `totp:${userId}` })).toMatchObject({ secret: account.secret, setupId: account.setupId });
     expect(await codesOf()).toEqual(Array(10).fill(account.setupId));
-    expect(hook.types().filter((type) => type === 'totp.enabled')).toHaveLength(1);
+    expect(hook.types().filter((type) => type === 'user.second_factor_enabled')).toHaveLength(1);
 
     // A setup that started before the app was removed is refused as well.
     advance(60_000);
@@ -289,7 +327,9 @@ describe('setting up the authenticator app while signed in', () => {
     expect(fresh).not.toContain(recoveryCodes[1]);
     expect(await status()).toEqual({ enabled: true, recoveryCodesLeft: 10 });
     advance(60_000);
-    expect((await signInWithApp(app, { email: grace.email, recoveryCode: recoveryCodes[1] })).status).toBe(401);
+    const first = await post(app, '/auth/password/signin', grace);
+    const stale = await post(app, '/auth/totp/verify', { recoveryCode: recoveryCodes[1] }, { Cookie: `madauth_challenge=${cookies(first).madauth_challenge.value}` });
+    expect(stale.status).toBe(401);
 
     // Removing needs a code that works.
     expect(await (await remove({})).json()).toMatchObject({ error: 'code_invalid' });
@@ -299,11 +339,11 @@ describe('setting up the authenticator app while signed in', () => {
     expect((await remove({ code: codeFor(secret) })).status).toBe(200);
     expect(await store.findOne('account', { key: `totp:${userId}` })).toBeNull();
     expect(await store.findMany('recoveryCode', { userId })).toEqual([]);
-    expect(hook.calls).toEqual([{ type: 'totp.disabled', data: { user: graceUser } }]);
+    expect(hook.calls).toEqual([{ type: 'user.second_factor_disabled', data: { user: graceUser, method: 'totp' } }]);
     expect(await status()).toEqual({ enabled: false, recoveryCodesLeft: 0 });
     // Nothing to remove any more: no second event.
     expect((await remove({ code: '000000' })).status).toBe(200);
-    expect(hook.types()).toEqual(['totp.disabled']);
+    expect(hook.types()).toEqual(['user.second_factor_disabled']);
     expect(await (await post(app, '/auth/totp/recovery-codes', { code: '000000' }, withSession(session))).json()).toMatchObject({ error: 'no_authenticator' });
 
     // With a policy that requires the app, nobody can remove it.
@@ -317,7 +357,7 @@ describe('setting up the authenticator app while signed in', () => {
 
 describe('signing in with the app alone', () => {
   it('T6: the e-mail address and the code give a session for the app as the method', async () => {
-    const { app, hook, store, userId, secret } = await enrolled(standalone);
+    const { app, hook, store, userId, secret } = await appUser();
     advance(60_000);
 
     const res = await signInWithApp(app, { email: 'Grace@Example.com', code: codeFor(secret) });
@@ -330,7 +370,7 @@ describe('signing in with the app alone', () => {
   });
 
   it('T7: a code is accepted one step early or late, never twice, and never one from before the last used', async () => {
-    const { app, secret } = await enrolled(standalone);
+    const { app, secret } = await appUser();
     advance(60_000);
     const signin = (offset: number) => signInWithApp(app, { email: grace.email, code: codeFor(secret, offset) });
 
@@ -343,7 +383,7 @@ describe('signing in with the app alone', () => {
   });
 
   it('T8: a recovery code signs in once, and the webhook learns how many are left', async () => {
-    const { app, hook, secret, recoveryCodes } = await enrolled(standalone);
+    const { app, hook, secret, recoveryCodes } = await appUser();
     advance(60_000);
     const [code] = recoveryCodes;
 
@@ -351,7 +391,7 @@ describe('signing in with the app alone', () => {
 
     expect(res.status).toBe(200);
     expect(await sessionClaims(app, res)).toMatchObject({ amr: ['otp'] });
-    expect(hook.types()).toEqual(['totp.recovery_code_used', 'user.signed_in']);
+    expect(hook.types()).toEqual(['user.recovery_code_used', 'user.signed_in']);
     expect(hook.calls[0].data).toEqual({ user: graceUser, remaining: 9 });
     expect((await signInWithApp(app, { email: grace.email, recoveryCode: code })).status).toBe(401);
     // A recovery code is not a code from the app, and the other way round.
@@ -360,7 +400,7 @@ describe('signing in with the app alone', () => {
   });
 
   it('T9: nothing reveals whether an address has an account or an app', async () => {
-    const { app, hook, store, userId, secret } = await enrolled(standalone);
+    const { app, hook, store, userId, secret } = await appUser();
     await signUpVerified(app, hook, 'ada@example.com', 'adas password!');
     advance(60_000);
     const answers: Response[] = [];
@@ -384,7 +424,7 @@ describe('signing in with the app alone', () => {
   });
 
   it('T10: wrong codes lock the app like wrong passwords, also when they come at once', async () => {
-    const { app, store, userId, secret } = await enrolled(standalone);
+    const { app, store, userId, secret } = await appUser();
     advance(60_000);
     const wrong = () => signInWithApp(app, { email: grace.email, code: codeFor(secret, 5) });
     const right = () => signInWithApp(app, { email: grace.email, code: codeFor(secret) });
@@ -445,9 +485,10 @@ describe('signing in with the app alone', () => {
     expect(alone.status).toBe(403);
     expect(await alone.json()).toMatchObject({ error: 'method_disabled' });
 
+    // On its own: people who sign up with the app sign in with it. Grace's is a step of her password, still.
     await setMethods(store, standalone);
     expect(await config()).toMatchObject({ totp: { signIn: true, signUp: true } });
-    expect((await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).status).toBe(200);
+    expect((await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).status).toBe(401);
   });
 
   it('T13: deleting the account takes a current code once the app is set up, and removes it with the codes', async () => {
@@ -486,7 +527,7 @@ describe('signing in with the app alone', () => {
   });
 
   it('T14: with another signing key the secrets can not be read: the app does not sign in, and the log says why', async () => {
-    const { app, hook, store, secret } = await enrolled(standalone);
+    const { app, hook, store, secret } = await appUser();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const otherKey = testApp({
       store,
@@ -534,7 +575,7 @@ describe('the second step after a password or Google', () => {
 
     expect(second.status).toBe(200);
     expect(await sessionClaims(app, second)).toMatchObject({ amr: ['pwd', 'otp'] });
-    expect(hook.types()).toEqual(['totp.recovery_code_used', 'user.signed_in']);
+    expect(hook.types()).toEqual(['user.recovery_code_used', 'user.signed_in']);
     expect(hook.calls[1].data).toMatchObject({ method: 'password', secondFactor: 'recovery_code' });
   });
 
@@ -612,8 +653,10 @@ describe('the second step after a password or Google', () => {
     expect(body.recoveryCodes).toHaveLength(10);
     expect(await sessionClaims(app, confirm)).toMatchObject({ amr: ['pwd', 'otp'] });
     expect(cookies(confirm).madauth_challenge).toMatchObject({ value: '' });
-    expect(hook.types()).toEqual(['totp.enabled', 'user.signed_in']);
-    expect(hook.calls[1].data).toEqual({ user: graceUser, method: 'password', secondFactor: 'totp' });
+    // Her first session: the sign-up is complete only now, with the app the policy asks for, not at the e-mail.
+    expect(hook.types()).toEqual(['user.second_factor_enabled', 'user.signed_up', 'user.signed_in']);
+    expect(hook.calls[1].data).toEqual({ user: graceUser, method: 'password' });
+    expect(hook.calls[2].data).toEqual({ user: graceUser, method: 'password', secondFactor: 'totp' });
   });
 
   it('T20: Google asks for the code too when its policy says so, in both flows', async () => {
@@ -755,7 +798,9 @@ describe('the operator resets a lost app', () => {
     expect(await res.json()).toEqual({ email: 'grace@example.com', userId, enabled: false });
     expect(await store.findOne('account', { key: `totp:${userId}` })).toBeNull();
     expect(await store.findMany('recoveryCode', { userId })).toEqual([]);
-    expect(hook.calls).toEqual([{ type: 'totp.disabled', data: { user: { id: userId, email: 'grace@example.com', name: 'Grace Hopper' }, by: 'admin@example.com' } }]);
+    expect(hook.calls).toEqual([
+      { type: 'user.second_factor_disabled', data: { user: { id: userId, email: 'grace@example.com', name: 'Grace Hopper' }, method: 'totp', by: 'admin@example.com' } },
+    ]);
     // Grace sets it up again at her next sign-in; her old app is of no use.
     const next = await post(app, '/auth/password/signin', { email: 'grace@example.com', password: 'correct horse battery' });
     expect(await next.json()).toMatchObject({ error: 'totp_setup_required' });
@@ -791,9 +836,8 @@ describe('signing up with the app alone', () => {
     const [user] = await store.findMany('user', {});
     expect(user).toMatchObject({ email: 'grace@example.com', name: 'Grace Hopper', emailVerified: false });
     expect(await store.findMany('account', {})).toEqual([]);
-    expect(hook.types()).toEqual(['signup.before', 'user.created', 'email.verify']);
+    expect(hook.types()).toEqual(['user.signing_up', 'email.send_verification']);
     expect(hook.calls[0].data).toEqual({ email: 'grace@example.com', name: 'Grace Hopper', locale: 'de', method: 'totp' });
-    expect(hook.calls[1].data).toMatchObject({ method: 'totp' });
     const { token, code } = linkAndCode(hook.lastEmail());
     expect(code).toMatch(/^\d{6}$/);
 
@@ -813,10 +857,12 @@ describe('signing up with the app alone', () => {
     expect(confirm.status).toBe(200);
     expect(((await confirm.json()) as { user: unknown }).user).toEqual({ ...graceUser, amr: ['otp'] });
     expect(await sessionClaims(app, confirm)).toMatchObject({ amr: ['otp'], sv: 0 });
+    // The app is how she signs in, not a second factor: her sign-up is complete, and she is in.
     expect(hook.calls).toEqual([
-      { type: 'totp.enabled', data: { user: graceUser } },
+      { type: 'user.signed_up', data: { user: graceUser, method: 'totp' } },
       { type: 'user.signed_in', data: { user: graceUser, method: 'totp' } },
     ]);
+    expect(await store.findOne('account', { key: `totp:${user.id}` })).toMatchObject({ primaryUserId: user.id });
     // The app is her only way in: it can't be removed, only the account deleted.
     const removal = await post(app, '/auth/totp/remove', { code: codeFor(secret, 1) }, withSession(cookies(confirm).madauth_session.value));
     expect(removal.status).toBe(403);
@@ -826,7 +872,7 @@ describe('signing up with the app alone', () => {
     // A password sign-up with the address afterwards only tells her she is registered, with the app.
     advance(60_000);
     await post(app, '/auth/password/signup', { ...grace, redirectTo: REDIRECT_TO });
-    expect(hook.lastEmail()).toMatchObject({ type: 'email.already_registered', data: { methods: ['totp'] } });
+    expect(hook.lastEmail()).toMatchObject({ type: 'email.send_already_registered', data: { methods: ['totp'] } });
   });
 
   it('T24: an unfinished sign-up starts over, and the latest unproven sign-up wins', async () => {
@@ -840,12 +886,12 @@ describe('signing up with the app alone', () => {
     advance(61_000);
 
     expect((await signUp(app)).status).toBe(202);
-    expect(hook.lastEmail()?.type).toBe('email.verify');
+    expect(hook.lastEmail()?.type).toBe('email.send_verification');
     expect(await store.findMany('user', {})).toHaveLength(1);
     // Someone signs up with a password for the same address before it is proven: the password is what counts then.
     advance(61_000);
     await post(app, '/auth/password/signup', { ...grace, redirectTo: REDIRECT_TO });
-    expect(hook.lastEmail()?.type).toBe('email.verify');
+    expect(hook.lastEmail()?.type).toBe('email.send_verification');
     const confirmed = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
     expect(confirmed.status).toBe(200);
     expect(await sessionClaims(app, confirmed)).toMatchObject({ amr: ['pwd'] });
@@ -856,6 +902,29 @@ describe('signing up with the app alone', () => {
     const { nonce, cookie } = await getNonce(other.app);
     expect((await verify(other.app, await googleIdToken({ nonce }), cookie)).status).toBe(200);
     expect((await other.store.findMany('account', {})).map((a) => a.key)).toEqual(['google:1001']);
+  });
+
+  it('T33: a user has one way to sign in: an app sign-up that got a password meanwhile can\'t add the app as a second', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: START });
+    const { app, hook, store } = passwordApp();
+    await setMethods(store, standalone);
+    await signUp(app);
+    const confirmed = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
+    const challenge = `madauth_challenge=${cookies(confirmed).madauth_challenge.value}`;
+    // Before the app is set up, a password sign-up gives the user a way to sign in.
+    advance(61_000);
+    await post(app, '/auth/password/signup', { ...grace, redirectTo: REDIRECT_TO });
+    const [{ id: userId }] = await store.findMany('user', {});
+    expect(await store.findMany('account', { userId })).toEqual([expect.objectContaining({ key: `password:${userId}`, primaryUserId: userId })]);
+
+    const setup = await post(app, '/auth/totp/setup', {}, { Cookie: challenge });
+    const secret = base32Decode(((await setup.json()) as { secret: string }).secret)!;
+    const confirm = await post(app, '/auth/totp/confirm', { code: codeFor(secret) }, { Cookie: `${challenge}; madauth_totp_setup=${cookies(setup).madauth_totp_setup.value}` });
+
+    expect(confirm.status).toBe(400);
+    expect(await confirm.json()).toMatchObject({ error: 'setup_expired' });
+    expect(await store.findMany('account', { userId })).toHaveLength(1);
+    expect(await store.findMany('recoveryCode', { userId })).toEqual([]);
   });
 
   it('T28: a sign-up with the app drops the password of an earlier sign-up nobody confirmed', async () => {
@@ -896,7 +965,7 @@ describe('signing up with the app alone', () => {
     expect(await (await noEmails.app.request('/auth/config')).json()).toMatchObject({ totp: { signIn: true, signUp: false }, email: { verification: false } });
     expect((await signUp(noEmails.app)).status).toBe(404);
 
-    // An app-only server: nothing but a webhook that sends email.verify.
+    // An app-only server: nothing but a webhook that sends email.send_verification.
     const config = await loadConfig({
       MADAUTH_ISSUER: ISSUER,
       MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
@@ -904,7 +973,7 @@ describe('signing up with the app alone', () => {
       DATABASE_URL: 'sqlite::memory:',
       WEBHOOK_URL,
       WEBHOOK_SECRET,
-      WEBHOOK_EVENTS: 'email.verify',
+      WEBHOOK_EVENTS: 'email.send_verification',
     });
     expect(config.google).toBeUndefined();
     expect(config.password).toBeUndefined();

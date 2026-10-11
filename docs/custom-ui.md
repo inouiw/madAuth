@@ -58,7 +58,7 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 - The link opens `redirectTo`. After `initialize`, `pendingReset` is true: show a new-password field and call `confirmReset({ newPassword })`.
 - With the code, ask for it and the new password, and call `confirmReset({ newPassword, email, code })`.
 
-If Google is one of your methods, say on the form that a Google user has no password to reset and should use the Google button instead, as the dialog does. (The server tells such a user the same by e-mail: `email.no_password` in [Webhooks](server.md#webhooks).)
+If Google is one of your methods, say on the form that a Google user has no password to reset and should use the Google button instead, as the dialog does. (The server tells such a user the same by e-mail: `email.send_password_reset_no_password` in [Webhooks](server.md#webhooks).)
 
 A completed reset signs the user in and ends their sessions on other devices.
 
@@ -96,7 +96,7 @@ Use these `autocomplete` values so browsers offer to save and fill passwords and
 
 ## E-mail link: `Madauth.emailLink`
 
-Needs `new EmailLink()` in `initialize`, and on the server a webhook that sends `email.signin` with the method listed by an admin. Otherwise the provider is left out with a warning and the methods fail with `flow_not_enabled`.
+Needs `new EmailLink()` in `initialize`, and on the server a webhook that sends `email.send_signin_link` with the method listed by an admin. Otherwise the provider is left out with a warning and the methods fail with `flow_not_enabled`.
 
 | Method | Result | Errors |
 | --- | --- | --- |
@@ -144,7 +144,7 @@ The methods work whenever the app is in use on the server: as the second factor 
 | `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
 | `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `totp_setup_required` for a sign-up with the app |
 | `pendingStep` | `{ step: 'code' \| 'sms' \| 'setup', method, factors? } \| null` | What a sign-in under way still needs, e.g. after the redirect flow or a link from an e-mail; `method` is the method whose sign-in it is (`google`, `password`, `totp` or `email-link`), `factors` which second factors can finish it (`totp`, `sms`) |
-| `policy` | `{ signIn, signUp, secondFactorFor } \| null` | What the app does on this server: whether it signs in on its own, whether people can sign up with it, and which methods ask for it |
+| `policy` | `{ signIn, signUp, secondFactorFor } \| null` | What the app does on this server: whether it signs in on its own (for the users who signed up with it), whether people can sign up with it, and which methods ask for it |
 
 ### The second step
 
@@ -183,7 +183,7 @@ confirmForm.onsubmit = async () => {
 
 ## SMS codes: `Madauth.sms`
 
-A second factor next to the app, never a sign-in on its own. The methods work whenever the server has SMS codes on (`sms` in the [sign-in methods](server.md#sign-in-methods), with a webhook that sends `sms.code`); otherwise they fail with `flow_not_enabled`, and `available` is false. No provider is needed.
+A second factor next to the app, never a sign-in on its own. The methods work whenever the server has SMS codes on (`sms` in the [sign-in methods](server.md#sign-in-methods), with a webhook that sends `sms.send_code`); otherwise they fail with `flow_not_enabled`, and `available` is false. No provider is needed.
 
 | Method | Result | Errors |
 | --- | --- | --- |
@@ -227,7 +227,7 @@ confirmForm.onsubmit = async () => {
 
 ### The app on its own
 
-When the server lists the app as a method (`policy.signIn`), `signIn({ email, code })` signs in with the address and a code from the app, with `invalid_credentials` for an unknown address, one without the app and a wrong code alike. With `policy.signUp`, `signUp({ email, name? })` creates an account that signs in with the app alone: it sends the confirmation e-mail, `verifyEmail` (or the link) ends with `totp_setup_required`, and the setup above signs the new user in.
+When the server lists the app as a method (`policy.signIn`), `signIn({ email, code })` signs in with the address and a code from the app, for users who signed up with it, with `invalid_credentials` for an unknown address, one without the app, one whose app is a second factor and a wrong code alike. With `policy.signUp`, `signUp({ email, name? })` creates an account that signs in with the app alone: it sends the confirmation e-mail, `verifyEmail` (or the link) ends with `totp_setup_required`, and the setup above signs the new user in.
 
 ## Google: `Madauth.google`
 

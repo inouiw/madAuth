@@ -970,7 +970,6 @@ export class MadauthLogin extends LitElement {
     return html`
       <p class="lead">${this.setupForSignIn ? s.totpSetup.requiredLead : s.totpSetup.lead}</p>
       ${!this.setupForSignIn && asks ? html`<p class="hint">${s.totpSetup.effects.secondFactor(asks)}</p>` : null}
-      ${!this.setupForSignIn && policy?.signIn ? html`<p class="hint">${s.totpSetup.effects.standalone}</p>` : null}
       ${setup
         ? html`
             <svg part="qr" class="qr" viewBox=${qrViewBox(setup.qr.size)} role="img" aria-label=${s.totpSetup.qrLabel} shape-rendering="crispEdges">
