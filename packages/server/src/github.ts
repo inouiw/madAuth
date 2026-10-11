@@ -2,6 +2,8 @@
 // REST API, and revoking the OAuth App's authorization. Every call carries a User-Agent, which
 // api.github.com insists on.
 
+import { deriveKey } from './crypto.js';
+
 const TOKEN_ENDPOINT = 'https://github.com/login/oauth/access_token';
 const API = 'https://api.github.com';
 const API_VERSION = '2022-11-28';
@@ -10,6 +12,13 @@ const USER_AGENT = 'madauth';
 const NOREPLY_DOMAIN = '@users.noreply.github.com';
 /** How long one call to GitHub may take; a sign-in makes three. */
 const TIMEOUT_MS = 10_000;
+/** How long revoking a grant may take: it happens while a user waits for their deletion. */
+const REVOKE_TIMEOUT_MS = 5_000;
+
+/** The key that encrypts the access tokens kept on the accounts (see crypto.ts): its own, apart from the authenticator secrets'. */
+export function deriveTokenKey(signingKeyD: string): Buffer {
+  return deriveKey(signingKeyD, 'madauth provider token');
+}
 
 /** What GitHub says about the account that signed in. */
 export interface GitHubAccount {
@@ -61,7 +70,11 @@ export async function exchangeGitHubCode(
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // A body nobody reads keeps its connection busy until it is collected.
+      await res.body?.cancel();
+      return null;
+    }
     const body = (await res.json()) as { access_token?: unknown };
     return typeof body.access_token === 'string' && body.access_token ? body.access_token : null;
   } catch {
@@ -84,8 +97,11 @@ export async function fetchGitHubAccount(token: string): Promise<GitHubAccountRe
       fetch(`${API}/user`, { headers: apiHeaders(token), signal: AbortSignal.timeout(TIMEOUT_MS) }),
       fetch(`${API}/user/emails`, { headers: apiHeaders(token), signal: AbortSignal.timeout(TIMEOUT_MS) }),
     ]);
-    if (!userRes.ok) return failed(`GET /user answered ${userRes.status}`);
-    if (!emailsRes.ok) return failed(`GET /user/emails answered ${emailsRes.status}`);
+    if (!userRes.ok || !emailsRes.ok) {
+      // Bodies nobody reads keep their connections busy until they are collected.
+      await Promise.all([userRes.body?.cancel(), emailsRes.body?.cancel()]);
+      return failed(!userRes.ok ? `GET /user answered ${userRes.status}` : `GET /user/emails answered ${emailsRes.status}`);
+    }
     user = (await userRes.json()) as typeof user;
     emails = (await emailsRes.json()) as typeof emails;
   } catch (e) {
@@ -123,8 +139,9 @@ export async function revokeGitHubGrant(app: GitHubAppCredentials, token: string
         'User-Agent': USER_AGENT,
       },
       body: JSON.stringify({ access_token: token }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
     });
+    await res.body?.cancel();
     return res.status;
   } catch {
     return null;

@@ -22,7 +22,8 @@ import {
   stubGitHub,
   testApp,
 } from '../test/helpers.js';
-import { decryptSecret, deriveTokenKey } from '../totp.js';
+import { decrypt } from '../crypto.js';
+import { deriveTokenKey } from '../github.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -156,7 +157,7 @@ describe('GitHub sign-in', () => {
     expect(user).toMatchObject({ email: 'ada@example.com', emailNormalized: 'ada@example.com', emailVerified: true, name: 'Ada Lovelace' });
     const [account] = await store.findMany('account', {});
     expect(account).toMatchObject({ userId: user.id, key: 'github:7001', email: 'ada@example.com' });
-    expect(decryptSecret(tokenKey, account.secret as string)?.toString()).toBe('gho_test');
+    expect(decrypt(tokenKey, account.secret as string)?.toString()).toBe('gho_test');
     expect((await (await session(app, res)).json()).user).toEqual({
       id: user.id,
       email: 'ada@example.com',
@@ -195,7 +196,7 @@ describe('GitHub sign-in', () => {
     expect(await store.findMany('user', {})).toHaveLength(1);
     const account = await store.findOne('account', { key: 'github:7001' });
     expect(account).toMatchObject({ userId: first.id, email: 'ada@newmail.example' });
-    expect(decryptSecret(tokenKey, account!.secret as string)?.toString()).toBe('gho_second');
+    expect(decrypt(tokenKey, account!.secret as string)?.toString()).toBe('gho_second');
   });
 
   it('O7: a GitHub sign-in never joins a user who signs in another way: the address is refused', async () => {
@@ -254,9 +255,14 @@ describe('GitHub sign-in', () => {
 
     await setMethods(store, { google: { secondFactor: 'none' }, password: { secondFactor: 'none' } });
     expect(await config()).toBeNull();
-    expect((await startGitHub(app)).res.status).toBe(403);
-    expect(await (await startGitHub(app)).res.json()).toEqual({ error: 'method_disabled', message: 'GitHub sign-in is switched off.' });
-    expect((await githubCallback(app, started)).status).toBe(403);
+    // Both routes are top-level navigations: the browser is sent back to the app with the error, never shown JSON.
+    const off = await startGitHub(app);
+    expect(off.res.status).toBe(302);
+    expect(off.res.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=method_disabled&madauth_method=github`);
+    expect(cookies(off.res).madauth_oauth).toBeUndefined();
+    const late = await githubCallback(app, started);
+    expect(late.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=method_disabled&madauth_method=github`);
+    expect(cookies(late).madauth_session).toBeUndefined();
 
     await setMethods(store, { github: { secondFactor: 'required' }, password: { secondFactor: 'none' } });
     expect(await config()).toEqual({ secondFactor: 'required' });

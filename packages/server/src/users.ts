@@ -279,7 +279,7 @@ export class Users {
 
   /** The user's GitHub account, if linked: its key holds GitHub's user id, its secret the encrypted access token of the last sign-in. */
   async githubAccount(userId: string): Promise<StoredAccount | null> {
-    const accounts = (await this.store.findMany('account', { userId })) as unknown as StoredAccount[];
+    const accounts = await this.accounts(userId);
     return accounts.find((account) => account.key.startsWith('github:')) ?? null;
   }
 

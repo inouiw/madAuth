@@ -223,8 +223,9 @@ function handleRedirectReturn(ctx: ProviderContext): void {
   const error = takeHashParam(REDIRECT_ERROR_PARAM);
   const next = takeHashParam(REDIRECT_NEXT_PARAM);
   const named = (takeHashParam(REDIRECT_FACTORS_PARAM) ?? '').split(',').filter((f): f is SecondFactor => f === 'totp' || f === 'sms');
+  // Only the redirect providers come back this way: anything else in the hash counts as Google's.
   const via = takeHashParam(REDIRECT_METHOD_PARAM);
-  const method: LoginMethodId = isLoginMethodId(via) ? via : 'google';
+  const method: LoginMethodId = via === 'github' ? 'github' : 'google';
   if (error) {
     const code = toErrorCode(error);
     const s = stringsFor(ctx.locale);

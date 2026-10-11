@@ -177,7 +177,10 @@ describe('switching sign-in methods off and on', () => {
     const nonce = await app.request('/auth/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } });
     expect(nonce.status).toBe(403);
     expect(await nonce.json()).toMatchObject({ error: 'method_disabled' });
-    expect((await app.request(`/auth/google/start?return_to=${encodeURIComponent(APP_ORIGIN)}`)).status).toBe(403);
+    // The redirect flow's start sends the browser back to the app: it is on its way, and a JSON error would strand it.
+    const start = await app.request(`/auth/google/start?return_to=${encodeURIComponent(APP_ORIGIN)}`);
+    expect(start.status).toBe(302);
+    expect(start.headers.get('location')).toBe(`${APP_ORIGIN}/#madauth_error=method_disabled&madauth_method=google`);
   });
 
   it('the last method can not be switched off, and a method the server is not configured for is never on', async () => {

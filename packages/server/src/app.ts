@@ -7,6 +7,7 @@ import { importSigningKeys, type SigningKeys } from './keys.js';
 import { deriveCodeKey, isValidEmail, normalizeEmail } from './password.js';
 import { emailRoutes } from './routes/email.js';
 import { emailLinkRoutes } from './routes/email-link.js';
+import { deriveTokenKey } from './github.js';
 import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
 import { body, error } from './routes/helpers.js';
@@ -36,7 +37,7 @@ import {
   type SignInMethod,
 } from './settings.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims } from './tokens.js';
-import { deriveTokenKey, deriveTotpKey } from './totp.js';
+import { deriveTotpKey } from './totp.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 import { Users, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
@@ -401,10 +402,11 @@ export function createApp(config: MadauthConfig): Hono {
     }
     // Read before the deletion: the web library revokes the app's access to this Google account with it.
     const googleSub = await users.googleSub(user.id);
-    // GitHub's authorization is revoked here, with the token kept from the last sign-in.
-    if (config.github) await revokeGrant(config.github, tokenKey, await users.githubAccount(user.id));
+    // GitHub's authorization goes once the user is gone, with the token kept from the last sign-in.
+    const githubAccount = config.github ? await users.githubAccount(user.id) : null;
     // The user with all their sign-in methods: the session proves who they are, whichever way they signed in.
-    await users.deleteById(user.id);
+    const deleted = await users.deleteById(user.id);
+    if (deleted && config.github) await revokeGrant(config.github, tokenKey, githubAccount);
     clearSession(c);
     await ctx.emit('user.deleted', { user });
     return googleSub ? c.json({ googleSub }) : c.body(null, 204);

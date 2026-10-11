@@ -1,10 +1,9 @@
-import type { Context, Hono } from 'hono';
+import type { Hono } from 'hono';
 import type { AppContext } from '../app.js';
 import type { MadauthConfig } from '../config.js';
 import { exchangeGitHubCode, fetchGitHubAccount, revokeGitHubGrant } from '../github.js';
-import { decryptSecret, encryptSecret } from '../totp.js';
+import { decrypt, encrypt } from '../crypto.js';
 import { githubAccountKey, type StoredAccount } from '../users.js';
-import { error } from './helpers.js';
 import { pkceChallenge, redirectBack, resolveProviderUser, startOAuth, takeOAuthState, type OAuthProvider } from './oauth.js';
 
 const GITHUB_AUTH_ENDPOINT = 'https://github.com/login/oauth/authorize';
@@ -24,14 +23,11 @@ type GitHubConfig = NonNullable<MadauthConfig['github']>;
 export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig, tokenKey: Buffer): void {
   const callbackUrl = `${ctx.config.issuer}/auth/github/callback`;
 
-  const requireOn = async (c: Context, next: () => Promise<void>) => {
-    if (!(await ctx.enabled(c, 'github'))) return error(c, 403, 'method_disabled', 'GitHub sign-in is switched off.');
-    await next();
-  };
-
-  app.get('/auth/github/start', requireOn, async (c) => {
+  app.get('/auth/github/start', async (c) => {
     const returnUrl = ctx.allowedUrl(c.req.query('return_to'));
     if (!returnUrl) return c.text('return_to must be an absolute URL whose origin is in ALLOWED_ORIGINS', 400);
+    // The browser is on its way from the app: a method that is off sends it back there, with the error.
+    if (!(await ctx.enabled(c, 'github'))) return redirectBack(c, returnUrl.href, 'github')('method_disabled');
     const oauth = await startOAuth(c, ctx, COOKIE_PATH, returnUrl);
 
     const url = new URL(GITHUB_AUTH_ENDPOINT);
@@ -47,10 +43,11 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig, t
     return c.redirect(url.href, 302);
   });
 
-  app.get('/auth/github/callback', requireOn, async (c) => {
+  app.get('/auth/github/callback', async (c) => {
     const oauth = await takeOAuthState(c, ctx, COOKIE_PATH);
     if (!oauth) return c.text('Sign-in expired or was started in another browser. Please try again.', 400);
     const back = redirectBack(c, oauth.returnTo, 'github');
+    if (!(await ctx.enabled(c, 'github'))) return back('method_disabled');
 
     if (c.req.query('error')) return back(c.req.query('error') === 'access_denied' ? 'cancelled' : 'verification_failed');
     const code = c.req.query('code');
@@ -65,7 +62,7 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig, t
     const resolved = await resolveProviderUser(
       ctx,
       GITHUB,
-      { key: githubAccountKey(account.id), email: account.email, name: account.name, secret: encryptSecret(tokenKey, Buffer.from(token)) },
+      { key: githubAccountKey(account.id), email: account.email, name: account.name, secret: encrypt(tokenKey, Buffer.from(token)) },
       oauth.locale,
     );
     if (!resolved.ok) return back(resolved.error);
@@ -84,7 +81,7 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig, t
  */
 export async function revokeGrant(github: GitHubConfig, tokenKey: Buffer, account: StoredAccount | null): Promise<void> {
   if (!account) return;
-  const token = account.secret ? decryptSecret(tokenKey, account.secret) : null;
+  const token = account.secret ? decrypt(tokenKey, account.secret) : null;
   if (!token) {
     console.error(`[madauth] The GitHub token of user ${account.userId} can't be read (was MADAUTH_SIGNING_KEY changed?): the authorization stays at GitHub until the user removes it.`);
     return;

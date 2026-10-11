@@ -74,7 +74,8 @@ describe('GitHub', () => {
     await settle();
     $<HTMLButtonElement>('.github-slot button')!.click();
 
-    expect(assign).toHaveBeenCalledExactlyOnceWith(`${SERVER}/auth/github/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}`);
+    // The locale goes along, for the sign-up check's message.
+    expect(assign).toHaveBeenCalledExactlyOnceWith(`${SERVER}/auth/github/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}&locale=${encodeURIComponent(navigator.language)}`);
     expect(gisScripts()).toHaveLength(0);
   });
 
@@ -109,9 +110,11 @@ describe('GitHub', () => {
     expect(await Madauth.initialize({ serverUrl: SERVER, providers: providers() })).toMatchObject({ error: { message: 'The Google sign-in could not be verified. Please try again.' } });
     history.replaceState(null, '', '/page#madauth_error=verification_failed&madauth_method=github');
     expect(await Madauth.initialize({ serverUrl: SERVER, providers: providers() })).toMatchObject({ error: { message: 'The GitHub sign-in could not be verified. Please try again.' } });
-    // A server before 0.5 names no method: only Google had a redirect flow then.
+    // A server before 0.5 names no method: only Google had a redirect flow then. A method without a redirect flow counts as Google's too.
     history.replaceState(null, '', '/page#madauth_error=verification_failed');
     expect(await Madauth.initialize({ serverUrl: SERVER, providers: providers() })).toMatchObject({ error: { message: 'The Google sign-in could not be verified. Please try again.' } });
+    history.replaceState(null, '', '/page#madauth_error=cancelled&madauth_method=password');
+    expect(await Madauth.initialize({ serverUrl: SERVER, providers: providers() })).toMatchObject({ error: { message: 'The Google sign-in was cancelled.' } });
     expect(location.href).toBe('https://app.example.com/page');
   });
 

@@ -38,11 +38,11 @@ The exchange yields an access token with the scope `user:email`, which GitHub do
 
 A leaked database alone does not expose the tokens; the signing key is needed as well. A new `MADAUTH_SIGNING_KEY` makes the stored tokens unreadable: the next sign-in stores a fresh one, and a deletion in between leaves the authorization at GitHub.
 
-Code: `deriveTokenKey`, `encryptSecret` and `decryptSecret` in [`packages/server/src/totp.ts`](../packages/server/src/totp.ts), `revokeGrant` in [`routes/github.ts`](../packages/server/src/routes/github.ts), `revokeGitHubGrant` in [`github.ts`](../packages/server/src/github.ts).
+Code: `deriveKey`, `encrypt` and `decrypt` in [`packages/server/src/crypto.ts`](../packages/server/src/crypto.ts), `deriveTokenKey` and `revokeGitHubGrant` in [`github.ts`](../packages/server/src/github.ts), `revokeGrant` in [`routes/github.ts`](../packages/server/src/routes/github.ts).
 
 ## Switching the method off
 
-While an admin has the method off, both routes answer `403 method_disabled`, and a sign-in that was between its two steps ends. The method is configured only with `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`; without them the routes are not there (404).
+While an admin has the method off, both routes send the browser back to the app with `madauth_error=method_disabled` (they are top-level navigations, so a JSON error would strand the user on the server's origin), and a sign-in that was between its two steps ends. The method is configured only with `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`; without them the routes are not there (404).
 
 Code: the middleware in [`routes/github.ts`](../packages/server/src/routes/github.ts).
 

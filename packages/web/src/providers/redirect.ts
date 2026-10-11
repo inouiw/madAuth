@@ -57,8 +57,12 @@ export function renderRedirectButton(
   };
 }
 
-/** Sends the browser to the server's start route of the method; the user comes back to this page, without its hash. */
+/**
+ * Sends the browser to the server's start route of the method, with the locale for the sign-up check (like the
+ * other sign-up requests); the user comes back to this page, without its hash.
+ */
 export function startRedirect(ctx: ProviderContext, method: LoginMethodId): void {
   const returnTo = location.href.split('#')[0];
-  location.assign(`${ctx.serverUrl}/auth/${method}/start?return_to=${encodeURIComponent(returnTo)}`);
+  const locale = ctx.locale ? `&locale=${encodeURIComponent(ctx.locale)}` : '';
+  location.assign(`${ctx.serverUrl}/auth/${method}/start?return_to=${encodeURIComponent(returnTo)}${locale}`);
 }

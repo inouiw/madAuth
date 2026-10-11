@@ -363,7 +363,7 @@ Which methods the server can offer is configured at start: `GOOGLE_CLIENT_ID` fo
 
 Until an admin sets the list, a server runs its configured primary methods, Google, GitHub, password and/or the e-mail link, without a second factor, and SMS codes when the webhook sends them; a server that only has the webhook runs the authenticator app alone. The app on its own is never on until it is listed, since it lets a user in with one factor: that is the admin's decision. It signs in only the users who signed up with it; for everyone else the app stays a step of their method.
 
-A method that is off is not shown by the web library (`GET /auth/config` reports it as `null`), and its routes answer `403 method_disabled`; a sign-in that was between its two steps ends too. Existing sessions continue. At least one method that creates users stays on: Google, GitHub, e-mail & password, the e-mail link, or the app on a server whose webhook confirms addresses (the app alone on another server would let in only the users who have one).
+A method that is off is not shown by the web library (`GET /auth/config` reports it as `null`), and its routes answer `403 method_disabled` (the `start` and `callback` routes of the redirect flows send the browser back to the app with `madauth_error=method_disabled` instead, since it is on its way there); a sign-in that was between its two steps ends too. Existing sessions continue. At least one method that creates users stays on: Google, GitHub, e-mail & password, the e-mail link, or the app on a server whose webhook confirms addresses (the app alone on another server would let in only the users who have one).
 
 From your app with the web library, or with the HTTP API:
 
@@ -642,7 +642,7 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
 | `GET /health` | `ok` |
 
-POST requests must come from an origin in `ALLOWED_ORIGINS`. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The routes of Google, of GitHub, of e-mail & password, of the e-mail link and of SMS codes return 404 when the method is not configured; every method's routes return 403 `method_disabled` when it is not on.
+POST requests must come from an origin in `ALLOWED_ORIGINS`. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The routes of Google, of GitHub, of e-mail & password, of the e-mail link and of SMS codes return 404 when the method is not configured; every method's routes return 403 `method_disabled` when it is not on, except the redirect flows' `start` and `callback`, which send the browser back to `return_to` with `madauth_error=method_disabled`.
 
 ### The second step
 

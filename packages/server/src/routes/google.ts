@@ -80,13 +80,14 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
 
   const requireCodeFlow = async (c: Context, next: () => Promise<void>) => {
     if (!google.clientSecret) return c.json({ error: 'not_found' }, 404);
-    if (!(await ctx.enabled(c, 'google'))) return disabled(c);
     await next();
   };
 
   app.get('/auth/google/start', requireCodeFlow, async (c) => {
     const returnUrl = ctx.allowedUrl(c.req.query('return_to'));
     if (!returnUrl) return c.text('return_to must be an absolute URL whose origin is in ALLOWED_ORIGINS', 400);
+    // The browser is on its way from the app: a method that is off sends it back there, with the error.
+    if (!(await ctx.enabled(c, 'google'))) return redirectBack(c, returnUrl.href, 'google')('method_disabled');
     const oauth = await startOAuth(c, ctx, COOKIE_PATH, returnUrl);
 
     const url = new URL(GOOGLE_AUTH_ENDPOINT);
@@ -107,6 +108,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     const oauth = await takeOAuthState(c, ctx, COOKIE_PATH);
     if (!oauth) return c.text('Sign-in expired or was started in another browser. Please try again.', 400);
     const back = redirectBack(c, oauth.returnTo, 'google');
+    if (!(await ctx.enabled(c, 'google'))) return back('method_disabled');
 
     if (c.req.query('error')) return back(c.req.query('error') === 'access_denied' ? 'cancelled' : 'verification_failed');
     const code = c.req.query('code');
