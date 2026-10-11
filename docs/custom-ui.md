@@ -90,7 +90,7 @@ Use these `autocomplete` values so browsers offer to save and fill passwords and
 | Code from the e-mail | `one-time-code` |
 | Code from the authenticator app, or a recovery code | `off` |
 
-`one-time-code` lets Safari and iOS fill the code from Mail or Messages. It also makes password managers offer a stored authenticator code, but the iCloud Passwords extension for Chrome then opens its panel on every such field, even with nothing stored for the site; the dialog keeps the attribute for the e-mail code only.
+`one-time-code` lets Safari and iOS fill the code from Mail or Messages, and lets password managers offer a stored authenticator code. The iCloud Passwords extension for Chrome, though, opens its panel on every such field even with nothing stored for the site, so the dialog uses `off` for the authenticator code and keeps `one-time-code` for the e-mail code, where the panel still appears in Chrome. The dialog's [`code-autocomplete` attribute](styling.md#attributes) switches the authenticator fields to `one-time-code`.
 
 ## Authenticator app: `Madauth.totp`
 

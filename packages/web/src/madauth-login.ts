@@ -116,6 +116,7 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
 export class MadauthLogin extends LitElement {
   static override properties = {
     heading: { type: String },
+    codeAutocomplete: { type: String, attribute: 'code-autocomplete' },
     notice: { state: true },
     error: { state: true },
     usable: { state: true },
@@ -131,6 +132,13 @@ export class MadauthLogin extends LitElement {
 
   /** Title shown at the top of the dialog. Default: "Sign in" in the dialog's language. */
   heading = '';
+
+  /**
+   * `autocomplete` of the fields for the code from the authenticator app: `off` (the default) or `one-time-code`.
+   * `one-time-code` lets password managers offer a stored code, but the iCloud Passwords extension for Chrome then
+   * opens its panel on the field even with nothing stored; see docs/custom-ui.md.
+   */
+  codeAutocomplete: 'off' | 'one-time-code' = 'off';
 
   /** Message shown below the heading, e.g. after picking a method that is not available yet. */
   private notice?: (strings: Strings) => string;
@@ -726,10 +734,7 @@ export class MadauthLogin extends LitElement {
 
   // --- The authenticator app ---
 
-  /**
-   * The field for the code from the app, or for a recovery code. Not `autocomplete="one-time-code"`: that makes
-   * the iCloud Passwords extension open its panel on the field even with nothing stored (see custom-ui.md).
-   */
+  /** The field for the code from the app, or for a recovery code. */
   private codeField() {
     const s = this.strings;
     return this.useRecovery
@@ -742,10 +747,15 @@ export class MadauthLogin extends LitElement {
       : html`
           <div class="field">
             <label for="code">${s.appCode}</label>
-            <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="off" maxlength="7" />
+            ${this.appCodeInput()}
             <p class="hint">${s.totpHint}</p>
           </div>
         `;
+  }
+
+  /** The input for the code from the app, in {@link codeField} and in the setup; {@link codeAutocomplete} applies. */
+  private appCodeInput() {
+    return html`<input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete=${this.codeAutocomplete || 'off'} maxlength="7" />`;
   }
 
   /** What was typed into {@link codeField}, as the scope takes it. */
@@ -844,7 +854,7 @@ export class MadauthLogin extends LitElement {
             <form part="form" class="totp-setup" @submit=${this.onConfirmSetup}>
               <div class="field">
                 <label for="code">${s.appCode}</label>
-                <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="off" maxlength="7" />
+                ${this.appCodeInput()}
               </div>
               <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
                 <span class="label">${s.totpSetup.turnOn}</span>

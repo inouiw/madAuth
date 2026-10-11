@@ -99,6 +99,13 @@ describe('<madauth-login> and the authenticator app on its own', () => {
     const code = $<HTMLInputElement>('form.totp input[name="code"]')!;
     expect(code.getAttribute('autocomplete')).toBe('off');
     expect(code.getAttribute('inputmode')).toBe('numeric');
+    // The code-autocomplete attribute opts into one-time-code; removing it is back to off.
+    login().setAttribute('code-autocomplete', 'one-time-code');
+    await settle();
+    expect($('form.totp input[name="code"]')!.getAttribute('autocomplete')).toBe('one-time-code');
+    login().removeAttribute('code-autocomplete');
+    await settle();
+    expect($('form.totp input[name="code"]')!.getAttribute('autocomplete')).toBe('off');
     expect(text('form.totp .hint')).toBe('Enter the 6-digit code from your authenticator app.');
     expect(text('form.totp .submit')).toBe('Sign in');
     await click('[data-action="toggle-recovery"]');
