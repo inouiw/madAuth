@@ -113,7 +113,9 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
       // Another sign-up gave the user a sign-in method meanwhile: theirs stands, and no e-mail goes out for a
       // password that was never stored. The answer is the same.
       else if (!(await users.linkAccount(existing.id, { key: passwordAccountKey(existing.id), secret: passwordHash }))) {
-        if (existing.emailVerified) await users.updateUser(existing.id, { emailVerified: true });
+        // The confirmation comes back only for a method that won without a password (an app sign-up whose
+        // address was confirmed): a password another sign-up linked meanwhile still waits for its own e-mail.
+        if (existing.emailVerified && !(await users.passwordAccount(existing.id))) await users.updateUser(existing.id, { emailVerified: true });
         return accepted(c);
       }
       await users.reopenSignUp(existing);

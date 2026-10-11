@@ -200,8 +200,10 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     // The challenge of a sign-up with the app comes from a used confirmation link. A password sign-up for the
     // address meanwhile took the confirmation back until its own e-mail is used; nobody has, so the app wins
     // and the password goes, as for any unconfirmed sign-up.
-    if (signUp && !user.emailVerified) {
-      await users.verifyByProvider(user);
+    // Read again: a password confirmed by its own e-mail meanwhile stays.
+    const fresh = signUp && !user.emailVerified ? await users.findById(user.id) : null;
+    if (fresh && !fresh.emailVerified) {
+      await users.verifyByProvider(fresh);
       user = { ...user, emailVerified: true, wrongCodes: 0 };
     }
     const { recoveryCodes, hashes } = newRecoveryCodes();

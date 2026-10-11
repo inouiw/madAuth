@@ -17,6 +17,7 @@ import {
   testApp,
   verify,
 } from '../test/helpers.js';
+import { Users, passwordAccountKey } from '../users.js';
 import { RESET_TTL_MS, VERIFY_TTL_MS } from './password.js';
 
 afterEach(() => {
@@ -191,6 +192,36 @@ describe('a confirmed user without a sign-in method', () => {
 
     expect(await store.findMany('account', { userId })).toEqual([expect.objectContaining({ key: 'google:1001' })]);
     expect((await signIn(app)).status).toBe(401);
+  });
+
+  it('of two password sign-ups at once, the one that loses doesn\'t confirm the other\'s password', async () => {
+    const { app } = await interruptedGoogleSignUp();
+    advance(61_000);
+    // The other sign-up links its password between this one's lookup and its own link.
+    const link = Users.prototype.linkAccount;
+    vi.spyOn(Users.prototype, 'linkAccount').mockImplementationOnce(async function (this: Users, userId) {
+      await link.call(this, userId, { key: passwordAccountKey(userId), secret: await hashPassword('their password') });
+      return null;
+    });
+
+    expect((await signUp(app)).status).toBe(202);
+
+    expect((await signIn(app, { password: 'their password' })).status).toBe(403);
+  });
+
+  it('a sign-up that loses to an app setup confirmed meanwhile gives the address its confirmation back', async () => {
+    const { app, store, userId } = await interruptedGoogleSignUp();
+    advance(61_000);
+    const link = Users.prototype.linkAccount;
+    vi.spyOn(Users.prototype, 'linkAccount').mockImplementationOnce(async function (this: Users, id) {
+      await link.call(this, id, { key: `totp:${id}`, primary: true, secret: 'x' });
+      return null;
+    });
+
+    expect((await signUp(app)).status).toBe(202);
+
+    expect(await store.findMany('user', { id: userId })).toEqual([expect.objectContaining({ emailVerified: true })]);
+    expect(await store.findMany('account', { userId })).toEqual([expect.objectContaining({ key: `totp:${userId}` })]);
   });
 });
 
