@@ -5,7 +5,7 @@ import { generateSigningKey } from '../keys.js';
 import type { StoreAdapter } from '../store/schema.js';
 import { createSqliteAdapter } from '../store/sqlite.js';
 import { Users } from '../users.js';
-import { EMAIL_TYPES, WEBHOOK_TYPES, generateWebhookSecret, verifyWebhook } from '../webhooks.js';
+import { EMAIL_TYPES, SMS_TYPES, WEBHOOK_TYPES, generateWebhookSecret, verifyWebhook } from '../webhooks.js';
 
 export const ISSUER = 'https://auth.example.com';
 export const APP_ORIGIN = 'https://app.example.com';
@@ -145,6 +145,9 @@ export function recordingWebhook() {
     /** The e-mails taken over so far. */
     emails: () => calls.filter((c) => (EMAIL_TYPES as readonly string[]).includes(c.type)),
     lastEmail: () => hook.emails().at(-1),
+    /** The SMS taken over so far. */
+    sms: () => calls.filter((c) => (SMS_TYPES as readonly string[]).includes(c.type)),
+    lastSms: () => hook.sms().at(-1),
     types: () => calls.map((c) => c.type),
     fetch: (async (url: string | URL, init: RequestInit = {}) => {
       const body = String(init.body);

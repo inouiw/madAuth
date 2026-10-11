@@ -18,6 +18,16 @@ export function error(c: Context, status: 400 | 401 | 403 | 404 | 429 | 503, cod
 export const unavailable = (c: Context): Response =>
   error(c, 503, 'temporarily_unavailable', 'E-mails can not be sent right now. Please try again later.');
 
+/** The webhook did not take over an SMS. */
+export const smsUnavailable = (c: Context): Response =>
+  error(c, 503, 'temporarily_unavailable', 'The SMS can not be sent right now. Please try again later.');
+
+/** The host of the app that made the request (its Origin), else the server's: what a message names as the site. */
+export function originHost(ctx: AppContext, c: Context): string {
+  const origin = c.req.header('origin');
+  return URL.canParse(origin ?? '') ? new URL(origin!).hostname : new URL(ctx.config.issuer).hostname;
+}
+
 /** Every accepted request for an e-mail answers the same way, whether or not a mail was sent. */
 export const accepted = (c: Context): Response => c.json({}, 202);
 
@@ -42,10 +52,12 @@ export function nameOf(value: unknown): string | null {
 export function signInAnswer(c: Context, step: SignInStep): Response {
   if ('disabled' in step) return error(c, 403, 'method_disabled', 'This way of signing in is switched off.');
   if ('next' in step) {
-    // `method` says which sign-in goes on, for a client that learns of the step later (e.g. after a redirect).
-    return step.next === 'totp'
-      ? c.json({ error: 'totp_required', message: 'Enter the code from your authenticator app to finish signing in.', method: step.method }, 401)
-      : c.json({ error: 'totp_setup_required', message: 'Set up an authenticator app to finish signing in.', method: step.method }, 401);
+    // `method` says which sign-in goes on, for a client that learns of the step later (e.g. after a redirect);
+    // `factors` which second factors the user can finish it with, so the client can offer a switch.
+    const rest = { method: step.method, factors: step.factors };
+    if (step.next === 'totp') return c.json({ error: 'totp_required', message: 'Enter the code from your authenticator app to finish signing in.', ...rest }, 401);
+    if (step.next === 'sms') return c.json({ error: 'sms_required', message: 'Enter the code we sent to your phone to finish signing in.', ...rest }, 401);
+    return c.json({ error: 'totp_setup_required', message: 'Set up an authenticator app to finish signing in.', ...rest }, 401);
   }
   return c.json({ user: step.user });
 }

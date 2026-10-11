@@ -10,8 +10,11 @@ import { emailLinkRoutes } from './routes/email-link.js';
 import { googleRoutes } from './routes/google.js';
 import { body, error } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
-import { checkCode, clearChallenge, setChallenge, totpRoutes, type NextStep, type TotpKeys } from './routes/totp.js';
+import { clearChallenge, setChallenge, type Factor, type NextStep } from './routes/challenge.js';
+import { smsRoutes } from './routes/sms.js';
+import { checkCode, totpRoutes, type TotpKeys } from './routes/totp.js';
 import {
+  METHODS,
   SIGN_IN_METHODS,
   Settings,
   anyOn,
@@ -23,6 +26,7 @@ import {
   parseMethodSettings,
   policyOf,
   authenticatorOn,
+  type MethodId,
   type MethodSettings,
   type SignInMethod,
 } from './settings.js';
@@ -35,16 +39,17 @@ import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type Webho
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
 
-export { REDIRECT_ERROR_PARAM, REDIRECT_NEXT_PARAM } from './routes/google.js';
+export { REDIRECT_ERROR_PARAM, REDIRECT_FACTORS_PARAM, REDIRECT_NEXT_PARAM } from './routes/google.js';
 
 /** The answer of the operator's sign-up check. */
 export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | { ok: false; reason: 'rejected'; message: string };
 
 /**
- * What a primary sign-in method ends in: the user with their session; the next step with the
- * authenticator app (the challenge cookie is set); or nothing, because the method is switched off.
+ * What a primary sign-in method ends in: the user with their session; the next step with a second factor
+ * (the challenge cookie is set; `factors` is what the user can finish with); or nothing, because the method
+ * is switched off.
  */
-export type SignInStep = { user: MadauthUser } | { next: NextStep; method: SignInMethod } | { disabled: true };
+export type SignInStep = { user: MadauthUser } | { next: NextStep; method: SignInMethod; factors: Factor[] } | { disabled: true };
 
 /** What the route modules share. */
 export interface AppContext {
@@ -58,8 +63,8 @@ export interface AppContext {
   /** Sets the session cookies for the user, as the routes resolved them from the store; returns the user with `amr`. */
   startSession(c: Context, user: MadauthUser, amr: string[], extra?: { sv?: number }): Promise<MadauthUser>;
   /**
-   * Finishes a primary sign-in method that succeeded: the session, or the next step with the authenticator
-   * app as the policy of `method` and the user's enrollment demand. `amr` is how the user signed in so far;
+   * Finishes a primary sign-in method that succeeded: the session, or the next step with a second factor
+   * as the policy of `method` and what the user has set up demand. `amr` is how the user signed in so far;
    * `profile` is what the method knows beyond the record (e.g. Google's picture). Emits `user.signed_in`.
    */
   secondStep(c: Context, user: StoredUser, amr: string[], method: SignInMethod, profile?: { name?: string; picture?: string }): Promise<SignInStep>;
@@ -70,13 +75,13 @@ export interface AppContext {
   /** Present when WEBHOOK_URL is configured. */
   webhook?: WebhookClient;
   /** Whether the server has what a method needs; only a configured method can be on. */
-  configured(method: SignInMethod): boolean;
+  configured(method: MethodId): boolean;
   /** Whether the webhook sends the e-mails that confirm an address, so people can sign up with one. */
   emailVerification: boolean;
   /** The sign-in methods that are on, as an admin set them: read from the store once per request. */
   methods(c: Context): Promise<MethodSettings>;
   /** Whether a sign-in method is on: configured, and listed by an admin. */
-  enabled(c: Context, method: SignInMethod): Promise<boolean>;
+  enabled(c: Context, method: MethodId): Promise<boolean>;
   /** Asks the webhook whether someone may sign up (`signup.before`). Fails closed: without an answer, nobody signs up. */
   checkSignup(data: { email: string; name?: string; locale?: string; method: SignInMethod }): Promise<SignupCheck>;
   /** Tells the webhook that something happened. Awaited (Lambda stops after the answer), but never fails. */
@@ -97,7 +102,7 @@ export function createApp(config: MadauthConfig): Hono {
   const users = new Users(config.store, codeKey);
   const methods = methodConfig(config);
   const settings = new Settings(config.store, initialMethods(methods));
-  const configured = (method: SignInMethod) => isConfigured(methods, method);
+  const configured = (method: MethodId) => isConfigured(methods, method);
   const signsUp = (method: SignInMethod) => canSignUp(methods, method);
   const emailVerification = sendsVerificationEmails(config);
   const totpKeys: TotpKeys = { totpKey: deriveTotpKey(config.signingKey.d!), codeKey };
@@ -215,18 +220,28 @@ export function createApp(config: MadauthConfig): Hono {
     async secondStep(c, user, amr, method, profile) {
       const methods = await this.methods(c);
       if (!isOn(method, configured, methods)) return { disabled: true };
-      const enrolled = await users.totpAccount(user.id);
       // The app itself is the method of a sign-up with it: it is set up now, or asked for if it exists already.
       const policy = method === 'totp' ? 'required' : policyOf(method, methods);
-      const next: NextStep | null = policy === 'none' ? null : enrolled ? 'totp' : policy === 'required' ? 'totp-setup' : null;
+      let next: NextStep | null = null;
+      let factors: Factor[] = [];
+      if (policy !== 'none') {
+        // A phone counts when SMS codes are on; a sign-up with the app is finished with the app. The app comes
+        // first when the user has both: the client can switch to the SMS.
+        const [app, phone] = await Promise.all([
+          users.totpAccount(user.id),
+          method !== 'totp' && isOn('sms', configured, methods) ? users.smsAccount(user.id) : null,
+        ]);
+        factors = [...(app ? (['totp'] as const) : []), ...(phone ? (['sms'] as const) : [])];
+        next = app ? 'totp' : phone ? 'sms' : policy === 'required' ? 'totp-setup' : null;
+      }
       if (next) {
-        // A sign-in that goes on with the app ends the session there was at this browser, if any: whoever
-        // was signed in is signed out until the step is done, so the setup can't be taken for theirs.
+        // A sign-in that goes on with a second step ends the session there was at this browser, if any:
+        // whoever was signed in is signed out until the step is done, so the setup can't be taken for theirs.
         clearSession(c);
         // Only what the session will show; the cookie is signed, not encrypted.
         const known = { ...(profile?.name ? { name: profile.name } : {}), ...(profile?.picture ? { picture: profile.picture } : {}) };
-        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, ...(Object.keys(known).length ? { profile: known } : {}) });
-        return { next, method };
+        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, factors, ...(Object.keys(known).length ? { profile: known } : {}) });
+        return { next, method, factors };
       }
       const result = await this.startSession(c, toMadauthUser(user, profile), amr, { sv: user.sessionVersion });
       await this.emit('user.signed_in', { user: result, method });
@@ -305,7 +320,7 @@ export function createApp(config: MadauthConfig): Hono {
   // The methods that are on right now, so the web library shows exactly those.
   app.get('/auth/config', async (c) => {
     const current = await ctx.methods(c);
-    const on = (method: SignInMethod) => isOn(method, configured, current);
+    const on = (method: MethodId) => isOn(method, configured, current);
     return c.json({
       google: on('google') ? { clientId: config.google!.clientId, codeFlow: !!config.google!.clientSecret, secondFactor: policyOf('google', current) } : null,
       password: on('password') ? { minLength: config.password!.minLength, secondFactor: policyOf('password', current) } : null,
@@ -313,11 +328,14 @@ export function createApp(config: MadauthConfig): Hono {
       totp: authenticatorOn(configured, current) ? { signIn: on('totp'), signUp: on('totp') && emailVerification } : null,
       email: { verification: emailVerification },
       emailLink: on('email-link') ? { secondFactor: policyOf('email-link', current) } : null,
+      // SMS codes as a second factor: a signed-in user can add a phone, and the dialog offers it in the second step.
+      sms: on('sms'),
     });
   });
 
   if (emailVerification && ctx.webhook) emailRoutes(app, ctx, users, ctx.webhook);
   if (configured('email-link') && ctx.webhook) emailLinkRoutes(app, ctx, users, ctx.webhook);
+  if (configured('sms') && ctx.webhook) smsRoutes(app, ctx, users, ctx.webhook);
   if (config.google) googleRoutes(app, ctx, config.google);
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, config.password, users, ctx.webhook);
   totpRoutes(app, ctx, totpKeys);
@@ -344,7 +362,8 @@ export function createApp(config: MadauthConfig): Hono {
     const user = await currentSession(c);
     if (!user) return c.json({ error: 'no_session' }, 401);
     const stored = await users.findById(user.id);
-    // An app that is switched off server-wide protects nothing, so it is not asked for either.
+    // An app that is switched off server-wide protects nothing, so it is not asked for either. A phone for
+    // SMS codes alone does not protect the deletion (not covered yet, see docs/sms-security.md).
     const protects = stored && authenticatorOn(configured, await ctx.methods(c));
     const authenticator = protects ? await users.totpAccount(user.id) : null;
     if (stored && authenticator) {
@@ -420,12 +439,12 @@ export function createApp(config: MadauthConfig): Hono {
   });
 
   /**
-   * The settings as the admin API answers them: for each method, whether the server is configured for it,
-   * whether it is on, and (the methods with a second factor) whether it asks for one.
+   * The settings as the admin API answers them: for each method (and `sms`), whether the server is configured
+   * for it, whether it is on, and (the methods with a second factor) whether it asks for one.
    */
   const settingsAnswer = (methods: MethodSettings) => ({
     methods: Object.fromEntries(
-      SIGN_IN_METHODS.map((method) => [
+      METHODS.map((method) => [
         method,
         {
           configured: configured(method),
@@ -450,9 +469,9 @@ export function createApp(config: MadauthConfig): Hono {
     const next = parseMethodSettings(data.methods, { booleans: true });
     if (!next) {
       return invalid(
-        `methods must list the sign-in methods that are on (${SIGN_IN_METHODS.join(', ')}), each as true, {} or ` +
+        `methods must list the sign-in methods that are on (${SIGN_IN_METHODS.join(', ')}; sms for SMS codes as a second factor), each as true, {} or ` +
           '{ "secondFactor": "none" | "optional" | "required" } (google, password and email-link), e.g. ' +
-          '{ "google": {}, "password": { "secondFactor": "optional" } }. A method that is not listed is off.',
+          '{ "google": {}, "password": { "secondFactor": "optional" }, "sms": {} }. A method that is not listed is off.',
       );
     }
     // The whole list is replaced; the guard runs on the value that is written.
@@ -471,6 +490,19 @@ export function createApp(config: MadauthConfig): Hono {
     if (!user) return noUser(c);
     const removed = await users.removeTotp(user.id);
     if (removed) await ctx.emit('totp.disabled', { user: toMadauthUser(user), by: caller.email });
+    return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
+  });
+
+  // The same for a user who lost the phone that gets the SMS codes.
+  app.post('/auth/admin/sms/remove', async (c) => {
+    const caller = await admin(c);
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    if (!isValidEmail(data.email)) return invalidEmail(c);
+    const user = await users.findByEmail(normalizeEmail(data.email));
+    if (!user) return noUser(c);
+    const removed = await users.removeSms(user.id);
+    if (removed) await ctx.emit('sms.disabled', { user: toMadauthUser(user), by: caller.email });
     return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
   });
 

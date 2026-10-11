@@ -1,6 +1,7 @@
 // Confirming an e-mail address, shared by the methods that sign people up with one (password and the
 // authenticator app): the routes are the same, only the scope that offers them differs.
 import type { LoginMethodId } from '../methods.js';
+import { pendingStepOf } from '../providers/provider.js';
 import { ok, type MadauthUser, type Result } from '../result.js';
 import type { Core } from './core.js';
 
@@ -13,17 +14,18 @@ export interface SendEmailOptions {
 export const currentPage = (): string => location.href.split('#')[0];
 
 /**
- * Marks a sign-in that goes on with the authenticator app, and returns the result as it is: a `totp_required`
- * or `totp_setup_required` failure tells the caller what comes next.
+ * Marks a sign-in that goes on with a second step, and returns the result as it is: a `totp_required`,
+ * `sms_required` or `totp_setup_required` failure tells the caller what comes next.
  */
 export function noteNextStep<T extends object>(core: Core, method: LoginMethodId, result: Result<T>): Result<T> {
-  if (!result.isSuccess && (result.error.code === 'totp_required' || result.error.code === 'totp_setup_required')) {
-    core.setPendingStep({ step: result.error.code === 'totp_required' ? 'code' : 'setup', method });
+  if (!result.isSuccess) {
+    const pending = pendingStepOf(result.error, method);
+    if (pending) core.setPendingStep(pending);
   }
   return result;
 }
 
-/** Notes a sign-in that succeeded, or one that goes on with the app. */
+/** Notes a sign-in that succeeded, or one that goes on with a second step. */
 export function signedIn(core: Core, method: LoginMethodId, result: Result<{ user: MadauthUser }>): Result<{ user: MadauthUser }> {
   if (result.isSuccess) {
     core.signedIn(result.user);

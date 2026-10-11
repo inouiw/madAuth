@@ -24,14 +24,16 @@ let settings = {
   password: { configured: true, enabled: false, secondFactor: 'optional' },
   totp: { configured: true, enabled: false },
   'email-link': { configured: true, enabled: true, secondFactor: 'none' },
+  sms: { configured: true, enabled: true },
 };
 /** When set, the fake server answers settings/get only once it resolves. */
 let holdSettings: Promise<void> | undefined;
 /** The same for claims/get and totp/remove: late responses, after the user changed. */
 let holdClaims: Promise<void> | undefined;
 let holdRemove: Promise<void> | undefined;
-/** Whether the signed-in user has the authenticator app. */
+/** Whether the signed-in user has the authenticator app, and their phone number for SMS codes (masked), if any. */
 let authenticator = false;
+let phone: string | null = null;
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 // The API explorer: a row per method, opened to its parameters, the request and the response.
@@ -69,7 +71,17 @@ vi.stubGlobal(
           totp: { signIn: false, signUp: false },
           email: { verification: true },
           emailLink: { secondFactor: 'none' },
+          sms: true,
         });
+      case 'GET /auth/sms/status':
+        return sessionUser ? json({ enabled: !!phone, phone }) : json({ error: 'no_session' }, 401);
+      case 'POST /auth/sms/send':
+        if (!sessionUser) return json({ error: 'no_session' }, 401);
+        return phone ? json({ phone }, 202) : json({ error: 'no_phone', message: 'none' }, 400);
+      case 'POST /auth/sms/remove':
+        if (body().code !== '123456') return json({ error: 'code_invalid', message: 'wrong' }, 401);
+        phone = null;
+        return json({});
       case 'GET /auth/session':
         return sessionUser ? json({ user: sessionUser }) : json({ error: 'no_session' }, 401);
       case 'GET /auth/totp/status':
@@ -111,6 +123,7 @@ vi.stubGlobal(
           password: { configured: true, enabled: on(methods.password), secondFactor: policy(methods.password) },
           totp: { configured: true, enabled: on(methods.totp) },
           'email-link': { configured: true, enabled: on(methods['email-link']), secondFactor: policy(methods['email-link']) },
+          sms: { configured: true, enabled: on(methods.sms) },
         };
         return json({ methods: settings });
       }
@@ -272,7 +285,7 @@ describe('demo page', () => {
     $<HTMLInputElement>('#method-email-link').checked = false;
     changed($('#method-email-link'));
     expect(request('setSettings')).toBe(
-      `Madauth.admin.setSettings({ methods })\n${JSON.stringify({ methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false } }, null, 2)}`,
+      `Madauth.admin.setSettings({ methods })\n${JSON.stringify({ methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false, sms: true } }, null, 2)}`,
     );
     execute('setSettings').click();
     await expect.poll(() => settings.password.enabled).toBe(true);
@@ -281,7 +294,7 @@ describe('demo page', () => {
     expect(settings['email-link'].enabled).toBe(false);
     const [, sent] = [...vi.mocked(fetch).mock.calls].reverse().find(([url]: [unknown, RequestInit?]) => String(url).endsWith('/auth/admin/settings/set')) as [string, RequestInit];
     expect(JSON.parse(String(sent.body))).toEqual({
-      methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false },
+      methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false, sms: true },
     });
     await expect.poll(() => response('setSettings')).toContain('"secondFactor": "required"');
     expect(execute('setSettings').disabled).toBe(false);

@@ -176,6 +176,7 @@ describe('init', () => {
       'E-mail & password sign-in? (yes/no)',
       'Sign-up with the authenticator app alone, without a password? (yes/no)',
       'Passwordless sign-in with an e-mail link? (yes/no)',
+      'SMS codes as a second factor, sent by your webhook receiver? (yes/no)',
       'Database for the users',
     ]);
     expect(readEnvFile(file)).toMatchObject({
@@ -201,6 +202,7 @@ describe('init', () => {
       'E-mail & password sign-in? (yes/no)',
       'Sign-up with the authenticator app alone, without a password? (yes/no)',
       'Passwordless sign-in with an e-mail link? (yes/no)',
+      'SMS codes as a second factor, sent by your webhook receiver? (yes/no)',
     ]);
     expect(answered).toEqual({ exitCode: 1, output: expect.stringContaining('No sign-in method is chosen') });
     expect(withOptions).toEqual(answered);

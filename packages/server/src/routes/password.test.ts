@@ -454,8 +454,9 @@ describe('configuration', () => {
       password: { minLength: 8, secondFactor: 'none' },
       totp: null,
       email: { verification: true },
-      // The test receiver asks for every type, email.signin included: the e-mail link is configured and on.
+      // The test receiver asks for every type, email.signin and sms.code included: the e-mail link and SMS codes are configured and on.
       emailLink: { secondFactor: 'none' },
+      sms: true,
     });
     expect((await app.request('/auth/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } })).status).toBe(404);
   });

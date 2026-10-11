@@ -16,7 +16,7 @@ export interface MethodSetting {
 }
 
 export interface Settings {
-  methods: { google: MethodSetting; password: MethodSetting; totp: MethodSetting; 'email-link': MethodSetting };
+  methods: { google: MethodSetting; password: MethodSetting; totp: MethodSetting; 'email-link': MethodSetting; sms: MethodSetting };
 }
 
 /** The list of methods to switch on: `true` or `{}` for on, with a policy for Google, password and the e-mail link. A method left out is off. */
@@ -27,6 +27,8 @@ export interface MethodsToSet {
   totp?: boolean | Record<string, never>;
   /** The passwordless e-mail link. */
   'email-link'?: boolean | { secondFactor?: SecondFactorPolicy };
+  /** SMS codes as a second factor (next to the authenticator app), for the methods whose policy asks for one. */
+  sms?: boolean | Record<string, never>;
 }
 
 /**

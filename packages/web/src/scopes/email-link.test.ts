@@ -129,7 +129,7 @@ describe('Madauth.emailLink', () => {
 
     expect(result).toEqual({ isSuccess: true, leftOut: [] });
     expect(Madauth.currentUser).toBeNull();
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'email-link' });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'email-link', factors: ['totp'] });
     expect(Madauth.totp.policy?.secondFactorFor).toEqual(['email-link']);
     expect(await Madauth.totp.verify({ code: CODE })).toEqual({ isSuccess: true, user: linda });
     expect(Madauth.totp.pendingStep).toBeNull();

@@ -15,9 +15,11 @@ export { columnName, createTablesSql, tableName, upgradeTablesSql, type SqlDiale
 export type { MadauthUser } from './user.js';
 export { ADMIN_ROLE, parseClaims, parseRoles, type Claims } from './claims.js';
 export {
+  METHODS,
   METHODS_WITH_SECOND_FACTOR,
   SECOND_FACTOR_POLICIES,
   SIGN_IN_METHODS,
+  type MethodId,
   type MethodSetting,
   type MethodSettings,
   type SecondFactorPolicy,

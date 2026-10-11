@@ -5,7 +5,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
-import { METHODS_WITH_SECOND_FACTOR, authenticatorOn, isOn, policyOf, type SignInMethod } from '../settings.js';
+import { METHODS_WITH_SECOND_FACTOR, authenticatorOn, isOn, policyOf } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import {
   TOTP_WINDOW,
@@ -21,41 +21,21 @@ import {
 } from '../totp.js';
 import { newId, toMadauthUser, totpAccountKey, type StoredAccount, type StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
+import { finishSignIn, methodOff, methodStillOn, pendingOrSignedIn, readChallenge } from './challenge.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
-import { accepted, body, error, nameOf, noSession, redirectTarget, unavailable, type Body } from './helpers.js';
+import { accepted, body, error, nameOf, noSession, originHost, redirectTarget, unavailable, type Body } from './helpers.js';
 import { countSignInAttempt } from './lockout.js';
 
-/** The cookie that carries a sign-in from its first step to the code (or the setup) of the authenticator app. */
-export const CHALLENGE_COOKIE = 'madauth_challenge';
-export const CHALLENGE_TYP = 'madauth-challenge+jwt';
-/** How long the second step may take. */
-export const CHALLENGE_TTL = 10 * 60;
+export { CHALLENGE_COOKIE, CHALLENGE_TTL, CHALLENGE_TYP, clearChallenge, setChallenge, type Challenge, type NextStep } from './challenge.js';
 
 const SETUP_COOKIE = 'madauth_totp_setup';
 const SETUP_TYP = 'madauth-totp-setup+jwt';
 /** How long scanning the QR code and entering the first code may take. */
 const SETUP_TTL = 10 * 60;
 
-/** Both cookies are only sent to these routes. */
+/** The routes, and where the setup cookie is sent. */
 const COOKIE_PATH = '/auth/totp';
 
-/** What a sign-in still needs after its primary method succeeded: a code from the app, or setting one up. */
-export type NextStep = 'totp' | 'totp-setup';
-
-/**
- * The challenge cookie: who passed the first step, how (`amr`, empty for a sign-up with the app), what comes
- * next, and what the method knows beyond the record (Google's name and picture), for the session.
- */
-export interface Challenge {
-  sub: string;
-  sv: number;
-  amr: string[];
-  method: SignInMethod;
-  next: NextStep;
-  profile?: { name?: string; picture?: string };
-}
-
-type ChallengeClaims = Challenge & JWTPayload;
 /**
  * The setup cookie: whose setup it is (`sub`), its id, the secret as it will be stored (encrypted), the id of
  * the setup the account had when this one started (`replaces`; absent without an account, null for one
@@ -77,23 +57,6 @@ export interface TotpKeys {
 }
 
 const cookieOptions = (secure: boolean) => ({ path: COOKIE_PATH, httpOnly: true, secure, sameSite: 'Strict' as const });
-
-/** Sets the challenge cookie: the sign-in goes on with the authenticator app within CHALLENGE_TTL. */
-export async function setChallenge(c: Context, ctx: AppContext, challenge: Challenge): Promise<void> {
-  const token = await signToken(await ctx.keys, ctx.config.issuer, CHALLENGE_TYP, { ...challenge }, CHALLENGE_TTL);
-  setCookie(c, CHALLENGE_COOKIE, token, { ...cookieOptions(ctx.secure), maxAge: CHALLENGE_TTL });
-}
-
-/** Ends the challenge, if any: a session was started, or the user signed out. */
-export function clearChallenge(c: Context, secure: boolean): void {
-  deleteCookie(c, CHALLENGE_COOKIE, cookieOptions(secure));
-}
-
-/** The request's challenge for this step, or null if there is none, it expired, or it waits for another step. */
-async function readChallenge(c: Context, ctx: AppContext, next: NextStep): Promise<ChallengeClaims | null> {
-  const claims = await readToken<ChallengeClaims>(await ctx.keys, ctx.config.issuer, CHALLENGE_TYP, getCookie(c, CHALLENGE_COOKIE));
-  return claims && claims.next === next && typeof claims.sub === 'string' && Array.isArray(claims.amr) ? claims : null;
-}
 
 /** How a code was given: from the app, or one of the recovery codes. */
 export type CodeVia = 'totp' | 'recovery_code';
@@ -155,9 +118,6 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   /** Whether the app signs in on its own (the e-mail address and a code), as opposed to a second step only. */
   const standalone = async (c: Context) => isOn('totp', ctx.configured, await methodsNow(c));
   const notStandalone = (c: Context) => error(c, 403, 'method_disabled', 'Signing in with the authenticator app alone is switched off.');
-  /** A challenge finishes only if the method it belongs to is still on: an admin may have switched it off meanwhile. */
-  const methodStillOn = async (c: Context, challenge: Challenge) => isOn(challenge.method, ctx.configured, await methodsNow(c));
-  const methodOff = (c: Context) => error(c, 403, 'method_disabled', 'This way of signing in is switched off.');
 
   /** The stored user of the request's session, or null. */
   const signedIn = async (c: Context): Promise<StoredUser | null> => {
@@ -165,18 +125,8 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     return user ? users.findById(user.id) : null;
   };
 
-  /**
-   * Who sets the app up: the user whose sign-in waits for the setup (the challenge, the latest sign-in at this
-   * browser), else the signed-in user. Starting a session ends the challenge, so an abandoned one can't
-   * outlive a later sign-in. A challenge from before a password reset no longer counts.
-   */
-  const whoSetsUp = async (c: Context): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | null> => {
-    const challenge = await readChallenge(c, ctx, 'totp-setup');
-    const waiting = challenge ? await users.findById(challenge.sub) : null;
-    if (challenge && waiting && waiting.sessionVersion === challenge.sv) return { user: waiting, challenge };
-    const user = await signedIn(c);
-    return user ? { user, challenge: null } : null;
-  };
+  /** Who sets the app up: the user whose sign-in waits for the setup, else the signed-in user (see challenge.ts). */
+  const whoSetsUp = (c: Context) => pendingOrSignedIn(c, ctx);
 
   /** New recovery codes, with what is stored for them. */
   const newRecoveryCodes = () => {
@@ -185,24 +135,12 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   };
 
   /** The name the app shows next to the account: TOTP_ISSUER, or the host of the app that asked. */
-  const issuerLabel = (c: Context): string => {
-    if (config.totpIssuer) return config.totpIssuer;
-    const origin = c.req.header('origin');
-    return URL.canParse(origin ?? '') ? new URL(origin!).hostname : new URL(issuer).hostname;
-  };
-
-  /** Finishes a sign-in whose second step is done: the session, with the app in `amr`. */
-  const finishSignIn = async (c: Context, user: StoredUser, challenge: ChallengeClaims, via: CodeVia) => {
-    const result = await ctx.startSession(c, toMadauthUser(user, challenge.profile), [...challenge.amr, 'otp'], { sv: user.sessionVersion });
-    // For a sign-up with the app, the app is the method itself, not a second factor.
-    await ctx.emit('user.signed_in', { user: result, method: challenge.method, ...(challenge.amr.length ? { secondFactor: via } : {}) });
-    return result;
-  };
+  const issuerLabel = (c: Context): string => config.totpIssuer || originHost(ctx, c);
 
   app.post(`${COOKIE_PATH}/setup`, async (c) => {
     const who = await whoSetsUp(c);
     if (!who) return noSession(c);
-    if (who.challenge && !(await methodStillOn(c, who.challenge))) return methodOff(c);
+    if (who.challenge && !(await methodStillOn(c, ctx, who.challenge))) return methodOff(c);
     // Replacing an app takes a current code from it (or a recovery code), like removing it: a stolen
     // session alone must not swap the app and the recovery codes for the thief's. The approval holds for
     // SETUP_TTL in the setup cookie, so starting again (or a closed dialog) costs no second code.
@@ -241,7 +179,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const who = await whoSetsUp(c);
     if (!who) return noSession(c);
     const { user, challenge } = who;
-    if (challenge && !(await methodStillOn(c, challenge))) return methodOff(c);
+    if (challenge && !(await methodStillOn(c, ctx, challenge))) return methodOff(c);
     const data = await body(c);
     const setup = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
     const secret =
@@ -272,7 +210,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     deleteCookie(c, SETUP_COOKIE, cookie);
     await ctx.emit('totp.enabled', { user: toMadauthUser(user) });
     if (!challenge) return c.json({ recoveryCodes });
-    const result = await finishSignIn(c, user, challenge, 'totp');
+    const result = await finishSignIn(c, ctx, user, challenge, 'otp', 'totp');
     return c.json({ user: result, recoveryCodes });
   });
 
@@ -280,14 +218,14 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const expired = () => error(c, 401, 'challenge_expired', 'The sign-in has expired. Please sign in again.');
     const challenge = await readChallenge(c, ctx, 'totp');
     if (!challenge) return expired();
-    if (!(await methodStillOn(c, challenge))) return methodOff(c);
+    if (!(await methodStillOn(c, ctx, challenge))) return methodOff(c);
     const user = await users.findById(challenge.sub);
     // The user is gone, a password reset ended their sessions meanwhile, or the app was removed.
     const account = user && user.sessionVersion === challenge.sv ? await users.totpAccount(user.id) : null;
     if (!user || !account) return expired();
     const via = await checkCode(c, ctx, keys, user, account, await body(c));
     if (via instanceof Response) return via;
-    return c.json({ user: await finishSignIn(c, user, challenge, via) });
+    return c.json({ user: await finishSignIn(c, ctx, user, challenge, 'otp', via) });
   });
 
   app.post(`${COOKIE_PATH}/signin`, async (c) => {
@@ -311,9 +249,12 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     if (!user) return noSession(c);
     const methods = await methodsNow(c);
     const required = METHODS_WITH_SECOND_FACTOR.filter((method) => isOn(method, ctx.configured, methods) && policyOf(method, methods) === 'required');
-    if (required.length) {
+    // A phone for SMS codes satisfies the policy as well: with one, the app may go.
+    const smsOn = isOn('sms', ctx.configured, methods);
+    if (required.length && !(smsOn && (await users.smsAccount(user.id)))) {
       const names = required.map((method) => ({ google: 'Google', password: 'e-mail & password', 'email-link': 'the e-mail link' })[method]);
-      return error(c, 403, 'required_by_policy', `Signing in with ${names.join(' and ')} requires the authenticator app, so it can't be removed.`);
+      const alternative = smsOn ? ' Add a phone number for SMS codes first, or' : ' To stop using it,';
+      return error(c, 403, 'required_by_policy', `Signing in with ${names.join(' and ')} requires a second factor, so the authenticator app can't be removed.${alternative} delete your account.`);
     }
     const account = await users.totpAccount(user.id);
     if (!account) return c.json({});

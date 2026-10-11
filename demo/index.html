@@ -101,6 +101,15 @@
             <pre id="output" role="status"></pre>
           </div>
         </div>
+        <!-- SMS codes as a second factor: Madauth.setUpSms() opens the dialog for the number and its code; removing takes a code sent to it. -->
+        <div class="authenticator phone">
+          <span class="caption">Phone (SMS codes)</span>
+          <p id="sms-status"></p>
+          <p class="buttons">
+            <button type="button" data-call="setUpSms" hidden>Madauth.setUpSms()</button>
+            <button type="button" data-call="removeSms" hidden>Madauth.sms.remove({ code })</button>
+          </p>
+        </div>
         <button id="sign-out" type="button">Sign out</button>
       </section>
 
@@ -202,6 +211,10 @@
                 </tr>
                 <tr>
                   <td><label><input id="method-totp" type="checkbox" /> Authenticator app on its own</label></td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-sms" type="checkbox" /> SMS codes (as a second factor, next to the app)</label></td>
                   <td></td>
                 </tr>
                 <tr>

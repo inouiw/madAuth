@@ -20,8 +20,11 @@ export const VERIFY_LINK_PARAM = 'madauth_verify';
 export const RESET_LINK_PARAM = 'madauth_reset';
 export const SIGNIN_LINK_PARAM = 'madauth_signin';
 
+/** The purposes that send a link (and a code) by e-mail; SMS codes are sent by routes/sms.ts. */
+export type LinkPurpose = Exclude<VerificationPurpose, 'sms'>;
+
 /** How long each kind of link lives, how it reaches the app, and which e-mail carries it. */
-const LINKS: Record<VerificationPurpose, { ttl: number; param: string; type: WebhookType }> = {
+const LINKS: Record<LinkPurpose, { ttl: number; param: string; type: WebhookType }> = {
   verify: { ttl: VERIFY_TTL_MS, param: VERIFY_LINK_PARAM, type: 'email.verify' },
   reset: { ttl: RESET_TTL_MS, param: RESET_LINK_PARAM, type: 'email.reset' },
   signin: { ttl: SIGNIN_TTL_MS, param: SIGNIN_LINK_PARAM, type: 'email.signin' },
@@ -37,7 +40,7 @@ export interface Emails {
    */
   sendEmail(user: StoredUser, type: WebhookType, data: Record<string, unknown>): Promise<boolean>;
   /** Issues a verification, reset or sign-in and sends its link and code. */
-  sendLinkEmail(user: StoredUser, purpose: VerificationPurpose, target: URL, locale?: string): Promise<boolean>;
+  sendLinkEmail(user: StoredUser, purpose: LinkPurpose, target: URL, locale?: string): Promise<boolean>;
   /**
    * Tells the owner of an address about the account it has and how it signs in: after a sign-up with it
    * (`email.already_registered`) or a "forgot password" for a user without a password (`email.no_password`).
@@ -46,7 +49,7 @@ export interface Emails {
    */
   sendAccountEmail(user: StoredUser, type: 'email.already_registered' | 'email.no_password', target: URL, locale?: string): Promise<boolean>;
   /** Resolves the user from `{ token }` (an e-mail link) or `{ email, code }`; null if invalid, expired or used. */
-  consume(data: Body, purpose: VerificationPurpose): Promise<Consumed>;
+  consume(data: Body, purpose: LinkPurpose): Promise<Consumed>;
   /** The answer when a link or code did not resolve to a user. */
   invalidVerification(c: Context, consumed: Consumed): Response;
 }

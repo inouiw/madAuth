@@ -1,10 +1,10 @@
 # Running the madAuth server
 
-`@madauth/server` signs users in with Google, with e-mail & password, with a passwordless e-mail link or with an authenticator app (TOTP), and issues the madAuth session. You can run it with Node, as a Docker container, an AWS Lambda function or an Azure Function.
+`@madauth/server` signs users in with Google, with e-mail & password, with a passwordless e-mail link or with an authenticator app (TOTP), asks for a second factor (the app, or a code by SMS) when the policy says so, and issues the madAuth session. You can run it with Node, as a Docker container, an AWS Lambda function or an Azure Function.
 
 To set it up on your machine step by step, see [Getting started](getting-started.md).
 
-Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method they have: the password, the Google account (known by Google's stable `sub`), the authenticator app, the e-mail link. A method signs in only users who have it: a Google sign-in with the address of a user who signs in with a password (and perhaps the authenticator app) is refused with `403 other_method`, since whoever controls the Google account must not get past them. The one exception is a sign-up nobody finished (its e-mail link was never used, or the app was never set up): a Google sign-in with its address takes that user over and drops the unproven password. "Forgot password?" only resets a password that exists: a user who signs in with Google alone gets an e-mail that says how they sign in instead (`email.no_password`), and the answer is the same as for any address.
+Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method they have: the password, the Google account (known by Google's stable `sub`), the authenticator app, the e-mail link, and the phone number for SMS codes. A method signs in only users who have it: a Google sign-in with the address of a user who signs in with a password (and perhaps the authenticator app) is refused with `403 other_method`, since whoever controls the Google account must not get past them. The one exception is a sign-up nobody finished (its e-mail link was never used, or the app was never set up): a Google sign-in with its address takes that user over and drops the unproven password. "Forgot password?" only resets a password that exists: a user who signs in with Google alone gets an e-mail that says how they sign in instead (`email.no_password`), and the answer is the same as for any address.
 
 ## How it works
 
@@ -13,6 +13,7 @@ Every user is stored, whichever way they sign in, through a [store adapter](#cus
    - or with an e-mail address and password (`Password`). The server checks the password against its scrypt hash; new accounts confirm their address first. See [Password security](password-security.md).
    - or with an e-mail link (`EmailLink`): the address, then the link or the code from the e-mail madAuth sends. A new address is signed up on first use. See [E-mail link security](email-link-security.md).
    - or with a code from the authenticator app (`Totp`): as the second step after Google, the password or the e-mail link, when the [sign-in policy](#sign-in-methods) asks for it, or on its own with the e-mail address. See [Authenticator app](#authenticator-app).
+   - The second step can also be a code sent by SMS to a phone the user added, next to the app. See [SMS codes](#sms-codes).
 2. The server finds or creates the user, and sets its own session: an ES256-signed JWT in an HttpOnly cookie named `madauth_session`, with the user's [claims](#claims). It is short-lived and renewed without the user noticing; see [Sessions](#sessions).
 3. Your app backends verify that JWT with [`createSessionVerifier`](#verifying-the-session-in-your-backend) or any JWT library, using the public key at `/.well-known/jwks.json`.
 
@@ -32,7 +33,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `DATABASE_URL` | yes | Where the users are stored: `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). For other databases pass your own [store adapter](#custom-store-adapter) instead. |
 | `WEBHOOK_URL` | for the e-mail methods | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
-| `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.verify` and `email.reset`, the e-mail link when they include `email.signin`, e.g. `email.verify,email.reset,email.signin,email.already_registered,email.no_password`. |
+| `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.verify` and `email.reset`, the e-mail link when they include `email.signin`, SMS codes when they include `sms.code`, e.g. `email.verify,email.reset,email.signin,email.already_registered,email.no_password,sms.code`. |
 | `PASSWORD_MIN_LENGTH` | no | Minimum password length. Default `8`. |
 | `TOTP_ISSUER` | no | The name authenticator apps show next to the account, e.g. `My App`. Default: the host of the app that asked for the setup, e.g. `app.example.com`. See [Authenticator app](#authenticator-app). |
 | `SESSION_TTL` | no | Lifetime of a session token in seconds: how long your backends accept it. Default `28800` (8 hours). The web library renews it when needed, see [Sessions](#sessions). |
@@ -235,21 +236,24 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `email.verify` | Sign-up, or "send the e-mail again" | `to`, `link`, `code`, `expiresAt`, `site`, `locale`, `user { id, name }` | 2xx within 10 s, once you have taken over the e-mail (e.g. your mail service accepted it) | The request fails with `503 temporarily_unavailable`, and the user sees that e-mails can't be sent right now. They can retry at once. |
 | `email.reset` | "Forgot password?" | the same | the same | the same |
 | `email.signin` | A sign-in with the [e-mail link](email-link-security.md): the link signs in, the code too | the same (the link lives 15 minutes) | the same | the same |
+| `sms.code` | An [SMS code](sms-security.md): confirming a new number (`setup`), the second step of a sign-in (`signin`), or approving a change to the number (`approve`) | `to` (the number, E.164), `code`, `purpose`, `expiresAt`, `site`, `locale`, `user { id, name }` | 2xx within 10 s, once your SMS service accepted it | `503 temporarily_unavailable`; the user can retry at once |
 | `email.already_registered` | Sign-up with an address that already has a confirmed account | `to`, `link` (the sign-in page), `site`, `locale`, `user`, `methods` (how the user signs in, e.g. `["google"]`) | the same | the same |
 | `email.no_password` | "Forgot password?" for a user without a password, who signs in with Google: tell them so | the same | the same | the same |
 | `signup.before` | Before a user is created: a sign-up with a password or with the authenticator app, the first Google sign-in of an address nobody has, or the first e-mail link for one | `email`, `name`, `locale`, `method` (`password`, `google`, `totp` or `email-link`) | 2xx within 10 s. `{ "allow": false, "message": "…" }` refuses the sign-up and the user sees your message (`403 signup_rejected`); any other 2xx allows it. | The sign-up is refused with `503 temporarily_unavailable`: without your answer, nobody signs up. |
 | `user.created` | A user was created (with a password, the app or the e-mail link: not yet confirmed) | `user { id, email, name }`, `method` | 2xx within 5 s | Logged; the request still succeeds. |
 | `email.verified` | An address was confirmed | `user`, `via` (`link` or `code`) | the same | the same |
 | `email.password_reset` | A password was reset (older sessions end) | `user` | the same | the same |
-| `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `totp` or `email-link`), `secondFactor` (`totp` or `recovery_code`, when the app was the second step) | the same | the same |
+| `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `totp` or `email-link`), `secondFactor` (`totp`, `recovery_code` or `sms`, when there was a second step) | the same | the same |
 | `user.deleted` | A user deleted their account | `user` | the same | the same |
 | `user.claims_changed` | An admin set the claims of a user | `userId`, `email`, `claims`, `by` (the admin's address) | the same | the same |
 | `totp.enabled` | A user set the authenticator app up, or replaced it | `user` | the same | the same |
 | `totp.disabled` | A user removed their authenticator app, or an admin did over the HTTP API (the command line calls no webhook) | `user`, `by` (the admin's address, when an admin did) | the same | the same |
 | `totp.recovery_code_used` | A recovery code was used instead of the app | `user`, `remaining` (recovery codes left) | the same | the same |
+| `sms.enabled` | A user added or replaced their phone number for SMS codes | `user`, `phone` | the same | the same |
+| `sms.disabled` | A user removed their phone number, or an admin did over the HTTP API | `user`, `by` (the admin's address, when an admin did) | the same | the same |
 
 - `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
-- Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. E-mail & password sign-in is on when `email.verify` and `email.reset` are in the list, the e-mail link when `email.signin` is; a receiver that only wants events (e.g. `user.signed_in`) is fine on a Google-only server.
+- Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. E-mail & password sign-in is on when `email.verify` and `email.reset` are in the list, the e-mail link when `email.signin` is, SMS codes when `sms.code` is; a receiver that only wants events (e.g. `user.signed_in`) is fine on a Google-only server.
 - Without `email.already_registered` in the list, a sign-up with an address that already has a confirmed account is answered like any other and no e-mail is sent; the same goes for `email.no_password` and "Forgot password?" for a user without a password. Keep both in the list unless your receiver can't send them: without them the answer comes faster for such an address, see [Password security](password-security.md#no-account-enumeration). Without `signup.before`, every sign-up is allowed.
 - madAuth waits for each call before it answers the browser, because AWS Lambda stops a function as soon as it has answered. Keep receivers fast.
 
@@ -333,18 +337,19 @@ madAuth has four primary sign-in methods, named by these ids in the settings and
 | `password` | E-mail & password | `Password`, `Madauth.password` |
 | `totp` | The [authenticator app](#authenticator-app) on its own (the e-mail address and a code from the app) | `Totp`, `Madauth.totp` |
 | `email-link` | The passwordless [e-mail link](email-link-security.md) (the address, then the link or the code from the e-mail) | `EmailLink`, `Madauth.emailLink` |
+| `sms` | Not a method of its own: [SMS codes](sms-security.md) as a second factor, next to the app, for the methods whose policy asks for one | `Madauth.sms`, `Madauth.setUpSms()` |
 
-The authenticator app is also the second factor of Google, password and the e-mail link: a code from it after the first step.
+The authenticator app is the second factor of Google, password and the e-mail link: a code from it after the first step. With `sms` on, a code sent to the user's phone is one as well; the policy says *that* a second factor is needed, and the user chooses which they set up (the app comes first when they have both, and the dialog offers the switch).
 
 Which methods the server can offer is configured at start: `GOOGLE_CLIENT_ID` for Google, the webhook that sends the e-mails for password sign-in, for the e-mail link and for sign-up with the app; the app itself needs nothing but the store. Which of them are on is a setting in the database that admins change while the server runs, at once and for every instance: the list of the methods that are on, each with its policy for the authenticator app as a second factor. A method that is not in the list is off.
 
 | Policy | For Google, password and the e-mail link |
 | --- | --- |
 | `none` | The method signs in on its own. |
-| `optional` | A user who set the app up (`Madauth.setUpAuthenticator()`) is asked for a code from it after this method; a user without the app signs in as before. Setting the app up never makes an account weaker. |
-| `required` | Everyone is asked for the code. A user without the app sets it up at their next sign-in, before they are in. |
+| `optional` | A user who set the app up (`Madauth.setUpAuthenticator()`) or added a phone (`Madauth.setUpSms()`, with `sms` on) is asked for a code after this method; a user with neither signs in as before. Setting a factor up never makes an account weaker. |
+| `required` | Everyone is asked for a code. A user with neither factor sets one up at their next sign-in, before they are in: the app, or a phone when `sms` is on. |
 
-Until an admin sets the list, a server runs its configured primary methods, Google, password and/or the e-mail link, without a second factor; a server that only has the webhook runs the authenticator app alone. The app on its own is never on until it is listed, since it lets a user in with one factor: that is the admin's decision. Listing it next to a `required` policy is allowed (the phone is the key then), but an enrolled user then also signs in with the app alone.
+Until an admin sets the list, a server runs its configured primary methods, Google, password and/or the e-mail link, without a second factor, and SMS codes when the webhook sends them; a server that only has the webhook runs the authenticator app alone. The app on its own is never on until it is listed, since it lets a user in with one factor: that is the admin's decision. Listing it next to a `required` policy is allowed (the phone is the key then), but an enrolled user then also signs in with the app alone.
 
 A method that is off is not shown by the web library (`GET /auth/config` reports it as `null`), and its routes answer `403 method_disabled`; a sign-in that was between its two steps ends too. Existing sessions continue. At least one method that creates users stays on: Google, e-mail & password, the e-mail link, or the app on a server whose webhook confirms addresses (the app alone on another server would let in only the users who have one).
 
@@ -352,12 +357,12 @@ From your app with the web library, or with the HTTP API:
 
 ```ts
 // The list replaces the old one: what is sent is what is on, with the policy for the app.
-await Madauth.admin.setSettings({ methods: { google: {}, password: { secondFactor: 'optional' }, totp: true, 'email-link': { secondFactor: 'required' } } });
+await Madauth.admin.setSettings({ methods: { google: {}, password: { secondFactor: 'optional' }, totp: true, 'email-link': { secondFactor: 'required' }, sms: {} } });
 const result = await Madauth.admin.getSettings();
-// { isSuccess: true, methods: { google: { configured, enabled, secondFactor }, password: { … }, totp: { configured, enabled }, 'email-link': { … } } }
+// { isSuccess: true, methods: { google: { configured, enabled, secondFactor }, password: { … }, totp: { configured, enabled }, 'email-link': { … }, sms: { configured, enabled } } }
 ```
 
-On the command line, `set-methods google password=required totp email-link=optional` switches on the listed methods, with the policy after `=` (`none` without one), and off the others; `get-methods` prints them.
+On the command line, `set-methods google password=required totp email-link=optional sms` switches on the listed methods, with the policy after `=` (`none` without one), and off the others; `get-methods` prints them.
 
 ## Authenticator app
 
@@ -367,17 +372,27 @@ The authenticator app (TOTP, RFC 6238: Google Authenticator, 1Password, Microsof
 
 **Signing in.** After Google, a password or an e-mail link whose policy asks for it, the server answers `401 totp_required` (or `totp_setup_required`) instead of a session and sets a ten-minute challenge cookie; the dialog asks for the code, and `POST /auth/totp/verify` finishes the sign-in. With the app listed as a method of its own, `POST /auth/totp/signin` takes the e-mail address and a code. A recovery code works wherever a code does, once; `totp.recovery_code_used` tells your webhook how many are left.
 
-**Removing it.** `Madauth.totp.remove(...)` and `newRecoveryCodes(...)` take a current code from the app or a recovery code, so a stolen session can't switch the protection off; while any method's policy is `required`, nobody can remove the app (`403 required_by_policy`), and a user who signed up with the app alone can't remove their only way in (`403 only_method`; they can delete the account). Deleting the account takes a code as well once the app is set up, while the app is on. A user who lost both the phone and the recovery codes needs the operator: `npx @madauth/server remove-totp <email>` (with `DATABASE_URL`; it calls no webhook), or `POST /auth/admin/totp/remove` as an admin; with a `required` policy they set the app up again at their next sign-in.
+**Removing it.** `Madauth.totp.remove(...)` and `newRecoveryCodes(...)` take a current code from the app or a recovery code, so a stolen session can't switch the protection off; while any method's policy is `required`, the app can only go if the user has a phone for [SMS codes](#sms-codes) (`403 required_by_policy`), and a user who signed up with the app alone can't remove their only way in (`403 only_method`; they can delete the account). Deleting the account takes a code as well once the app is set up, while the app is on. A user who lost both the phone and the recovery codes needs the operator: `npx @madauth/server remove-totp <email>` (with `DATABASE_URL`; it calls no webhook), or `POST /auth/admin/totp/remove` as an admin; with a `required` policy they set the app up again at their next sign-in.
 
 The session says how it was authenticated: `amr` is `["pwd", "otp"]`, `["google", "otp"]` or `["email", "otp"]` after the second step and `["otp"]` for the app alone, as `user.amr` in the web library and in [`createSessionVerifier`](#verifying-the-session-in-your-backend). A backend can require `otp` before a sensitive action.
 
 The secrets are stored encrypted with a key derived from `MADAUTH_SIGNING_KEY`: a copy of the database alone gives no codes, and a new signing key makes every enrolled app stop working until it is set up again. See [Authenticator app security](totp-security.md) for the rules in detail.
 
+## SMS codes
+
+With `sms` among the [sign-in methods](#sign-in-methods) and a webhook that sends `sms.code`, a code sent to the user's phone is a second factor next to the app, for the methods whose policy asks for one. It is never a sign-in method of its own: a phone is added to an account that has a first factor.
+
+**Setting it up.** A signed-in user calls `Madauth.setUpSms()` (a custom screen: `Madauth.sms.setUp({ phone })` and `confirmSetup({ code })`): the server sends a code to the number, and the code confirms it; nothing is stored before. The number must be given with the country code and is kept in E.164 form; madAuth shows only its beginning and last two digits. Replacing the number takes a code sent to the current one first (`Madauth.sms.send()`, then `setUp({ phone, code })`), like removing it. With a `required` policy, a user without any factor can add a phone at their next sign-in instead of the app.
+
+**Signing in.** After the first step, a user with only a phone gets `401 sms_required`; one with the app and a phone gets `totp_required` with `factors: ["totp", "sms"]` and can switch. The SMS goes when the client asks for it (`POST /auth/sms/send` with the challenge cookie), and `POST /auth/sms/verify` finishes the sign-in with `amr` ending in `sms`. One SMS per minute goes to a user (`429 too_soon`); a code lives ten minutes.
+
+**Removing it.** `Madauth.sms.remove({ code })` takes a code sent to the number (`Madauth.sms.send()` while signed in). While a policy is `required`, the phone can only go if the user has the app (`403 required_by_policy`). A user who lost the phone needs the operator: `npx @madauth/server remove-sms <email>`, or `POST /auth/admin/sms/remove` as an admin. Deleting the account takes no SMS code (only the app protects the deletion). See [SMS code security](sms-security.md) for the rules in detail.
+
 ## Deleting an account
 
 `Madauth.deleteAccount()` in the web library (`POST /auth/account/delete`) lets a signed-in user delete their account:
 
-- The user is deleted with all their sign-in methods (the password, the Google account, the authenticator app with its recovery codes, the e-mail link), their claims, and their pending confirmation, reset and sign-in links. The session proves who they are, whichever way they signed in.
+- The user is deleted with all their sign-in methods (the password, the Google account, the authenticator app with its recovery codes, the e-mail link, the phone number), their claims, and their pending confirmation, reset and sign-in links and SMS codes. The session proves who they are, whichever way they signed in.
 - Once the user has an authenticator app, and while the app is on (a policy asks for it, or it signs in on its own), the request needs a current code from it or a recovery code (`Madauth.deleteAccount({ code })`; `401 code_required` without one): like removing the app, so a stolen session can't destroy the account.
 - If the user had a Google account, the answer is `200 { googleSub }` (otherwise `204`). With `GoogleFedcm`, the web library revokes the app's access to that Google account by its id (`google.accounts.id.revoke`): the app leaves their connected apps at Google, and the Google button says "Sign in with Google" again instead of "Continue as …". A user without a Google account is never sent to Google.
 - The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`, with the user as the session held them.
@@ -421,8 +436,9 @@ npx @madauth/server schema --dialect postgres --from 1
 | 3 | New model `role`: the roles of an e-mail address. A new table; existing ones don't change. |
 | 4 | Every user is stored, with their [claims](#claims): `user.claims` (JSON string, empty without claims) and `account.email` (the address the provider reported, e.g. Google's; empty for passwords). New model `setting` (the [sign-in methods](#sign-in-methods)). The `role` table is dropped: roles are a claim now, set them again with `set-roles`. |
 | 5 | The [authenticator app](#authenticator-app): `account.lastUsedStep` (the time step of the last accepted code, so a code works once; number, starts at 0), `account.setupId` (the setup the secret came from; empty for other accounts) and the new model `recoveryCode` (a user's recovery codes, by their keyed hash, each with the `setupId` it belongs to; a record goes when its code is used). |
+| 6 | [SMS codes](#sms-codes): `account.phone` (the number of an `sms:` account in E.164 form; empty for other accounts) and `user.lastSmsAt` (when the last SMS went to the user, so at most one per minute goes; empty before the first). |
 
-Stores without fixed columns need no change: madAuth reads a missing `wrongCodes` or `lastUsedStep` as 0, and a missing `claims` or `email` as empty. Records of the `role` model are simply not read any more.
+Stores without fixed columns need no change: madAuth reads a missing `wrongCodes`, `lastUsedStep` or `lastSmsAt` as 0, and a missing `claims`, `email` or `phone` as empty. Records of the `role` model are simply not read any more.
 
 ### Example: Postgres
 
@@ -535,7 +551,7 @@ if (!user) return new Response('Unauthorized', { status: 401 });
 console.log(user.id, user.email, user.claims, user.amr); // claims: e.g. { roles: ['admin'] }; amr: e.g. ['pwd', 'otp']
 ```
 
-`user.amr` says how the session was authenticated: `pwd` (password), `google`, `email` (the [e-mail link](email-link-security.md)), `otp` (the [authenticator app](#authenticator-app), as the second step or on its own). Require `otp` before a sensitive action if your users have the app.
+`user.amr` says how the session was authenticated: `pwd` (password), `google`, `email` (the [e-mail link](email-link-security.md)), `otp` (the [authenticator app](#authenticator-app), as the second step or on its own), `sms` (a code by SMS as the second step). Require `otp` before a sensitive action if your users have the app.
 
 A session token is valid for `SESSION_TTL`. When `verifySession` finds none, answer 401: the web library then renews the session, and the app sends the request again (see [Sessions](#sessions)).
 
@@ -545,17 +561,17 @@ Other languages can verify the JWT with any JOSE library:
 - header `typ` `madauth-session+jwt`
 - keys from `/.well-known/jwks.json`
 
-The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the session was authenticated: `pwd`, `google`, `email`, `otp`) and `claims` (what admins attached, see [Claims](#claims)).
+The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the session was authenticated: `pwd`, `google`, `email`, `otp`, `sms`) and `claims` (what admins attached, see [Claims](#claims)).
 
 ## HTTP API
 
 | Method & path | Description |
 | --- | --- |
-| `GET /auth/config` | Public settings for the web library: `{ google: { clientId, codeFlow, secondFactor } \| null, password: { minLength, secondFactor } \| null, totp: { signIn, signUp } \| null, email: { verification }, emailLink: { secondFactor } \| null }`. A method is `null` when it is not configured or [switched off](#sign-in-methods); `totp` is `null` when the app is neither a second factor of a method that is on nor a method itself (`signIn`). |
+| `GET /auth/config` | Public settings for the web library: `{ google: { clientId, codeFlow, secondFactor } \| null, password: { minLength, secondFactor } \| null, totp: { signIn, signUp } \| null, email: { verification }, emailLink: { secondFactor } \| null, sms }` (`sms`: whether SMS codes are on as a second factor). A method is `null` when it is not configured or [switched off](#sign-in-methods); `totp` is `null` when the app is neither a second factor of a method that is on nor a method itself (`signIn`). |
 | `POST /auth/google/nonce` | Starts a FedCM / One Tap sign-in: returns `{ nonce }` and sets a 5-minute nonce cookie |
 | `POST /auth/google/verify` | `{ credential, locale? }` (Google ID token) → `{ user }` and the session cookie, or the [second step](#the-second-step); 403 `signup_rejected` (a first sign-in the sign-up check refused), 403 `other_method` (the address signs in another way; `methods` says how), 503 `temporarily_unavailable` |
 | `GET /auth/google/start?return_to=` | Starts the redirect flow (needs `GOOGLE_CLIENT_SECRET`) |
-| `GET /auth/google/callback` | Google redirects here; redirects back to `return_to`, to `return_to#madauth_error=<code>`, or to `return_to#madauth_next=totp` / `totp-setup` for the second step |
+| `GET /auth/google/callback` | Google redirects here; redirects back to `return_to`, to `return_to#madauth_error=<code>`, or to `return_to#madauth_next=totp` / `sms` / `totp-setup` for the second step, with `&madauth_factors=totp,sms` naming the factors that can finish it |
 | `POST /auth/password/signin` | `{ email, password }` → `{ user }` and the session cookie, or the second step; 401 `invalid_credentials`, 403 `email_unverified`, 429 `too_many_attempts` |
 | `POST /auth/password/signup` | `{ email, password, name?, redirectTo, locale? }` → 202, and the confirmation e-mail; 400 `invalid_email` or `weak_password`, 403 `signup_rejected`, 503 `temporarily_unavailable` |
 | `POST /auth/password/send-reset` | `{ email, redirectTo, locale? }` → 202, and the reset e-mail if the address has a password (`email.no_password` if its user has none); 503 `temporarily_unavailable` |
@@ -572,19 +588,26 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/totp/remove` | `{ code }` or `{ recoveryCode }`, signed in → `{}`; 401 `code_invalid`, 403 `required_by_policy` or `only_method` (the app is the user's only way to sign in that is on) |
 | `POST /auth/totp/recovery-codes` | `{ code }` or `{ recoveryCode }`, signed in → `{ recoveryCodes }` (the old ones stop working); 400 `no_authenticator`, 401 `code_invalid` |
 | `GET /auth/totp/status` | `{ enabled, recoveryCodesLeft }` for the signed-in user; 401 `no_session` |
+| `POST /auth/sms/setup` | `{ phone, locale?, code? }`, signed in or in the setup step of a sign-in → 202 `{ phone }` (masked), the SMS (`sms.code`, `purpose: "setup"`) and a 10-minute setup cookie; a user who has a number sends `{ code }` from an SMS to the current one (401 `code_required`, `code_invalid`); 400 `invalid_phone`, 401 `no_session`, 429 `too_soon`, 503 `temporarily_unavailable` |
+| `POST /auth/sms/confirm` | `{ code }` → `{}`, or `{ user }` and the session cookie when the setup finished a sign-in; 400 `setup_expired`, 401 `code_invalid`, 429 `too_many_attempts` |
+| `POST /auth/sms/send` | `{ locale? }`, with the challenge cookie (the second step) or signed in (to approve a change) → 202 `{ phone }` and the SMS; 400 `no_phone`, 401 `challenge_expired` or `no_session`, 429 `too_soon`, 503 `temporarily_unavailable` |
+| `POST /auth/sms/verify` | `{ code }`, with the challenge cookie → `{ user }` and the session cookie; 401 `challenge_expired` or `code_invalid`, 429 `too_many_attempts` |
+| `POST /auth/sms/remove` | `{ code }` (from an SMS sent with `send`), signed in → `{}`; 400 `no_phone`, 401 `code_invalid`, 403 `required_by_policy` (a required policy, and no authenticator app) |
+| `GET /auth/sms/status` | `{ enabled, phone }` (masked, or null) for the signed-in user; 401 `no_session` |
 | `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
 | `POST /auth/logout` | Clears the cookies of the session |
 | `POST /auth/admin/claims/get` | `{ email }` → `{ email, userId, claims }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`, 404 `user_not_found`. See [Claims](#claims). |
 | `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims` |
-| `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, secondFactor }, password: { … }, totp: { configured, enabled }, 'email-link': { configured, enabled, secondFactor } } }`, for admins. See [Sign-in methods](#sign-in-methods). |
-| `POST /auth/admin/settings/set` | `{ methods: { google?: {}, password?: { secondFactor }, totp?: {}, 'email-link'?: { secondFactor } } }` (the list of the methods that are on; `true` for `{}`) → the same; 400 `invalid_settings`, also when no method that creates users would stay on |
+| `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, secondFactor }, password: { … }, totp: { configured, enabled }, 'email-link': { configured, enabled, secondFactor }, sms: { configured, enabled } } }`, for admins. See [Sign-in methods](#sign-in-methods). |
+| `POST /auth/admin/settings/set` | `{ methods: { google?: {}, password?: { secondFactor }, totp?: {}, 'email-link'?: { secondFactor }, sms?: {} } }` (the list of the methods that are on; `true` for `{}`) → the same; 400 `invalid_settings`, also when no method that creates users would stay on |
 | `POST /auth/admin/totp/remove` | `{ email }` → `{ email, userId, enabled: false }`: removes the user's authenticator app and recovery codes, for admins. See [Authenticator app](#authenticator-app). |
+| `POST /auth/admin/sms/remove` | `{ email }` → `{ email, userId, enabled: false }`: removes the user's phone number, for admins. See [SMS codes](#sms-codes). |
 | `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`. See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
 | `GET /health` | `ok` |
 
-POST requests must come from an origin in `ALLOWED_ORIGINS`. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The routes of Google, of e-mail & password and of the e-mail link return 404 when the method is not configured; every method's routes return 403 `method_disabled` when it is not on.
+POST requests must come from an origin in `ALLOWED_ORIGINS`. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The routes of Google, of e-mail & password, of the e-mail link and of SMS codes return 404 when the method is not configured; every method's routes return 403 `method_disabled` when it is not on.
 
 ### The second step
 
-When the [policy](#sign-in-methods) of Google, password or the e-mail link asks for the authenticator app, `google/verify`, `password/signin`, `password/reset`, `email/verify` and `email-link/verify` answer `401 { "error": "totp_required", "method": "password" }` (the user has the app) or `401 { "error": "totp_setup_required", … }` (they set it up first) instead of `{ user }`, and set a 10-minute challenge cookie on `/auth/totp`; the session there was at that browser, if any, is cleared, so whoever was signed in is signed out until the step is done. The sign-in then goes on with `POST /auth/totp/verify`, or with `POST /auth/totp/setup` and `confirm`; if an admin switched the method off meanwhile, they answer `403 method_disabled`. The redirect flow returns with `#madauth_next=totp` or `totp-setup` instead. The web library handles the second step by itself, with or without `new Totp()`.
+When the [policy](#sign-in-methods) of Google, password or the e-mail link asks for a second factor, `google/verify`, `password/signin`, `password/reset`, `email/verify` and `email-link/verify` answer `401 { "error": "totp_required", "method": "password", "factors": ["totp"] }` (the user has the app; `factors` lists what they can finish with, e.g. `["totp", "sms"]` when they have a phone as well), `401 { "error": "sms_required", …, "factors": ["sms"] }` (a phone only) or `401 { "error": "totp_setup_required", …, "factors": [] }` (they set a factor up first) instead of `{ user }`, and set a 10-minute challenge cookie on `/auth`; the session there was at that browser, if any, is cleared, so whoever was signed in is signed out until the step is done. The sign-in then goes on with `POST /auth/totp/verify` or `POST /auth/sms/send` and `verify` (each for a factor in `factors`), or with the setup pair of the app or of the phone; if an admin switched the method off meanwhile, they answer `403 method_disabled`. The redirect flow returns with `#madauth_next=totp`, `sms` or `totp-setup` instead, and `madauth_factors`. The web library handles the second step by itself, with or without `new Totp()`.

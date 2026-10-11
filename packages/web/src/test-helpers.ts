@@ -13,6 +13,9 @@ export const grace: MadauthUser = { id: 'usr_grace', email: 'grace@example.com',
 export const VERIFY_TOKEN = 'verify-token';
 export const RESET_TOKEN = 'reset-token';
 export const SIGNIN_TOKEN = 'signin-token';
+/** The phone the tests add, and how the fake server shows it. */
+export const PHONE = '+41 79 123 45 67';
+export const MASKED_PHONE = '+41 ••••••• 67';
 export const CODE = '123456';
 /** The key the fake server hands out for the authenticator app, and the recovery codes it gives. */
 export const TOTP_SECRET = 'JBSWY3DPEHPK3PXP';
@@ -67,17 +70,25 @@ export interface FakeServer {
   requests: RecordedRequest[];
   /** Claims by e-mail address, as set through the admin API. */
   claims: Map<string, Record<string, unknown>>;
-  /** Which sign-in methods are on (the list an admin sets); `totp` is the app on its own. */
-  methods: { google: boolean; password: boolean; totp: boolean; 'email-link': boolean };
+  /** Which sign-in methods are on (the list an admin sets); `totp` is the app on its own, `sms` SMS codes as a second factor. */
+  methods: { google: boolean; password: boolean; totp: boolean; 'email-link': boolean; sms: boolean };
   /** Whether Google, password and the e-mail link ask for the authenticator app as a second factor. */
   policy: { google: SecondFactorPolicy; password: SecondFactorPolicy; 'email-link': SecondFactorPolicy };
   /** The addresses whose users have set up the authenticator app, and their recovery codes left. */
   authenticators: Set<string>;
   recoveryCodes: Map<string, string[]>;
-  /** A sign-in whose first step is done, waiting for the app's code or its setup (the challenge cookie). */
-  challenge: { email: string; next: 'totp' | 'totp-setup'; method: 'google' | 'password' | 'totp' | 'email-link' } | undefined;
+  /** A sign-in whose first step is done, waiting for a code or a setup (the challenge cookie), with the factors that can finish it. */
+  challenge: { email: string; next: 'totp' | 'totp-setup' | 'sms'; method: 'google' | 'password' | 'totp' | 'email-link'; factors: ('totp' | 'sms')[] } | undefined;
   /** A setup under way (the setup cookie); set to undefined to simulate its expiry. */
   totpSetup: { email: string } | undefined;
+  /** The phone numbers of the users who added one, by e-mail address. */
+  phones: Map<string, string>;
+  /** The SMS "sent": to which number, and what for. */
+  texts: { to: string; purpose: 'setup' | 'signin' | 'approve' }[];
+  /** A phone setup under way (the setup cookie); set to undefined to simulate its expiry. */
+  smsSetup: { email: string; phone: string } | undefined;
+  /** The last SMS went less than a minute ago: sending answers 429. */
+  smsTooSoon: boolean;
   /** Lifetime of a session in seconds; the server's expiry cookie is set from it. */
   sessionTtl: number;
 }
@@ -109,13 +120,22 @@ export function fakeServer(): FakeServer {
     nonces: 0,
     requests: [],
     claims: new Map(),
-    methods: { google: true, password: true, totp: false, 'email-link': false },
+    methods: { google: true, password: true, totp: false, 'email-link': false, sms: false },
     policy: { google: 'none', password: 'none', 'email-link': 'none' },
     authenticators: new Set(),
     recoveryCodes: new Map(),
     challenge: undefined,
     totpSetup: undefined,
+    phones: new Map(),
+    texts: [],
+    smsSetup: undefined,
+    smsTooSoon: false,
     sessionTtl: 3600,
+  };
+  const mask = (phone: string) => `${phone.slice(0, 3)} ${'•'.repeat(Math.max(0, phone.length - 5))} ${phone.slice(-2)}`;
+  const normalizePhone = (value: unknown) => {
+    const digits = String(value ?? '').replace(/[\s().-]/g, '');
+    return /^\+[1-9]\d{6,14}$/.test(digits) ? digits : undefined;
   };
   const userFor = (email: string): MadauthUser => {
     const account = server.accounts.get(email);
@@ -131,14 +151,17 @@ export function fakeServer(): FakeServer {
   };
   /** The authenticator app is in use at all: on its own, or as the second factor of a method. */
   const totpOn = () => server.methods.totp || server.policy.google !== 'none' || server.policy.password !== 'none' || server.policy['email-link'] !== 'none';
-  /** What follows a primary method that succeeded: the session, or the app's code or setup. */
+  /** What follows a primary method that succeeded: the session, or a code (from the app, or by SMS) or the app's setup. */
   const afterPrimary = (email: string, method: 'google' | 'password' | 'email-link') => {
     const policy = server.policy[method];
-    const enrolled = server.authenticators.has(email);
-    const next = policy === 'none' ? undefined : enrolled ? 'totp' : policy === 'required' ? 'totp-setup' : undefined;
+    const app = server.authenticators.has(email);
+    const phone = server.methods.sms && server.phones.has(email);
+    const factors: ('totp' | 'sms')[] = [...(app ? (['totp'] as const) : []), ...(phone ? (['sms'] as const) : [])];
+    const next = policy === 'none' ? undefined : app ? 'totp' : phone ? 'sms' : policy === 'required' ? 'totp-setup' : undefined;
     if (!next) return signedIn(email);
-    server.challenge = { email, next, method };
-    return json({ error: next === 'totp' ? 'totp_required' : 'totp_setup_required', message: 'the app is next', method }, 401);
+    server.challenge = { email, next, method, factors };
+    const error = next === 'totp' ? 'totp_required' : next === 'sms' ? 'sms_required' : 'totp_setup_required';
+    return json({ error, message: 'the second step is next', method, factors }, 401);
   };
   /** Checks a code from the app (`CODE`) or uses up a recovery code. */
   const codeOk = (email: string, body: Record<string, string>): boolean => {
@@ -180,6 +203,7 @@ export function fakeServer(): FakeServer {
           totp: totpOn() ? { signIn: server.methods.totp, signUp: server.methods.totp && server.password } : null,
           email: { verification: server.password },
           emailLink: server.emailLink && server.methods['email-link'] ? { secondFactor: server.policy['email-link'] } : null,
+          sms: server.methods.sms,
         });
       // --- The e-mail link ---
       case 'POST /auth/email-link/send': {
@@ -258,8 +282,8 @@ export function fakeServer(): FakeServer {
         account.verified = true;
         if (account.app) {
           // A sign-up with the app: it is set up now.
-          server.challenge = { email: target, next: 'totp-setup', method: 'totp' };
-          return json({ error: 'totp_setup_required', message: 'set it up', method: 'totp' }, 401);
+          server.challenge = { email: target, next: 'totp-setup', method: 'totp', factors: [] };
+          return json({ error: 'totp_setup_required', message: 'set it up', method: 'totp', factors: [] }, 401);
         }
         return afterPrimary(target, 'password');
       }
@@ -301,7 +325,7 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/totp/verify': {
         if (!totpOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         const challenge = server.challenge;
-        if (!challenge || challenge.next !== 'totp' || !server.authenticators.has(challenge.email)) {
+        if (!challenge || !challenge.factors.includes('totp') || !server.authenticators.has(challenge.email)) {
           return json({ error: 'challenge_expired', message: 'sign in again' }, 401);
         }
         if (server.locked) return json({ error: 'too_many_attempts', message: 'Too many failed attempts. Try again in 30 seconds.' }, 429);
@@ -365,6 +389,79 @@ export function fakeServer(): FakeServer {
         const enabled = server.authenticators.has(server.user.email);
         return json({ enabled, recoveryCodesLeft: enabled ? (server.recoveryCodes.get(server.user.email)?.length ?? 0) : 0 });
       }
+      // --- SMS codes ---
+      case 'POST /auth/sms/setup': {
+        if (!server.methods.sms) return json({ error: 'method_disabled', message: 'off' }, 403);
+        const who = whoSetsUp();
+        if (!who) return json({ error: 'no_session' }, 401);
+        const phone = normalizePhone(body.phone);
+        if (!phone) return json({ error: 'invalid_phone', message: 'not a number' }, 400);
+        // Replacing a number: the current one has to agree.
+        if (server.phones.has(who)) {
+          if (body.code === undefined) return json({ error: 'code_required', message: 'the current number has to agree' }, 401);
+          if (body.code !== CODE) return json({ error: 'code_invalid', message: 'wrong' }, 401);
+        } else if (server.smsTooSoon) {
+          return json({ error: 'too_soon', message: 'wait' }, 429);
+        }
+        if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
+        server.smsSetup = { email: who, phone };
+        server.texts.push({ to: phone, purpose: 'setup' });
+        return json({ phone: mask(phone) }, 202);
+      }
+      case 'POST /auth/sms/confirm': {
+        if (!server.methods.sms) return json({ error: 'method_disabled', message: 'off' }, 403);
+        const who = whoSetsUp();
+        if (!who) return json({ error: 'no_session' }, 401);
+        if (server.smsSetup?.email !== who) return json({ error: 'setup_expired', message: 'start again' }, 400);
+        if (body.code !== CODE) return json({ error: 'code_invalid', message: 'wrong' }, 401);
+        server.phones.set(who, server.smsSetup.phone);
+        server.smsSetup = undefined;
+        if (server.user) return json({});
+        // The setup finished a sign-in.
+        server.challenge = undefined;
+        server.user = userFor(who);
+        issued();
+        return json({ user: server.user });
+      }
+      case 'POST /auth/sms/send': {
+        if (!server.methods.sms) return json({ error: 'method_disabled', message: 'off' }, 403);
+        const challenge = server.challenge?.factors.includes('sms') ? server.challenge : undefined;
+        const who = challenge?.email ?? server.user?.email;
+        if (!who) return json({ error: challenge === undefined && server.challenge ? 'challenge_expired' : 'no_session', message: 'nobody' }, 401);
+        const phone = server.phones.get(who);
+        if (!phone) return challenge ? json({ error: 'challenge_expired', message: 'no phone' }, 401) : json({ error: 'no_phone', message: 'none' }, 400);
+        if (server.smsTooSoon) return json({ error: 'too_soon', message: 'wait' }, 429);
+        if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
+        server.texts.push({ to: phone, purpose: challenge ? 'signin' : 'approve' });
+        return json({ phone: mask(phone) }, 202);
+      }
+      case 'POST /auth/sms/verify': {
+        if (!server.methods.sms) return json({ error: 'method_disabled', message: 'off' }, 403);
+        const challenge = server.challenge;
+        if (!challenge || !challenge.factors.includes('sms') || !server.phones.has(challenge.email)) {
+          return json({ error: 'challenge_expired', message: 'sign in again' }, 401);
+        }
+        if (server.locked) return json({ error: 'too_many_attempts', message: 'Too many failed attempts. Try again in 30 seconds.' }, 429);
+        if (body.code !== CODE) return json({ error: 'code_invalid', message: 'wrong' }, 401);
+        server.challenge = undefined;
+        return signedIn(challenge.email);
+      }
+      case 'POST /auth/sms/remove': {
+        if (!server.methods.sms) return json({ error: 'method_disabled', message: 'off' }, 403);
+        if (!server.user?.email) return json({ error: 'no_session' }, 401);
+        if (!server.phones.has(server.user.email)) return json({ error: 'no_phone', message: 'none' }, 400);
+        const required = Object.values(server.policy).includes('required');
+        if (required && !server.authenticators.has(server.user.email)) return json({ error: 'required_by_policy', message: 'required' }, 403);
+        if (body.code !== CODE) return json({ error: 'code_invalid', message: 'wrong' }, 401);
+        server.phones.delete(server.user.email);
+        return json({});
+      }
+      case 'GET /auth/sms/status': {
+        if (!server.methods.sms) return json({ error: 'method_disabled', message: 'off' }, 403);
+        if (!server.user?.email) return json({ error: 'no_session' }, 401);
+        const phone = server.phones.get(server.user.email);
+        return json({ enabled: !!phone, phone: phone ? mask(phone) : null });
+      }
       // --- Admin ---
       case 'POST /auth/admin/claims/get':
       case 'POST /auth/admin/claims/set': {
@@ -389,7 +486,7 @@ export function fakeServer(): FakeServer {
           const on = (value: unknown) => value === true || (!!value && typeof value === 'object');
           const policyOf = (value: unknown): SecondFactorPolicy =>
             value && typeof value === 'object' && 'secondFactor' in value ? ((value as { secondFactor: SecondFactorPolicy }).secondFactor ?? 'none') : 'none';
-          server.methods = { google: on(methods.google), password: on(methods.password), totp: on(methods.totp), 'email-link': on(methods['email-link']) };
+          server.methods = { google: on(methods.google), password: on(methods.password), totp: on(methods.totp), 'email-link': on(methods['email-link']), sms: on(methods.sms) };
           server.policy = { google: policyOf(methods.google), password: policyOf(methods.password), 'email-link': policyOf(methods['email-link']) };
         }
         return json({
@@ -398,6 +495,7 @@ export function fakeServer(): FakeServer {
             password: { configured: server.password, enabled: server.password && server.methods.password, secondFactor: server.policy.password },
             totp: { configured: true, enabled: server.methods.totp },
             'email-link': { configured: server.emailLink, enabled: server.emailLink && server.methods['email-link'], secondFactor: server.policy['email-link'] },
+            sms: { configured: true, enabled: server.methods.sms },
           },
         });
       }

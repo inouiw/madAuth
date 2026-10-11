@@ -28,8 +28,9 @@ npx @madauth/server init
 | E-mail & password sign-in? | yes | |
 | Sign-up with the authenticator app alone? | no | Accounts without a password: the address is confirmed by e-mail, then the app is set up. The app as a second factor needs no answer here; admins set that [policy](server.md#sign-in-methods) while the server runs. |
 | Passwordless sign-in with an e-mail link? | no | The user enters their address and gets an e-mail with a link that signs them in and a code. A new address is signed up on first use. |
+| SMS codes as a second factor? | no | Your webhook receiver sends the SMS (`sms.code`). A signed-in user adds a phone number; the policy then asks for a code sent to it, next to the authenticator app. |
 | Database | `sqlite:./madauth.db` | The SQLite file that stores the users, whichever way they sign in. |
-| Webhook URL | `http://localhost:8790/webhook` | Only with e-mail & password sign-in, the e-mail link or sign-up with the app: where madAuth hands over its e-mails (step 4). |
+| Webhook URL | `http://localhost:8790/webhook` | Only with e-mail & password sign-in, the e-mail link, sign-up with the app or SMS codes: where madAuth hands over its e-mails and SMS (step 4). |
 
 Choose at least one way to create users. At the end, `init` prints the next steps for your answers. They are the steps below.
 
@@ -41,7 +42,7 @@ Every question is also an option, so a script needs no prompts. `--yes` takes th
 npx @madauth/server init --yes --app-url http://localhost:3000
 ```
 
-The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--password` or `--no-password`, `--totp` or `--no-totp`, `--email-link` or `--no-email-link`, `--database` and `--webhook-url`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
+The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--password` or `--no-password`, `--totp` or `--no-totp`, `--email-link` or `--no-email-link`, `--sms` or `--no-sms`, `--database` and `--webhook-url`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
 
 ## 3. Start the server
 
@@ -90,7 +91,7 @@ Other dev servers have a similar setting. In production, your reverse proxy or C
 
 ## 6. Sign users in
 
-Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `EmailLink` for the e-mail link, and `Totp` for signing in with the authenticator app on its own (once an admin lists it with `set-methods`). The app as a second factor needs no provider: once an admin sets the policy, the dialog asks for the code by itself, and a user sets the app up from your app with `Madauth.setUpAuthenticator()`.
+Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `EmailLink` for the e-mail link, and `Totp` for signing in with the authenticator app on its own (once an admin lists it with `set-methods`). The app as a second factor needs no provider, and neither do SMS codes: once an admin sets the policy, the dialog asks for the code by itself, and a user sets the app up from your app with `Madauth.setUpAuthenticator()`, or adds a phone with `Madauth.setUpSms()`.
 
 ```ts
 import { Madauth, Password, Totp, EmailLink } from '@madauth/web';

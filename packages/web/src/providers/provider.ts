@@ -1,6 +1,6 @@
 import type { HttpResult, RequestInit } from '../http.js';
 import type { LoginMethodId } from '../methods.js';
-import type { MadauthError, MadauthUser, Result } from '../result.js';
+import type { MadauthError, MadauthUser, Result, SecondFactor } from '../result.js';
 
 /**
  * Whether a method asks for the authenticator app as a second factor: never, when the user has set one up
@@ -21,13 +21,33 @@ export interface ServerConfig {
   email: { verification: boolean };
   /** The passwordless e-mail link, with its policy for the authenticator app as a second factor. */
   emailLink: { secondFactor: SecondFactorPolicy } | null;
+  /** Whether SMS codes are on as a second factor: a signed-in user can add a phone, and a sign-in can ask for a code sent to it. */
+  sms: boolean;
 }
 
 /** What a sign-in still needs after its first step, and which sign-in it is. */
 export interface PendingStep {
-  /** `code`: a code from the authenticator app; `setup`: the app has to be set up first. */
-  step: 'code' | 'setup';
+  /**
+   * `code`: a code from the authenticator app; `sms`: a code sent to the user's phone; `setup`: a second
+   * factor has to be set up first (the app, or a phone when the server has SMS codes on).
+   */
+  step: 'code' | 'setup' | 'sms';
   method: LoginMethodId;
+  /** With `code` and `sms`: the second factors the user can finish with, so a screen can offer the switch. */
+  factors?: SecondFactor[];
+}
+
+/** The step an error stands for: `totp_required`, `sms_required` or `totp_setup_required`; undefined for any other. */
+export function secondStepOf(error: MadauthError): PendingStep['step'] | undefined {
+  return error.code === 'totp_required' ? 'code' : error.code === 'sms_required' ? 'sms' : error.code === 'totp_setup_required' ? 'setup' : undefined;
+}
+
+/** The pending step a second-step error stands for, with the factors it names; undefined for any other error. */
+export function pendingStepOf(error: MadauthError, method: LoginMethodId): PendingStep | undefined {
+  const step = secondStepOf(error);
+  if (!step) return undefined;
+  if (step === 'setup') return { step, method };
+  return { step, method, factors: error.factors?.length ? error.factors : [step === 'sms' ? 'sms' : 'totp'] };
 }
 
 /** What the madAuth core gives a provider during setup. */
@@ -35,7 +55,7 @@ export interface ProviderContext {
   readonly serverUrl: string;
   readonly config: ServerConfig;
   readonly currentUser: MadauthUser | null;
-  /** A sign-in waits for the authenticator app (its code or setup): no automatic prompt meanwhile. */
+  /** A sign-in waits for its second step (a code, or a setup): no automatic prompt meanwhile. */
   readonly signInPending: boolean;
   /** The locale of the texts shown to the user: the configured one, else the page's, else the browser's. */
   readonly locale: string | undefined;
@@ -46,11 +66,11 @@ export interface ProviderContext {
   signedIn(user: MadauthUser): void;
   /**
    * A sign-in failed outside the dialog (e.g. after the redirect flow); shown the next time the dialog opens.
-   * A `totp_required` or `totp_setup_required` error is not a failure: the sign-in goes on with the
-   * authenticator app, see {@link signInContinues}.
+   * A `totp_required`, `sms_required` or `totp_setup_required` error is not a failure: the sign-in goes on
+   * with its second step, see {@link signInContinues}.
    */
   signInFailed(error: MadauthError): void;
-  /** A sign-in outside the dialog needs the authenticator app next: the dialog opens on that step. */
+  /** A sign-in outside the dialog needs its second step next: the dialog opens on that step. */
   signInContinues(pending: PendingStep): void;
 }
 

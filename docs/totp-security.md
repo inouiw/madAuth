@@ -46,7 +46,7 @@ Code: `generateRecoveryCodes`, `hashRecoveryCode` in [`totp.ts`](../packages/ser
 
 ## The second step
 
-After Google, a password or an e-mail link whose policy asks for the app, the first step gives no session. Instead the server sets a challenge cookie (`madauth_challenge`, HttpOnly, ten minutes, only sent to `/auth/totp`): a signed token with the user's id, their session version, how they signed in so far and what comes next. The code, or the setup, turns it into the session.
+After Google, a password or an e-mail link whose policy asks for a second factor, the first step gives no session. Instead the server sets a challenge cookie (`madauth_challenge`, HttpOnly, ten minutes, sent to `/auth`): a signed token with the user's id, their session version, how they signed in so far, what comes next, and which factors can finish it (the app, and the phone when the user has one and [SMS codes](sms-security.md) are on; the app comes first). The code, or the setup, turns it into the session.
 
 - The challenge is bound to the user and to its step: a challenge for the setup can't be used to skip the setup with a code, and the other way round.
 - It finishes only while its method is still on: an admin who switches Google, password or the e-mail link off also ends the sign-ins that were between their two steps.
@@ -88,5 +88,4 @@ All `POST` routes of the app are accepted only from an `Origin` in `ALLOWED_ORIG
 
 - Trusted devices ("remember this browser for 30 days"): the code is asked for at every sign-in.
 - Apps that want SHA-256 or 8-digit codes; the QR code asks for the defaults every app supports.
-- SMS codes as a second factor.
 - Passkeys, which would also resist phishing; a code from the app can be phished like a password.
