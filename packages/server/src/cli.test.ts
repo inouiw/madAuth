@@ -176,6 +176,7 @@ describe('init', () => {
       'App URL, the address your users open',
       'Google client ID (empty: no Google sign-in)',
       'Google client secret (empty: no redirect flow): ',
+      'GitHub client ID (empty: no GitHub sign-in)',
       'E-mail & password sign-in? (yes/no)',
       'Sign-up with the authenticator app alone, without a password? (yes/no)',
       'Passwordless sign-in with an e-mail link? (yes/no)',
@@ -202,6 +203,7 @@ describe('init', () => {
     expect(io.asked).toEqual([
       'App URL, the address your users open',
       'Google client ID (empty: no Google sign-in)',
+      'GitHub client ID (empty: no GitHub sign-in)',
       'E-mail & password sign-in? (yes/no)',
       'Sign-up with the authenticator app alone, without a password? (yes/no)',
       'Passwordless sign-in with an e-mail link? (yes/no)',
@@ -293,6 +295,44 @@ Next steps:
     expect(output).toContain('5. Never commit');
     expect(output).not.toContain('redirect URIs');
     expect(output).not.toContain('webhook receiver');
+  });
+
+  it('O14: takes a GitHub OAuth App as id and secret, writes both, and prints the GitHub step', async () => {
+    const file = tempFile();
+    const io = answering({ 'App URL': 'https://app.example.com', 'GitHub client ID': 'Iv1.abc', 'GitHub client secret': 'shh2', 'E-mail & password': 'no' });
+
+    const asked = await runCli(['init', '--out', file], io);
+    const { output } = await runCli(['init', '--yes', '--github-client-id', 'Iv1.abc', '--github-client-secret', 'shh2', '--no-password', '--out', file, '--force'], noQuestions);
+
+    expect(asked.exitCode).toBe(0);
+    expect(io.asked).toContain('GitHub client secret: ');
+    expect(readEnvFile(file)).toEqual({
+      MADAUTH_ISSUER: 'http://localhost:5173',
+      MADAUTH_SIGNING_KEY: expect.any(String),
+      ALLOWED_ORIGINS: 'http://localhost:5173',
+      GITHUB_CLIENT_ID: 'Iv1.abc',
+      GITHUB_CLIENT_SECRET: 'shh2',
+      DATABASE_URL: 'sqlite:./madauth.db',
+      PORT: '8787',
+    });
+    expect(output).toContain("import { Madauth, GitHub } from '@madauth/web';");
+    expect(output).toContain('Madauth.initialize({ providers: [new GitHub()] });');
+    expect(output).toContain('4. In your GitHub OAuth App (https://github.com/settings/developers), set:');
+    expect(output).toContain('Authorization callback URL: http://localhost:5173/auth/github/callback');
+    expect(output).not.toContain('Google Cloud Console');
+  });
+
+  it('O14: GitHub sign-in needs both the client ID and the secret', async () => {
+    const file = tempFile();
+    const init = (...args: string[]) => runCli(['init', '--yes', '--out', file, ...args], noQuestions);
+    const failsWith = (text: string) => ({ exitCode: 1, output: expect.stringContaining(text) });
+
+    expect(await init('--github-client-id', 'Iv1.abc')).toEqual(failsWith('needs the client secret'));
+    expect(await init('--github-client-secret', 'shh2')).toEqual(failsWith('--github-client-secret needs a GitHub client ID'));
+    expect(existsSync(file)).toBe(false);
+    // Asked for, an empty secret is refused the same way.
+    const io = answering({ 'GitHub client ID': 'Iv1.abc' });
+    expect(await runCli(['init', '--out', file], io)).toEqual(failsWith('needs the client secret'));
   });
 
   it('prints the next steps for the Google redirect flow with e-mail & password sign-in', async () => {

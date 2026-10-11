@@ -1,7 +1,7 @@
 // Settings admins change at runtime: which sign-in methods are on, and which ask for the authenticator app.
 // See "Sign-in methods" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Settings, anyOn, authenticatorOn, canSignUp, initialMethods, isOn, parseMethodSettings, parsePasswordRules, policyOf } from './settings.js';
+import { Settings, anyOn, authenticatorOn, canSignUp, initialMethods, isConfigured, isOn, parseMethodSettings, parsePasswordRules, policyOf } from './settings.js';
 import { APP_ORIGIN, cookies, getNonce, googleIdToken, passwordApp, post, setClaims, signUpVerified, testApp, verify } from './test/helpers.js';
 
 afterEach(() => {
@@ -28,6 +28,17 @@ async function withAdmin() {
 }
 
 describe('parseMethodSettings', () => {
+  it('O15: GitHub is configured by its OAuth App, on from the start, and takes a policy like Google', () => {
+    expect(isConfigured({ github: {} }, 'github')).toBe(true);
+    expect(isConfigured({ google: {} }, 'github')).toBe(false);
+    expect(canSignUp({ github: {} }, 'github')).toBe(true);
+    expect(initialMethods({ github: {} })).toEqual({ github: { secondFactor: 'none' } });
+    // The app alone is the default only on a server where nothing else creates users.
+    expect(initialMethods({ github: {}, emailVerification: true })).toEqual({ github: { secondFactor: 'none' } });
+    expect(parseMethodSettings({ github: { secondFactor: 'required' } })).toEqual({ github: { secondFactor: 'required' } });
+    expect(authenticatorOn(() => true, { github: { secondFactor: 'optional' } })).toBe(true);
+  });
+
   it('reads the list of methods that are on, each with its policy for the authenticator app', () => {
     expect(parseMethodSettings({ google: {}, password: { secondFactor: 'required' }, totp: {} })).toEqual({
       google: {},
