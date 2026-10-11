@@ -1,6 +1,7 @@
-import { EXPIRY_COOKIE, VERIFY_LINK_PARAM } from './constants.js';
+import { EXPIRY_COOKIE, REDIRECT_NEXT_PARAM, VERIFY_LINK_PARAM } from './constants.js';
+import { takeHashParam } from './hash.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
-import type { AuthenticatorEnabledDetail } from './madauth-login.js';
+import type { AuthenticatorEnabledDetail, AuthenticatorFailedDetail } from './madauth-login.js';
 import type { LoginMethodId } from './methods.js';
 import type { PendingStep, ProviderContext, ServerConfig, SignInProvider } from './providers/provider.js';
 import { fail, ok, type MadauthError, type MadauthUser, type Result } from './result.js';
@@ -178,16 +179,18 @@ function validate(
  * with the authenticator app. The same for a sign-up with a password and one with the app.
  */
 async function handleVerifyLink(ctx: ProviderContext): Promise<void> {
-  const params = new URLSearchParams(location.hash.slice(1));
-  const token = params.get(VERIFY_LINK_PARAM);
+  // The token is a secret: it leaves the address bar (and so the history) right away.
+  const token = takeHashParam(VERIFY_LINK_PARAM);
   if (!token) return;
-  // The token is a secret: take it out of the address bar (and so the history) right away.
-  params.delete(VERIFY_LINK_PARAM);
-  const hash = params.toString();
-  history.replaceState(history.state, '', `${location.pathname}${location.search}${hash ? `#${hash}` : ''}`);
   const res = await ctx.request<{ user: MadauthUser }>('/auth/email/verify', { method: 'POST', body: { token } });
   if (res.ok) ctx.signedIn(res.data.user);
   else ctx.signInFailed(res.error);
+}
+
+/** Back from the redirect flow with the first step done: the code from the authenticator app, or its setup, is next. */
+function handleNextStep(ctx: ProviderContext): void {
+  const next = takeHashParam(REDIRECT_NEXT_PARAM);
+  if (next === 'totp' || next === 'totp-setup') ctx.signInContinues({ step: next === 'totp' ? 'code' : 'setup', method: 'google' });
 }
 
 async function initialize(target: State, run: number): Promise<{ ready: Result; result: InitializeResult }> {
@@ -240,6 +243,7 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
     signInContinues: continueSignIn,
   };
   await handleVerifyLink(ctx);
+  handleNextStep(ctx);
   // A provider for a method the server doesn't offer (e.g. GoogleRedirect without a Google client on
   // the server) is left out, so the page works with the other methods: the server's configuration
   // decides what is on, and a development server often has less than production. Other failures
@@ -360,9 +364,10 @@ export const Madauth = {
   /**
    * Opens the dialog on the "Set up authenticator app" screen for the signed-in user: a QR code to scan
    * with the app, a field for the first code it shows, and the recovery codes to save. Resolves with the
-   * recovery codes once the user has seen them. Fails with `cancelled` when the dialog is closed before,
-   * `no_session` when nobody is signed in, and `flow_not_enabled` without `new Totp()` or with the app
-   * switched off on the server. With `ui: 'custom'` use `Madauth.totp.startSetup()` and `confirmSetup()`.
+   * recovery codes once the user has seen them. A user who has an app already is asked for a code from it
+   * first: a new app replaces it. Fails with `cancelled` when the dialog is closed before, `no_session` when
+   * nobody is signed in, and `flow_not_enabled` when the server has the app switched off (no `new Totp()`
+   * is needed). With `ui: 'custom'` use `Madauth.totp.startSetup()` and `confirmSetup()`.
    */
   async setUpAuthenticator(): Promise<Result<{ recoveryCodes: string[] }>> {
     const ready = await whenReady();
@@ -373,20 +378,24 @@ export const Madauth = {
         "Madauth.setUpAuthenticator() opens madAuth's dialog, but initialize was called with ui: 'custom'. Use Madauth.totp.startSetup() and confirmSetup() instead.",
       );
     }
-    if (!state!.providers.has('totp')) {
-      return fail('flow_not_enabled', 'Pass new Totp() to Madauth.initialize to use Madauth.setUpAuthenticator (and the server must have the app switched on).');
+    if (!state!.config?.totp) {
+      return fail('flow_not_enabled', 'The madAuth server has the authenticator app switched off: no sign-in method is set to ask for it, and it does not sign in on its own.');
     }
     if (!user) return fail('no_session', 'Nobody is signed in.');
     const element = dialogElement();
     return new Promise((resolve) => {
       const finish = (result: Result<{ recoveryCodes: string[] }>) => {
         element.removeEventListener('madauth-authenticator-enabled', onEnabled);
+        element.removeEventListener('madauth-authenticator-failed', onFailed);
         element.removeEventListener('madauth-cancel', onCancel);
         resolve(result);
       };
       const onEnabled = (e: CustomEvent<AuthenticatorEnabledDetail>) => finish({ isSuccess: true, recoveryCodes: e.detail.recoveryCodes });
+      // The setup can't go on (e.g. the session ended meanwhile): the dialog shows why, and the caller learns it too.
+      const onFailed = (e: CustomEvent<AuthenticatorFailedDetail>) => finish({ isSuccess: false, error: e.detail.error });
       const onCancel = () => finish(fail('cancelled', 'The dialog was closed.'));
       element.addEventListener('madauth-authenticator-enabled', onEnabled);
+      element.addEventListener('madauth-authenticator-failed', onFailed);
       element.addEventListener('madauth-cancel', onCancel);
       void element.openAuthenticatorSetup();
     });

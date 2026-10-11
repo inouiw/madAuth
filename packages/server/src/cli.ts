@@ -10,6 +10,7 @@ import {
   SIGN_IN_METHODS,
   Settings,
   anyOn,
+  canSignUp,
   initialMethods,
   isConfigured,
   isOn,
@@ -20,7 +21,7 @@ import {
 } from './settings.js';
 import { madauthSchema, type StoreAdapter } from './store/schema.js';
 import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
-import { passwordAccountKey, totpAccountKey, Users } from './users.js';
+import { passwordAccountKey, Users } from './users.js';
 import { DEV_WEBHOOK_RECEIVER_URL, generateWebhookSecret } from './webhooks.js';
 
 /** The server's default port, which `init` writes as PORT. */
@@ -487,6 +488,7 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
   const config = await loadConfig(env);
   const forMethods = methodConfig(config);
   const configured = (method: SignInMethod) => isConfigured(forMethods, method);
+  const signsUp = (method: SignInMethod) => canSignUp(forMethods, method);
   const settings = new Settings(config.store, initialMethods(forMethods));
   if (command === 'set-methods') {
     const next: MethodSettings = {};
@@ -504,9 +506,12 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
       }
       next[method] = method === 'totp' ? {} : { secondFactor: (policy as SecondFactorPolicy | undefined) ?? 'none' };
     }
-    if (!anyOn(configured, next)) {
-      const usable = SIGN_IN_METHODS.filter(configured);
-      return { output: `That would switch off every sign-in method. The server is configured for: ${usable.join(', ')}.`, exitCode: 1 };
+    if (!anyOn(signsUp, next)) {
+      const usable = SIGN_IN_METHODS.filter(signsUp);
+      return {
+        output: `That would leave no sign-in method on that creates users, so nobody could sign up. On this server these do: ${usable.join(', ')}.`,
+        exitCode: 1,
+      };
     }
     await settings.changeMethods(() => next, null);
   }
@@ -526,8 +531,7 @@ async function removeTotp(email: string | undefined, env: Env) {
   const address = normalizeEmail(email);
   const user = await users.findByEmail(address);
   if (!user) return { output: `No user has the e-mail address ${address}.`, exitCode: 1 };
-  const removed = await users.unlinkAccount(totpAccountKey(user.id));
-  await users.clearRecoveryCodes(user.id);
+  const removed = await users.removeTotp(user.id);
   return {
     output: removed ? `Removed the authenticator app of ${address}.` : `${address} has no authenticator app.`,
     exitCode: 0,

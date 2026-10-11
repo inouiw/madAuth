@@ -1,4 +1,5 @@
 import { RESET_LINK_PARAM } from '../constants.js';
+import { takeHashParam } from '../hash.js';
 import { fail, ok, type Result } from '../result.js';
 import type { ProviderContext, SignInProvider } from './provider.js';
 
@@ -18,15 +19,9 @@ export class Password implements SignInProvider {
     if (!ctx.config.password) {
       return fail('flow_not_enabled', 'The madAuth server has no webhook that sends the e-mails, so e-mail & password sign-in is off.');
     }
-    const params = new URLSearchParams(location.hash.slice(1));
-    const resetToken = params.get(RESET_LINK_PARAM);
-    if (!resetToken) return ok();
-
-    // The token is a secret: take it out of the address bar (and so the history) right away.
-    params.delete(RESET_LINK_PARAM);
-    const hash = params.toString();
-    history.replaceState(history.state, '', `${location.pathname}${location.search}${hash ? `#${hash}` : ''}`);
-    resetTokens.set(this, resetToken);
+    // Opened from a reset link: the token (a secret) leaves the address bar right away.
+    const resetToken = takeHashParam(RESET_LINK_PARAM);
+    if (resetToken) resetTokens.set(this, resetToken);
     return ok();
   }
 }

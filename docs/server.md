@@ -243,7 +243,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `user.deleted` | A user deleted their account | `user` | the same | the same |
 | `user.claims_changed` | An admin set the claims of a user | `userId`, `email`, `claims`, `by` (the admin's address) | the same | the same |
 | `totp.enabled` | A user set the authenticator app up, or replaced it | `user` | the same | the same |
-| `totp.disabled` | A user removed their authenticator app, or an admin did | `user`, `by` (the admin's address, when an admin did) | the same | the same |
+| `totp.disabled` | A user removed their authenticator app, or an admin did over the HTTP API (the command line calls no webhook) | `user`, `by` (the admin's address, when an admin did) | the same | the same |
 | `totp.recovery_code_used` | A recovery code was used instead of the app | `user`, `remaining` (recovery codes left) | the same | the same |
 
 - `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
@@ -335,7 +335,7 @@ Which methods the server can offer is configured at start: `GOOGLE_CLIENT_ID` fo
 
 Until an admin sets the list, a server runs its configured primary methods, Google and/or password, without a second factor; a server that only has the webhook runs the authenticator app alone. The app on its own is never on until it is listed, since it lets a user in with one factor: that is the admin's decision. Listing it next to a `required` policy is allowed (the phone is the key then), but an enrolled user then also signs in with the app alone.
 
-A method that is off is not shown by the web library (`GET /auth/config` reports it as `null`), and its routes answer `403 method_disabled`. Existing sessions continue. The last method that is on can't be switched off.
+A method that is off is not shown by the web library (`GET /auth/config` reports it as `null`), and its routes answer `403 method_disabled`; a sign-in that was between its two steps ends too. Existing sessions continue. At least one method that creates users stays on: Google, e-mail & password, or the app on a server whose webhook confirms addresses (the app alone on another server would let in only the users who have one).
 
 From your app with the web library, or with the HTTP API:
 
@@ -352,11 +352,11 @@ On the command line, `set-methods google password=required totp` switches on the
 
 The authenticator app (TOTP, RFC 6238: Google Authenticator, 1Password, Microsoft Authenticator and the like) needs no configuration beyond the store; `TOTP_ISSUER` only sets the name the app shows next to the account. What it does is the [sign-in policy](#sign-in-methods) above.
 
-**Setting it up.** A signed-in user calls `Madauth.setUpAuthenticator()` (a custom screen: `Madauth.totp.startSetup()` and `confirmSetup()`). The server makes a new secret and the web library shows it as a QR code (an `otpauth://` URI) and as text; the first code from the app proves the setup. The user then gets ten recovery codes to save, each good for one sign-in without the app. A new setup replaces an earlier app. With a `required` policy, a user without the app is taken into the setup at their next sign-in, before they are in. A sign-up with the app alone (`Madauth.totp.signUp`; the server must confirm addresses by e-mail) confirms the address first and then sets the app up.
+**Setting it up.** A signed-in user calls `Madauth.setUpAuthenticator()` (a custom screen: `Madauth.totp.startSetup()` and `confirmSetup()`). The server makes a new secret and the web library shows it as a QR code (an `otpauth://` URI) and as text; the first code from the app proves the setup. The user then gets ten recovery codes to save, each good for one sign-in without the app. A new setup replaces an earlier app and its recovery codes, so it takes a current code from the old app (or a recovery code) first, like removing it. With a `required` policy, a user without the app is taken into the setup at their next sign-in, before they are in. A sign-up with the app alone (`Madauth.totp.signUp`; the server must confirm addresses by e-mail) confirms the address first and then sets the app up.
 
 **Signing in.** After Google or a password whose policy asks for it, the server answers `401 totp_required` (or `totp_setup_required`) instead of a session and sets a ten-minute challenge cookie; the dialog asks for the code, and `POST /auth/totp/verify` finishes the sign-in. With the app listed as a method of its own, `POST /auth/totp/signin` takes the e-mail address and a code. A recovery code works wherever a code does, once; `totp.recovery_code_used` tells your webhook how many are left.
 
-**Removing it.** `Madauth.totp.remove(...)` and `newRecoveryCodes(...)` take a current code from the app or a recovery code, so a stolen session can't switch the protection off; while any method's policy is `required`, nobody can remove the app (`403 required_by_policy`). Deleting the account takes a code as well once the app is set up. A user who lost both the phone and the recovery codes needs the operator: `npx @madauth/server remove-totp <email>` (with `DATABASE_URL`), or `POST /auth/admin/totp/remove` as an admin; with a `required` policy they set the app up again at their next sign-in.
+**Removing it.** `Madauth.totp.remove(...)` and `newRecoveryCodes(...)` take a current code from the app or a recovery code, so a stolen session can't switch the protection off; while any method's policy is `required`, nobody can remove the app (`403 required_by_policy`), and a user who signed up with the app alone can't remove their only way in (`403 only_method`; they can delete the account). Deleting the account takes a code as well once the app is set up, while the app is on. A user who lost both the phone and the recovery codes needs the operator: `npx @madauth/server remove-totp <email>` (with `DATABASE_URL`; it calls no webhook), or `POST /auth/admin/totp/remove` as an admin; with a `required` policy they set the app up again at their next sign-in.
 
 The session says how it was authenticated: `amr` is `["pwd", "otp"]` or `["google", "otp"]` after the second step and `["otp"]` for the app alone, as `user.amr` in the web library and in [`createSessionVerifier`](#verifying-the-session-in-your-backend). A backend can require `otp` before a sensitive action.
 
@@ -367,7 +367,7 @@ The secrets are stored encrypted with a key derived from `MADAUTH_SIGNING_KEY`: 
 `Madauth.deleteAccount()` in the web library (`POST /auth/account/delete`) lets a signed-in user delete their account:
 
 - The user is deleted with all their sign-in methods (the password, the Google account, the authenticator app with its recovery codes), their claims, and their pending confirmation and reset links. The session proves who they are, whichever way they signed in.
-- Once the user has an authenticator app, the request needs a current code from it or a recovery code (`Madauth.deleteAccount({ code })`; `401 code_required` without one): like removing the app, so a stolen session can't destroy the account.
+- Once the user has an authenticator app, and while the app is on (a policy asks for it, or it signs in on its own), the request needs a current code from it or a recovery code (`Madauth.deleteAccount({ code })`; `401 code_required` without one): like removing the app, so a stolen session can't destroy the account.
 - The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`, with the user as the session held them.
 
 Delete the user's data in your own backend first, while the user is still signed in. Sessions on other devices end when the app next checks them; your own backends accept them until they expire (see [Password security](password-security.md#sessions)).
@@ -550,12 +550,12 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie, or the second step; ends all older sessions; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
 | `POST /auth/email/send-verification` | `{ email, redirectTo, locale? }` → 202, and the confirmation e-mail again, for a sign-up with a password or with the authenticator app; 503 `temporarily_unavailable` |
 | `POST /auth/email/verify` | `{ token }` or `{ email, code }` → `{ user }` and the session cookie, or the second step (a sign-up with the app: `totp_setup_required`); 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
-| `POST /auth/totp/setup` | `{}`, signed in or in the second step → `{ secret, uri }` (base32, and the `otpauth://` URI for the QR code) and a 10-minute setup cookie; 401 `no_session` |
+| `POST /auth/totp/setup` | `{}`, signed in or in the second step → `{ secret, uri }` (base32, and the `otpauth://` URI for the QR code) and a 10-minute setup cookie; a user who has an app sends `{ code }` or `{ recoveryCode }` from it, since the new one replaces it (401 `code_required`, `code_invalid`); 401 `no_session` |
 | `POST /auth/totp/confirm` | `{ code }` → `{ recoveryCodes }`, or `{ user, recoveryCodes }` and the session cookie when the setup finished a sign-in; 400 `setup_expired` or `code_invalid`, 401 `no_session` |
 | `POST /auth/totp/verify` | `{ code }` or `{ recoveryCode }`, with the challenge cookie → `{ user }` and the session cookie; 401 `challenge_expired` or `code_invalid`, 429 `too_many_attempts` |
 | `POST /auth/totp/signin` | `{ email, code }` or `{ email, recoveryCode }` → `{ user }` and the session cookie, when the app is a method of its own; 401 `invalid_credentials`, 429 `too_many_attempts` |
 | `POST /auth/totp/signup` | `{ email, name?, redirectTo, locale? }` → 202, and the confirmation e-mail; the setup follows the confirmation; 400 `invalid_email`, 403 `signup_rejected`, 503 `temporarily_unavailable` |
-| `POST /auth/totp/remove` | `{ code }` or `{ recoveryCode }`, signed in → `{}`; 401 `code_invalid`, 403 `required_by_policy` |
+| `POST /auth/totp/remove` | `{ code }` or `{ recoveryCode }`, signed in → `{}`; 401 `code_invalid`, 403 `required_by_policy` or `only_method` (the app is the user's only way to sign in) |
 | `POST /auth/totp/recovery-codes` | `{ code }` or `{ recoveryCode }`, signed in → `{ recoveryCodes }` (the old ones stop working); 400 `no_authenticator`, 401 `code_invalid` |
 | `GET /auth/totp/status` | `{ enabled, recoveryCodesLeft }` for the signed-in user; 401 `no_session` |
 | `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
@@ -563,7 +563,7 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/admin/claims/get` | `{ email }` → `{ email, userId, claims }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`, 404 `user_not_found`. See [Claims](#claims). |
 | `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims` |
 | `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, secondFactor }, password: { … }, totp: { configured, enabled } } }`, for admins. See [Sign-in methods](#sign-in-methods). |
-| `POST /auth/admin/settings/set` | `{ methods: { google?: {}, password?: { secondFactor }, totp?: {} } }` (the list of the methods that are on; `true` for `{}`) → the same; 400 `invalid_settings` |
+| `POST /auth/admin/settings/set` | `{ methods: { google?: {}, password?: { secondFactor }, totp?: {} } }` (the list of the methods that are on; `true` for `{}`) → the same; 400 `invalid_settings`, also when no method that creates users would stay on |
 | `POST /auth/admin/totp/remove` | `{ email }` → `{ email, userId, enabled: false }`: removes the user's authenticator app and recovery codes, for admins. See [Authenticator app](#authenticator-app). |
 | `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`. See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
@@ -573,4 +573,4 @@ POST requests must come from an origin in `ALLOWED_ORIGINS`. The e-mail endpoint
 
 ### The second step
 
-When the [policy](#sign-in-methods) of Google or password asks for the authenticator app, `google/verify`, `password/signin`, `password/reset` and `email/verify` answer `401 { "error": "totp_required", "method": "password" }` (the user has the app) or `401 { "error": "totp_setup_required", … }` (they set it up first) instead of `{ user }`, and set a 10-minute challenge cookie on `/auth/totp`. The sign-in then goes on with `POST /auth/totp/verify`, or with `POST /auth/totp/setup` and `confirm`. The redirect flow returns with `#madauth_next=totp` or `totp-setup` instead.
+When the [policy](#sign-in-methods) of Google or password asks for the authenticator app, `google/verify`, `password/signin`, `password/reset` and `email/verify` answer `401 { "error": "totp_required", "method": "password" }` (the user has the app) or `401 { "error": "totp_setup_required", … }` (they set it up first) instead of `{ user }`, and set a 10-minute challenge cookie on `/auth/totp`. The sign-in then goes on with `POST /auth/totp/verify`, or with `POST /auth/totp/setup` and `confirm`; if an admin switched the method off meanwhile, they answer `403 method_disabled`. The redirect flow returns with `#madauth_next=totp` or `totp-setup` instead. The web library handles the second step by itself, with or without `new Totp()`.

@@ -193,7 +193,17 @@ async function startSetup(): Promise<void> {
   show('totp-setup');
   $('#qr').innerHTML = '';
   $('#secret').textContent = '';
-  const result = await Madauth.totp.startSetup();
+  let result = await Madauth.totp.startSetup();
+  // An app exists already: the current one has to agree to being replaced.
+  if (!result.isSuccess && result.error.code === 'code_required') {
+    const code = prompt('A current code from your authenticator app, or a recovery code, to replace it:');
+    if (!code) {
+      $('#login').hidden = !!Madauth.currentUser;
+      show('signin');
+      return;
+    }
+    result = await Madauth.totp.startSetup(codeOptions(code));
+  }
   if (!result.isSuccess) {
     report(result);
     return;

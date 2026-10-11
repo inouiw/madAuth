@@ -9,11 +9,12 @@ import { emailRoutes } from './routes/email.js';
 import { googleRoutes } from './routes/google.js';
 import { body, error } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
-import { checkCode, setChallenge, totpRoutes, type NextStep, type TotpKeys } from './routes/totp.js';
+import { checkCode, clearChallenge, setChallenge, totpRoutes, type NextStep, type TotpKeys } from './routes/totp.js';
 import {
   SIGN_IN_METHODS,
   Settings,
   anyOn,
+  canSignUp,
   initialMethods,
   isConfigured,
   isOn,
@@ -26,7 +27,7 @@ import {
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims } from './tokens.js';
 import { deriveTotpKey } from './totp.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
-import { Users, toMadauthUser, totpAccountKey, type StoredUser } from './users.js';
+import { Users, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
 /** How long madAuth waits for an event call; events never make a request fail. */
@@ -93,6 +94,7 @@ export function createApp(config: MadauthConfig): Hono {
   const methods = methodConfig(config);
   const settings = new Settings(config.store, initialMethods(methods));
   const configured = (method: SignInMethod) => isConfigured(methods, method);
+  const signsUp = (method: SignInMethod) => canSignUp(methods, method);
   const emailVerification = sendsVerificationEmails(config);
   const totpKeys: TotpKeys = { totpKey: deriveTotpKey(config.signingKey.d!), codeKey };
 
@@ -198,6 +200,8 @@ export function createApp(config: MadauthConfig): Hono {
       return url;
     },
     async startSession(c, user, amr, extra) {
+      // A sign-in that was waiting for the authenticator app is over, whichever way this session came about.
+      clearChallenge(c, secure);
       await issueSession(c, user, amr, extra);
       return { ...user, amr };
     },
@@ -209,7 +213,7 @@ export function createApp(config: MadauthConfig): Hono {
       const policy = method === 'totp' ? 'required' : policyOf(method, methods);
       const next: NextStep | null = policy === 'none' ? null : enrolled ? 'totp' : policy === 'required' ? 'totp-setup' : null;
       if (next) {
-        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next });
+        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, ...(profile ? { profile } : {}) });
         return { next, method };
       }
       const result = await this.startSession(c, toMadauthUser(user, profile), amr, { sv: user.sessionVersion });
@@ -308,6 +312,7 @@ export function createApp(config: MadauthConfig): Hono {
 
   app.post('/auth/logout', (c) => {
     clearSession(c);
+    clearChallenge(c, secure);
     return c.body(null, 204);
   });
 
@@ -317,7 +322,9 @@ export function createApp(config: MadauthConfig): Hono {
     const user = await currentSession(c);
     if (!user) return c.json({ error: 'no_session' }, 401);
     const stored = await users.findById(user.id);
-    const authenticator = stored ? await users.totpAccount(user.id) : null;
+    // An app that is switched off server-wide protects nothing, so it is not asked for either.
+    const protects = stored && authenticatorOn(configured, await settings.methods());
+    const authenticator = protects ? await users.totpAccount(user.id) : null;
     if (stored && authenticator) {
       // Deleting the user removes their authenticator app too, so like removing it, it takes a current code.
       const data = await body(c);
@@ -425,8 +432,8 @@ export function createApp(config: MadauthConfig): Hono {
       );
     }
     // The whole list is replaced; the guard runs on the value that is written.
-    const methods = await settings.changeMethods(() => (anyOn(configured, next) ? next : null), caller.email);
-    if (!methods) return invalid('At least one sign-in method must stay on.');
+    const methods = await settings.changeMethods(() => (anyOn(signsUp, next) ? next : null), caller.email);
+    if (!methods) return invalid('At least one sign-in method that creates users must stay on: Google, e-mail & password, or the authenticator app with sign-up by e-mail.');
     return c.json(settingsAnswer(methods));
   });
 
@@ -438,8 +445,7 @@ export function createApp(config: MadauthConfig): Hono {
     if (!isValidEmail(data.email)) return invalidEmail(c);
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
-    const removed = await users.unlinkAccount(totpAccountKey(user.id));
-    await users.clearRecoveryCodes(user.id);
+    const removed = await users.removeTotp(user.id);
     if (removed) await ctx.emit('totp.disabled', { user: toMadauthUser(user), by: caller.email });
     return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
   });

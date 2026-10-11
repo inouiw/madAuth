@@ -397,8 +397,10 @@ describe('Madauth.setUpAuthenticator', () => {
 
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()], ui: 'custom' });
     expect(await Madauth.setUpAuthenticator()).toMatchObject({ isSuccess: false, error: { code: 'invalid_options', message: expect.stringContaining('startSetup') } });
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
-    expect(await Madauth.setUpAuthenticator()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+    // With the app switched off on the server there is nothing to set up; the provider is not what decides.
+    fakeServer();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
+    expect(await Madauth.setUpAuthenticator()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('switched off') } });
   });
 
   it('D14: a session that ended meanwhile is reported in the dialog', async () => {
@@ -408,11 +410,40 @@ describe('Madauth.setUpAuthenticator', () => {
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
     server.user = null;
 
-    void Madauth.setUpAuthenticator();
+    const result = Madauth.setUpAuthenticator();
     await settle();
 
     expect($('[part="error"]')!.dataset.code).toBe('no_session');
     expect(text('[part="error"]')).toBe('You are not signed in. Please sign in first.');
     expect($('[part="qr"]')).toBeNull();
+    // The caller learns it too, instead of waiting for the dialog to be closed.
+    expect(await result).toMatchObject({ isSuccess: false, error: { code: 'no_session' } });
+  });
+
+  it('D17: replacing an app asks for a code from the current one first', async () => {
+    const server = fakeServer();
+    server.policy.password = 'optional';
+    server.user = grace;
+    server.authenticators.add('grace@example.com');
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
+
+    const result = Madauth.setUpAuthenticator();
+    await settle();
+
+    expect(text('h2')).toBe('Enter your code');
+    expect(text('.lead')).toBe('Enter the code from your current authenticator app, or a recovery code, to replace it with a new one.');
+    expect($('[part="qr"]')).toBeNull();
+    fill({ code: '000000' });
+    await submit('totp-code');
+    expect($('[part="error"]')!.dataset.code).toBe('code_invalid');
+    fill({ code: CODE });
+    await submit('totp-code');
+    expect(text('h2')).toBe('Set up authenticator app');
+    expect($('[part="qr"]')).not.toBeNull();
+    expect($('[part="error"]')).toBeNull();
+    fill({ code: CODE });
+    await submit('totp-setup');
+    await click('.close');
+    expect(await result).toEqual({ isSuccess: true, recoveryCodes: RECOVERY_CODES });
   });
 });

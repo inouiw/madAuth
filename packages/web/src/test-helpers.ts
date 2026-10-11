@@ -274,6 +274,11 @@ export function fakeServer(): FakeServer {
         if (!totpOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         const who = whoSetsUp();
         if (!who) return json({ error: 'no_session' }, 401);
+        // Replacing an app: the current one has to agree.
+        if (server.authenticators.has(who)) {
+          if (body.code === undefined && body.recoveryCode === undefined) return json({ error: 'code_required', message: 'the current app has to agree' }, 401);
+          if (!codeOk(who, body)) return json({ error: 'code_invalid', message: 'wrong' }, 401);
+        }
         server.totpSetup = { email: who };
         return json({ secret: TOTP_SECRET, uri: `otpauth://totp/app.example.com:${encodeURIComponent(who)}?secret=${TOTP_SECRET}&issuer=app.example.com&algorithm=SHA1&digits=6&period=30` });
       }
@@ -298,6 +303,9 @@ export function fakeServer(): FakeServer {
         if (!server.user?.email) return json({ error: 'no_session' }, 401);
         if (server.policy.google === 'required' || server.policy.password === 'required') return json({ error: 'required_by_policy', message: 'required' }, 403);
         if (!server.authenticators.has(server.user.email)) return json({});
+        // A sign-up with the app has no other way in.
+        const account = server.accounts.get(server.user.email);
+        if (account?.app && !account.password) return json({ error: 'only_method', message: 'the only way in' }, 403);
         if (!codeOk(server.user.email, body)) return json({ error: 'code_invalid', message: 'wrong' }, 401);
         server.authenticators.delete(server.user.email);
         server.recoveryCodes.delete(server.user.email);

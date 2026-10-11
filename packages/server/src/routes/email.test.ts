@@ -55,6 +55,10 @@ describe('e-mail confirmation', () => {
     expect(await verify.json()).toMatchObject({ error: 'method_disabled' });
     expect(again.status).toBe(202);
     expect(hook.emails()).toEqual([]);
+
+    // The link was not used up: it works once the method is on again.
+    await store.update('setting', { id: 'methods' }, { value: JSON.stringify({ google: {}, password: {} }) });
+    expect((await post(app, '/auth/email/verify', { token })).status).toBe(200);
   });
 
   it('E4: a POST from another origin is refused, like every other', async () => {

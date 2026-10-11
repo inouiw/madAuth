@@ -55,30 +55,41 @@ describe('Madauth.totp', () => {
     expect(await Madauth.totp.signIn({ email: 'grace@example.com', code: CODE })).toMatchObject({ isSuccess: false, error: { code: 'method_disabled' } });
   });
 
-  it('H14: fails clearly without the Totp provider, without asking the server', async () => {
+  it('H14: without the Totp provider, the app on its own is not offered, while the second step and the account calls work', async () => {
     const server = fakeServer();
     server.methods.totp = true;
+    server.policy.password = 'optional';
+    server.authenticators.add('grace@example.com');
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
     const before = server.requests.length;
 
-    const results = await Promise.all([
-      Madauth.totp.signIn({ email: 'grace@example.com', code: CODE }),
-      Madauth.totp.verify({ code: CODE }),
-      Madauth.totp.startSetup(),
-      Madauth.totp.confirmSetup({ code: CODE }),
-      Madauth.totp.remove({ code: CODE }),
-      Madauth.totp.newRecoveryCodes({ code: CODE }),
-      Madauth.totp.status(),
-      Madauth.totp.signUp({ email: 'x@example.com' }),
-      Madauth.setUpAuthenticator(),
-    ]);
-
-    for (const result of results) {
+    // Signing in or up with the app alone is what the provider adds.
+    const alone = await Promise.all([Madauth.totp.signIn({ email: 'grace@example.com', code: CODE }), Madauth.totp.signUp({ email: 'x@example.com' })]);
+    for (const result of alone) {
       expect(result).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('new Totp()') } });
     }
     expect(server.requests.length).toBe(before);
+    expect(Madauth.totp.policy).toMatchObject({ signIn: true, secondFactorFor: ['password'] });
+
+    // The server's policy decides the second step; the page needs nothing for it.
+    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'totp_required' } });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password' });
+    expect(await Madauth.totp.verify({ code: CODE })).toEqual({ isSuccess: true, user: grace });
     expect(Madauth.totp.pendingStep).toBeNull();
-    expect(Madauth.totp.policy).toBeNull();
+    expect(await Madauth.totp.status()).toMatchObject({ isSuccess: true, enabled: true });
+  });
+
+  it('H25: replacing an app takes a code from the current one', async () => {
+    const server = fakeServer();
+    server.policy.password = 'optional';
+    server.user = grace;
+    server.authenticators.add('grace@example.com');
+    await init();
+
+    expect(await Madauth.totp.startSetup()).toMatchObject({ isSuccess: false, error: { code: 'code_required' } });
+    expect(await Madauth.totp.startSetup({ code: '000000' })).toMatchObject({ isSuccess: false, error: { code: 'code_invalid' } });
+    expect(await Madauth.totp.startSetup({ code: CODE })).toMatchObject({ isSuccess: true, secret: TOTP_SECRET });
+    expect(await Madauth.totp.confirmSetup({ code: CODE })).toEqual({ isSuccess: true, recoveryCodes: RECOVERY_CODES });
   });
 
   it('H15: the provider is left out when the server has the app switched off', async () => {
@@ -260,6 +271,8 @@ describe('Madauth.totp', () => {
     expect(Madauth.currentUser).toBeNull();
     expect(await Madauth.totp.startSetup()).toMatchObject({ isSuccess: true });
     expect(await Madauth.totp.confirmSetup({ code: CODE })).toMatchObject({ isSuccess: true, user: { email: 'new@example.com' } });
+    // The app is the only way in for such a user: it stays until the account goes.
+    expect(await Madauth.totp.remove({ code: CODE })).toMatchObject({ isSuccess: false, error: { code: 'only_method' } });
   });
 
   it('H23: deleting the account takes a code once the app is set up', async () => {

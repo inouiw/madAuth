@@ -205,6 +205,13 @@ export class Users {
     return (await this.store.delete('account', { key })) === 1;
   }
 
+  /** Removes the user's authenticator app and recovery codes. Resolves to false if they had no app. */
+  async removeTotp(userId: string): Promise<boolean> {
+    const removed = await this.unlinkAccount(totpAccountKey(userId));
+    await this.clearRecoveryCodes(userId);
+    return removed;
+  }
+
   /** Adds a sign-in method to a user. Resolves to null if the account key is taken. */
   async linkAccount(userId: string, account: NewAccount): Promise<StoredAccount | null> {
     const record: StoredAccount = {
@@ -320,6 +327,12 @@ export class Users {
     };
     await this.store.create('verification', record as unknown as Row);
     return { token, code };
+  }
+
+  /** The user ID a link token belongs to, without using the verification up; null if invalid, expired or used. */
+  async peekLinkToken(token: string, purpose: VerificationPurpose): Promise<string | null> {
+    const record = (await this.store.findOne('verification', { id: hashLinkToken(token), purpose })) as StoredVerification | null;
+    return record && record.expiresAt > Date.now() ? record.userId : null;
   }
 
   /** Uses up the verification a link token belongs to. Resolves to its user ID, or null if invalid, expired or used. */

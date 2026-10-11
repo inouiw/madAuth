@@ -42,8 +42,10 @@ export interface TotpPolicy {
 }
 
 /**
- * The authenticator app (TOTP) for custom login screens. Needs `new Totp()` in `Madauth.initialize`; without
- * it, or when the server has the app switched off, every method fails with `flow_not_enabled`.
+ * The authenticator app (TOTP) for custom login screens. The methods work whenever the server has the app
+ * switched on (a policy asks for it, or it signs in on its own); otherwise they fail with `flow_not_enabled`.
+ * Signing in or up with the app alone ({@link signIn}, {@link signUp}) also needs `new Totp()` in
+ * `Madauth.initialize`.
  */
 export interface TotpApi {
   /**
@@ -61,9 +63,11 @@ export interface TotpApi {
   /**
    * Starts setting the app up, for the signed-in user or for a sign-in that ended with
    * `totp_setup_required`: a new key to scan or type into the app. Confirm it within ten minutes with
-   * {@link confirmSetup}. Fails with `no_session`.
+   * {@link confirmSetup}. A user who has an app already gives a current code from it (or a recovery code)
+   * in `options`, since the new app replaces it; without one it fails with `code_required`, with a wrong
+   * one with `code_invalid`. Fails with `no_session`.
    */
-  startSetup(): Promise<Result<TotpSetup>>;
+  startSetup(options?: CodeOptions): Promise<Result<TotpSetup>>;
   /**
    * Proves the setup with the first code the app shows and turns the app on; a new app replaces an earlier
    * one. Resolves with the recovery codes, to show once, and with the user when this finished a sign-in.
@@ -72,7 +76,8 @@ export interface TotpApi {
   confirmSetup(options: { code: string }): Promise<Result<{ recoveryCodes: string[]; user?: MadauthUser }>>;
   /**
    * Turns the signed-in user's app off, with a current code from it or a recovery code. Fails with
-   * `code_invalid`, `required_by_policy` (a method requires the app, so nobody can remove it) or `no_session`.
+   * `code_invalid`, `required_by_policy` (a method requires the app, so nobody can remove it), `only_method`
+   * (the app is the user's only way to sign in; they can delete the account instead) or `no_session`.
    */
   remove(options: CodeOptions): Promise<Result>;
   /** New recovery codes for the signed-in user, with a current code; the old ones stop working. Fails with `code_invalid`, `no_authenticator` or `no_session`. */
@@ -103,14 +108,17 @@ export interface TotpApi {
   readonly policy: TotpPolicy | null;
 }
 
-const notRegistered = () => fail('flow_not_enabled', 'Pass new Totp() to Madauth.initialize to use Madauth.totp.');
+const notRegistered = () => fail('flow_not_enabled', 'Pass new Totp() to Madauth.initialize to sign in or up with the authenticator app alone.');
+const switchedOff = () =>
+  fail('flow_not_enabled', 'The madAuth server has the authenticator app switched off: no sign-in method is set to ask for it, and it does not sign in on its own.');
 
 export function createTotpApi(core: Core): TotpApi {
+  /** The app as a method of its own is what the provider adds; the second step and the account calls need none. */
   const registered = () => core.provider('totp') instanceof Totp;
 
   /**
-   * Waits for initialize, checks that the Totp provider is registered, then calls the server. With
-   * `session`, a 401 means that nobody is signed in.
+   * Waits for initialize, checks that the server has the app switched on, then calls it. With `session`,
+   * a 401 means that nobody is signed in.
    */
   async function call<T extends object>(
     path: string,
@@ -118,7 +126,7 @@ export function createTotpApi(core: Core): TotpApi {
   ): Promise<Result<T>> {
     const ready = await core.whenReady();
     if (!ready.isSuccess) return ready;
-    if (!registered()) return notRegistered();
+    if (!core.config()?.totp) return switchedOff();
     const res = await core.request<T>(path, { method: init.method ?? 'POST', body: init.body });
     if (res.ok) return ok(res.data);
     if (init.session && res.status === 401 && res.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
@@ -130,31 +138,26 @@ export function createTotpApi(core: Core): TotpApi {
 
   return {
     async signIn(options) {
-      const result = signedIn(core, 'totp', await post('/auth/totp/signin', { ...options }));
-      if (result.isSuccess) core.setPendingStep(null);
-      return result;
+      if (!registered()) return notRegistered();
+      return signedIn(core, 'totp', await post('/auth/totp/signin', { ...options }));
     },
 
     async verify(options) {
       const result = await post<{ user: MadauthUser }>('/auth/totp/verify', { ...options });
       if (!result.isSuccess) return result;
-      core.setPendingStep(null);
       core.signedIn(result.user);
       return { isSuccess: true, user: result.user };
     },
 
-    async startSetup() {
-      const result = await call<{ secret: string; uri: string }>('/auth/totp/setup', { body: {}, session: true });
+    async startSetup(options) {
+      const result = await call<{ secret: string; uri: string }>('/auth/totp/setup', { body: { ...options }, session: true });
       return result.isSuccess ? ok({ secret: result.secret, uri: result.uri, qrSvg: qrSvg(result.uri) }) : result;
     },
 
     async confirmSetup({ code }) {
       const result = await call<{ recoveryCodes: string[]; user?: MadauthUser }>('/auth/totp/confirm', { body: { code }, session: true });
       if (!result.isSuccess) return result;
-      if (result.user) {
-        core.setPendingStep(null);
-        core.signedIn(result.user);
-      }
+      if (result.user) core.signedIn(result.user);
       return ok(result.user ? { recoveryCodes: result.recoveryCodes, user: result.user } : { recoveryCodes: result.recoveryCodes });
     },
 
@@ -174,6 +177,7 @@ export function createTotpApi(core: Core): TotpApi {
     },
 
     async signUp({ email, name, redirectTo }) {
+      if (!registered()) return notRegistered();
       const result = await post('/auth/totp/signup', { email, name, redirectTo: redirectTo ?? currentPage(), locale: core.locale() });
       return result.isSuccess ? ok() : result;
     },
@@ -182,11 +186,11 @@ export function createTotpApi(core: Core): TotpApi {
     verifyEmail: confirmation.verifyEmail,
 
     get pendingStep() {
-      return registered() ? core.pendingStep() : null;
+      return core.pendingStep();
     },
 
     get policy() {
-      const config = registered() ? core.config() : undefined;
+      const config = core.config();
       if (!config?.totp) return null;
       const secondFactorFor: ('google' | 'password')[] = [];
       if (config.google && config.google.secondFactor !== 'none') secondFactorFor.push('google');

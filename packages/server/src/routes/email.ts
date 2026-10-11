@@ -1,6 +1,6 @@
 // Confirming an e-mail address with the link or the code from the confirmation e-mail. Shared by the
 // methods that sign people up with an address: e-mail & password, and the authenticator app.
-import type { Hono } from 'hono';
+import type { Context, Hono } from 'hono';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
 import { toMadauthUser, type Users } from '../users.js';
@@ -27,13 +27,22 @@ export function emailRoutes(app: Hono, ctx: AppContext, users: Users, webhook: W
     return accepted(c);
   });
 
+  const disabled = (c: Context) => error(c, 403, 'method_disabled', 'This way of signing in is switched off.');
+
   app.post('/auth/email/verify', async (c) => {
-    const consumed = await emails.consume(await body(c), 'verify');
+    const data = await body(c);
+    // A link whose method is off is refused before it is used up, so it still works once the method is on
+    // again. (The code is checked first: whether an address has a pending sign-up is not told to anyone.)
+    if (typeof data.token === 'string' && data.token) {
+      const waiting = await users.peekLinkToken(data.token, 'verify');
+      if (waiting && !(await ctx.enabled(await signUpMethod(waiting)))) return disabled(c);
+    }
+    const consumed = await emails.consume(data, 'verify');
     const { userId, via } = consumed;
     const user = userId ? await users.findById(userId) : null;
     if (!user) return emails.invalidVerification(c, consumed);
     const method = await signUpMethod(user.id);
-    if (!(await ctx.enabled(method))) return error(c, 403, 'method_disabled', 'This way of signing in is switched off.');
+    if (!(await ctx.enabled(method))) return disabled(c);
     // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.
     await users.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
     const verified = { ...user, emailVerified: true, wrongCodes: 0 };

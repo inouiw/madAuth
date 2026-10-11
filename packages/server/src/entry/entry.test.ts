@@ -286,13 +286,13 @@ describe('deployment entry points', () => {
     expect(await runCli(['set-methods', 'password=maybe'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('none, optional, required') });
     expect(await runCli(['set-methods', 'totp=required'], io, env)).toMatchObject({ exitCode: 1 });
     // Nothing listed: that would switch everything off.
-    expect(await runCli(['set-methods'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('switch off every sign-in method') });
+    expect(await runCli(['set-methods'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('nobody could sign up') });
 
     // A password-only server: "set-methods google" would switch off the only method there is.
     const passwordOnly = { ...env, GOOGLE_CLIENT_ID: undefined };
     expect(await runCli(['set-methods', 'google'], io, passwordOnly)).toEqual({
       exitCode: 1,
-      output: 'That would switch off every sign-in method. The server is configured for: password, totp.',
+      output: 'That would leave no sign-in method on that creates users, so nobody could sign up. On this server these do: password, totp.',
     });
     // What was set above holds: Google is simply not configured here.
     expect(await runCli(['get-methods'], io, passwordOnly)).toEqual({ exitCode: 0, output: 'Switched on: password (authenticator app required), totp.' });

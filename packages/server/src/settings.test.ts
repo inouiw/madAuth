@@ -1,7 +1,7 @@
 // Settings admins change at runtime: which sign-in methods are on, and which ask for the authenticator app.
 // See "Sign-in methods" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Settings, authenticatorOn, initialMethods, isOn, parseMethodSettings, policyOf } from './settings.js';
+import { Settings, anyOn, authenticatorOn, canSignUp, initialMethods, isOn, parseMethodSettings, policyOf } from './settings.js';
 import { APP_ORIGIN, cookies, getNonce, googleIdToken, passwordApp, post, setClaims, signUpVerified, testApp, verify } from './test/helpers.js';
 
 afterEach(() => {
@@ -184,6 +184,15 @@ describe('switching sign-in methods off and on', () => {
       totp: null,
       email: { verification: false },
     });
+  });
+
+  it('keeps a method on that creates users: the app alone counts only with sign-up by e-mail', () => {
+    const googleOnly = { google: {}, emailVerification: false };
+    expect(anyOn((m) => canSignUp(googleOnly, m), { totp: {} })).toBe(false);
+    expect(anyOn((m) => canSignUp(googleOnly, m), { google: {}, totp: {} })).toBe(true);
+    const emails = { password: {}, emailVerification: true };
+    expect(anyOn((m) => canSignUp(emails, m), { totp: {} })).toBe(true);
+    expect(anyOn((m) => canSignUp(emails, m), { google: {} })).toBe(false);
   });
 
   it('is for admins only and checks its input', async () => {

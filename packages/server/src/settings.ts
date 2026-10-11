@@ -78,6 +78,15 @@ export function isConfigured(config: MethodConfig, method: SignInMethod): boolea
 }
 
 /**
+ * Whether a method creates users on this server: Google and password when configured, the authenticator app
+ * only when the webhook sends the confirmation e-mails (sign-up with it). An app that existing users set up
+ * is no way in for anyone new.
+ */
+export function canSignUp(config: MethodConfig, method: SignInMethod): boolean {
+  return method === 'totp' ? !!config.emailVerification : isConfigured(config, method);
+}
+
+/**
  * The methods a server runs until an admin sets them: the configured ones, without a second factor. The
  * authenticator app on its own only when nothing else can create users, i.e. on an authenticator-only server.
  */
@@ -180,9 +189,13 @@ export function policyOf(method: SignInMethod, methods: MethodSettings): SecondF
   return methods[method]?.secondFactor ?? 'none';
 }
 
-/** Whether the settings leave at least one configured method on. */
-export function anyOn(configured: (method: SignInMethod) => boolean, methods: MethodSettings): boolean {
-  return SIGN_IN_METHODS.some((method) => isOn(method, configured, methods));
+/**
+ * Whether the settings leave on at least one method that creates users, so that nobody is locked out:
+ * `signsUp` is {@link canSignUp} for the server. The app alone, on a server where nobody can sign up with
+ * it, would let in only the users who already have an app.
+ */
+export function anyOn(signsUp: (method: SignInMethod) => boolean, methods: MethodSettings): boolean {
+  return SIGN_IN_METHODS.some((method) => signsUp(method) && methods[method] !== undefined);
 }
 
 /**

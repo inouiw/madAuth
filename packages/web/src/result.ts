@@ -45,6 +45,7 @@ const errorCodes = [
   'required_by_policy',
   'code_required',
   'no_authenticator',
+  'only_method',
   'other_method',
   'unknown',
 ] as const;

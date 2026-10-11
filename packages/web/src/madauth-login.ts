@@ -11,6 +11,7 @@ import {
 } from './madauth.js';
 import { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
 import type { PendingStep } from './providers/provider.js';
+import type { CodeOptions } from './scopes/totp.js';
 import { qrModules, qrViewBox, type QrModules } from './qr.js';
 import type { MadauthError, MadauthErrorCode, MadauthUser, Result } from './result.js';
 import { languageOf, stringsFor, type Strings } from './strings.js';
@@ -25,6 +26,11 @@ export type ErrorDetail = { method?: LoginMethodId } & MadauthError;
 /** The authenticator app was set up and the recovery codes shown. */
 export interface AuthenticatorEnabledDetail {
   recoveryCodes: string[];
+}
+
+/** `madauth-authenticator-failed`: the setup opened by `Madauth.setUpAuthenticator()` can't go on. */
+export interface AuthenticatorFailedDetail {
+  error: MadauthError;
 }
 
 /** The screens of the dialog. */
@@ -139,6 +145,7 @@ export class MadauthLogin extends LitElement {
     setup: { state: true },
     recoveryCodes: { state: true },
     useRecovery: { state: true },
+    setupNeedsCode: { state: true },
   };
 
   /** Title shown at the top of the dialog. Default: "Sign in" in the dialog's language. */
@@ -185,6 +192,8 @@ export class MadauthLogin extends LitElement {
 
   /** A recovery code instead of a code from the app. */
   private useRecovery = false;
+  /** The setup replaces an app the user has: a code from the current one comes first. */
+  private setupNeedsCode = false;
 
   private stopFollowingLocale?: () => void;
 
@@ -255,6 +264,7 @@ export class MadauthLogin extends LitElement {
   private continueWith(pending: PendingStep): void {
     this.primary = pending.method;
     this.useRecovery = false;
+    this.setupNeedsCode = false;
     if (pending.step === 'code') {
       this.view = 'totp-code';
       return;
@@ -324,6 +334,7 @@ export class MadauthLogin extends LitElement {
     this.recoveryCodes = undefined;
     this.setupUser = undefined;
     this.useRecovery = false;
+    this.setupNeedsCode = false;
   }
 
   /**
@@ -799,7 +810,7 @@ export class MadauthLogin extends LitElement {
   private renderTotpCode() {
     const s = this.strings;
     return html`
-      <p class="lead">${s.totpCode.lead}</p>
+      <p class="lead">${this.setupNeedsCode ? s.totpCode.replaceLead : s.totpCode.lead}</p>
       <form part="form" class="totp-code" @submit=${this.onTotpVerify}>
         ${this.codeField()}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
@@ -808,13 +819,17 @@ export class MadauthLogin extends LitElement {
       </form>
       <p class="links">
         ${this.toggleRecoveryLink()}
-        <button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${s.backToSignIn}</button>
+        ${this.setupNeedsCode
+          ? html`<button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>`
+          : html`<button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${s.backToSignIn}</button>`}
       </p>
     `;
   }
 
   private async onTotpVerify(e: Event): Promise<void> {
     const fields = this.fields(e);
+    // Replacing an app: the code is for the current one, and the setup starts once it agrees.
+    if (this.setupNeedsCode) return this.startSetup(this.codeOptions(fields));
     const result = await this.run(() => Madauth.totp.verify(this.codeOptions(fields)));
     if (!result) return;
     if (!result.isSuccess && result.error.code === 'challenge_expired') {
@@ -861,15 +876,33 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
-  /** Asks the server for a new key and shows it: the first step of the setup, also after "Start again". */
-  private async startSetup(): Promise<void> {
+  /**
+   * Asks the server for a new key and shows it: the first step of the setup, also after "Start again". A
+   * user who has an app already is sent to the code step first, which calls this again with the code.
+   */
+  private async startSetup(current?: CodeOptions): Promise<void> {
     this.setup = undefined;
-    const result = await this.run(() => Madauth.totp.startSetup());
+    const result = await this.run(() => Madauth.totp.startSetup(current));
     if (!result) return;
     if (!result.isSuccess) {
+      if (result.error.code === 'code_required') {
+        this.setupNeedsCode = true;
+        this.useRecovery = false;
+        this.view = 'totp-code';
+        return;
+      }
       this.showError(result.error, 'totp');
+      // Nothing the user can do here: the caller of setUpAuthenticator() learns it as well.
+      if (!this.setupForSignIn && (result.error.code === 'no_session' || result.error.code === 'method_disabled')) {
+        const detail: AuthenticatorFailedDetail = { error: result.error };
+        this.dispatchEvent(new CustomEvent('madauth-authenticator-failed', { detail, bubbles: true, composed: true }));
+      }
       return;
     }
+    this.setupNeedsCode = false;
+    this.notice = undefined;
+    this.error = null;
+    this.view = 'totp-setup';
     this.setup = { secret: result.secret, qr: qrModules(result.uri) };
     await this.updateComplete;
     this.renderRoot.querySelector<HTMLInputElement>('form.totp-setup input[name="code"]')?.focus();
@@ -1429,5 +1462,6 @@ declare global {
     'madauth-cancel': CustomEvent<void>;
     'madauth-error': CustomEvent<ErrorDetail>;
     'madauth-authenticator-enabled': CustomEvent<AuthenticatorEnabledDetail>;
+    'madauth-authenticator-failed': CustomEvent<AuthenticatorFailedDetail>;
   }
 }

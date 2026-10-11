@@ -1,4 +1,5 @@
 import { REDIRECT_ERROR_PARAM } from '../constants.js';
+import { takeHashParam } from '../hash.js';
 import { fail, ok, toErrorCode, type Result } from '../result.js';
 import { stringsFor, type Strings } from '../strings.js';
 import type { ButtonOptions, ProviderContext, SignInProvider } from './provider.js';
@@ -33,12 +34,8 @@ export class GoogleRedirect implements SignInProvider {
       );
     }
     // Coming back from a failed redirect sign-in: report it and tidy up the URL.
-    const params = new URLSearchParams(location.hash.slice(1));
-    const error = params.get(REDIRECT_ERROR_PARAM);
+    const error = takeHashParam(REDIRECT_ERROR_PARAM);
     if (error) {
-      params.delete(REDIRECT_ERROR_PARAM);
-      const hash = params.toString();
-      history.replaceState(history.state, '', `${location.pathname}${location.search}${hash ? `#${hash}` : ''}`);
       const code = toErrorCode(error);
       const strings = stringsFor(ctx.locale);
       const message = Object.hasOwn(strings.googleErrors, code)

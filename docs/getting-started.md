@@ -89,7 +89,7 @@ Other dev servers have a similar setting. In production, your reverse proxy or C
 
 ## 6. Sign users in
 
-Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, and `Totp` for the authenticator app (as a second factor once an admin sets the policy, or on its own once an admin lists it with `set-methods`; a user sets the app up from your app with `Madauth.setUpAuthenticator()`).
+Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, and `Totp` for signing in with the authenticator app on its own (once an admin lists it with `set-methods`). The app as a second factor needs no provider: once an admin sets the policy, the dialog asks for the code by itself, and a user sets the app up from your app with `Madauth.setUpAuthenticator()`.
 
 ```ts
 import { Madauth, Password, Totp } from '@madauth/web';

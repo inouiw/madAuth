@@ -90,14 +90,14 @@ Use these `autocomplete` values so browsers offer to save and fill passwords and
 
 ## Authenticator app: `Madauth.totp`
 
-Needs `new Totp()` in `initialize`, and the app in use on the server: as the second factor of a method whose [policy](server.md#sign-in-methods) is `optional` or `required`, or as a method of its own. Otherwise the methods fail with `flow_not_enabled` and `initialize` leaves the provider out.
+The methods work whenever the app is in use on the server: as the second factor of a method whose [policy](server.md#sign-in-methods) is `optional` or `required`, or as a method of its own; otherwise they fail with `flow_not_enabled`. `signIn` and `signUp`, the app on its own, also need `new Totp()` in `initialize` (left out with a warning when the server has the app switched off); the second step and the account methods need no provider, so an admin's policy applies to every app.
 
 | Method | Result | Errors |
 | --- | --- | --- |
 | `verify({ code })` or `verify({ recoveryCode })` | `{ user }` | `code_invalid`, `too_many_attempts`, `challenge_expired` |
-| `startSetup()` | `{ secret, uri, qrSvg }` | `no_session` |
+| `startSetup()`, or `startSetup({ code })` / `startSetup({ recoveryCode })` when the user has an app already | `{ secret, uri, qrSvg }` | `no_session`; `code_required` (an app exists: give a code from it), `code_invalid` |
 | `confirmSetup({ code })` | `{ recoveryCodes, user? }` | `code_invalid`, `setup_expired`, `no_session` |
-| `remove({ code })` or `remove({ recoveryCode })` | — | `code_invalid`, `required_by_policy`, `no_session` |
+| `remove({ code })` or `remove({ recoveryCode })` | — | `code_invalid`, `required_by_policy`, `only_method` (the app is the user's only way to sign in; offer deleting the account), `no_session` |
 | `newRecoveryCodes({ code })` or `newRecoveryCodes({ recoveryCode })` | `{ recoveryCodes }` | `code_invalid`, `no_authenticator`, `no_session` |
 | `status()` | `{ enabled, recoveryCodesLeft }` | `no_session` |
 | `signIn({ email, code })` or `signIn({ email, recoveryCode })` | `{ user }` | `invalid_credentials`, `too_many_attempts`, `method_disabled` |
@@ -126,7 +126,7 @@ codeForm.onsubmit = async () => {
 
 ### Setting the app up
 
-While the user is signed in (whichever way), or in the setup step of a sign-in, call `startSetup()`: it returns the key as `secret` (base32, to type into the app), `uri` (`otpauth://totp/...`) and `qrSvg`, the QR code of the URI as an SVG string. Put `qrSvg` into the page with `innerHTML`; it draws the dark modules in `currentColor` with no background, so give the container a white background and a size. Then ask for the first code the app shows and call `confirmSetup({ code })` within ten minutes; after that it fails with `setup_expired`, and you start again. Show the `recoveryCodes` it returns once, and tell the user to save them. Say on the screen what the app will do (`policy`): that signing in with the password or Google then asks for a code, and whether the app signs in on its own.
+While the user is signed in (whichever way), or in the setup step of a sign-in, call `startSetup()`: it returns the key as `secret` (base32, to type into the app), `uri` (`otpauth://totp/...`) and `qrSvg`, the QR code of the URI as an SVG string. Put `qrSvg` into the page with `innerHTML`; it draws the dark modules in `currentColor` with no background, so give the container a white background and a size. Then ask for the first code the app shows and call `confirmSetup({ code })` within ten minutes; after that it fails with `setup_expired`, and you start again. Show the `recoveryCodes` it returns once, and tell the user to save them. Say on the screen what the app will do (`policy`): that signing in with the password or Google then asks for a code, and whether the app signs in on its own. A user who has an app already replaces it: `startSetup()` then fails with `code_required`, so ask for a current code from the old app (or a recovery code) and call `startSetup({ code })`.
 
 ```ts
 const setup = await Madauth.totp.startSetup();

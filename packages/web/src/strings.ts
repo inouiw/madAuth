@@ -72,7 +72,12 @@ export const en = {
   /** On the "Create account" form of a sign-up with the app alone. */
   totpSignUpHint: 'You will set up your authenticator app after confirming your e-mail address.',
   /** The second step after a password or Google sign-in. */
-  totpCode: { heading: 'Enter your code', lead: 'Enter the code from your authenticator app to finish signing in.' },
+  totpCode: {
+    heading: 'Enter your code',
+    lead: 'Enter the code from your authenticator app to finish signing in.',
+    /** Setting up a new app while one exists: the current one has to agree. */
+    replaceLead: 'Enter the code from your current authenticator app, or a recovery code, to replace it with a new one.',
+  },
   totpSetup: {
     heading: 'Set up authenticator app',
     lead: 'Scan this QR code with your authenticator app (e.g. Google Authenticator or 1Password), then enter the code it shows.',
@@ -118,6 +123,7 @@ export const en = {
     required_by_policy: 'Signing in requires the authenticator app, so it can’t be removed.',
     code_required: 'Please enter a code from your authenticator app.',
     no_authenticator: 'No authenticator app is set up.',
+    only_method: 'The authenticator app is the only way you sign in, so it can’t be removed.',
     other_method: 'This e-mail address signs in another way. Use that instead of Google.',
   } satisfies Partial<Record<MadauthErrorCode, string>>,
   /** For every other error code. */
@@ -202,7 +208,11 @@ export const de: Strings = {
   totpInvalid:
     'E-Mail-Adresse oder Code ist falsch. Um sich mit einer Authentifizierungs-App anzumelden, richten Sie diese zuerst ein, während Sie auf andere Weise angemeldet sind.',
   totpSignUpHint: 'Nach der Bestätigung Ihrer E-Mail-Adresse richten Sie Ihre Authentifizierungs-App ein.',
-  totpCode: { heading: 'Code eingeben', lead: 'Geben Sie den Code aus Ihrer Authentifizierungs-App ein, um die Anmeldung abzuschließen.' },
+  totpCode: {
+    heading: 'Code eingeben',
+    lead: 'Geben Sie den Code aus Ihrer Authentifizierungs-App ein, um die Anmeldung abzuschließen.',
+    replaceLead: 'Geben Sie den Code aus Ihrer bisherigen Authentifizierungs-App oder einen Wiederherstellungscode ein, um sie durch eine neue zu ersetzen.',
+  },
   totpSetup: {
     heading: 'Authentifizierungs-App einrichten',
     lead: 'Scannen Sie diesen QR-Code mit Ihrer Authentifizierungs-App (z. B. Google Authenticator oder 1Password) und geben Sie dann den Code ein, den sie anzeigt.',
@@ -244,6 +254,7 @@ export const de: Strings = {
     required_by_policy: 'Für die Anmeldung ist die Authentifizierungs-App erforderlich, daher kann sie nicht entfernt werden.',
     code_required: 'Bitte geben Sie einen Code aus Ihrer Authentifizierungs-App ein.',
     no_authenticator: 'Es ist keine Authentifizierungs-App eingerichtet.',
+    only_method: 'Die Authentifizierungs-App ist Ihre einzige Anmeldemethode, daher kann sie nicht entfernt werden.',
     other_method: 'Diese E-Mail-Adresse meldet sich auf andere Weise an. Verwenden Sie diese statt Google.',
   },
   errorFallback: 'Die Anmeldung ist derzeit nicht möglich.',

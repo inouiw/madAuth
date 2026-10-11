@@ -271,11 +271,18 @@ describe('<madauth-login> in German', () => {
     expect(text('form.totp-code .submit')).toBe('Weiter');
     login().close();
 
-    // Setting the app up while signed in.
+    // Setting the app up while signed in: Grace has one, so the current one has to agree first.
     server.user = grace;
     await Madauth.getSession();
     void Madauth.setUpAuthenticator();
     await settle();
+    expect(text('h2')).toBe('Code eingeben');
+    expect(text('.lead')).toBe(
+      'Geben Sie den Code aus Ihrer bisherigen Authentifizierungs-App oder einen Wiederherstellungscode ein, um sie durch eine neue zu ersetzen.',
+    );
+    expect(text('[data-action="cancel"]')).toBe('Abbrechen');
+    fill({ code: CODE });
+    await submit('totp-code');
     expect(text('h2')).toBe('Authentifizierungs-App einrichten');
     expect(text('.lead')).toBe(
       'Scannen Sie diesen QR-Code mit Ihrer Authentifizierungs-App (z. B. Google Authenticator oder 1Password) und geben Sie dann den Code ein, den sie anzeigt.',
@@ -289,6 +296,10 @@ describe('<madauth-login> in German', () => {
     await submit('totp-setup');
     expect(text('[part="error"]')).toBe('Die Einrichtung hat zu lange gedauert. Bitte beginnen Sie neu. Neu beginnen');
     await click('[data-action="restart-setup"]');
+    // Starting again asks the current app once more.
+    expect(text('h2')).toBe('Code eingeben');
+    fill({ code: CODE });
+    await submit('totp-code');
     fill({ code: CODE });
     await submit('totp-setup');
     expect(text('h2')).toBe('Wiederherstellungscodes speichern');
