@@ -21,8 +21,6 @@ export const en = {
     email: { label: 'E-mail link', description: 'Passwordless sign-in by e-mail' },
     sms: { label: 'SMS code', description: 'One-time code sent to your phone' },
   } satisfies Record<LoginMethodId, { label: string; description: string }>,
-  /** After picking a method that has no provider yet. */
-  comingSoon: (method: string) => `“${method}” is coming soon.`,
 
   // Fields
   email: 'E-mail',
@@ -169,7 +167,6 @@ export const de: Strings = {
     email: { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
     sms: { label: 'SMS-Code', description: 'Einmalcode per SMS an Ihr Mobiltelefon' },
   },
-  comingSoon: (method) => `„${method}“ ist bald verfügbar.`,
 
   email: 'E-Mail-Adresse',
   password: 'Passwort',
