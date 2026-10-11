@@ -17,33 +17,68 @@
       </svg>
     </button>
     <main>
-      <!-- Two demos: Google sign-in in the browser (One Tap / FedCM) or through the server (redirect). See src/main.ts. -->
-      <nav id="flow" aria-label="Google sign-in flow">
-        <a href="?google=fedcm" data-flow="fedcm">One Tap / FedCM</a>
-        <a href="?google=redirect" data-flow="redirect">Server-side redirect</a>
-      </nav>
-      <p class="flow-description" data-flow="fedcm">
-        <code>new GoogleFedcm()</code>: the browser shows “Continue as …” (One Tap) and the madAuth server verifies
-        Google's ID token.
-      </p>
-      <p class="flow-description" data-flow="redirect" hidden>
-        <code>new GoogleRedirect()</code>: the browser is redirected to Google and back, and the madAuth server
-        exchanges the code. Needs <code>GOOGLE_CLIENT_SECRET</code> on the server.
-      </p>
+      <!--
+        Two ways to sign in with Google: in the browser (One Tap / FedCM) or through the server (the redirect
+        flow). The links switch between them; the info button explains the difference. See src/main.ts.
+      -->
+      <div class="google-flow">
+        <span class="caption">
+          Google sign-in
+          <button type="button" class="info" aria-label="About the two Google sign-in flows" aria-expanded="false" aria-controls="flow-info">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5M12 7.5v.01" /></svg>
+          </button>
+        </span>
+        <nav id="flow" aria-label="Google sign-in flow">
+          <a href="?google=fedcm" data-flow="fedcm">One Tap / FedCM</a>
+          <a href="?google=redirect" data-flow="redirect">Server-side redirect</a>
+        </nav>
+        <div id="flow-info" class="info-text" hidden>
+          <p>
+            Both sign the user in with their Google account; they differ in where Google is talked to. The current
+            one is what the dialog's Google button uses.
+          </p>
+          <p class="flow-description" data-flow="fedcm">
+            <strong>One Tap / FedCM</strong>, <code>new GoogleFedcm()</code>: the browser shows “Continue as …” (One
+            Tap) and hands madAuth Google's ID token, which the madAuth server verifies. No redirect, and the page
+            keeps its state.
+          </p>
+          <p class="flow-description" data-flow="redirect">
+            <strong>Server-side redirect</strong>, <code>new GoogleRedirect()</code>: the browser is redirected to
+            Google and back, and the madAuth server exchanges the code for the token. Works where One Tap doesn't
+            (e.g. some in-app browsers) and needs <code>GOOGLE_CLIENT_SECRET</code> on the server.
+          </p>
+        </div>
+      </div>
       <p id="flow-note" class="note" hidden>
         This madAuth server doesn't offer the redirect flow: it needs <code>GOOGLE_CLIENT_ID</code> and
         <code>GOOGLE_CLIENT_SECRET</code>, with Google switched on. The dialog offers e-mail &amp; password only.
       </p>
 
       <button id="sign-in" type="button">Sign in</button>
+      <!-- What a call resolved to when it ended the session, e.g. deleteAccount: shown here, since the API is gone then. -->
+      <div id="last-response" class="api-box" hidden>
+        <span class="caption">Response</span>
+        <pre role="status"></pre>
+      </div>
 
       <section id="account" hidden>
         <img id="avatar" alt="" referrerpolicy="no-referrer" />
         <p><strong id="user-name"></strong><span id="user-email"></span></p>
         <!-- What admins attached to the user (Madauth.currentUser.claims); the session token carries it to your backends too. -->
         <div class="claims">
-          <span class="caption">Claims</span>
+          <span class="caption">
+            Claims
+            <button type="button" class="info" aria-label="About claims" aria-expanded="false" aria-controls="claims-info">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5M12 7.5v.01" /></svg>
+            </button>
+          </span>
           <pre id="claims"></pre>
+          <p id="claims-info" class="info-text" hidden>
+            Claims are what admins attached to this user, e.g. their roles. They are stored in the session token, so
+            your own backends read them from the token without asking madAuth. Users with the role
+            <code>admin</code> set them through the API, <code>Madauth.admin.setClaims(email, claims)</code>, see the
+            Admin section below; the first admin gets the role on the server's command line.
+          </p>
         </div>
         <!-- How this session was authenticated (Madauth.currentUser.amr), e.g. pwd and otp. -->
         <p class="amr">Signed in with <code id="amr"></code></p>
@@ -53,82 +88,127 @@
           <p id="totp-status"></p>
           <label class="code-field" hidden>
             Code from the app, or a recovery code
-            <input id="totp-code" type="text" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" />
+            <input id="totp-code" type="text" autocomplete="one-time-code" spellcheck="false" />
           </label>
           <p class="buttons">
             <button type="button" data-call="setUpAuthenticator" hidden>Madauth.setUpAuthenticator()</button>
             <button type="button" data-call="newRecoveryCodes" hidden>Madauth.totp.newRecoveryCodes({ code })</button>
             <button type="button" data-call="removeAuthenticator" hidden>Madauth.totp.remove({ code })</button>
           </p>
+          <!-- What the last of these calls resolved to; a status region, so screen readers announce it. -->
+          <div id="totp-output" class="api-box" hidden>
+            <span class="caption">Response</span>
+            <pre id="output" role="status"></pre>
+          </div>
         </div>
         <button id="sign-out" type="button">Sign out</button>
       </section>
 
-      <!-- Everything else a signed-in user can call. Each result is shown below as it is. -->
+      <!--
+        The rest of the API a signed-in user can call, a method per row. An open row shows what the method
+        does, its parameters, the call with its arguments (kept up to date as the parameters change), an
+        Execute button and the response. src/main.ts adds the request, the button and the response to each row.
+      -->
       <section id="api" hidden>
-        <h2>Session</h2>
-        <p class="buttons">
-          <button type="button" data-call="getSession">Madauth.getSession()</button>
-          <button type="button" data-call="sessionReady">Madauth.sessionReady()</button>
-          <button type="button" data-call="deleteAccount">Madauth.deleteAccount()</button>
-        </p>
-        <h2>Admin</h2>
+        <h2>API</h2>
+        <p>Click a method to see its parameters, the call it makes and the response. The HTTP requests behind the calls are in the <a href="https://github.com/inouiw/madAuth/blob/main/docs/server.md#http-api">server docs</a>.</p>
+
+        <h3>Session</h3>
+        <ul class="api-list">
+          <li class="api-method" data-call="getSession">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.getSession()</button>
+            <div class="api-detail" hidden>
+              <p>The current session from the server, renewed on the way if it is about to expire. Fails with <code>no_session</code> when nobody is signed in.</p>
+            </div>
+          </li>
+          <li class="api-method" data-call="sessionReady">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.sessionReady()</button>
+            <div class="api-detail" hidden>
+              <p>Resolves with <code>true</code> once a fresh session cookie is there, e.g. before your first call to your own backend; <code>false</code> when nobody is signed in.</p>
+            </div>
+          </li>
+          <li class="api-method" data-call="deleteAccount">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.deleteAccount()</button>
+            <div class="api-detail" hidden>
+              <p>Deletes the signed-in user with their sign-in methods and claims, for good; the page asks first. Once the authenticator app is set up, a current code from it is needed.</p>
+              <label data-needs-authenticator hidden>Code from the app, or a recovery code <input data-param="code" type="text" autocomplete="one-time-code" spellcheck="false" /></label>
+            </div>
+          </li>
+        </ul>
+
+        <h3>Admin</h3>
         <p>
           For users with the role <code>admin</code>, which is given on the server:
           <code>npx @madauth/server set-roles you@example.com admin</code>
         </p>
-        <!-- Shown to a signed-in user without the role. madauth.com gives it to nobody: see src/main.ts. -->
+        <!-- Shown to a signed-in user without the role. madauth.com gives it to no visitor: see src/main.ts. -->
         <p id="admin-note" class="note" hidden>
           You don't have the role, so these calls answer <code>forbidden</code>.
           <span data-hosted hidden>
-            Nobody gets it on madauth.com: an admin could change every visitor's claims and switch sign-in methods
-            off for everyone.
+            Visitors don't get it on madauth.com: an admin could change every visitor's claims and switch sign-in
+            methods off for everyone.
           </span>
           To try the admin API, <a href="https://github.com/inouiw/madAuth#getting-started">run the demo on your machine</a>
           and give yourself the role: <code>npm run cli -w packages/server -- set-roles you@example.com admin</code>
         </p>
-        <label>E-mail <input id="claims-email" type="email" autocomplete="off" spellcheck="false" /></label>
-        <label>Claims (JSON) <textarea id="claims-json" rows="2" spellcheck="false">{ "roles": ["admin"] }</textarea></label>
-        <p class="buttons">
-          <button type="button" data-call="getClaims">Madauth.admin.getClaims(email)</button>
-          <button type="button" data-call="setClaims">Madauth.admin.setClaims(email, claims)</button>
-        </p>
-        <!--
-          The controls show the server's settings once getSettings succeeded; only then can they be sent back.
-          The list says which methods are on; Google and password take a policy for the authenticator app.
-        -->
-        <table class="methods">
-          <tr>
-            <td><label><input id="method-google" type="checkbox" /> Google</label></td>
-            <td>
-              <label class="policy">
-                Authenticator app
-                <select id="policy-google"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
-              </label>
-            </td>
-          </tr>
-          <tr>
-            <td><label><input id="method-password" type="checkbox" /> E-mail &amp; password</label></td>
-            <td>
-              <label class="policy">
-                Authenticator app
-                <select id="policy-password"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
-              </label>
-            </td>
-          </tr>
-          <tr>
-            <td><label><input id="method-totp" type="checkbox" /> Authenticator app on its own</label></td>
-            <td></td>
-          </tr>
-        </table>
-        <p class="buttons">
-          <button type="button" data-call="getSettings">Madauth.admin.getSettings()</button>
-          <button type="button" data-call="setSettings" disabled>Madauth.admin.setSettings({ methods })</button>
-        </p>
+        <ul class="api-list">
+          <li class="api-method" data-call="getClaims">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.getClaims(email)</button>
+            <div class="api-detail" hidden>
+              <p>The claims of the user with this address.</p>
+              <label>E-mail <input data-param="email" type="email" autocomplete="off" spellcheck="false" /></label>
+            </div>
+          </li>
+          <li class="api-method" data-call="setClaims">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.setClaims(email, claims)</button>
+            <div class="api-detail" hidden>
+              <p>Replaces the claims of the user with this address, the same as in <code>getClaims</code>. The user sees them at their next session check; your backends from their next session token.</p>
+              <label>E-mail <input data-param="email" type="email" autocomplete="off" spellcheck="false" /></label>
+              <label>Claims (JSON) <textarea data-param="claims" data-json rows="2" spellcheck="false">{ "roles": ["admin"] }</textarea></label>
+            </div>
+          </li>
+          <li class="api-method" data-call="getSettings">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.getSettings()</button>
+            <div class="api-detail" hidden>
+              <p>The sign-in methods that are on, each with its policy for the authenticator app. Fills the controls of <code>setSettings</code>.</p>
+            </div>
+          </li>
+          <li class="api-method" data-call="setSettings">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.setSettings({ methods })</button>
+            <div class="api-detail" hidden>
+              <p>Sends the list of the methods that are on, with the policy of Google and password for the authenticator app; a method that is not listed is off. It applies at once, for everyone.</p>
+              <!--
+                The controls show the server's settings once getSettings succeeded; only then can they be sent back.
+              -->
+              <p id="settings-unloaded" class="note">The controls are empty until <code>getSettings</code> has loaded the server's settings.</p>
+              <table class="methods">
+                <tr>
+                  <td><label><input id="method-google" type="checkbox" /> Google</label></td>
+                  <td>
+                    <label class="policy">
+                      Authenticator app
+                      <select id="policy-google"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
+                    </label>
+                  </td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-password" type="checkbox" /> E-mail &amp; password</label></td>
+                  <td>
+                    <label class="policy">
+                      Authenticator app
+                      <select id="policy-password"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
+                    </label>
+                  </td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-totp" type="checkbox" /> Authenticator app on its own</label></td>
+                  <td></td>
+                </tr>
+              </table>
+            </div>
+          </li>
+        </ul>
       </section>
-
-      <!-- A status region, so the result of a call is announced to screen readers. -->
-      <pre id="output" role="status" hidden></pre>
     </main>
     <a class="page-link" href="custom.html">Custom login screen example →</a>
     <script type="module" src="./src/main.ts"></script>

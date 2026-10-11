@@ -1,4 +1,4 @@
-import { GoogleFedcm, GoogleRedirect, Madauth, Password, Totp, type MadauthUser, type MethodsToSet, type Settings } from '@madauth/web';
+import { GoogleFedcm, GoogleRedirect, Madauth, Password, Totp, type DeleteAccountOptions, type MadauthUser, type MethodsToSet, type Settings } from '@madauth/web';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -12,12 +12,24 @@ for (const link of document.querySelectorAll<HTMLAnchorElement>('#flow a')) {
   if (link.dataset.flow === flow) link.setAttribute('aria-current', 'page');
 }
 for (const description of document.querySelectorAll<HTMLElement>('.flow-description')) {
-  description.hidden = description.dataset.flow !== flow;
+  if (description.dataset.flow !== flow) continue;
+  // Said as well as shown: aria-current on a paragraph is not announced.
+  description.setAttribute('aria-current', 'true');
+  description.querySelector('strong')!.insertAdjacentText('afterend', ' (current)');
+}
+
+// The info buttons: each shows and hides the explanation it controls.
+for (const button of document.querySelectorAll<HTMLButtonElement>('button.info')) {
+  const text = document.getElementById(button.getAttribute('aria-controls')!)!;
+  button.addEventListener('click', () => {
+    text.hidden = !text.hidden;
+    button.setAttribute('aria-expanded', String(!text.hidden));
+  });
 }
 
 const google = flow === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();
 
-// The public demo gives nobody the role admin: an admin could change every visitor's claims and switch
+// The public demo gives no visitor the role admin: an admin could change every visitor's claims and switch
 // sign-in methods off for everyone. Visitors are told so, and how to try the admin API on their machine.
 const { hostname } = location;
 $('[data-hosted]').hidden = !(hostname === 'madauth.com' || hostname.endsWith('.madauth.com'));
@@ -48,18 +60,22 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   // How the session was authenticated, e.g. pwd and otp: a backend can ask for otp before a sensitive action.
   $('#amr').textContent = user?.amr?.join(', ') ?? '';
 
-  const email = $<HTMLInputElement>('#claims-email');
   if (!user) {
-    // Nothing of the previous user stays on the page: the admin fields, the last result, the settings.
-    email.value = '';
-    $('#output').hidden = true;
-    $('#output').textContent = '';
+    // Nothing of the previous user stays on the page: the parameters, the responses, the settings, the app.
+    resetExplorer();
+    $('#totp-output').hidden = true;
+    output.textContent = '';
     $<HTMLInputElement>('#totp-code').value = '';
+    showAuthenticator(false, false);
     settingsLoadedFor = undefined;
     showSettings(null);
     return;
   }
-  if (!email.value) email.value = user.email ?? '';
+  $('#last-response').hidden = true;
+  // The admin calls start with the signed-in user's own address.
+  for (const field of document.querySelectorAll<HTMLInputElement>('[data-param="email"]')) {
+    if (!field.value) field.value = user.email ?? '';
+  }
   $('#admin-note').hidden = isAdmin(user);
   void refreshAuthenticator();
   // An admin sees the server's settings in the controls before they can send them back.
@@ -84,7 +100,6 @@ async function refreshAuthenticator(): Promise<void> {
   const user = Madauth.currentUser;
   const status = await Madauth.totp.status();
   if (Madauth.currentUser?.id !== user?.id) return;
-  authenticatorOn = status.isSuccess && status.enabled;
   const offered = status.isSuccess || status.error.code !== 'flow_not_enabled';
   $('#totp-status').textContent = !status.isSuccess
     ? status.error.code === 'flow_not_enabled'
@@ -93,22 +108,80 @@ async function refreshAuthenticator(): Promise<void> {
     : status.enabled
       ? `Set up, ${status.recoveryCodesLeft} recovery codes left.`
       : 'Not set up.';
-  $('.authenticator .code-field').hidden = !authenticatorOn;
-  $('[data-call="setUpAuthenticator"]').hidden = !offered;
-  $('[data-call="newRecoveryCodes"]').hidden = !authenticatorOn;
-  $('[data-call="removeAuthenticator"]').hidden = !authenticatorOn;
+  showAuthenticator(status.isSuccess && status.enabled, offered);
 }
 
-/** The code typed next to the buttons: a 6-digit code from the app, or a recovery code (with a dash). */
-function codeOptions(): { code: string } | { recoveryCode: string } {
-  const value = $<HTMLInputElement>('#totp-code').value.trim();
+/** Shows what applies with or without the app: the code fields, the buttons, and deleteAccount's arguments. */
+function showAuthenticator(on: boolean, offered: boolean): void {
+  authenticatorOn = on;
+  $('.authenticator .code-field').hidden = !on;
+  $('[data-needs-authenticator]').hidden = !on;
+  $('[data-call="setUpAuthenticator"]').hidden = !offered;
+  $('[data-call="newRecoveryCodes"]').hidden = !on;
+  $('[data-call="removeAuthenticator"]').hidden = !on;
+  // Once the app is set up, deleting the account takes a code: the row's request changes with it.
+  renderRequest(methodRow('deleteAccount'));
+}
+
+/** A code as typed, next to the buttons or as a parameter: a 6-digit code from the app, or a recovery code (with a dash). */
+function codeOptions(typed = $<HTMLInputElement>('#totp-code').value): { code: string } | { recoveryCode: string } {
+  const value = typed.trim();
   return value.includes('-') || value.length > 7 ? { recoveryCode: value } : { code: value.replace(/\s/g, '') };
 }
 
-// --- The rest of the API a signed-in user can call. Each button shows what the call resolved to. ---
+// --- The authenticator calls in the account section: each shows what it resolved to below the buttons ---
 
 const output = $('#output');
-const claimsEmail = () => $<HTMLInputElement>('#claims-email').value.trim();
+const asText = (result: unknown) => (typeof result === 'string' ? result : JSON.stringify(result, null, 2));
+
+function showOutput(label: string, result: unknown): void {
+  $('#totp-output').hidden = false;
+  output.textContent = `${label}\n${asText(result)}`;
+}
+
+const accountCalls: Record<string, () => Promise<unknown>> = {
+  // The dialog shows the QR code, asks for the first code and shows the recovery codes.
+  setUpAuthenticator: () => Madauth.setUpAuthenticator().then(async (result) => (await refreshAuthenticator(), result)),
+  newRecoveryCodes: () => Madauth.totp.newRecoveryCodes(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
+  removeAuthenticator: () => Madauth.totp.remove(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
+};
+
+for (const button of document.querySelectorAll<HTMLButtonElement>('.authenticator button[data-call]')) {
+  button.addEventListener('click', async () => {
+    // A result for a user who signed out meanwhile (it may hold recovery codes) is dropped.
+    const user = Madauth.currentUser?.id;
+    button.disabled = true;
+    try {
+      const result = await accountCalls[button.dataset.call!]();
+      if (Madauth.currentUser?.id === user) showOutput(button.textContent, result);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+// --- The API explorer: the rest of what a signed-in user can call, a method per row ---
+//
+// Each row in #api names a method (data-call); its detail holds the description and the parameters (inputs
+// with data-param). This adds the request box (the call with its arguments, as JSON), the Execute button
+// and the response box to every row, keeps the request up to date, and runs the call.
+
+/** The parameters as typed, by name. */
+type Values = Record<string, string>;
+/** The arguments a call gets, by name, or undefined for none; built from the parameters. */
+type Args = Record<string, unknown> | undefined;
+
+/** A method of the explorer: what to send, built from the parameters (or a reason nothing can be sent yet), and the call. */
+interface ApiMethod {
+  build(values: Values): Args | string;
+  call(args: Args): Promise<unknown>;
+}
+
+/** Pairs a builder with its call, so the arguments one builds are what the other takes. */
+function api<A extends Args>(build: (values: Values) => A | string, call: (args: A) => Promise<unknown>): ApiMethod {
+  return { build, call: (args) => call(args as A) };
+}
+
 const methodBox = (method: 'google' | 'password' | 'totp') => $<HTMLInputElement>(`#method-${method}`);
 const policySelect = (method: 'google' | 'password') => $<HTMLSelectElement>(`#policy-${method}`);
 /** The user whose sign-in loaded the settings, so a claims change (which also notifies) doesn't load them again. */
@@ -132,7 +205,9 @@ function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSetti
     policySelect(method).disabled = !methods?.[method].configured;
   }
   settingsLoaded = !!methods;
-  $<HTMLButtonElement>('[data-call="setSettings"]').disabled = !settingsLoaded;
+  $('#settings-unloaded').hidden = settingsLoaded;
+  executeButton('setSettings').disabled = !settingsLoaded;
+  renderRequest(methodRow('setSettings'));
   return result;
 }
 
@@ -146,50 +221,143 @@ function methodsToSet(): MethodsToSet {
   };
 }
 
-const calls: Record<string, () => Promise<unknown>> = {
-  getSession: () => Madauth.getSession(),
-  sessionReady: () => Madauth.sessionReady(),
-  // One click would be too easy on a public demo: the user, their claims and their sign-in methods go for good.
-  // Once the authenticator app is set up, the server also wants a current code from it.
-  deleteAccount: async () =>
-    confirm('Delete your account on this madAuth server? Your user, claims and sign-in methods are deleted for good.')
-      ? Madauth.deleteAccount(authenticatorOn ? codeOptions() : undefined)
-      : 'Cancelled.',
-  // The dialog shows the QR code, asks for the first code and shows the recovery codes.
-  setUpAuthenticator: () => Madauth.setUpAuthenticator().then(async (result) => (await refreshAuthenticator(), result)),
-  newRecoveryCodes: () => Madauth.totp.newRecoveryCodes(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
-  removeAuthenticator: () => Madauth.totp.remove(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
-  getClaims: () => Madauth.admin.getClaims(claimsEmail()),
-  setClaims: async () => {
-    let claims: unknown;
-    try {
-      claims = JSON.parse($<HTMLTextAreaElement>('#claims-json').value);
-    } catch {
-      return 'The claims must be JSON, e.g. { "roles": ["admin"] }.';
-    }
-    // Anything but an object of claims is answered by the server with invalid_claims.
-    return Madauth.admin.setClaims(claimsEmail(), claims as Record<string, unknown>);
-  },
-  getSettings: () => Madauth.admin.getSettings().then(showSettings),
-  setSettings: () =>
-    Madauth.admin
-      .setSettings({ methods: methodsToSet() })
-      // A refused change (e.g. every method switched off) leaves the controls as the user set them.
-      .then((result) => (result.isSuccess ? showSettings(result) : result)),
+/** The claims typed as JSON, or the reason they can't be sent. */
+function parseClaims(text: string): { claims: Record<string, unknown> } | { error: string } {
+  try {
+    return { claims: JSON.parse(text) as Record<string, unknown> };
+  } catch {
+    return { error: 'The claims must be JSON, e.g. { "roles": ["admin"] }.' };
+  }
+}
+
+const methods: Record<string, ApiMethod> = {
+  getSession: api(
+    () => undefined,
+    () => Madauth.getSession(),
+  ),
+  sessionReady: api(
+    () => undefined,
+    () => Madauth.sessionReady(),
+  ),
+  // Once the authenticator app is set up, the server also wants a current code from it. One click would
+  // be too easy on a public demo: the user, their claims and their sign-in methods go for good.
+  deleteAccount: api(
+    (values): DeleteAccountOptions | undefined => (authenticatorOn ? codeOptions(values.code) : undefined),
+    async (code) =>
+      confirm('Delete your account on this madAuth server? Your user, claims and sign-in methods are deleted for good.')
+        ? Madauth.deleteAccount(code)
+        : 'Cancelled.',
+  ),
+  getClaims: api(
+    (values) => ({ email: values.email.trim() }),
+    ({ email }) => Madauth.admin.getClaims(email),
+  ),
+  // Anything but an object of claims is answered by the server with invalid_claims.
+  setClaims: api(
+    (values) => {
+      const parsed = parseClaims(values.claims);
+      return 'error' in parsed ? parsed.error : { email: values.email.trim(), claims: parsed.claims };
+    },
+    ({ email, claims }) => Madauth.admin.setClaims(email, claims),
+  ),
+  getSettings: api(
+    () => undefined,
+    () => Madauth.admin.getSettings().then(showSettings),
+  ),
+  setSettings: api(
+    () => (settingsLoaded ? { methods: methodsToSet() } : 'Call getSettings first.'),
+    // A refused change (e.g. every method switched off) leaves the controls as the user set them.
+    (list) => Madauth.admin.setSettings(list).then((result) => (result.isSuccess ? showSettings(result) : result)),
+  ),
 };
 
-for (const button of document.querySelectorAll<HTMLButtonElement>('[data-call]')) {
-  button.addEventListener('click', async () => {
-    button.disabled = true;
+const methodRow = (id: string) => $<HTMLLIElement>(`.api-method[data-call="${id}"]`);
+const executeButton = (id: string) => methodRow(id).querySelector<HTMLButtonElement>('.api-execute')!;
+const paramValues = (row: HTMLElement): Values =>
+  Object.fromEntries([...row.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-param]')].map((field) => [field.dataset.param!, field.value]));
+
+/** Shows the call the row would make now: the method, and its arguments as JSON. */
+function renderRequest(row: HTMLElement): void {
+  const built = methods[row.dataset.call!].build(paramValues(row));
+  const text = typeof built === 'string' ? built : built === undefined ? '(no arguments)' : JSON.stringify(built, null, 2);
+  row.querySelector('.api-request')!.textContent = `${row.querySelector('.api-row')!.textContent}\n${text}`;
+}
+
+for (const row of document.querySelectorAll<HTMLLIElement>('.api-method')) {
+  const toggle = row.querySelector<HTMLButtonElement>('.api-row')!;
+  const detail = row.querySelector<HTMLElement>('.api-detail')!;
+  detail.insertAdjacentHTML(
+    'beforeend',
+    `<div class="api-box"><span class="caption">Request</span><pre class="api-request"></pre></div>
+     <p class="buttons"><button type="button" class="api-execute">Execute</button></p>
+     <div class="api-box" hidden><span class="caption">Response</span><pre class="api-response" role="status"></pre></div>`,
+  );
+  const response = detail.querySelector<HTMLElement>('.api-response')!;
+  toggle.addEventListener('click', () => {
+    detail.hidden = !detail.hidden;
+    toggle.setAttribute('aria-expanded', String(!detail.hidden));
+    if (!detail.hidden) renderRequest(row);
+  });
+  // The request follows the parameters as they are typed or picked. The admin calls share the address:
+  // what is typed into one e-mail field is what the other targets too, so a lookup and a change can't drift apart.
+  detail.addEventListener('input', (e) => {
+    const field = e.target as HTMLInputElement;
+    if (field.dataset.param === 'email') {
+      for (const other of document.querySelectorAll<HTMLInputElement>('[data-param="email"]')) {
+        if (other !== field) {
+          other.value = field.value;
+          renderRequest(other.closest('.api-method')!);
+        }
+      }
+    }
+    renderRequest(row);
+  });
+  detail.addEventListener('change', () => renderRequest(row));
+  const execute = detail.querySelector<HTMLButtonElement>('.api-execute')!;
+  execute.addEventListener('click', async () => {
+    if (row.dataset.busy) return;
+    const method = methods[row.dataset.call!];
+    const built = method.build(paramValues(row));
+    if (typeof built === 'string') {
+      response.parentElement!.hidden = false;
+      response.textContent = built;
+      return;
+    }
+    // One call at a time per row; the button says so meanwhile (its disabled state belongs to showSettings).
+    const user = Madauth.currentUser?.id;
+    row.dataset.busy = 'true';
+    execute.setAttribute('aria-disabled', 'true');
+    let result: unknown;
     try {
-      const result = await calls[button.dataset.call!]();
-      output.hidden = false;
-      output.textContent = `${button.textContent}\n${typeof result === 'string' ? result : JSON.stringify(result, null, 2)}`;
+      result = await method.call(built);
     } finally {
-      // setSettings stays off until the settings were loaded.
-      button.disabled = button.dataset.call === 'setSettings' && !settingsLoaded;
+      delete row.dataset.busy;
+      execute.removeAttribute('aria-disabled');
+    }
+    // A result for the user who called: into the row. One that arrives after they signed out (deleteAccount,
+    // or a sign-out meanwhile): below the sign-in button, so they still see it. One that arrives once
+    // someone else is signed in: dropped, it is not theirs.
+    if (Madauth.currentUser?.id === user) {
+      response.parentElement!.hidden = false;
+      response.textContent = asText(result);
+      renderRequest(row);
+    } else if (!Madauth.currentUser) {
+      $('#last-response').hidden = false;
+      $('#last-response pre').textContent = `${toggle.textContent}\n${asText(result)}`;
     }
   });
+}
+
+/** Closes every row and clears what was typed and answered: nothing of the previous user stays for the next. */
+function resetExplorer(): void {
+  for (const row of document.querySelectorAll<HTMLLIElement>('.api-method')) {
+    row.querySelector<HTMLElement>('.api-detail')!.hidden = true;
+    row.querySelector('.api-row')!.setAttribute('aria-expanded', 'false');
+    for (const field of row.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-param]')) field.value = field.defaultValue;
+    const response = row.querySelector<HTMLElement>('.api-response')!;
+    response.textContent = '';
+    response.parentElement!.hidden = true;
+  }
 }
 
 // --- Theme ---
