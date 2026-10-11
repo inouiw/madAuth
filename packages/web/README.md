@@ -13,9 +13,9 @@ npm install @madauth/web
 ## Usage
 
 ```ts
-import { Madauth, GoogleFedcm, Password, Totp } from '@madauth/web';
+import { Madauth, GoogleFedcm, GitHub, Password, Totp } from '@madauth/web';
 
-Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp()] });
+Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Totp()] });
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 signInButton.onclick = () => Madauth.signIn();
 ```

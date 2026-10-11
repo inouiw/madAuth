@@ -76,9 +76,9 @@ Removing the app, and new recovery codes, take a current code from the app or a 
 
 ## A method signs in only users who have it
 
-A Google sign-in with the address of a user who signs in with a password, with the app, or both, is refused (`403 other_method`): whoever controls the Google account for the address must not get past the password and the app. A password can't be added to a Google user either ("Forgot password?" only resets a password that exists). The authenticator app is added only by the user, while signed in, or when a policy requires it. The one takeover that remains is of a sign-up nobody finished, since nobody has proven it: the latest unproven sign-up wins, so a sign-up with the app drops the password an earlier unconfirmed sign-up set, and a password sign-up replaces an unfinished app sign-up.
+A Google or GitHub sign-in with the address of a user who signs in with a password, with the app, or both, is refused (`403 other_method`): whoever controls that account for the address must not get past the password and the app. A password can't be added to a Google or GitHub user either ("Forgot password?" only resets a password that exists). The authenticator app is added only by the user, while signed in, or when a policy requires it. The one takeover that remains is of a sign-up nobody finished, since nobody has proven it: the latest unproven sign-up wins, so a sign-up with the app drops the password an earlier unconfirmed sign-up set, and a password sign-up replaces an unfinished app sign-up.
 
-Code: `resolveUser` in [`packages/server/src/routes/google.ts`](../packages/server/src/routes/google.ts).
+Code: `resolveProviderUser` in [`packages/server/src/routes/oauth.ts`](../packages/server/src/routes/oauth.ts).
 
 ## Cross-site requests
 

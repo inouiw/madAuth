@@ -31,6 +31,8 @@ export interface SiteProps extends StackProps {
   readonly zone: route53.IHostedZone;
   readonly certificate: acm.ICertificate;
   readonly googleClientId?: string;
+  /** The client ID of the demo's GitHub OAuth App; its secret is in the Parameter Store. Empty: no GitHub sign-in. */
+  readonly githubClientId?: string;
   /** A checkout of github.com/inouiw/madAuth-webhooks, for its aws-ses-mailer. */
   readonly webhooksDir: string;
   /** Where the monthly budget alert goes. No budget without it. */
@@ -101,6 +103,7 @@ export class SiteStack extends Stack {
     const server = new MadAuthServer(this, 'MadAuth', {
       issuer: origin,
       googleClientId: props.googleClientId || undefined,
+      githubClientId: props.githubClientId || undefined,
       secretsPath: SECRETS_PATH,
       webhook: { url: mailerUrl.url, events: EMAIL_EVENTS },
       // A public demo: cap what abuse can cost.

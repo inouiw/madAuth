@@ -27,6 +27,8 @@ export interface MadAuthServerProps {
   readonly allowedOrigins?: string[];
   /** GOOGLE_CLIENT_ID, for Google sign-in. Its secret, if any, goes into the Parameter Store. */
   readonly googleClientId?: string;
+  /** GITHUB_CLIENT_ID, for GitHub sign-in. Its secret goes into the Parameter Store as GITHUB_CLIENT_SECRET; GitHub needs both. */
+  readonly githubClientId?: string;
   /**
    * The Parameter Store path of the secrets. Each SecureString parameter under it becomes the environment
    * variable of its name, e.g. `/madauth/MADAUTH_SIGNING_KEY`. `scripts/bootstrap-secrets.sh` creates them.
@@ -35,7 +37,7 @@ export interface MadAuthServerProps {
   readonly secretsPath?: string;
   /**
    * WEBHOOK_URL and WEBHOOK_EVENTS, e.g. the aws-ses-mailer of madAuth-webhooks. E-mail & password sign-in
-   * is on when the events include the e-mails; default: {@link EMAIL_EVENTS}. Without a webhook, Google only.
+   * is on when the events include the e-mails; default: {@link EMAIL_EVENTS}. Without a webhook, Google and GitHub only.
    */
   readonly webhook?: { readonly url: string; readonly events?: readonly string[] };
   /** More environment variables, e.g. `SESSION_TTL` or `TOTP_ISSUER` (see docs/server.md). */
@@ -90,6 +92,7 @@ export class MadAuthServer extends Construct {
       DATABASE_URL: `dynamodb:${this.table.tableName}`,
       MADAUTH_SECRETS_PATH: secretsPath,
       ...(props.googleClientId ? { GOOGLE_CLIENT_ID: props.googleClientId } : {}),
+      ...(props.githubClientId ? { GITHUB_CLIENT_ID: props.githubClientId } : {}),
       ...(props.webhook ? { WEBHOOK_URL: props.webhook.url, WEBHOOK_EVENTS: (props.webhook.events ?? EMAIL_EVENTS).join(',') } : {}),
       ...props.environment,
     };

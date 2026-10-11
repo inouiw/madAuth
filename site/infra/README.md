@@ -23,7 +23,7 @@ The app has four stacks:
 
 Nothing in this folder is secret.
 
-- **Secrets** are SecureString parameters under `/madauth-site/` in the Parameter Store, read by the functions at runtime: the signing key, the webhook secret and the Google client secret.
+- **Secrets** are SecureString parameters under `/madauth-site/` in the Parameter Store, read by the functions at runtime: the signing key, the webhook secret, and the client secrets of the Google client and the GitHub OAuth App.
 - **The account ID** comes from the AWS credentials. `cdk.context.json` and `cdk.out/` are not committed.
 - **Deploys** run only in the GitHub environment `site`, which has required reviewers. The deploy role trusts only that environment, so pull requests can't use it.
 - **Abuse limits:** the server runs with at most 5 concurrent executions and the mailer with at most 2. A budget alert fires at $8 of the $10/month budget. The budget counts only the costs tagged `Project=madauth-site`, the tag every resource of the four stacks carries, so the account's other projects don't trip it.
@@ -58,7 +58,9 @@ cd deploy/aws && npm ci && npm run build && cd ../../site/infra && npm ci
 
    Put its client ID into `cdk.json` as `googleClientId` and commit it; client IDs are public.
 
-4. **Store the secrets.** When the script asks for the Google client secret, enter the new client's secret:
+   **Create a GitHub OAuth App** too ([GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers)), with the homepage URL `https://madauth.com` and the authorization callback URL `https://madauth.com/auth/github/callback`, and put its client ID into `cdk.json` as `githubClientId`. Without one, the demo has no GitHub button.
+
+4. **Store the secrets.** When the script asks for the Google client secret and the GitHub client secret, enter the new ones:
 
    ```bash
    AWS_REGION=eu-central-1 ../../deploy/aws/scripts/bootstrap-secrets.sh /madauth-site
@@ -98,4 +100,4 @@ After changing `deploy/aws`, run `npm run build` there and `npm install` here, s
 curl https://madauth.com/.well-known/jwks.json
 ```
 
-Then sign in at https://madauth.com/demo/ with Google and with e-mail & password.
+Then sign in at https://madauth.com/demo/ with Google, with GitHub and with e-mail & password.

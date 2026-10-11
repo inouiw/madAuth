@@ -2,7 +2,7 @@
 # Puts madAuth's secrets into the Parameter Store as SecureString parameters, once per deployment:
 #   scripts/bootstrap-secrets.sh [path]          (default path: /madauth)
 # It creates MADAUTH_SIGNING_KEY and WEBHOOK_SECRET if they don't exist yet, and asks for GOOGLE_CLIENT_SECRET
-# (leave it empty if you only use Google One Tap / FedCM). The values are never printed and never passed on a
+# (leave it empty if you only use Google One Tap / FedCM) and GITHUB_CLIENT_SECRET (empty without GitHub sign-in). The values are never printed and never passed on a
 # command line (other processes can read those); they reach the AWS CLI through a file only you can read.
 # Uses the AWS CLI's current credentials and region (aws configure / aws sso login, AWS_REGION).
 set -euo pipefail
@@ -43,4 +43,10 @@ read -r -s -p "GOOGLE_CLIENT_SECRET (empty to skip): " google_secret
 echo
 if [[ -n "$google_secret" ]]; then
   printf '%s' "$google_secret" | put GOOGLE_CLIENT_SECRET
+fi
+
+read -r -s -p "GITHUB_CLIENT_SECRET (empty to skip): " github_secret
+echo
+if [[ -n "$github_secret" ]]; then
+  printf '%s' "$github_secret" | put GITHUB_CLIENT_SECRET
 fi

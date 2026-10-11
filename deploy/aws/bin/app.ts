@@ -22,6 +22,7 @@ new MadAuthServer(stack, 'MadAuth', {
   issuer: context('issuer'),
   allowedOrigins: list('allowedOrigins'),
   googleClientId: context('googleClientId') || undefined,
+  githubClientId: context('githubClientId') || undefined,
   secretsPath: context('secretsPath') || undefined,
   webhook: context('webhookUrl') ? { url: context('webhookUrl'), events: list('webhookEvents') } : undefined,
 });

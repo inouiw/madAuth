@@ -25,6 +25,8 @@ npx @madauth/server init
 | App URL | `http://localhost:5173` | The address your users open. Here it is your dev server. madAuth is served on the same origin through a proxy (step 5), so its cookies are first-party. |
 | Google client ID | none | Turns on Google sign-in. See [Google Cloud Console setup](server.md#google-cloud-console-setup). |
 | Google client secret | none | Only asked with a client ID. Enables the redirect flow (`GoogleRedirect`). Without it, Google sign-in runs in the browser (`GoogleFedcm`). |
+| GitHub client ID | none | Turns on GitHub sign-in. See [GitHub OAuth App setup](server.md#github-oauth-app-setup). |
+| GitHub client secret | none | Only asked with a GitHub client ID, and needed with one: GitHub only has the redirect flow. |
 | E-mail & password sign-in? | yes | |
 | Sign-up with the authenticator app alone? | no | Accounts without a password: the address is confirmed by e-mail, then the app is set up. The app as a second factor needs no answer here; admins set that [policy](server.md#sign-in-methods) while the server runs. |
 | Passwordless sign-in with an e-mail link? | no | The user enters their address and gets an e-mail with a link that signs them in and a code. A new address is signed up on first use. |
@@ -42,7 +44,7 @@ Every question is also an option, so a script needs no prompts. `--yes` takes th
 npx @madauth/server init --yes --app-url http://localhost:3000
 ```
 
-The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--password` or `--no-password`, `--totp` or `--no-totp`, `--email-link` or `--no-email-link`, `--sms` or `--no-sms`, `--database` and `--webhook-url`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
+The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--github-client-id`, `--github-client-secret`, `--password` or `--no-password`, `--totp` or `--no-totp`, `--email-link` or `--no-email-link`, `--sms` or `--no-sms`, `--database` and `--webhook-url`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
 
 ## 3. Start the server
 
@@ -91,7 +93,7 @@ Other dev servers have a similar setting. In production, your reverse proxy or C
 
 ## 6. Sign users in
 
-Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `EmailLink` for the e-mail link, and `Totp` for signing in with the authenticator app on its own (once an admin lists it with `set-methods`). The app as a second factor needs no provider, and neither do SMS codes: once an admin sets the policy, the dialog asks for the code by itself, and a user sets the app up from your app with `Madauth.setUpAuthenticator()`, or adds a phone with `Madauth.setUpSms()`.
+Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `GitHub`, `EmailLink` for the e-mail link, and `Totp` for signing in with the authenticator app on its own (once an admin lists it with `set-methods`). The app as a second factor needs no provider, and neither do SMS codes: once an admin sets the policy, the dialog asks for the code by itself, and a user sets the app up from your app with `Madauth.setUpAuthenticator()`, or adds a phone with `Madauth.setUpSms()`.
 
 ```ts
 import { Madauth, Password, Totp, EmailLink } from '@madauth/web';
@@ -101,7 +103,7 @@ Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
 signInButton.onclick = () => Madauth.signIn();
 ```
 
-With Google sign-in, add your app URL under **Authorized JavaScript origins** in the Google Cloud Console (for `http://localhost:5173`, add `http://localhost` as well). For the redirect flow, also add `<app URL>/auth/google/callback` under **Authorized redirect URIs**.
+With Google sign-in, add your app URL under **Authorized JavaScript origins** in the Google Cloud Console (for `http://localhost:5173`, add `http://localhost` as well). For the redirect flow, also add `<app URL>/auth/google/callback` under **Authorized redirect URIs**. With GitHub sign-in, the OAuth App's authorization callback URL is `<app URL>/auth/github/callback`.
 
 ## 7. Sign up once
 
