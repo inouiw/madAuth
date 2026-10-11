@@ -491,7 +491,7 @@ describe('signing in with the app alone', () => {
     const otherKey = testApp({
       store,
       signingKey: await generateSigningKey(),
-      password: { minLength: 8 },
+      password: {},
       webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: ALL_EVENTS },
       webhookFetch: hook.fetch,
     });
@@ -552,7 +552,7 @@ describe('the second step after a password or Google', () => {
     // A password reset ends the sign-in that was under way.
     advance(61_000);
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    const reset = await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new password!' });
+    const reset = await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new teapot sky!' });
     expect(await (await verifyStep({ code: codeFor(secret) })).json()).toMatchObject({ error: 'challenge_expired' });
     // The reset itself ends in the second step too, and ends the older sessions.
     expect(reset.status).toBe(401);
@@ -561,7 +561,7 @@ describe('the second step after a password or Google', () => {
     expect(afterReset.status).toBe(200);
     expect(await sessionClaims(app, afterReset)).toMatchObject({ amr: ['pwd', 'otp'], sv: 1 });
     // Too late.
-    const again = await post(app, '/auth/password/signin', { ...grace, password: 'new password!' });
+    const again = await post(app, '/auth/password/signin', { ...grace, password: 'new teapot sky!' });
     advance(11 * 60_000);
     expect(await (await verifyStep({ code: codeFor(secret) }, withChallenge(cookies(again).madauth_challenge.value))).json()).toMatchObject({ error: 'challenge_expired' });
   });

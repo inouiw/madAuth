@@ -59,6 +59,7 @@ describe('Madauth.admin', () => {
 
     expect(await Madauth.admin.getSettings()).toEqual({
       isSuccess: true,
+      password: { minLength: 8, minScore: 2 },
       methods: {
         google: { configured: true, enabled: true, secondFactor: 'none' },
         password: { configured: true, enabled: true, secondFactor: 'none' },
@@ -78,6 +79,13 @@ describe('Madauth.admin', () => {
       url: `${SERVER}/auth/admin/settings/set`,
       body: { methods: { google: { secondFactor: 'optional' }, totp: true } },
     });
+    // The password rules alone leave the methods as they are.
+    expect(await Madauth.admin.setSettings({ password: { minLength: 12 } })).toMatchObject({
+      isSuccess: true,
+      password: { minLength: 12, minScore: 2 },
+      methods: { google: { secondFactor: 'optional' } },
+    });
+    expect(server.requests.at(-1)!.body).toEqual({ password: { minLength: 12 } });
     server.authenticators.add('grace@example.com');
     expect(await Madauth.admin.removeAuthenticator('grace@example.com')).toEqual({ isSuccess: true, userId: 'usr_grace' });
     expect(server.authenticators.has('grace@example.com')).toBe(false);

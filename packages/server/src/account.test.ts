@@ -103,7 +103,7 @@ describe('deleting the account', () => {
     // A password reset ends older sessions; they can't delete the account either.
     advance(61_000);
     await sendReset(app);
-    await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new password!' });
+    await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new teapot sky!' });
     expect((await deleteAccount(app, session)).status).toBe(401);
     expect(await store.findMany('user', {})).toHaveLength(1);
   });

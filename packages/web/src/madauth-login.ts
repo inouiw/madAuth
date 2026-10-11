@@ -126,6 +126,7 @@ export class MadauthLogin extends LitElement {
     recoveryCodes: { state: true },
     useRecovery: { state: true },
     setupNeedsCode: { state: true },
+    passwordScore: { state: true },
   };
 
   /** Title shown at the top of the dialog. Default: "Sign in" in the dialog's language. */
@@ -154,9 +155,6 @@ export class MadauthLogin extends LitElement {
   /** The reset code entered in the check-inbox view, used with the new password. */
   private resetCode?: string;
 
-  /** Length of the password last sent for a new account or a reset, to explain a `weak_password` error. */
-  private passwordLength = 0;
-
   /** The method whose sign-in is under way: for the second step, and for a sign-up with the authenticator app. */
   private primary: LoginMethodId = 'password';
 
@@ -172,6 +170,12 @@ export class MadauthLogin extends LitElement {
 
   /** A recovery code instead of a code from the app. */
   private useRecovery = false;
+
+  /** How hard the new password being typed is to guess, 0 to 4, for the strength meter; null while there is none. */
+  private passwordScore: number | null = null;
+  /** The meter rates the password a moment after typing stops, and only the latest rating counts. */
+  private rateTimer?: ReturnType<typeof setTimeout>;
+  private rateRun = 0;
   /** The setup replaces an app the user has: a code from the current one comes first. */
   private setupNeedsCode = false;
 
@@ -315,6 +319,7 @@ export class MadauthLogin extends LitElement {
     this.setupUser = undefined;
     this.useRecovery = false;
     this.setupNeedsCode = false;
+    this.clearStrength();
   }
 
   /**
@@ -384,6 +389,31 @@ export class MadauthLogin extends LitElement {
     this.notice = undefined;
     this.error = null;
     this.view = view;
+    this.clearStrength();
+  }
+
+  /** Rates the new password as it is typed, with the name and e-mail address on the form as the user's own words. */
+  private onNewPassword(e: Event): void {
+    const input = e.target as HTMLInputElement;
+    const field = (name: string) => (input.form?.elements.namedItem(name) as HTMLInputElement | null)?.value.trim() ?? '';
+    const password = input.value;
+    const userInputs = [field('name'), field('email') || this.email].filter(Boolean);
+    clearTimeout(this.rateTimer);
+    const run = ++this.rateRun;
+    if (!password) {
+      this.passwordScore = null;
+      return;
+    }
+    this.rateTimer = setTimeout(async () => {
+      const rate = await Madauth.password.loadRating().catch(() => undefined);
+      if (rate && run === this.rateRun) this.passwordScore = rate(password, userInputs);
+    }, 150);
+  }
+
+  private clearStrength(): void {
+    clearTimeout(this.rateTimer);
+    this.rateRun++;
+    this.passwordScore = null;
   }
 
   /** Runs one request at a time, with the buttons disabled. */
@@ -415,7 +445,6 @@ export class MadauthLogin extends LitElement {
   private async onSignUp(e: Event): Promise<void> {
     const { email = '', password = '', name = '' } = this.fields(e);
     this.email = email.trim();
-    this.passwordLength = [...password].length;
     const withApp = this.primary === 'totp';
     const result = await this.run(() =>
       withApp
@@ -463,7 +492,6 @@ export class MadauthLogin extends LitElement {
 
   private async onReset(e: Event): Promise<void> {
     const { password = '' } = this.fields(e);
-    this.passwordLength = [...password].length;
     const code = this.resetCode;
     const result = await this.run(() =>
       Madauth.password.confirmReset(code ? { newPassword: password, email: this.email, code } : { newPassword: password }),
@@ -522,8 +550,7 @@ export class MadauthLogin extends LitElement {
     // Written by the operator's sign-up check, which gets the user's locale.
     if (error.code === 'signup_rejected') return error.message;
     if (error.code === 'weak_password') {
-      const minLength = Madauth.password.policy?.minLength;
-      return s.weakPassword(error.message, minLength && this.passwordLength < minLength ? minLength : undefined);
+      return s.weakPassword(error.message, { minLength: error.minLength, minScore: error.minScore });
     }
     if (error.code === 'too_many_attempts') return s.tooManyAttempts(error.message);
     if (error.code === 'temporarily_unavailable') return this.view === 'signup' ? s.signUpUnavailable : s.emailsUnavailable;
@@ -684,8 +711,9 @@ export class MadauthLogin extends LitElement {
           : html`
               <div class="field">
                 <label for="new-password">${s.password}</label>
-                <input part="input" id="new-password" name="password" type="password" autocomplete="new-password" />
+                <input part="input" id="new-password" name="password" type="password" autocomplete="new-password" @input=${this.onNewPassword} />
                 ${minLength ? html`<p class="hint">${s.minLength(minLength)}</p>` : null}
+                ${this.renderStrength()}
               </div>
             `}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
@@ -937,14 +965,32 @@ export class MadauthLogin extends LitElement {
           : null}
         <div class="field">
           <label for="new-password">${s.newPassword}</label>
-          <input part="input" id="new-password" name="password" type="password" autocomplete="new-password" />
+          <input part="input" id="new-password" name="password" type="password" autocomplete="new-password" @input=${this.onNewPassword} />
           ${minLength ? html`<p class="hint">${s.minLength(minLength)}</p>` : null}
+          ${this.renderStrength()}
         </div>
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
           <span class="label">${s.setPassword}</span>
         </button>
       </form>
       ${this.backLink()}
+    `;
+  }
+
+  /** The strength meter under a new password: four bars and a word, and whether the server's rules accept it. */
+  private renderStrength() {
+    const score = this.passwordScore;
+    if (score === null) return null;
+    const s = this.strings.strength;
+    const enough = score >= (Madauth.password.policy?.minScore ?? 0);
+    const text = enough ? s.levels[score] : `${s.levels[score]}: ${s.tooEasy}`;
+    return html`
+      <div class="strength" part="strength" data-score=${score} ?data-too-easy=${!enough}>
+        <div class="bars" role="meter" aria-label=${s.label} aria-valuemin="0" aria-valuemax="4" aria-valuenow=${score} aria-valuetext=${text}>
+          ${[1, 2, 3, 4].map((bar) => html`<span class=${bar <= Math.max(score, 1) ? 'on' : ''}></span>`)}
+        </div>
+        <span class="level" aria-hidden="true">${text}</span>
+      </div>
     `;
   }
 
@@ -1292,6 +1338,40 @@ export class MadauthLogin extends LitElement {
       font-size: 0.8125rem;
       line-height: 18px;
       color: var(--_muted);
+    }
+
+    .strength {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.8125rem;
+      line-height: 18px;
+      color: var(--_muted);
+    }
+
+    .strength .bars {
+      display: flex;
+      flex: 0 0 96px;
+      gap: 4px;
+    }
+
+    .strength .bars span {
+      flex: 1;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--_line);
+    }
+
+    .strength .bars span.on {
+      background: var(--_primary);
+    }
+
+    .strength[data-too-easy] .level {
+      color: light-dark(#b42318, #fda29b);
+    }
+
+    .strength[data-too-easy] .bars span.on {
+      background: light-dark(#b42318, #fda29b);
     }
 
     .optional {

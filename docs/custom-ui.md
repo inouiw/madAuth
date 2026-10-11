@@ -35,11 +35,12 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 | `sendResetEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
 | `confirmReset({ newPassword, token? })` or `confirmReset({ newPassword, email, code })` | `{ user }` | `link_invalid`, `code_invalid`, `codes_locked`, `weak_password`; `totp_required` or `totp_setup_required` like `signIn` |
 | `pendingReset` | `boolean` | True when the page was opened from a reset link |
-| `policy` | `{ minLength, secondFactor } \| null` | The server's password rules, for a hint next to the field, and whether the method asks for the authenticator app (`none`, `optional`, `required`) |
+| `policy` | `{ minLength, minScore, secondFactor } \| null` | The server's [password rules](server.md#password-rules), for a hint next to the field, and whether the method asks for the authenticator app (`none`, `optional`, `required`) |
+| `loadRating()` | `(password, userInputs?) => number` | For a strength meter: loads the rating the server uses for `minScore` and resolves to a function that rates a password from 0 to 4. Pass the user's name and e-mail address as `userInputs`, as the server does. It downloads zxcvbn-ts (about 220 kB compressed) on the first call, so call it when the password field is shown or first typed in. |
 
 `signUp`, `sendVerificationEmail` and `sendResetEmail` succeed whether or not the address has an account (or a password to reset), so nobody can probe for accounts. Tell the user to check their inbox in every case.
 
-`too_many_attempts`, `weak_password` and `signup_rejected` come with a `message` written for the user: the wait time, the minimum length, or the reason your sign-up check gave. The first two are in English; for another language, write your own texts (`policy` has the minimum length). For the other codes, write your own texts.
+`too_many_attempts`, `weak_password` and `signup_rejected` come with a `message` written for the user: the wait time, which password rule was broken, or the reason your sign-up check gave. The first two are in English; for another language, write your own texts: a `weak_password` error has `error.minLength` when the password is too short and `error.minScore` when it is too easy to guess. For the other codes, write your own texts.
 
 `codes_locked` means that too many wrong codes were entered for this account, across e-mails: its codes no longer work until one of its e-mail links is used. Tell the user to ask for a new e-mail and to open the link in it.
 

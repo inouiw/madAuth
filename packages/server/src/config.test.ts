@@ -84,13 +84,11 @@ describe('loadConfig', () => {
     const config = await loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined });
 
     expect(config.google).toBeUndefined();
-    expect(config.password).toEqual({ minLength: 8 });
+    expect(config.password).toEqual({});
     expect(config.webhook).toEqual({ url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) });
   });
 
   it('A14: names what is missing or wrong for e-mail & password sign-in', async () => {
-    const withDb = { ...env, DATABASE_URL: 'sqlite::memory:' };
-    await expect(loadConfig({ ...withDb, ...hook, PASSWORD_MIN_LENGTH: '0' })).rejects.toThrow(/PASSWORD_MIN_LENGTH/);
     await expect(loadConfig({ ...env, ...hook, DATABASE_URL: 'postgres://db/madauth' })).rejects.toThrow(
       /must start with "sqlite:".*or "dynamodb:".*own store adapter/s,
     );
@@ -145,7 +143,7 @@ describe('loadConfig', () => {
 
   it('K6: e-mail & password sign-in is on exactly when email.verify and email.reset are among the events', async () => {
     expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.verify,user.created' })).password).toBeUndefined();
-    expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.reset,email.verify' })).password).toEqual({ minLength: 8 });
+    expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.reset,email.verify' })).password).toEqual({});
     // A receiver that only wants events, on a Google-only server.
     expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'user.signed_in' })).password).toBeUndefined();
     await expect(loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, WEBHOOK_EVENTS: 'user.signed_in' })).rejects.toThrow(/No sign-in method/);
@@ -170,10 +168,15 @@ describe('loadConfig', () => {
   it('A16: a store passed in replaces DATABASE_URL', async () => {
     const store = createSqliteAdapter(':memory:');
 
-    const config = await loadConfig({ ...env, ...hook, PASSWORD_MIN_LENGTH: '12' }, { store });
+    const config = await loadConfig({ ...env, ...hook }, { store });
 
     expect(config.store).toBe(store);
-    expect(config.password).toEqual({ minLength: 12 });
+  });
+
+  it('refuses to start with PASSWORD_MIN_LENGTH, which is a setting now, and says how to set it', async () => {
+    await expect(loadConfig({ ...env, ...hook, PASSWORD_MIN_LENGTH: '12' })).rejects.toThrow(
+      /PASSWORD_MIN_LENGTH was removed.*set-password-rules min-length=12/,
+    );
   });
 
   it('documents every environment variable in docs/server.md', () => {

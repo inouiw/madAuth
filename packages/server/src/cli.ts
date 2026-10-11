@@ -1,11 +1,13 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 import { parseArgs, parseEnv } from 'node:util';
-import { loadConfig, loadStore, loadUserStoreConfig, methodConfig } from './config.js';
+import { loadConfig, loadStore, methodConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
 import { claimsFromJson, parseClaims, parseRoles, type Claims } from './claims.js';
 import {
+  DEFAULT_PASSWORD_RULES,
+  MAX_MIN_LENGTH,
   SECOND_FACTOR_POLICIES,
   SIGN_IN_METHODS,
   Settings,
@@ -13,9 +15,11 @@ import {
   canSignUp,
   initialMethods,
   isConfigured,
+  isPasswordScore,
   isOn,
   policyOf,
   type MethodSettings,
+  type PasswordRules,
   type SecondFactorPolicy,
   type SignInMethod,
 } from './settings.js';
@@ -39,8 +43,8 @@ Commands:
   start                        Start the server on PORT (default ${PORT})
   generate-key                 Print a new private ES256 key to use as MADAUTH_SIGNING_KEY
   generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
-  create-user <email>          Create a user with a password (asks for it), already verified.
-                               Uses DATABASE_URL and PASSWORD_MIN_LENGTH from the environment.
+  create-user <email>          Create a user with a password (asks for it), already verified. The password
+                               must follow the password rules. Uses DATABASE_URL from the environment.
   set-roles <email> [role...]  Set the roles of a user (the claim "roles"), e.g. to make the first admin:
                                set-roles you@example.com admin. Without roles, removes them all.
                                The user must exist: signed in once, or created with create-user.
@@ -54,6 +58,12 @@ Commands:
                                app as a second factor: none (default), optional or required, e.g.
                                set-methods google password=required totp
   get-methods                  Print which sign-in methods are switched on, with their policies.
+  set-password-rules [min-length=<n>] [min-score=<0-4>]
+                               Set the rules for new passwords: the minimum length (default 8, at most 128)
+                               and how hard to guess they must be, 0 (anything) to 4 (default 2: no common
+                               passwords or simple patterns). What is left out takes its default, e.g.
+                               set-password-rules min-length=10 min-score=3. Uses DATABASE_URL.
+  get-password-rules           Print the rules for new passwords.
   remove-totp <email>          Remove a user's authenticator app and recovery codes: the last resort when
                                both are lost. With a required policy, the user sets it up again next time.
                                The claims commands and remove-totp use DATABASE_URL from the environment;
@@ -208,6 +218,7 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
   const argumentLimits: Record<string, number> = {
     'set-roles': Infinity,
     'set-methods': Infinity,
+    'set-password-rules': Infinity,
     'set-claims': 2,
     'create-user': 1,
     'get-roles': 1,
@@ -256,6 +267,9 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     }
     if (command === 'set-methods' || command === 'get-methods') {
       return await methods(command, rest, env);
+    }
+    if (command === 'set-password-rules' || command === 'get-password-rules') {
+      return await passwordRules(command, rest, env);
     }
     if (command === 'remove-totp') {
       return await removeTotp(rest[0], env);
@@ -525,6 +539,34 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
   return { output: `Switched on: ${on.join(', ')}.${off.length ? ` Switched off: ${off.join(', ')}.` : ''}`, exitCode: 0 };
 }
 
+/** The password rules in words. */
+function describeRules(rules: PasswordRules): string {
+  return `New passwords: at least ${rules.minLength} characters, and a strength score of at least ${rules.minScore} (0 to 4).`;
+}
+
+async function passwordRules(command: 'set-password-rules' | 'get-password-rules', args: string[], env: Env) {
+  const settings = new Settings(await loadStore(env));
+  if (command === 'set-password-rules') {
+    const fail = (output: string) => ({ output, exitCode: 1 });
+    const rules: PasswordRules = { ...DEFAULT_PASSWORD_RULES };
+    for (const arg of args) {
+      const [name, value, ...more] = arg.split('=');
+      const number = value !== undefined && /^\d+$/.test(value) && !more.length ? Number(value) : NaN;
+      if (name === 'min-length') {
+        if (!(number >= 1 && number <= MAX_MIN_LENGTH)) return fail(`min-length must be a whole number from 1 to ${MAX_MIN_LENGTH} but is "${value ?? ''}".`);
+        rules.minLength = number;
+      } else if (name === 'min-score') {
+        if (!isPasswordScore(number)) return fail(`min-score must be 0, 1, 2, 3 or 4 but is "${value ?? ''}".`);
+        rules.minScore = number;
+      } else {
+        return fail(`Unknown password rule "${arg}". Rules: min-length=<n>, min-score=<0-4>, e.g. set-password-rules min-length=10 min-score=3.`);
+      }
+    }
+    await settings.setPasswordRules(rules, null);
+  }
+  return { output: describeRules(await settings.passwordRules()), exitCode: 0 };
+}
+
 async function removeTotp(email: string | undefined, env: Env) {
   if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
   const users = new Users(await loadStore(env));
@@ -540,10 +582,10 @@ async function removeTotp(email: string | undefined, env: Env) {
 
 async function createUser(email: string | undefined, io: CliIo, env: Env) {
   if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const { store, minLength } = await loadUserStoreConfig(env);
+  const store = await loadStore(env);
   const password = await io.askSecret(`Password for ${email}: `);
-  const policy = checkPasswordPolicy(password, minLength);
-  if (policy) return { output: policy, exitCode: 1 };
+  const problem = await checkPasswordPolicy(password, await new Settings(store).passwordRules(), [email]);
+  if (problem) return { output: problem.message, exitCode: 1 };
   const users = new Users(store);
   const passwordHash = await hashPassword(password);
   const user = await users.createUser({

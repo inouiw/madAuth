@@ -25,7 +25,7 @@ export async function request<T>(serverUrl: string, path: string, init: RequestI
     };
   }
   const data = (await response.json().catch(() => undefined)) as
-    | (T & { error?: unknown; message?: unknown; method?: unknown; methods?: unknown })
+    | (T & { error?: unknown; message?: unknown; method?: unknown; methods?: unknown; minLength?: unknown; minScore?: unknown })
     | undefined;
   if (response.ok) {
     // E.g. an SPA fallback page answering for /auth/... because the server is not behind this URL.
@@ -45,5 +45,8 @@ export async function request<T>(serverUrl: string, path: string, init: RequestI
   // What some answers say besides the code: the method a sign-in goes on with, or how an address signs in.
   if (typeof data?.method === 'string') error.method = data.method;
   if (Array.isArray(data?.methods)) error.methods = data.methods.filter((m): m is string => typeof m === 'string');
+  // Which password rule a weak password breaks, so the dialog can say it in the user's language.
+  if (typeof data?.minLength === 'number') error.minLength = data.minLength;
+  if (typeof data?.minScore === 'number') error.minScore = data.minScore;
   return { ok: false, status: response.status, error };
 }

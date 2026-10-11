@@ -118,7 +118,7 @@ describe('renewal', () => {
     const otherDevice = await post(app, '/auth/password/signin', grace);
     advance(61_000);
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    const reset = await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new password!' });
+    const reset = await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new teapot sky!' });
 
     expect((await check(app, cookieHeader(otherDevice))).status).toBe(401);
     expect((await check(app, renewalOnly(otherDevice))).status).toBe(401);

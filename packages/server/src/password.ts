@@ -1,5 +1,7 @@
 // Password hashing and the checks around it. See docs/password-security.md.
 import { createHash, createHmac, hkdfSync, randomBytes, randomInt, scrypt, timingSafeEqual } from 'node:crypto';
+import type { PasswordRules, PasswordScore } from './settings.js';
+import { passwordScore } from './strength.js';
 
 /**
  * scrypt cost: N = 2^15, r = 8, p = 3. One of OWASP's equivalent recommendations; it needs 32 MiB per hash
@@ -58,12 +60,30 @@ export async function verifyAgainstDummy(password: string): Promise<void> {
   await verifyPassword(password, await dummyHash);
 }
 
-/** Returns why a password is not acceptable, or null. Length only, as NIST SP 800-63B recommends. */
-export function checkPasswordPolicy(password: unknown, minLength: number): string | null {
-  if (typeof password !== 'string') return 'password is missing';
+/** Why a new password is not acceptable: a message for the user, in English, and which rule it breaks. */
+export interface PasswordProblem {
+  message: string;
+  /** Set when the password is too short: the fewest characters it may have. */
+  minLength?: number;
+  /** Set when it is too easy to guess: the score it needs (it has less). */
+  minScore?: PasswordScore;
+}
+
+/**
+ * Returns why a new password breaks the rules an admin set (see `PasswordRules`), or null. `userInputs` are
+ * the user's e-mail address, name and the like: a password made of them is easy to guess.
+ */
+export async function checkPasswordPolicy(password: unknown, rules: PasswordRules, userInputs: string[] = []): Promise<PasswordProblem | null> {
+  if (typeof password !== 'string') return { message: 'password is missing' };
   const length = [...password].length;
-  if (length < minLength) return `The password must have at least ${minLength} characters.`;
-  if (length > MAX_PASSWORD_LENGTH) return `The password must have at most ${MAX_PASSWORD_LENGTH} characters.`;
+  if (length > MAX_PASSWORD_LENGTH) return { message: `The password must have at most ${MAX_PASSWORD_LENGTH} characters.` };
+  if (length < rules.minLength) return { message: `The password must have at least ${rules.minLength} characters.`, minLength: rules.minLength };
+  if (rules.minScore > 0 && (await passwordScore(password, userInputs)) < rules.minScore) {
+    return {
+      message: 'This password is too easy to guess. Add another word or two, or choose less common ones.',
+      minScore: rules.minScore,
+    };
+  }
   return null;
 }
 
