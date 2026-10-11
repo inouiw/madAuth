@@ -1,5 +1,5 @@
 // A custom login screen: everything madAuth's dialog does, built with the headless API.
-import { EmailLink, GoogleFedcm, Madauth, Password, Totp, type MadauthError, type MadauthUser, type Result, type SecondFactor } from '@madauth/web';
+import { EmailLink, GitHub, GoogleFedcm, Madauth, Password, Totp, type MadauthError, type MadauthUser, type Result, type SecondFactor } from '@madauth/web';
 
 type View =
   | 'signin'
@@ -47,9 +47,11 @@ let pending: { email: string; purpose: 'verify' | 'reset' | 'signin'; code?: str
 let showingCodes = false;
 
 // ui: 'custom' — this page shows its own screen, so madAuth's dialog never opens.
-void Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp(), new EmailLink()], ui: 'custom' }).then((result) => {
-  // Without Google on the server there is no Google button, so the hint about it goes.
-  $('#google-hint').hidden = result.leftOut.includes('google');
+void Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Totp(), new EmailLink()], ui: 'custom' }).then((result) => {
+  // The hint under "forgot password" names the providers the server offers (their users have no password); without any, it goes.
+  const providers = (['google', 'github'] as const).filter((method) => !result.leftOut.includes(method)).map((method) => ({ google: 'Google', github: 'GitHub' })[method]);
+  $('#provider-hint').textContent = `Signed up with ${providers.join(' or ')}? There is no password to reset: use that button instead.`;
+  $('#provider-hint').hidden = !providers.length;
   // Opened from the link in a reset e-mail: ask for the new password right away.
   if (Madauth.password.pendingReset) show('reset');
   const policy = Madauth.password.policy;
@@ -68,6 +70,7 @@ void Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Tot
 });
 Madauth.onAuthStateChanged(handleAuthStateChanged);
 Madauth.google.renderButton($('#google-button'), { onResult: report });
+Madauth.github.renderButton($('#github-button'), { onResult: report });
 
 function handleAuthStateChanged(user: MadauthUser | null): void {
   $('#login').hidden = !!user && !showingCodes;
@@ -143,7 +146,7 @@ function messageFor(error: MadauthError): string {
     case 'setup_expired':
       return 'The setup took too long. Please start again.';
     case 'other_method':
-      return `This e-mail address signs in with ${(error.methods ?? []).join(' or ') || 'another method'}. Use that instead of Google.`;
+      return `This e-mail address signs in with ${(error.methods ?? []).join(' or ') || 'another method'}. Use that instead.`;
     // signup_rejected: the message comes from your sign-up check and is shown as it is.
     default:
       return error.message;

@@ -21,6 +21,7 @@ let sessionUser: DemoUser | null = null;
 let signInAs: DemoUser = ada;
 let settings = {
   google: { configured: true, enabled: true, secondFactor: 'none' },
+  github: { configured: true, enabled: true, secondFactor: 'none' },
   password: { configured: true, enabled: false, secondFactor: 'optional' },
   totp: { configured: true, enabled: false },
   'email-link': { configured: true, enabled: true, secondFactor: 'none' },
@@ -67,6 +68,7 @@ vi.stubGlobal(
       case 'GET /auth/config':
         return json({
           google: { clientId: 'cid.apps.googleusercontent.com', codeFlow: false, secondFactor: 'none' },
+          github: { secondFactor: 'none' },
           password: { minLength: 8, secondFactor: 'optional' },
           totp: { signIn: false, signUp: false },
           email: { verification: true },
@@ -114,12 +116,13 @@ vi.stubGlobal(
         // The list replaces what was on: a method that is not in it (or false) is off.
         const { methods } = body();
         const on = (value: unknown) => value === true || (!!value && typeof value === 'object');
-        if (!on(methods.google) && !on(methods.password) && !on(methods.totp) && !on(methods['email-link'])) {
+        if (!on(methods.google) && !on(methods.github) && !on(methods.password) && !on(methods.totp) && !on(methods['email-link'])) {
           return json({ error: 'invalid_settings', message: 'At least one sign-in method must stay on.' }, 400);
         }
         const policy = (value: { secondFactor?: string } | boolean | undefined) => (typeof value === 'object' && value.secondFactor) || 'none';
         settings = {
           google: { configured: true, enabled: on(methods.google), secondFactor: policy(methods.google) },
+          github: { configured: true, enabled: on(methods.github), secondFactor: policy(methods.github) },
           password: { configured: true, enabled: on(methods.password), secondFactor: policy(methods.password) },
           totp: { configured: true, enabled: on(methods.totp) },
           'email-link': { configured: true, enabled: on(methods['email-link']), secondFactor: policy(methods['email-link']) },
@@ -285,7 +288,7 @@ describe('demo page', () => {
     $<HTMLInputElement>('#method-email-link').checked = false;
     changed($('#method-email-link'));
     expect(request('setSettings')).toBe(
-      `Madauth.admin.setSettings({ methods })\n${JSON.stringify({ methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false, sms: true } }, null, 2)}`,
+      `Madauth.admin.setSettings({ methods })\n${JSON.stringify({ methods: { google: { secondFactor: 'none' }, github: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false, sms: true } }, null, 2)}`,
     );
     execute('setSettings').click();
     await expect.poll(() => settings.password.enabled).toBe(true);
@@ -294,7 +297,7 @@ describe('demo page', () => {
     expect(settings['email-link'].enabled).toBe(false);
     const [, sent] = [...vi.mocked(fetch).mock.calls].reverse().find(([url]: [unknown, RequestInit?]) => String(url).endsWith('/auth/admin/settings/set')) as [string, RequestInit];
     expect(JSON.parse(String(sent.body))).toEqual({
-      methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false, sms: true },
+      methods: { google: { secondFactor: 'none' }, github: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false, sms: true },
     });
     await expect.poll(() => response('setSettings')).toContain('"secondFactor": "required"');
     expect(execute('setSettings').disabled).toBe(false);
@@ -428,6 +431,7 @@ describe('demo page', () => {
 
     open('setSettings');
     $<HTMLInputElement>('#method-google').checked = false;
+    $<HTMLInputElement>('#method-github').checked = false;
     $<HTMLInputElement>('#method-password').checked = false;
     $<HTMLInputElement>('#method-totp').checked = false;
     $<HTMLInputElement>('#method-email-link').checked = false;

@@ -49,6 +49,10 @@ describe('demo page with the server-side redirect flow', () => {
     await expect.poll(() => $('#flow-note').hidden).toBe(false);
   });
 
+  it('says so when the server has no GitHub sign-in', async () => {
+    await expect.poll(() => $('#github-note').hidden).toBe(false);
+  });
+
   it('does not load Google Identity Services: the redirect needs no script from Google', () => {
     expect(document.querySelector('script[src*="accounts.google.com"]')).toBeNull();
   });
