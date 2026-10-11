@@ -135,6 +135,7 @@ describe('switching sign-in methods off and on', () => {
         google: { configured: true, enabled: true, secondFactor: 'none' },
         password: { configured: true, enabled: false, secondFactor: 'none' },
         totp: { configured: true, enabled: false },
+        'email-link': { configured: true, enabled: false, secondFactor: 'none' },
       },
     });
     expect(await config(app)).toMatchObject({ google: { clientId: expect.any(String) }, password: null });
@@ -183,6 +184,7 @@ describe('switching sign-in methods off and on', () => {
       password: null,
       totp: null,
       email: { verification: false },
+      emailLink: null,
     });
   });
 

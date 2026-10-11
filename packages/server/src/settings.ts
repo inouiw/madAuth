@@ -3,14 +3,15 @@
 import type { Row, StoreAdapter } from './store/schema.js';
 
 /**
- * The primary sign-in methods madAuth has: Google, e-mail & password, and the authenticator app on its own
- * (the e-mail address and a code from the app).
+ * The primary sign-in methods madAuth has: Google, e-mail & password, the authenticator app on its own
+ * (`totp`: the e-mail address and a code from the app), and the passwordless e-mail link (`email-link`:
+ * the address, then the link or the code from an e-mail).
  */
-export const SIGN_IN_METHODS = ['google', 'password', 'totp'] as const;
+export const SIGN_IN_METHODS = ['google', 'password', 'totp', 'email-link'] as const;
 export type SignInMethod = (typeof SIGN_IN_METHODS)[number];
 
-/** The methods that can ask for a code from the authenticator app after they succeeded. */
-export const METHODS_WITH_SECOND_FACTOR = ['google', 'password'] as const;
+/** The methods that can ask for a second factor (a code from the authenticator app) after they succeeded. */
+export const METHODS_WITH_SECOND_FACTOR = ['google', 'password', 'email-link'] as const;
 export type MethodWithSecondFactor = (typeof METHODS_WITH_SECOND_FACTOR)[number];
 
 /**
@@ -20,7 +21,7 @@ export type MethodWithSecondFactor = (typeof METHODS_WITH_SECOND_FACTOR)[number]
 export const SECOND_FACTOR_POLICIES = ['none', 'optional', 'required'] as const;
 export type SecondFactorPolicy = (typeof SECOND_FACTOR_POLICIES)[number];
 
-/** The settings of a method that is on. `secondFactor` is for Google and password; it defaults to `none`. */
+/** The settings of a method that is on. `secondFactor` is for the METHODS_WITH_SECOND_FACTOR; it defaults to `none`. */
 export interface MethodSetting {
   secondFactor?: SecondFactorPolicy;
 }
@@ -37,14 +38,19 @@ export interface MethodConfig {
   password?: object;
   /** The webhook sends the e-mails that confirm an address, so people can sign up. */
   emailVerification?: boolean;
+  /** The webhook sends the sign-in e-mails of the e-mail link (`email.signin`). */
+  emailLink?: boolean;
 }
 
 const isSignInMethod = (value: string): value is SignInMethod => (SIGN_IN_METHODS as readonly string[]).includes(value);
+/** Whether a method takes a `secondFactor` policy. */
+export const hasSecondFactor = (method: string): method is MethodWithSecondFactor =>
+  (METHODS_WITH_SECOND_FACTOR as readonly string[]).includes(method);
 const isPolicy = (value: unknown): value is SecondFactorPolicy => (SECOND_FACTOR_POLICIES as readonly unknown[]).includes(value);
 
 /**
  * Checks a methods setting and returns it as {@link MethodSettings}, or null if `input` is not one: an
- * object keyed by sign-in method, each `{}` (on) or `{ secondFactor }` (Google and password). With
+ * object keyed by sign-in method, each `{}` (on) or `{ secondFactor }` (the methods with a second factor). With
  * `booleans`, as the admin API takes it, `true` means `{}` and `false` means left out; what is stored
  * never has them, so a value stored by madAuth 0.3 (booleans with another meaning) is not mistaken for one.
  */
@@ -61,7 +67,7 @@ export function parseMethodSettings(input: unknown, options: { booleans?: boolea
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const setting: MethodSetting = {};
     for (const [field, fieldValue] of Object.entries(value as Record<string, unknown>)) {
-      if (field !== 'secondFactor' || method === 'totp' || !isPolicy(fieldValue)) return null;
+      if (field !== 'secondFactor' || !hasSecondFactor(method) || !isPolicy(fieldValue)) return null;
       setting.secondFactor = fieldValue;
     }
     settings[method] = setting;
@@ -73,14 +79,15 @@ export function parseMethodSettings(input: unknown, options: { booleans?: boolea
 export function isConfigured(config: MethodConfig, method: SignInMethod): boolean {
   if (method === 'google') return !!config.google;
   if (method === 'password') return !!config.password;
+  if (method === 'email-link') return !!config.emailLink;
   // The authenticator app needs nothing but the store, which every server has.
   return true;
 }
 
 /**
- * Whether a method creates users on this server: Google and password when configured, the authenticator app
- * only when the webhook sends the confirmation e-mails (sign-up with it). An app that existing users set up
- * is no way in for anyone new.
+ * Whether a method creates users on this server: Google, password and the e-mail link when configured, the
+ * authenticator app only when the webhook sends the confirmation e-mails (sign-up with it). An app that
+ * existing users set up is no way in for anyone new.
  */
 export function canSignUp(config: MethodConfig, method: SignInMethod): boolean {
   return method === 'totp' ? !!config.emailVerification : isConfigured(config, method);
@@ -94,7 +101,8 @@ export function initialMethods(config: MethodConfig): MethodSettings {
   const methods: MethodSettings = {};
   if (config.google) methods.google = { secondFactor: 'none' };
   if (config.password) methods.password = { secondFactor: 'none' };
-  if (!config.google && !config.password && config.emailVerification) methods.totp = {};
+  if (config.emailLink) methods['email-link'] = { secondFactor: 'none' };
+  if (!config.google && !config.password && !config.emailLink && config.emailVerification) methods.totp = {};
   return methods;
 }
 

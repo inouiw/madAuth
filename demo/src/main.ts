@@ -1,4 +1,15 @@
-import { GoogleFedcm, GoogleRedirect, Madauth, Password, Totp, type DeleteAccountOptions, type MadauthUser, type MethodsToSet, type Settings } from '@madauth/web';
+import {
+  EmailLink,
+  GoogleFedcm,
+  GoogleRedirect,
+  Madauth,
+  Password,
+  Totp,
+  type DeleteAccountOptions,
+  type MadauthUser,
+  type MethodsToSet,
+  type Settings,
+} from '@madauth/web';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -35,8 +46,9 @@ const { hostname } = location;
 $('[data-hosted]').hidden = !(hostname === 'madauth.com' || hostname.endsWith('.madauth.com'));
 
 // No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin. The authenticator
-// app is left out when the server has it switched off (no policy asks for it, and it signs in nobody alone).
-void Madauth.initialize({ providers: [google, new Password(), new Totp()] }).then((result) => {
+// app is left out when the server has it switched off (no policy asks for it, and it signs in nobody alone),
+// and the e-mail link when the server's webhook doesn't send its e-mails or an admin has it off.
+void Madauth.initialize({ providers: [google, new Password(), new Totp(), new EmailLink()] }).then((result) => {
   // The server offers the redirect flow only with a client secret (and Google switched on); otherwise
   // initialize left GoogleRedirect out and the dialog has no Google button.
   if (flow === 'redirect' && result.leftOut.includes('google')) $('#flow-note').hidden = false;
@@ -182,8 +194,10 @@ function api<A extends Args>(build: (values: Values) => A | string, call: (args:
   return { build, call: (args) => call(args as A) };
 }
 
-const methodBox = (method: 'google' | 'password' | 'totp') => $<HTMLInputElement>(`#method-${method}`);
-const policySelect = (method: 'google' | 'password') => $<HTMLSelectElement>(`#policy-${method}`);
+type MethodId = 'google' | 'password' | 'totp' | 'email-link';
+type WithPolicy = 'google' | 'password' | 'email-link';
+const methodBox = (method: MethodId) => $<HTMLInputElement>(`#method-${method}`);
+const policySelect = (method: WithPolicy) => $<HTMLSelectElement>(`#policy-${method}`);
 /** The user whose sign-in loaded the settings, so a claims change (which also notifies) doesn't load them again. */
 let settingsLoadedFor: string | undefined;
 /** Whether the controls show the server's settings; only then may setSettings send them. */
@@ -196,11 +210,11 @@ let settingsLoaded = false;
  */
 function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSettings>> | null>(result: T): T {
   const methods: Settings['methods'] | undefined = result?.isSuccess ? result.methods : undefined;
-  for (const method of ['google', 'password', 'totp'] as const) {
+  for (const method of ['google', 'password', 'totp', 'email-link'] as const) {
     methodBox(method).checked = methods?.[method].enabled ?? false;
     methodBox(method).disabled = !methods?.[method].configured;
   }
-  for (const method of ['google', 'password'] as const) {
+  for (const method of ['google', 'password', 'email-link'] as const) {
     policySelect(method).value = methods?.[method].secondFactor ?? 'none';
     policySelect(method).disabled = !methods?.[method].configured;
   }
@@ -213,11 +227,12 @@ function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSetti
 
 /** The list to send: what is checked is on, with the policy next to it; the rest is off. */
 function methodsToSet(): MethodsToSet {
-  const policy = (method: 'google' | 'password') => ({ secondFactor: policySelect(method).value as 'none' | 'optional' | 'required' });
+  const policy = (method: WithPolicy) => ({ secondFactor: policySelect(method).value as 'none' | 'optional' | 'required' });
   return {
     google: methodBox('google').checked ? policy('google') : false,
     password: methodBox('password').checked ? policy('password') : false,
     totp: methodBox('totp').checked,
+    'email-link': methodBox('email-link').checked ? policy('email-link') : false,
   };
 }
 

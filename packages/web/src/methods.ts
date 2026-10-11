@@ -9,9 +9,11 @@ export interface LoginMethod {
   description: string;
 }
 
-export type LoginMethodId = 'password' | 'google' | 'totp' | 'email' | 'sms';
+export type LoginMethodId = 'password' | 'google' | 'totp' | 'email-link' | 'sms';
 
-const order: LoginMethodId[] = ['google', 'password', 'totp', 'email', 'sms'];
+const order: LoginMethodId[] = ['google', 'password', 'totp', 'email-link', 'sms'];
+
+export const isLoginMethodId = (value: unknown): value is LoginMethodId => typeof value === 'string' && (order as string[]).includes(value);
 
 /**
  * All sign-in methods, in the order they appear in the dialog. The dialog lists only the methods whose

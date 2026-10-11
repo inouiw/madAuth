@@ -34,7 +34,7 @@ export interface AuthenticatorFailedDetail {
 }
 
 /** The screens of the dialog. */
-type View = 'signin' | 'signup' | 'check-inbox' | 'forgot' | 'reset' | 'totp' | 'totp-code' | 'totp-setup' | 'totp-codes';
+type View = 'signin' | 'signup' | 'check-inbox' | 'forgot' | 'reset' | 'totp' | 'totp-code' | 'totp-setup' | 'totp-codes' | 'email-link';
 
 /** The step a sign-in goes on with, from the error that says so. */
 function nextStep(error: MadauthError): PendingStep['step'] | undefined {
@@ -75,7 +75,7 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
       <path d="m9 12 2 2 4-4" />
     </svg>
   `,
-  email: html`
+  'email-link': html`
     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
       <rect x="2" y="4" width="20" height="16" rx="2" />
       <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
@@ -148,8 +148,8 @@ export class MadauthLogin extends LitElement {
   /** The e-mail address last entered, kept across the views. */
   private email = '';
 
-  /** What the e-mail in the check-inbox view is for. */
-  private inboxPurpose: 'verify' | 'reset' = 'verify';
+  /** What the e-mail in the check-inbox view is for: confirming the address, a password reset, or a sign-in link. */
+  private inboxPurpose: 'verify' | 'reset' | 'signin' = 'verify';
 
   /** The reset code entered in the check-inbox view, used with the new password. */
   private resetCode?: string;
@@ -308,6 +308,7 @@ export class MadauthLogin extends LitElement {
     this.view = 'signin';
     this.busy = false;
     this.resetCode = undefined;
+    this.inboxPurpose = 'verify';
     this.primary = 'password';
     this.setup = undefined;
     this.setupForSignIn = false;
@@ -366,6 +367,7 @@ export class MadauthLogin extends LitElement {
       this.useRecovery = false;
       this.goTo('totp');
     }
+    if (m.id === 'email-link' && this.emailLinkAvailable) this.goTo('email-link');
   }
 
   private get passwordAvailable(): boolean {
@@ -375,6 +377,11 @@ export class MadauthLogin extends LitElement {
   /** Whether the authenticator app signs in on its own here (the e-mail address and a code). */
   private get totpAvailable(): boolean {
     return this.usable && !!providerFor('totp') && !!Madauth.totp.policy?.signIn;
+  }
+
+  /** Whether the e-mail link is offered here: its provider is registered and the server has it on. */
+  private get emailLinkAvailable(): boolean {
+    return this.usable && !!providerFor('email-link') && !!Madauth.emailLink.policy;
   }
 
   /** Switches the view, keeping the e-mail address typed so far. */
@@ -457,6 +464,11 @@ export class MadauthLogin extends LitElement {
       this.goTo('reset');
       return;
     }
+    if (this.inboxPurpose === 'signin') {
+      const result = await this.run(() => Madauth.emailLink.verify({ email: this.email, code }));
+      if (result) this.finish('email-link', result);
+      return;
+    }
     const result = await this.run(() => this.signUpScope.verifyEmail({ email: this.email, code }));
     if (result) this.finish(this.primary, result);
   }
@@ -477,14 +489,18 @@ export class MadauthLogin extends LitElement {
     this.finish('password', result);
   }
 
-  private async resend(purpose: 'verify' | 'reset'): Promise<void> {
+  private async resend(purpose: 'verify' | 'reset' | 'signin'): Promise<void> {
     const email = this.email;
     const result = await this.run(() =>
-      purpose === 'verify' ? this.signUpScope.sendVerificationEmail({ email }) : Madauth.password.sendResetEmail({ email }),
+      purpose === 'verify'
+        ? this.signUpScope.sendVerificationEmail({ email })
+        : purpose === 'reset'
+          ? Madauth.password.sendResetEmail({ email })
+          : Madauth.emailLink.send({ email }),
     );
     if (!result) return;
     if (!result.isSuccess) {
-      this.showError(result.error, purpose === 'verify' ? this.primary : 'password');
+      this.showError(result.error, purpose === 'verify' ? this.primary : purpose === 'reset' ? 'password' : 'email-link');
       return;
     }
     this.inboxPurpose = purpose;
@@ -511,6 +527,8 @@ export class MadauthLogin extends LitElement {
         return s.totpSetup.heading;
       case 'totp-codes':
         return s.totpCodes.heading;
+      case 'email-link':
+        return s.emailLink.heading;
       default:
         return this.heading || s.signIn;
     }
@@ -597,6 +615,8 @@ export class MadauthLogin extends LitElement {
         return this.renderTotpSetup();
       case 'totp-codes':
         return this.renderTotpCodes();
+      case 'email-link':
+        return this.renderEmailLink();
       default:
         return this.renderSignInView();
     }
@@ -606,7 +626,11 @@ export class MadauthLogin extends LitElement {
     // Once madAuth is ready, only the methods whose provider was passed to Madauth.initialize (and not left out
     // because the server doesn't offer them) are listed, all at once. The authenticator app is listed only when
     // it signs in on its own here.
-    const offered = this.usable ? loginMethods.filter((m) => providerFor(m.id) && (m.id !== 'totp' || this.totpAvailable)) : [];
+    const offered = this.usable
+      ? loginMethods.filter(
+          (m) => providerFor(m.id) && (m.id !== 'totp' || this.totpAvailable) && (m.id !== 'email-link' || this.emailLinkAvailable),
+        )
+      : [];
     const google = offered.find((m) => m.id === 'google');
     const password = offered.find((m) => m.id === 'password');
     const others = offered.filter((m) => m !== google && m !== password);
@@ -891,6 +915,36 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
+  // --- The e-mail link ---
+
+  /** Asking for the sign-in e-mail: the address, and a button that sends the link and the code. */
+  private renderEmailLink() {
+    const s = this.strings;
+    return html`
+      <p class="lead">${s.emailLink.lead}</p>
+      <form part="form" class="email-link" @submit=${this.onEmailLink}>
+        ${this.emailField('email')}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.emailLink.send}</span>
+        </button>
+      </form>
+      ${this.backLink()}
+    `;
+  }
+
+  private async onEmailLink(e: Event): Promise<void> {
+    const { email = '' } = this.fields(e);
+    this.email = email.trim();
+    const result = await this.run(() => Madauth.emailLink.send({ email }));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, 'email-link');
+      return;
+    }
+    this.inboxPurpose = 'signin';
+    this.view = 'check-inbox';
+  }
+
   private renderForgot() {
     const s = this.strings;
     return html`
@@ -908,8 +962,9 @@ export class MadauthLogin extends LitElement {
 
   private renderCheckInbox() {
     const s = this.strings;
+    const lead = this.inboxPurpose === 'signin' ? s.signInInboxLead : s.inboxLead;
     return html`
-      <p class="lead">${s.inboxLead.before}<strong>${this.email}</strong>${s.inboxLead.after}</p>
+      <p class="lead">${lead.before}<strong>${this.email}</strong>${lead.after}</p>
       <form part="form" class="code" @submit=${this.onCode}>
         <div class="field">
           <label for="code">${s.code}</label>

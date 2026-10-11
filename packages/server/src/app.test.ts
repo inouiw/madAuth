@@ -274,6 +274,7 @@ describe('code (redirect) flow', () => {
       password: null,
       totp: null,
       email: { verification: false },
+      emailLink: null,
     });
     // The FedCM flow still works.
     expect((await getNonce(app)).nonce).toBeTruthy();
@@ -378,6 +379,7 @@ describe('public endpoints', () => {
       password: null,
       totp: null,
       email: { verification: false },
+      emailLink: null,
     });
   });
 

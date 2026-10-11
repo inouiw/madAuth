@@ -11,6 +11,7 @@ import {
   Settings,
   anyOn,
   canSignUp,
+  hasSecondFactor,
   initialMethods,
   isConfigured,
   isOn,
@@ -34,6 +35,7 @@ Commands:
                                An answer given as an option is not asked for: --app-url <url>,
                                --google-client-id <id>, --google-client-secret <secret>, --password or
                                --no-password, --totp or --no-totp (sign-up with the authenticator app),
+                               --email-link or --no-email-link (passwordless sign-in by e-mail),
                                --database <url>, --webhook-url <url>. --yes takes the default for the
                                rest. --out <path> writes another file, --force overwrites.
   start                        Start the server on PORT (default ${PORT})
@@ -50,9 +52,10 @@ Commands:
   set-methods [method[=policy]...]
                                Switch sign-in methods on and off while the server runs: the listed ones
                                are on, the others off. Methods: google, password, totp (the authenticator
-                               app on its own). google and password take a policy for the authenticator
-                               app as a second factor: none (default), optional or required, e.g.
-                               set-methods google password=required totp
+                               app on its own), email-link (passwordless sign-in by e-mail). google,
+                               password and email-link take a policy for the authenticator app as a
+                               second factor: none (default), optional or required, e.g.
+                               set-methods google password=required totp email-link=optional
   get-methods                  Print which sign-in methods are switched on, with their policies.
   remove-totp <email>          Remove a user's authenticator app and recovery codes: the last resort when
                                both are lost. With a required policy, the user sets it up again next time.
@@ -179,6 +182,7 @@ function parseCliArgs(args: string[]) {
       'google-client-secret': { type: 'string' },
       password: { type: 'boolean' },
       totp: { type: 'boolean' },
+      'email-link': { type: 'boolean' },
       database: { type: 'string' },
       'webhook-url': { type: 'string' },
       yes: { type: 'boolean' },
@@ -308,12 +312,13 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   const password = options.password ?? /^y/i.test(await answer(undefined, 'E-mail & password sign-in? (yes/no)', 'yes'));
   // The app as a second factor needs no setting here; signing up with it alone needs the confirmation e-mails.
   const totp = options.totp ?? /^y/i.test(await answer(undefined, 'Sign-up with the authenticator app alone, without a password? (yes/no)', 'no'));
-  const emails = password || totp;
+  const emailLink = options['email-link'] ?? /^y/i.test(await answer(undefined, 'Passwordless sign-in with an e-mail link? (yes/no)', 'no'));
+  const emails = password || totp || emailLink;
   if (!emails && options['webhook-url'] !== undefined) {
-    return fail('--webhook-url is for the e-mails of e-mail & password sign-in and of sign-up with the authenticator app, which are turned off.');
+    return fail('--webhook-url is for the e-mails of e-mail & password sign-in, of the e-mail link and of sign-up with the authenticator app, which are turned off.');
   }
   if (!clientId && !emails) {
-    return fail('No sign-in method is chosen. Give a Google client ID, turn on e-mail & password sign-in or sign-up with the authenticator app.');
+    return fail('No sign-in method is chosen. Give a Google client ID, turn on e-mail & password sign-in, the e-mail link or sign-up with the authenticator app.');
   }
   // Every user is stored, whichever way they sign in.
   const database = await answer(options.database, 'Database for the users', 'sqlite:./madauth.db');
@@ -323,7 +328,14 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   const webhookUrl = emails
     ? await answer(options['webhook-url'], 'Webhook URL, where madAuth hands over its e-mails', 'http://localhost:8790/webhook')
     : '';
-  const events = password ? 'email.verify,email.reset,email.already_registered,email.no_password' : 'email.verify,email.already_registered';
+  // The types each chosen method needs, once each.
+  const events = [
+    ...(password ? ['email.verify', 'email.reset', 'email.already_registered', 'email.no_password'] : []),
+    ...(totp ? ['email.verify', 'email.already_registered'] : []),
+    ...(emailLink ? ['email.signin', 'email.already_registered'] : []),
+  ]
+    .filter((type, i, all) => all.indexOf(type) === i)
+    .join(',');
 
   // The comments have no quotes in them: some env file parsers trip over those.
   const variable = (name: string, value: string, comment: string) => `# ${comment}\n${name}=${value}\n`;
@@ -364,7 +376,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   writeFileSync(file, content, { mode: 0o600, flag: 'wx' });
 
   const google = clientSecret ? 'GoogleRedirect' : clientId ? 'GoogleFedcm' : undefined;
-  return { output: `Wrote ${file}.\n\nNext steps:\n\n${nextSteps(file, origin, google, password, totp)}`, exitCode: 0 };
+  return { output: `Wrote ${file}.\n\nNext steps:\n\n${nextSteps(file, origin, google, password, totp, emailLink)}`, exitCode: 0 };
 }
 
 /** What to do after `init`, for the chosen sign-in methods: numbered steps with commands and snippets to copy. */
@@ -374,17 +386,18 @@ function nextSteps(
   google: 'GoogleFedcm' | 'GoogleRedirect' | undefined,
   password: boolean,
   totp = false,
+  emailLink = false,
 ): string {
   const server = `http://localhost:${PORT}`;
   // Quoted when needed, so the command can be pasted as it is.
   const envFile = /[^\w./-]/.test(file) ? `'${file.replaceAll("'", `'\\''`)}'` : file;
-  const providers = [google, password && 'Password', totp && 'Totp'].filter(Boolean);
-  const methodList = [google && 'google', password && 'password', totp && 'totp'].filter(Boolean).join(' ');
+  const providers = [google, password && 'Password', totp && 'Totp', emailLink && 'EmailLink'].filter(Boolean);
+  const methodList = [google && 'google', password && 'password', totp && 'totp', emailLink && 'email-link'].filter(Boolean).join(' ');
   // For development, Google wants http://localhost next to the origin with its port.
   const googleOrigins = new Set([origin, ...(new URL(origin).hostname === 'localhost' ? ['http://localhost'] : [])]);
   const steps = [
     ['Start the madAuth server:', '', `  npx @madauth/server start --env-file ${envFile}`],
-    (password || totp) && [
+    (password || totp || emailLink) && [
       'madAuth hands its e-mails to your webhook receiver. For development, start the development receiver,',
       `which prints them, with the same WEBHOOK_URL and WEBHOOK_SECRET as in ${file}:`,
       '',
@@ -498,13 +511,13 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
         return { output: `Unknown sign-in method "${arg}". Methods: ${SIGN_IN_METHODS.join(', ')}, e.g. set-methods google password=required totp.`, exitCode: 1 };
       }
       const method = name as SignInMethod;
-      if (policy !== undefined && (method === 'totp' || !(SECOND_FACTOR_POLICIES as readonly string[]).includes(policy))) {
+      if (policy !== undefined && (!hasSecondFactor(method) || !(SECOND_FACTOR_POLICIES as readonly string[]).includes(policy))) {
         return {
-          output: `"${arg}": google and password take a policy for the authenticator app as a second factor: ${SECOND_FACTOR_POLICIES.join(', ')}.`,
+          output: `"${arg}": google, password and email-link take a policy for the authenticator app as a second factor: ${SECOND_FACTOR_POLICIES.join(', ')}.`,
           exitCode: 1,
         };
       }
-      next[method] = method === 'totp' ? {} : { secondFactor: (policy as SecondFactorPolicy | undefined) ?? 'none' };
+      next[method] = hasSecondFactor(method) ? { secondFactor: (policy as SecondFactorPolicy | undefined) ?? 'none' } : {};
     }
     if (!anyOn(signsUp, next)) {
       const usable = SIGN_IN_METHODS.filter(signsUp);
@@ -518,7 +531,7 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
   const current = await settings.methods();
   const describe = (method: SignInMethod) => {
     const policy = policyOf(method, current);
-    return method !== 'totp' && policy !== 'none' ? `${method} (authenticator app ${policy})` : method;
+    return hasSecondFactor(method) && policy !== 'none' ? `${method} (authenticator app ${policy})` : method;
   };
   const on = SIGN_IN_METHODS.filter((method) => isOn(method, configured, current)).map(describe);
   const off = SIGN_IN_METHODS.filter((method) => configured(method) && !isOn(method, configured, current));

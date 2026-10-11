@@ -72,6 +72,7 @@ describe('deployment entry points', () => {
       password: { minLength: 8, secondFactor: 'none' },
       totp: null,
       email: { verification: true },
+      emailLink: null,
     });
     expect(nonce).toMatchObject({ statusCode: 200 });
     expect((nonce as { cookies: string[] }).cookies[0]).toMatch(/^madauth_nonce=/);
@@ -282,7 +283,14 @@ describe('deployment entry points', () => {
       exitCode: 0,
       output: 'Switched on: google, password (authenticator app required), totp.',
     });
-    expect(await runCli(['set-methods', 'sms'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('Unknown sign-in method "sms"') });
+    expect(await runCli(['set-methods', 'fax'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('Unknown sign-in method "fax"') });
+    // The e-mail link is not configured here (no email.signin): listing it changes nothing.
+    expect(await runCli(['set-methods', 'google', 'email-link=optional'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp.' });
+    const withLink = { ...env, WEBHOOK_EVENTS: 'email.verify,email.reset,email.signin' };
+    expect(await runCli(['get-methods'], io, withLink)).toEqual({ exitCode: 0, output: 'Switched on: google, email-link (authenticator app optional). Switched off: password, totp.' });
+    expect(await runCli(['set-methods', 'email-link=required'], io, withLink)).toEqual({ exitCode: 0, output: 'Switched on: email-link (authenticator app required). Switched off: google, password, totp.' });
+    expect(await runCli(['set-methods', 'email-link=maybe'], io, withLink)).toMatchObject({ exitCode: 1, output: expect.stringContaining('none, optional, required') });
+    expect(await runCli(['set-methods', 'google', 'password=required', 'totp'], io, env)).toMatchObject({ exitCode: 0 });
     expect(await runCli(['set-methods', 'password=maybe'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('none, optional, required') });
     expect(await runCli(['set-methods', 'totp=required'], io, env)).toMatchObject({ exitCode: 1 });
     // Nothing listed: that would switch everything off.

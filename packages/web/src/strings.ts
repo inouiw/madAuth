@@ -18,7 +18,7 @@ export const en = {
     google: { label: 'Continue with Google', description: 'Use your Google account' },
     password: { label: 'E-mail & password', description: 'Sign in with your e-mail address and password' },
     totp: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
-    email: { label: 'E-mail link', description: 'Passwordless sign-in by e-mail' },
+    'email-link': { label: 'E-mail link', description: 'Passwordless sign-in by e-mail' },
     sms: { label: 'SMS code', description: 'One-time code sent to your phone' },
   } satisfies Record<LoginMethodId, { label: string; description: string }>,
 
@@ -55,6 +55,18 @@ export const en = {
   },
   emailSentAgain: 'We sent the e-mail again.',
   chooseNewPassword: 'Choose a new password',
+
+  // The e-mail link
+  emailLink: {
+    heading: 'Sign in with an e-mail link',
+    lead: 'Enter your e-mail address. We will send you a link that signs you in, and a code.',
+    send: 'Send link',
+  },
+  /** The check-inbox lead after asking for a sign-in link; the e-mail address is shown between the two parts. */
+  signInInboxLead: {
+    before: 'We sent an e-mail to ',
+    after: '. Open the link in it to sign in, or enter the 6-digit code from the e-mail.',
+  },
 
   // The authenticator app
   cancel: 'Cancel',
@@ -99,7 +111,7 @@ export const en = {
   },
   /** `other_method` with the methods the server named, e.g. "a password". */
   otherMethod: (how: string) => `This e-mail address signs in with ${how}. Use that instead of Google.`,
-  methodNames: { google: 'Google', password: 'a password', totp: 'an authenticator app' },
+  methodNames: { google: 'Google', password: 'a password', totp: 'an authenticator app', 'email-link': 'an e-mail link' },
   and: ' and ',
   /** Between alternatives in a sentence. */
   orList: ' or ',
@@ -164,7 +176,7 @@ export const de: Strings = {
     google: { label: 'Weiter mit Google', description: 'Mit Ihrem Google-Konto anmelden' },
     password: { label: 'E-Mail-Adresse und Passwort', description: 'Mit E-Mail-Adresse und Passwort anmelden' },
     totp: { label: 'Authentifizierungs-App', description: 'Einmalcode aus Ihrer Authentifizierungs-App' },
-    email: { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
+    'email-link': { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
     sms: { label: 'SMS-Code', description: 'Einmalcode per SMS an Ihr Mobiltelefon' },
   },
 
@@ -196,6 +208,16 @@ export const de: Strings = {
   },
   emailSentAgain: 'Wir haben die E-Mail erneut gesendet.',
   chooseNewPassword: 'Neues Passwort wählen',
+
+  emailLink: {
+    heading: 'Mit E-Mail-Link anmelden',
+    lead: 'Geben Sie Ihre E-Mail-Adresse ein. Wir senden Ihnen einen Link, der Sie anmeldet, und einen Bestätigungscode.',
+    send: 'Link senden',
+  },
+  signInInboxLead: {
+    before: 'Wir haben eine E-Mail an ',
+    after: ' gesendet. Öffnen Sie den Link darin, um sich anzumelden, oder geben Sie den 6-stelligen Bestätigungscode aus der E-Mail ein.',
+  },
 
   cancel: 'Abbrechen',
   loading: 'Wird geladen …',
@@ -232,7 +254,7 @@ export const de: Strings = {
     saved: 'Ich habe sie gespeichert',
   },
   otherMethod: (how) => `Diese E-Mail-Adresse meldet sich mit ${how} an. Verwenden Sie das statt Google.`,
-  methodNames: { google: 'Google', password: 'einem Passwort', totp: 'einer Authentifizierungs-App' },
+  methodNames: { google: 'Google', password: 'einem Passwort', totp: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link' },
   and: ' und ',
   orList: ' oder ',
 

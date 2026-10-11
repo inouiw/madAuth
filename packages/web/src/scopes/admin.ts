@@ -11,20 +11,22 @@ export interface MethodSetting {
   configured: boolean;
   /** Whether users can sign in with it right now. */
   enabled: boolean;
-  /** Google and password: whether they ask for the authenticator app as a second factor. */
+  /** Google, password and the e-mail link: whether they ask for the authenticator app as a second factor. */
   secondFactor?: SecondFactorPolicy;
 }
 
 export interface Settings {
-  methods: { google: MethodSetting; password: MethodSetting; totp: MethodSetting };
+  methods: { google: MethodSetting; password: MethodSetting; totp: MethodSetting; 'email-link': MethodSetting };
 }
 
-/** The list of methods to switch on: `true` or `{}` for on, with a policy for Google and password. A method left out is off. */
+/** The list of methods to switch on: `true` or `{}` for on, with a policy for Google, password and the e-mail link. A method left out is off. */
 export interface MethodsToSet {
   google?: boolean | { secondFactor?: SecondFactorPolicy };
   password?: boolean | { secondFactor?: SecondFactorPolicy };
   /** The authenticator app on its own: the e-mail address and a code sign in. */
   totp?: boolean | Record<string, never>;
+  /** The passwordless e-mail link. */
+  'email-link'?: boolean | { secondFactor?: SecondFactorPolicy };
 }
 
 /**

@@ -3,9 +3,10 @@ export const REDIRECT_ERROR_PARAM = 'madauth_error';
 /** Hash parameter that says what a redirect sign-in still needs (`#madauth_next=totp` or `totp-setup`). */
 export const REDIRECT_NEXT_PARAM = 'madauth_next';
 
-/** Hash parameters of the links in madAuth's e-mails (`#madauth_verify=<token>`, `#madauth_reset=<token>`). */
+/** Hash parameters of the links in madAuth's e-mails (`#madauth_verify=<token>`, `#madauth_reset=<token>`, `#madauth_signin=<token>`). */
 export const VERIFY_LINK_PARAM = 'madauth_verify';
 export const RESET_LINK_PARAM = 'madauth_reset';
+export const SIGNIN_LINK_PARAM = 'madauth_signin';
 
 /**
  * Cookie in which the server tells when the session expires (seconds since 1970). It stays for as long as

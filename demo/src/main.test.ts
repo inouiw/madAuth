@@ -23,6 +23,7 @@ let settings = {
   google: { configured: true, enabled: true, secondFactor: 'none' },
   password: { configured: true, enabled: false, secondFactor: 'optional' },
   totp: { configured: true, enabled: false },
+  'email-link': { configured: true, enabled: true, secondFactor: 'none' },
 };
 /** When set, the fake server answers settings/get only once it resolves. */
 let holdSettings: Promise<void> | undefined;
@@ -67,6 +68,7 @@ vi.stubGlobal(
           password: { minLength: 8, secondFactor: 'optional' },
           totp: { signIn: false, signUp: false },
           email: { verification: true },
+          emailLink: { secondFactor: 'none' },
         });
       case 'GET /auth/session':
         return sessionUser ? json({ user: sessionUser }) : json({ error: 'no_session' }, 401);
@@ -100,7 +102,7 @@ vi.stubGlobal(
         // The list replaces what was on: a method that is not in it (or false) is off.
         const { methods } = body();
         const on = (value: unknown) => value === true || (!!value && typeof value === 'object');
-        if (!on(methods.google) && !on(methods.password) && !on(methods.totp)) {
+        if (!on(methods.google) && !on(methods.password) && !on(methods.totp) && !on(methods['email-link'])) {
           return json({ error: 'invalid_settings', message: 'At least one sign-in method must stay on.' }, 400);
         }
         const policy = (value: { secondFactor?: string } | boolean | undefined) => (typeof value === 'object' && value.secondFactor) || 'none';
@@ -108,6 +110,7 @@ vi.stubGlobal(
           google: { configured: true, enabled: on(methods.google), secondFactor: policy(methods.google) },
           password: { configured: true, enabled: on(methods.password), secondFactor: policy(methods.password) },
           totp: { configured: true, enabled: on(methods.totp) },
+          'email-link': { configured: true, enabled: on(methods['email-link']), secondFactor: policy(methods['email-link']) },
         };
         return json({ methods: settings });
       }
@@ -266,16 +269,19 @@ describe('demo page', () => {
     changed($('#policy-password'));
     $<HTMLInputElement>('#method-totp').checked = true;
     changed($('#method-totp'));
+    $<HTMLInputElement>('#method-email-link').checked = false;
+    changed($('#method-email-link'));
     expect(request('setSettings')).toBe(
-      `Madauth.admin.setSettings({ methods })\n${JSON.stringify({ methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true } }, null, 2)}`,
+      `Madauth.admin.setSettings({ methods })\n${JSON.stringify({ methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false } }, null, 2)}`,
     );
     execute('setSettings').click();
     await expect.poll(() => settings.password.enabled).toBe(true);
     expect(settings.password.secondFactor).toBe('required');
     expect(settings.totp.enabled).toBe(true);
+    expect(settings['email-link'].enabled).toBe(false);
     const [, sent] = [...vi.mocked(fetch).mock.calls].reverse().find(([url]: [unknown, RequestInit?]) => String(url).endsWith('/auth/admin/settings/set')) as [string, RequestInit];
     expect(JSON.parse(String(sent.body))).toEqual({
-      methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true },
+      methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false },
     });
     await expect.poll(() => response('setSettings')).toContain('"secondFactor": "required"');
     expect(execute('setSettings').disabled).toBe(false);
@@ -411,6 +417,7 @@ describe('demo page', () => {
     $<HTMLInputElement>('#method-google').checked = false;
     $<HTMLInputElement>('#method-password').checked = false;
     $<HTMLInputElement>('#method-totp').checked = false;
+    $<HTMLInputElement>('#method-email-link').checked = false;
     execute('setSettings').click();
 
     await expect.poll(() => response('setSettings')).toContain('invalid_settings');

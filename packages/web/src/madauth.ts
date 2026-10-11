@@ -1,12 +1,13 @@
-import { EXPIRY_COOKIE, REDIRECT_NEXT_PARAM, VERIFY_LINK_PARAM } from './constants.js';
+import { EXPIRY_COOKIE, REDIRECT_NEXT_PARAM, SIGNIN_LINK_PARAM, VERIFY_LINK_PARAM } from './constants.js';
 import { takeHashParam } from './hash.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
 import type { AuthenticatorEnabledDetail, AuthenticatorFailedDetail } from './madauth-login.js';
-import type { LoginMethodId } from './methods.js';
+import { isLoginMethodId, type LoginMethodId } from './methods.js';
 import type { DeletedAccount, PendingStep, ProviderContext, ServerConfig, SignInProvider } from './providers/provider.js';
 import { fail, ok, type MadauthError, type MadauthUser, type Result } from './result.js';
 import type { Core } from './scopes/core.js';
 import { createAdminApi } from './scopes/admin.js';
+import { createEmailLinkApi } from './scopes/email-link.js';
 import { createGoogleApi } from './scopes/google.js';
 import { createPasswordApi } from './scopes/password.js';
 import { createTotpApi } from './scopes/totp.js';
@@ -19,8 +20,8 @@ export interface MadauthOptions {
   /**
    * `'dialog'` (default): madAuth's sign-in dialog, opened with `Madauth.signIn()`; it also opens by itself
    * when the page was opened from a password reset link, or when a sign-in goes on with the authenticator app.
-   * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google` and `Madauth.totp`;
-   * the dialog never opens.
+   * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.totp` and
+   * `Madauth.emailLink`; the dialog never opens.
    */
   ui?: 'dialog' | 'custom';
   /**
@@ -125,7 +126,7 @@ function logError<T extends object>(result: Result<T>): Result<T> {
 /** The step a `totp_required` or `totp_setup_required` error stands for, with the method whose sign-in it is. */
 function nextStepOf(error: MadauthError): PendingStep | undefined {
   if (error.code !== 'totp_required' && error.code !== 'totp_setup_required') return undefined;
-  const method = (['google', 'password', 'totp'] as const).find((m) => m === error.method) ?? 'password';
+  const method = isLoginMethodId(error.method) ? error.method : 'password';
   return { step: error.code === 'totp_required' ? 'code' : 'setup', method };
 }
 
@@ -196,6 +197,22 @@ async function handleVerifyLink(ctx: ProviderContext): Promise<void> {
   else ctx.signInFailed(res.error);
 }
 
+/**
+ * Opened from the link in a sign-in e-mail (the e-mail link method): signs the user in, or goes on with the
+ * authenticator app. The token is a secret, so it leaves the address bar whether or not the method is in use.
+ */
+async function handleSignInLink(ctx: ProviderContext, providers: Map<LoginMethodId, SignInProvider>): Promise<void> {
+  const token = takeHashParam(SIGNIN_LINK_PARAM);
+  if (!token) return;
+  if (!providers.has('email-link')) {
+    console.warn('[madauth]', 'The page was opened from a sign-in link, but no EmailLink provider is passed to Madauth.initialize.');
+    return;
+  }
+  const res = await ctx.request<{ user: MadauthUser }>('/auth/email-link/verify', { method: 'POST', body: { token } });
+  if (res.ok) ctx.signedIn(res.data.user);
+  else ctx.signInFailed(res.error);
+}
+
 /** Back from the redirect flow with the first step done: the code from the authenticator app, or its setup, is next. */
 function handleNextStep(ctx: ProviderContext): void {
   const next = takeHashParam(REDIRECT_NEXT_PARAM);
@@ -255,6 +272,7 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
     signInContinues: continueSignIn,
   };
   await handleVerifyLink(ctx);
+  await handleSignInLink(ctx, providers);
   handleNextStep(ctx);
   // A provider for a method the server doesn't offer (e.g. GoogleRedirect without a Google client on
   // the server) is left out, so the page works with the other methods: the server's configuration
@@ -507,6 +525,9 @@ export const Madauth = {
 
   /** The authenticator app for custom login screens: sign-in, the second step, the setup. Needs `new Totp()`. */
   totp: createTotpApi(core),
+
+  /** The passwordless e-mail link for custom login screens. Needs `new EmailLink()`. */
+  emailLink: createEmailLinkApi(core),
 
   /** Reading and setting claims and settings, for users with the role `admin`. */
   admin: createAdminApi(core),

@@ -12,6 +12,7 @@ export const grace: MadauthUser = { id: 'usr_grace', email: 'grace@example.com',
 /** The link token and code the fake server puts in its e-mails. */
 export const VERIFY_TOKEN = 'verify-token';
 export const RESET_TOKEN = 'reset-token';
+export const SIGNIN_TOKEN = 'signin-token';
 export const CODE = '123456';
 /** The key the fake server hands out for the authenticator app, and the recovery codes it gives. */
 export const TOTP_SECRET = 'JBSWY3DPEHPK3PXP';
@@ -35,12 +36,15 @@ export interface FakeAccount {
   name?: string;
   /** A sign-up with the authenticator app alone: no password, the app is set up after the confirmation. */
   app?: boolean;
+  /** A user of the e-mail link: no password, the link or its code sign in. */
+  link?: boolean;
 }
 
 export interface FakeServer {
-  /** Whether the server offers Google and e-mail & password sign-in. */
+  /** Whether the server offers Google, e-mail & password sign-in and the e-mail link. */
   google: boolean;
   password: boolean;
+  emailLink: boolean;
   codeFlow: boolean;
   /** E-mail & password accounts by e-mail address; grace@example.com (verified) exists. */
   accounts: Map<string, FakeAccount>;
@@ -51,7 +55,7 @@ export interface FakeServer {
   /** Sign-in is locked after too many failed attempts: it answers 429. */
   locked: boolean;
   /** E-mails "sent": what for, to whom and the link's page. */
-  mails: { purpose: 'verify' | 'reset' | 'registered'; to: string; redirectTo: unknown }[];
+  mails: { purpose: 'verify' | 'reset' | 'signin' | 'registered'; to: string; redirectTo: unknown }[];
   user: MadauthUser | null;
   /** Error code that /auth/google/verify answers with, if set. */
   verifyError: string | undefined;
@@ -64,14 +68,14 @@ export interface FakeServer {
   /** Claims by e-mail address, as set through the admin API. */
   claims: Map<string, Record<string, unknown>>;
   /** Which sign-in methods are on (the list an admin sets); `totp` is the app on its own. */
-  methods: { google: boolean; password: boolean; totp: boolean };
-  /** Whether Google and password ask for the authenticator app as a second factor. */
-  policy: { google: SecondFactorPolicy; password: SecondFactorPolicy };
+  methods: { google: boolean; password: boolean; totp: boolean; 'email-link': boolean };
+  /** Whether Google, password and the e-mail link ask for the authenticator app as a second factor. */
+  policy: { google: SecondFactorPolicy; password: SecondFactorPolicy; 'email-link': SecondFactorPolicy };
   /** The addresses whose users have set up the authenticator app, and their recovery codes left. */
   authenticators: Set<string>;
   recoveryCodes: Map<string, string[]>;
   /** A sign-in whose first step is done, waiting for the app's code or its setup (the challenge cookie). */
-  challenge: { email: string; next: 'totp' | 'totp-setup'; method: 'google' | 'password' | 'totp' } | undefined;
+  challenge: { email: string; next: 'totp' | 'totp-setup'; method: 'google' | 'password' | 'totp' | 'email-link' } | undefined;
   /** A setup under way (the setup cookie); set to undefined to simulate its expiry. */
   totpSetup: { email: string } | undefined;
   /** Lifetime of a session in seconds; the server's expiry cookie is set from it. */
@@ -91,6 +95,7 @@ export function fakeServer(): FakeServer {
   const server: FakeServer = {
     google: true,
     password: true,
+    emailLink: true,
     codeFlow: false,
     accounts: new Map([['grace@example.com', { password: 'correct horse battery', verified: true, name: 'Grace Hopper' }]]),
     mails: [],
@@ -104,8 +109,8 @@ export function fakeServer(): FakeServer {
     nonces: 0,
     requests: [],
     claims: new Map(),
-    methods: { google: true, password: true, totp: false },
-    policy: { google: 'none', password: 'none' },
+    methods: { google: true, password: true, totp: false, 'email-link': false },
+    policy: { google: 'none', password: 'none', 'email-link': 'none' },
     authenticators: new Set(),
     recoveryCodes: new Map(),
     challenge: undefined,
@@ -116,7 +121,7 @@ export function fakeServer(): FakeServer {
     const account = server.accounts.get(email);
     return email === grace.email ? grace : email === ada.email ? ada : { id: `usr_${email.split('@')[0]}`, email, ...(account?.name ? { name: account.name } : {}) };
   };
-  const lastMailTo = (purpose: 'verify' | 'reset') => [...server.mails].reverse().find((m) => m.purpose === purpose)?.to;
+  const lastMailTo = (purpose: 'verify' | 'reset' | 'signin') => [...server.mails].reverse().find((m) => m.purpose === purpose)?.to;
   /** What the real server does with every session it issues or renews. */
   const issued = () => setExpiryCookie(Date.now() + server.sessionTtl * 1000);
   const signedIn = (email: string) => {
@@ -125,9 +130,9 @@ export function fakeServer(): FakeServer {
     return json({ user: server.user });
   };
   /** The authenticator app is in use at all: on its own, or as the second factor of a method. */
-  const totpOn = () => server.methods.totp || server.policy.google !== 'none' || server.policy.password !== 'none';
+  const totpOn = () => server.methods.totp || server.policy.google !== 'none' || server.policy.password !== 'none' || server.policy['email-link'] !== 'none';
   /** What follows a primary method that succeeded: the session, or the app's code or setup. */
-  const afterPrimary = (email: string, method: 'google' | 'password') => {
+  const afterPrimary = (email: string, method: 'google' | 'password' | 'email-link') => {
     const policy = server.policy[method];
     const enrolled = server.authenticators.has(email);
     const next = policy === 'none' ? undefined : enrolled ? 'totp' : policy === 'required' ? 'totp-setup' : undefined;
@@ -174,7 +179,37 @@ export function fakeServer(): FakeServer {
           password: server.password && server.methods.password ? { minLength: 8, secondFactor: server.policy.password } : null,
           totp: totpOn() ? { signIn: server.methods.totp, signUp: server.methods.totp && server.password } : null,
           email: { verification: server.password },
+          emailLink: server.emailLink && server.methods['email-link'] ? { secondFactor: server.policy['email-link'] } : null,
         });
+      // --- The e-mail link ---
+      case 'POST /auth/email-link/send': {
+        if (!server.emailLink) break;
+        if (!server.methods['email-link']) return json({ error: 'method_disabled', message: 'off' }, 403);
+        if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
+        const account = server.accounts.get(email);
+        if (account?.verified && !account.link) {
+          if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
+          server.mails.push({ purpose: 'registered', to: email, redirectTo: body.redirectTo });
+          return json({}, 202);
+        }
+        if (!account?.link && server.rejectSignUp) return json({ error: 'signup_rejected', message: server.rejectSignUp }, 403);
+        if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
+        if (!account?.link) server.accounts.set(email, { password: '', verified: false, link: true });
+        server.mails.push({ purpose: 'signin', to: email, redirectTo: body.redirectTo });
+        return json({}, 202);
+      }
+      case 'POST /auth/email-link/verify': {
+        if (!server.emailLink) break;
+        if (!server.methods['email-link']) return json({ error: 'method_disabled', message: 'off' }, 403);
+        if (server.locked) return json({ error: 'codes_locked', message: 'locked' }, 429);
+        const target = body.token === SIGNIN_TOKEN ? lastMailTo('signin') : body.code === CODE ? email : undefined;
+        const account = target && server.accounts.get(target);
+        if (!account || !account.link) {
+          return body.token ? json({ error: 'link_invalid', message: 'bad link' }, 400) : json({ error: 'code_invalid', message: 'bad code' }, 400);
+        }
+        account.verified = true;
+        return afterPrimary(target, 'email-link');
+      }
       case 'POST /auth/password/signin': {
         if (server.locked) return json({ error: 'too_many_attempts', message: 'Too many failed attempts. Try again in 30 seconds.' }, 429);
         const account = server.accounts.get(email);
@@ -354,14 +389,15 @@ export function fakeServer(): FakeServer {
           const on = (value: unknown) => value === true || (!!value && typeof value === 'object');
           const policyOf = (value: unknown): SecondFactorPolicy =>
             value && typeof value === 'object' && 'secondFactor' in value ? ((value as { secondFactor: SecondFactorPolicy }).secondFactor ?? 'none') : 'none';
-          server.methods = { google: on(methods.google), password: on(methods.password), totp: on(methods.totp) };
-          server.policy = { google: policyOf(methods.google), password: policyOf(methods.password) };
+          server.methods = { google: on(methods.google), password: on(methods.password), totp: on(methods.totp), 'email-link': on(methods['email-link']) };
+          server.policy = { google: policyOf(methods.google), password: policyOf(methods.password), 'email-link': policyOf(methods['email-link']) };
         }
         return json({
           methods: {
             google: { configured: server.google, enabled: server.google && server.methods.google, secondFactor: server.policy.google },
             password: { configured: server.password, enabled: server.password && server.methods.password, secondFactor: server.policy.password },
             totp: { configured: true, enabled: server.methods.totp },
+            'email-link': { configured: server.emailLink, enabled: server.emailLink && server.methods['email-link'], secondFactor: server.policy['email-link'] },
           },
         });
       }

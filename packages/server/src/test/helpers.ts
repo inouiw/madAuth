@@ -202,10 +202,10 @@ export function post(app: PasswordApp, path: string, body: unknown, headers: Rec
   );
 }
 
-/** The link, its token and the code of a verification or reset e-mail. */
+/** The link, its token and the code of a verification, reset or sign-in e-mail. */
 export function linkAndCode(call: WebhookCall | undefined): { token: string; code: string; link: string } {
   const link = call?.data.link as string | undefined;
-  if (!link || !/#madauth_(verify|reset)=/.test(link)) throw new Error(`No e-mail with a link: ${JSON.stringify(call)}`);
+  if (!link || !/#madauth_(verify|reset|signin)=/.test(link)) throw new Error(`No e-mail with a link: ${JSON.stringify(call)}`);
   return { link, token: link.split('=').at(-1)!, code: call!.data.code as string };
 }
 

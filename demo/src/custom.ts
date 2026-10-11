@@ -1,7 +1,7 @@
 // A custom login screen: everything madAuth's dialog does, built with the headless API.
-import { GoogleFedcm, Madauth, Password, Totp, type MadauthError, type MadauthUser, type Result } from '@madauth/web';
+import { EmailLink, GoogleFedcm, Madauth, Password, Totp, type MadauthError, type MadauthUser, type Result } from '@madauth/web';
 
-type View = 'signin' | 'signup' | 'forgot' | 'code' | 'reset' | 'totp' | 'totp-signup' | 'totp-code' | 'totp-setup' | 'totp-codes';
+type View = 'signin' | 'signup' | 'forgot' | 'code' | 'reset' | 'totp' | 'totp-signup' | 'totp-code' | 'totp-setup' | 'totp-codes' | 'email-link';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -16,15 +16,16 @@ const titles: Record<View, string> = {
   'totp-code': 'Enter your code',
   'totp-setup': 'Set up authenticator app',
   'totp-codes': 'Save your recovery codes',
+  'email-link': 'Sign in with an e-mail link',
 };
 
 /** The address the e-mail went to, and what it was for; `app` for a sign-up with the authenticator app alone. */
-let pending: { email: string; purpose: 'verify' | 'reset'; code?: string; app?: boolean } | undefined;
+let pending: { email: string; purpose: 'verify' | 'reset' | 'signin'; code?: string; app?: boolean } | undefined;
 /** The recovery codes are on the screen: the login card stays although the user is signed in. */
 let showingCodes = false;
 
 // ui: 'custom' — this page shows its own screen, so madAuth's dialog never opens.
-void Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp()], ui: 'custom' }).then((result) => {
+void Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp(), new EmailLink()], ui: 'custom' }).then((result) => {
   // Without Google on the server there is no Google button, so the hint about it goes.
   $('#google-hint').hidden = result.leftOut.includes('google');
   // Opened from the link in a reset e-mail: ask for the new password right away.
@@ -34,6 +35,8 @@ void Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Tot
   // The authenticator app on its own, and signing up with it, only when the server lets it.
   $('#go-totp').hidden = !Madauth.totp.policy?.signIn;
   $('#go-totp-signup').hidden = !Madauth.totp.policy?.signUp;
+  // The e-mail link, only when the server offers it (its link is handled by initialize, like the confirmation links).
+  $('#go-email-link').hidden = !Madauth.emailLink.policy;
   // A sign-in that goes on with the app: after the redirect flow, or the link of a sign-up with the app.
   const step = Madauth.totp.pendingStep;
   if (step?.step === 'code') show('totp-code');
@@ -88,6 +91,8 @@ function messageFor(error: MadauthError): string {
       return 'Please confirm your e-mail address first. We sent you a new e-mail.';
     case 'code_invalid':
       return 'The code is wrong or has expired.';
+    case 'codes_locked':
+      return 'Too many wrong codes. Please ask for a new e-mail and use the link in it.';
     case 'link_invalid':
       return 'The link has expired. Please ask for a new e-mail.';
     case 'temporarily_unavailable':
@@ -128,7 +133,7 @@ function onSubmit(selector: string, handler: (values: Record<string, string>) =>
   });
 }
 
-function checkInbox(email: string, purpose: 'verify' | 'reset', app = false): void {
+function checkInbox(email: string, purpose: 'verify' | 'reset' | 'signin', app = false): void {
   pending = { email, purpose, app };
   $('#code-email').textContent = email;
   show('code');
@@ -159,6 +164,10 @@ onSubmit('#code-form', async ({ code }) => {
     show('reset');
     return;
   }
+  if (pending.purpose === 'signin') {
+    report(await Madauth.emailLink.verify({ email: pending.email, code }));
+    return;
+  }
   // The same confirmation for both sign-ups; one with the app alone goes on with its setup.
   const scope = pending.app ? Madauth.totp : Madauth.password;
   report(await scope.verifyEmail({ email: pending.email, code }));
@@ -169,6 +178,12 @@ onSubmit('#reset-form', async ({ password }) => {
     ? await Madauth.password.confirmReset({ newPassword: password, email: pending.email, code: pending.code })
     : await Madauth.password.confirmReset({ newPassword: password });
   report(result);
+});
+
+// --- The e-mail link ---
+
+onSubmit('#email-link-form', async ({ email }) => {
+  if (report(await Madauth.emailLink.send({ email }))) checkInbox(email, 'signin');
 });
 
 // --- The authenticator app ---

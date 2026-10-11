@@ -24,7 +24,7 @@ export interface StoredUser {
 export interface StoredAccount {
   id: string;
   userId: string;
-  /** `password:<userId>`, `google:<sub>` or `totp:<userId>`. */
+  /** `password:<userId>`, `google:<sub>`, `totp:<userId>` or `email-link:<userId>`. */
   key: string;
   /** The password hash, or the encrypted secret of the authenticator app. Empty for Google. */
   secret: string | null;
@@ -48,7 +48,8 @@ interface StoredVerification {
   expiresAt: number;
 }
 
-export type VerificationPurpose = 'verify' | 'reset';
+/** What a link and code are for: confirming an address, resetting the password, or signing in (the e-mail link). */
+export type VerificationPurpose = 'verify' | 'reset' | 'signin';
 
 /** Wrong codes allowed per e-mail before the code (and its link) stop working. */
 export const MAX_CODE_ATTEMPTS = 5;
@@ -78,6 +79,11 @@ export function googleAccountKey(sub: string): string {
 
 export function totpAccountKey(userId: string): string {
   return `totp:${userId}`;
+}
+
+/** The account of a user who signs in with the e-mail link; it has no secret, the inbox is the key. */
+export function emailLinkAccountKey(userId: string): string {
+  return `email-link:${userId}`;
 }
 
 /**
@@ -132,6 +138,11 @@ export class Users {
   /** The user's authenticator app, if they set one up. */
   async totpAccount(userId: string): Promise<StoredAccount | null> {
     return this.findAccountByKey(totpAccountKey(userId));
+  }
+
+  /** The user's e-mail link account, if they sign in that way. */
+  async emailLinkAccount(userId: string): Promise<StoredAccount | null> {
+    return this.findAccountByKey(emailLinkAccountKey(userId));
   }
 
   /** Whether the user has any way to sign in; a sign-up with the authenticator app has none until it is set up. */
@@ -352,7 +363,7 @@ export class Users {
   }
 
   /**
-   * Starts a verification or password reset: replaces the user's earlier one for the same purpose and
+   * Starts a verification, password reset or e-mail link sign-in: replaces the user's earlier one for the same purpose and
    * returns the link token and the code for the e-mail. Only their hashes are stored.
    */
   async issueVerification(userId: string, purpose: VerificationPurpose, ttlMs: number): Promise<{ token: string; code: string }> {

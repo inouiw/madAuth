@@ -82,7 +82,9 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
       if (existing) {
         if (existing.emailVerified && (await users.hasAccounts(existing.id))) {
           const methods = await users.signInMethods(existing.id, await ctx.settings.methods());
-          const how = methods.map((method) => ({ password: 'a password', totp: 'an authenticator app', google: 'Google' })[method]).join(' or ');
+          const how = methods
+            .map((method) => ({ password: 'a password', totp: 'an authenticator app', google: 'Google', 'email-link': 'an e-mail link' })[method])
+            .join(' or ');
           return { ok: false, error: 'other_method', message: `This e-mail address signs in with ${how || 'another method'}. Use that instead of Google.`, methods };
         }
         // Google verified the address, and nobody has proven this user yet (an unconfirmed sign-up, whose

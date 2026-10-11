@@ -6,6 +6,7 @@ import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './con
 import { importSigningKeys, type SigningKeys } from './keys.js';
 import { deriveCodeKey, isValidEmail, normalizeEmail } from './password.js';
 import { emailRoutes } from './routes/email.js';
+import { emailLinkRoutes } from './routes/email-link.js';
 import { googleRoutes } from './routes/google.js';
 import { body, error } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
@@ -15,6 +16,7 @@ import {
   Settings,
   anyOn,
   canSignUp,
+  hasSecondFactor,
   initialMethods,
   isConfigured,
   isOn,
@@ -310,10 +312,12 @@ export function createApp(config: MadauthConfig): Hono {
       // The app can be set up when it is in use at all; `signIn` says whether it signs in on its own.
       totp: authenticatorOn(configured, current) ? { signIn: on('totp'), signUp: on('totp') && emailVerification } : null,
       email: { verification: emailVerification },
+      emailLink: on('email-link') ? { secondFactor: policyOf('email-link', current) } : null,
     });
   });
 
   if (emailVerification && ctx.webhook) emailRoutes(app, ctx, users, ctx.webhook);
+  if (configured('email-link') && ctx.webhook) emailLinkRoutes(app, ctx, users, ctx.webhook);
   if (config.google) googleRoutes(app, ctx, config.google);
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, config.password, users, ctx.webhook);
   totpRoutes(app, ctx, totpKeys);
@@ -417,7 +421,7 @@ export function createApp(config: MadauthConfig): Hono {
 
   /**
    * The settings as the admin API answers them: for each method, whether the server is configured for it,
-   * whether it is on, and (Google and password) whether it asks for the authenticator app.
+   * whether it is on, and (the methods with a second factor) whether it asks for one.
    */
   const settingsAnswer = (methods: MethodSettings) => ({
     methods: Object.fromEntries(
@@ -426,7 +430,7 @@ export function createApp(config: MadauthConfig): Hono {
         {
           configured: configured(method),
           enabled: isOn(method, configured, methods),
-          ...(method === 'totp' ? {} : { secondFactor: policyOf(method, methods) }),
+          ...(hasSecondFactor(method) ? { secondFactor: policyOf(method, methods) } : {}),
         },
       ]),
     ),
@@ -447,13 +451,13 @@ export function createApp(config: MadauthConfig): Hono {
     if (!next) {
       return invalid(
         `methods must list the sign-in methods that are on (${SIGN_IN_METHODS.join(', ')}), each as true, {} or ` +
-          '{ "secondFactor": "none" | "optional" | "required" } (google and password), e.g. ' +
+          '{ "secondFactor": "none" | "optional" | "required" } (google, password and email-link), e.g. ' +
           '{ "google": {}, "password": { "secondFactor": "optional" } }. A method that is not listed is off.',
       );
     }
     // The whole list is replaced; the guard runs on the value that is written.
     const methods = await settings.changeMethods(() => (anyOn(signsUp, next) ? next : null), caller.email);
-    if (!methods) return invalid('At least one sign-in method that creates users must stay on: Google, e-mail & password, or the authenticator app with sign-up by e-mail.');
+    if (!methods) return invalid('At least one sign-in method that creates users must stay on: Google, e-mail & password, the e-mail link, or the authenticator app with sign-up by e-mail.');
     return c.json(settingsAnswer(methods));
   });
 

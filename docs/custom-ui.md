@@ -3,9 +3,9 @@
 madAuth's dialog (`Madauth.signIn()`) is optional. Everything it does is available as methods, grouped by sign-in method, so you can build a login screen that fits your app. The dialog itself is built only on these methods.
 
 ```ts
-import { Madauth, GoogleFedcm, Password, Totp } from '@madauth/web';
+import { Madauth, GoogleFedcm, Password, Totp, EmailLink } from '@madauth/web';
 
-Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp()], ui: 'custom' });
+Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp(), new EmailLink()], ui: 'custom' });
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 ```
 
@@ -88,6 +88,39 @@ Use these `autocomplete` values so browsers offer to save and fill passwords and
 | Password when signing up or resetting | `new-password` |
 | Code from the e-mail, or from the authenticator app | `one-time-code` |
 
+## E-mail link: `Madauth.emailLink`
+
+Needs `new EmailLink()` in `initialize`, and on the server a webhook that sends `email.signin` with the method listed by an admin. Otherwise the provider is left out with a warning and the methods fail with `flow_not_enabled`.
+
+| Method | Result | Errors |
+| --- | --- | --- |
+| `send({ email, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `method_disabled`, `temporarily_unavailable` |
+| `verify({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`, `method_disabled`; `totp_required` or `totp_setup_required` when the sign-in goes on with the [authenticator app](#authenticator-app-madauthtotp) |
+| `policy` | `{ secondFactor } \| null` | Whether the method asks for the authenticator app (`none`, `optional`, `required`); null when the server doesn't offer the method |
+
+`send` succeeds for every address: an unknown one is signed up on first use (your [sign-up check](server.md#webhooks) permitting, `signup_rejected` otherwise), and the owner of an address that signs in another way, e.g. with a password, gets an e-mail that says so instead of a link. Tell the user to check their inbox in every case.
+
+### The flows
+
+Call `send`, then show "check your inbox". The e-mail contains a link and a 6-digit code, both good for 15 minutes:
+- The link opens `redirectTo` (default: the current page, see [`redirectTo`](#redirectto)). When the page loads, `initialize` signs the user in; your `onAuthStateChanged` listener gets the user, with `amr: ['email']`.
+- For the code, show a field and call `verify({ email, code })`. This also works when the e-mail is read on another device.
+
+With a policy that asks for the authenticator app, both end with `totp_required` or `totp_setup_required` instead, like a password: see [The second step](#the-second-step). After the link, the step is in `Madauth.totp.pendingStep` once `initialize` is done.
+
+```ts
+sendForm.onsubmit = async () => {
+  const result = await Madauth.emailLink.send({ email: emailInput.value });
+  if (result.isSuccess) showCheckInbox();
+};
+codeForm.onsubmit = async () => {
+  const result = await Madauth.emailLink.verify({ email: emailInput.value, code: codeInput.value });
+  if (!result.isSuccess) showError(result.error);
+};
+```
+
+To handle the link yourself, e.g. in a native app, read the token from the URL's hash (`#madauth_signin=<token>`) and post it to `/auth/email-link/verify` (see the [HTTP API](server.md#http-api)).
+
 ## Authenticator app: `Madauth.totp`
 
 The methods work whenever the app is in use on the server: as the second factor of a method whose [policy](server.md#sign-in-methods) is `optional` or `required`, or as a method of its own; otherwise they fail with `flow_not_enabled`. `signIn` and `signUp`, the app on its own, also need `new Totp()` in `initialize`, which is left out with a warning when the server does not let the app sign in on its own; the second step and the account methods need no provider, so an admin's policy applies to every app. A sign-in that reaches the second step signs out whoever was signed in (`onAuthStateChanged` gets `null`) until the step is done.
@@ -104,14 +137,14 @@ The methods work whenever the app is in use on the server: as the second factor 
 | `signUp({ email, name?, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `temporarily_unavailable`, `method_disabled` |
 | `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
 | `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `totp_setup_required` for a sign-up with the app |
-| `pendingStep` | `{ step: 'code' \| 'setup', method } \| null` | What a sign-in under way still needs, e.g. after the redirect flow or an e-mail link |
+| `pendingStep` | `{ step: 'code' \| 'setup', method } \| null` | What a sign-in under way still needs, e.g. after the redirect flow or a link from an e-mail; `method` is the method whose sign-in it is (`google`, `password`, `totp` or `email-link`) |
 | `policy` | `{ signIn, signUp, secondFactorFor } \| null` | What the app does on this server: whether it signs in on its own, whether people can sign up with it, and which methods ask for it |
 
 ### The second step
 
-When the policy of Google or password asks for the app, `password.signIn` (also `verifyEmail` and `confirmReset`) and the Google button's `onResult` end with `totp_required` instead of a user: the password was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. With `totp_setup_required` the user has no app yet and the policy requires one: run the setup below; `confirmSetup` then signs them in and returns `user` as well. A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
+When the policy of Google, password or the e-mail link asks for the app, `password.signIn` (also `verifyEmail` and `confirmReset`), `emailLink.verify` and the Google button's `onResult` end with `totp_required` instead of a user: the first step was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. With `totp_setup_required` the user has no app yet and the policy requires one: run the setup below; `confirmSetup` then signs them in and returns `user` as well. A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
 
-A sign-in that started outside your screen, i.e. the redirect flow (`#madauth_next=…`) or the link in a confirmation e-mail, leaves its step in `pendingStep` after `initialize`: show the matching form.
+A sign-in that started outside your screen, i.e. the redirect flow (`#madauth_next=…`) or the link in a confirmation or sign-in e-mail, leaves its step in `pendingStep` after `initialize`: show the matching form.
 
 ```ts
 const result = await Madauth.password.signIn({ email, password });
@@ -180,7 +213,7 @@ Madauth.setLocale('en');
 Without a locale, madAuth uses the page's `<html lang>`, then the browser's language.
 
 The locale is used for:
-- **The e-mails.** `signUp`, `sendVerificationEmail` and `sendResetEmail` send it to the server, which passes it to your [webhook](server.md#webhooks) and your sign-up check.
+- **The e-mails.** `signUp`, `sendVerificationEmail`, `sendResetEmail` and `emailLink.send` send it to the server, which passes it to your [webhook](server.md#webhooks) and your sign-up check.
 - **The `GoogleRedirect` button.** It says "Weiter mit Google" for a German locale and "Continue with Google" for every other. `setLocale` also changes a button that is already on the page.
 - **The `message` of a failed `GoogleRedirect` sign-in**, which `initialize` returns. It is German for a German locale, English otherwise.
 

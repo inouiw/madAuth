@@ -121,6 +121,21 @@ describe('init', () => {
     }
   });
 
+  it('--email-link adds the sign-in e-mail to the types, once each, and EmailLink to the next steps', async () => {
+    const link = tempFile();
+    const alone = tempFile();
+
+    const withPassword = await runCli(['init', '--yes', '--email-link', '--out', link], noQuestions);
+    const linkOnly = await runCli(['init', '--yes', '--no-password', '--email-link', '--out', alone], noQuestions);
+
+    expect(readEnvFile(link).WEBHOOK_EVENTS).toBe(`${EMAIL_TYPES},email.signin`);
+    expect(withPassword.output).toContain('providers: [new Password(), new EmailLink()]');
+    expect(readEnvFile(alone).WEBHOOK_EVENTS).toBe('email.signin,email.already_registered');
+    expect(linkOnly).toMatchObject({ exitCode: 0, output: expect.stringContaining('providers: [new EmailLink()]') });
+    // The webhook that sends the e-mails is still needed.
+    expect(await loadConfig({ ...readEnvFile(alone), DATABASE_URL: `sqlite:${tempFile('madauth.db')}` })).toMatchObject({ password: undefined });
+  });
+
   it('takes the answers given as options instead of the defaults', async () => {
     const googleOnly = tempFile();
     const both = tempFile();
@@ -160,6 +175,7 @@ describe('init', () => {
       'Google client secret (empty: no redirect flow): ',
       'E-mail & password sign-in? (yes/no)',
       'Sign-up with the authenticator app alone, without a password? (yes/no)',
+      'Passwordless sign-in with an e-mail link? (yes/no)',
       'Database for the users',
     ]);
     expect(readEnvFile(file)).toMatchObject({
@@ -184,6 +200,7 @@ describe('init', () => {
       'Google client ID (empty: no Google sign-in)',
       'E-mail & password sign-in? (yes/no)',
       'Sign-up with the authenticator app alone, without a password? (yes/no)',
+      'Passwordless sign-in with an e-mail link? (yes/no)',
     ]);
     expect(answered).toEqual({ exitCode: 1, output: expect.stringContaining('No sign-in method is chosen') });
     expect(withOptions).toEqual(answered);

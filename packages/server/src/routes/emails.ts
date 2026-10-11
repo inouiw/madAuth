@@ -1,5 +1,6 @@
 // The e-mails of the sign-in methods that use an address: confirmation links and codes, password resets,
-// and the notes to an address's owner. Shared by the e-mail, password and authenticator routes.
+// sign-in links, and the notes to an address's owner. Shared by the e-mail, password, authenticator and
+// e-mail link routes.
 import type { Context } from 'hono';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
@@ -11,10 +12,20 @@ import { error, type Body } from './helpers.js';
 export const MAIL_INTERVAL_MS = 60 * 1000;
 export const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
 export const RESET_TTL_MS = 30 * 60 * 1000;
+/** A sign-in link lets whoever has it in: it is short-lived, like a reset link. */
+export const SIGNIN_TTL_MS = 15 * 60 * 1000;
 
 /** Hash parameters that carry e-mail link tokens to the app (`<redirectTo>#madauth_verify=<token>`). */
 export const VERIFY_LINK_PARAM = 'madauth_verify';
 export const RESET_LINK_PARAM = 'madauth_reset';
+export const SIGNIN_LINK_PARAM = 'madauth_signin';
+
+/** How long each kind of link lives, how it reaches the app, and which e-mail carries it. */
+const LINKS: Record<VerificationPurpose, { ttl: number; param: string; type: WebhookType }> = {
+  verify: { ttl: VERIFY_TTL_MS, param: VERIFY_LINK_PARAM, type: 'email.verify' },
+  reset: { ttl: RESET_TTL_MS, param: RESET_LINK_PARAM, type: 'email.reset' },
+  signin: { ttl: SIGNIN_TTL_MS, param: SIGNIN_LINK_PARAM, type: 'email.signin' },
+};
 
 /** What a link or code resolved to: the user, or why not. */
 export type Consumed = Partial<CodeResult> & { userId: string | null; via: 'link' | 'code' };
@@ -25,7 +36,7 @@ export interface Emails {
    * and the answer is the same). Resolves to false if the webhook did not take it over.
    */
   sendEmail(user: StoredUser, type: WebhookType, data: Record<string, unknown>): Promise<boolean>;
-  /** Issues a verification or reset and sends its link and code. */
+  /** Issues a verification, reset or sign-in and sends its link and code. */
   sendLinkEmail(user: StoredUser, purpose: VerificationPurpose, target: URL, locale?: string): Promise<boolean>;
   /**
    * Tells the owner of an address about the account it has and how it signs in: after a sign-up with it
@@ -58,17 +69,11 @@ export function createEmails(ctx: AppContext, users: Users, webhook: WebhookClie
 
     async sendLinkEmail(user, purpose, target, locale) {
       if (Date.now() - user.lastMailAt < MAIL_INTERVAL_MS) return true;
-      const ttl = purpose === 'verify' ? VERIFY_TTL_MS : RESET_TTL_MS;
+      const { ttl, param, type } = LINKS[purpose];
       const { token, code } = await users.issueVerification(user.id, purpose, ttl);
       const link = new URL(target);
-      link.hash = `${purpose === 'verify' ? VERIFY_LINK_PARAM : RESET_LINK_PARAM}=${token}`;
-      return sendEmail(user, purpose === 'verify' ? 'email.verify' : 'email.reset', {
-        link: link.href,
-        code,
-        expiresAt: Date.now() + ttl,
-        site: target.host,
-        locale,
-      });
+      link.hash = `${param}=${token}`;
+      return sendEmail(user, type, { link: link.href, code, expiresAt: Date.now() + ttl, site: target.host, locale });
     },
 
     async sendAccountEmail(user, type, target, locale) {

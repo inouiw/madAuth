@@ -53,9 +53,19 @@ export function sendsVerificationEmails(config: Pick<MadauthConfig, 'webhook'>):
   return !!config.webhook?.events.has('email.verify');
 }
 
+/** Whether the webhook sends the sign-in e-mails of the e-mail link (`email.signin`), so the method can be on. */
+export function sendsSignInEmails(config: Pick<MadauthConfig, 'webhook'>): boolean {
+  return !!config.webhook?.events.has('email.signin');
+}
+
 /** What decides which methods the server is configured for, see `isConfigured` and `initialMethods`. */
 export function methodConfig(config: MadauthConfig): MethodConfig {
-  return { google: config.google, password: config.password, emailVerification: sendsVerificationEmails(config) };
+  return {
+    google: config.google,
+    password: config.password,
+    emailVerification: sendsVerificationEmails(config),
+    emailLink: sendsSignInEmails(config),
+  };
 }
 
 /** Every environment variable read by {@link loadConfig}, with whether it is required. */
@@ -177,16 +187,17 @@ export async function loadConfig(
   // E-mail & password sign-in needs its e-mails sent, so it is on exactly when the webhook handles them.
   const sendsEmails = !!webhook && REQUIRED_EMAIL_TYPES.every((type) => webhook.events.has(type));
   const password = sendsEmails ? { minLength: passwordMinLength(read('PASSWORD_MIN_LENGTH')) } : undefined;
-  // Sign-up with the authenticator app only needs the address confirmed.
+  // Sign-up with the authenticator app only needs the address confirmed; the e-mail link needs its own e-mail.
   const emailVerification = !!webhook && webhook.events.has('email.verify');
+  const emailLink = !!webhook && webhook.events.has('email.signin');
 
-  if (!clientId && !password && !emailVerification) {
+  if (!clientId && !password && !emailVerification && !emailLink) {
     throw new ConfigError(
       'No sign-in method is configured. Set GOOGLE_CLIENT_ID for Google sign-in, and/or a webhook that sends ' +
-        'the e-mails: e-mail & password sign-in needs email.verify and email.reset, sign-up with the authenticator ' +
-        `app needs email.verify. For development, run the receiver at ${DEV_WEBHOOK_RECEIVER_URL} ` +
-        'and set WEBHOOK_URL=http://localhost:8790/webhook and ' +
-        `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.already_registered,email.no_password. See docs/server.md.`,
+        'the e-mails: e-mail & password sign-in needs email.verify and email.reset, the passwordless e-mail link ' +
+        `needs email.signin, sign-up with the authenticator app needs email.verify. For development, run the ` +
+        `receiver at ${DEV_WEBHOOK_RECEIVER_URL} and set WEBHOOK_URL=http://localhost:8790/webhook and ` +
+        `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.signin,email.already_registered,email.no_password. See docs/server.md.`,
     );
   }
   const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
@@ -334,8 +345,9 @@ function webhookFromEnv(url: string | undefined, secret: string | undefined, eve
   if (!selected.size) {
     throw new ConfigError(
       'WEBHOOK_EVENTS is not set. List the types your webhook receiver handles; only these are sent. ' +
-        `E-mail & password sign-in is on when they include ${REQUIRED_EMAIL_TYPES.join(' and ')}. For a receiver ` +
-        'that sends the e-mails:\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.already_registered,email.no_password\n\n' +
+        `E-mail & password sign-in is on when they include ${REQUIRED_EMAIL_TYPES.join(' and ')}, the passwordless ` +
+        'e-mail link when they include email.signin. For a receiver that sends the e-mails:\n\n' +
+        'WEBHOOK_EVENTS=email.verify,email.reset,email.signin,email.already_registered,email.no_password\n\n' +
         'For one that only wants to know who signed in:\n\nWEBHOOK_EVENTS=user.signed_in\n\n' +
         allTypes,
     );

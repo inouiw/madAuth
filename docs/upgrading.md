@@ -1,5 +1,13 @@
 # Upgrading
 
+## To 0.5
+
+0.5 adds the passwordless e-mail link, a primary sign-in method with the id `email-link`. What changes for you:
+
+- **New webhook type `email.signin`** (the e-mail with the sign-in link and code; the link lives 15 minutes): the method is configured exactly when it is in `WEBHOOK_EVENTS`, and on until an admin lists the methods. Update your receiver first: the aws-ses-mailer answers 400 to an `email.*` type it doesn't know, so the server would report `temporarily_unavailable`, and the dev-receiver prints such a call without its link. `signup.before`, `user.created` and `user.signed_in` can carry `method: "email-link"`; `email.already_registered` can list it in `methods`.
+- **New:** `new EmailLink()` and `Madauth.emailLink` in the web library, `POST /auth/email-link/send` and `verify`, `emailLink` in `GET /auth/config`, `email-link` in the settings (`set-methods email-link=optional`, `Madauth.admin.setSettings`) with a `secondFactor` policy like Google and password, `init --email-link`, and `amr: ["email"]`.
+- **The placeholder id `email` is now `email-link`** in `LoginMethodId` and `loginMethods` (it was never listed). `Google` sign-in refuses a link user's address with `other_method`, and `methods` there may say `email-link`.
+
 ## To 0.4.0-beta.2
 
 - **The dialog lists only the methods that are on.** A method is listed when its provider is passed to `Madauth.initialize` and the server offers it; methods without one (e.g. E-mail link and SMS code) no longer show up as "coming soon". `<madauth-login>`'s `open()` now waits until madAuth is ready before the dialog shows, so it never fills in while open; when madAuth isn't initialized or couldn't reach the server, the dialog shows the error and no method buttons. The plain "Continue with Google" button the dialog showed without a Google provider is gone; with one, Google's own button is shown as before. Tests or screenshots of your page that rely on the placeholder buttons need updating.

@@ -9,7 +9,7 @@
   </head>
   <body>
     <main>
-      <!-- A login screen built with the headless API (Madauth.password, Madauth.google, Madauth.totp). See src/custom.ts. -->
+      <!-- A login screen built with the headless API (Madauth.password, Madauth.google, Madauth.totp, Madauth.emailLink). See src/custom.ts. -->
       <section id="login" class="card" hidden>
         <h1 id="title">Sign in</h1>
         <p id="message" hidden></p>
@@ -26,8 +26,21 @@
             <button type="button" data-go="forgot">Forgot password?</button>
             <button type="button" data-go="signup">Create account</button>
           </p>
-          <!-- Only when the server lets the authenticator app sign in on its own. -->
-          <p class="links"><button type="button" data-go="totp" id="go-totp" hidden>Sign in with the authenticator app</button></p>
+          <!-- Only when the server lets the authenticator app sign in on its own, or offers the e-mail link. -->
+          <p class="links">
+            <button type="button" data-go="totp" id="go-totp" hidden>Sign in with the authenticator app</button>
+            <button type="button" data-go="email-link" id="go-email-link" hidden>Sign in with an e-mail link</button>
+          </p>
+        </div>
+
+        <!-- The e-mail link (Madauth.emailLink.send): the e-mail carries a link that signs in, and a code for the view below. -->
+        <div data-view="email-link" hidden>
+          <p>Enter your e-mail address. We will send you a link that signs you in, and a code.</p>
+          <form id="email-link-form">
+            <label>E-mail <input name="email" type="email" autocomplete="email" required /></label>
+            <button type="submit">Send link</button>
+          </form>
+          <p class="links"><button type="button" data-go="signin">Back to sign in</button></p>
         </div>
 
         <div data-view="signup" hidden>

@@ -19,6 +19,8 @@ export interface ServerConfig {
   totp: { signIn: boolean; signUp: boolean } | null;
   /** Whether the server confirms addresses by e-mail (sign-ups with a password or the authenticator app). */
   email: { verification: boolean };
+  /** The passwordless e-mail link, with its policy for the authenticator app as a second factor. */
+  emailLink: { secondFactor: SecondFactorPolicy } | null;
 }
 
 /** What a sign-in still needs after its first step, and which sign-in it is. */

@@ -13,6 +13,7 @@ export { GoogleFedcm, type GoogleFedcmOptions } from './providers/google-fedcm.j
 export { GoogleRedirect } from './providers/google-redirect.js';
 export { Password } from './providers/password.js';
 export { Totp } from './providers/totp.js';
+export { EmailLink } from './providers/email-link.js';
 export type { DeletedAccount, PendingStep, SecondFactorPolicy, SignInProvider } from './providers/provider.js';
 export type {
   ConfirmResetOptions,
@@ -23,6 +24,7 @@ export type {
 } from './scopes/password.js';
 export type { GoogleApi, GoogleButtonOptions } from './scopes/google.js';
 export type { CodeOptions, SignInWithTotpOptions, TotpApi, TotpPolicy, TotpSetup, TotpSignUpOptions } from './scopes/totp.js';
+export type { EmailLinkApi } from './scopes/email-link.js';
 export type { AdminApi, Claims, MethodSetting, MethodsToSet, Settings } from './scopes/admin.js';
 export { MadauthLogin, type AuthenticatorEnabledDetail, type ErrorDetail, type SignedInDetail } from './madauth-login.js';
 export { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';

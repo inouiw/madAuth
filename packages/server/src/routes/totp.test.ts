@@ -909,7 +909,13 @@ describe('signing up with the app alone', () => {
     expect(config.google).toBeUndefined();
     expect(config.password).toBeUndefined();
     const only = testApp({ ...config, webhookFetch: hook.fetch });
-    expect(await (await only.request('/auth/config')).json()).toEqual({ google: null, password: null, totp: { signIn: true, signUp: true }, email: { verification: true } });
+    expect(await (await only.request('/auth/config')).json()).toEqual({
+      google: null,
+      password: null,
+      totp: { signIn: true, signUp: true },
+      email: { verification: true },
+      emailLink: null,
+    });
     expect((await signUp(only)).status).toBe(202);
   });
 });

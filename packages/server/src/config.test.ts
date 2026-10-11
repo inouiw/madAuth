@@ -1,7 +1,7 @@
 import { importJWK } from 'jose';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ConfigError, envVars, loadConfig } from './config.js';
+import { ConfigError, envVars, loadConfig, methodConfig } from './config.js';
 import { CLIENT_ID, WEBHOOK_SECRET, WEBHOOK_URL, signingKey } from './test/helpers.js';
 import { createSqliteAdapter } from './store/sqlite.js';
 import { checkWebhookSecret } from './webhooks.js';
@@ -137,7 +137,7 @@ describe('loadConfig', () => {
     const error = await loadConfig(withDb).catch((e: Error) => e);
 
     expect(error).toBeInstanceOf(ConfigError);
-    expect((error as Error).message).toContain('\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.already_registered,email.no_password\n\n');
+    expect((error as Error).message).toContain('\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.signin,email.already_registered,email.no_password\n\n');
     await expect(loadConfig({ ...withDb, WEBHOOK_EVENTS: ' , ' })).rejects.toThrow(/WEBHOOK_EVENTS is not set/);
     // Without e-mail & password sign-in no e-mail type is needed, but the list still is.
     await expect(loadConfig({ ...env, WEBHOOK_URL, WEBHOOK_SECRET })).rejects.toThrow(/WEBHOOK_EVENTS is not set.*WEBHOOK_EVENTS=user.signed_in/s);
@@ -149,6 +149,13 @@ describe('loadConfig', () => {
     // A receiver that only wants events, on a Google-only server.
     expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'user.signed_in' })).password).toBeUndefined();
     await expect(loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, WEBHOOK_EVENTS: 'user.signed_in' })).rejects.toThrow(/No sign-in method/);
+  });
+
+  it('K6: the e-mail link is configured exactly when email.signin is among the events, and counts as a way to create users', async () => {
+    const linkOnly = await loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, WEBHOOK_EVENTS: 'email.signin' });
+    expect(linkOnly.password).toBeUndefined();
+    expect(methodConfig(linkOnly)).toEqual({ google: undefined, password: undefined, emailVerification: false, emailLink: true });
+    expect(methodConfig(await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.verify,email.reset' }))).toMatchObject({ emailLink: false });
   });
 
   it('K6: names the new name of a type that was renamed', async () => {

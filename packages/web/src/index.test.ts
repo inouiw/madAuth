@@ -13,13 +13,14 @@ afterEach(resetAll);
 describe('@madauth/web', () => {
   it('W7: exports exactly the public API', () => {
     expect(Object.keys(madauth).sort()).toEqual(
-      ['GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'Password', 'Totp', 'loginMethods'].sort(),
+      ['EmailLink', 'GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'Password', 'Totp', 'loginMethods'].sort(),
     );
     expect(Object.keys(madauth.Madauth).sort()).toEqual(
       [
         'admin',
         'currentUser',
         'deleteAccount',
+        'emailLink',
         'getSession',
         'google',
         'initialize',
@@ -44,7 +45,9 @@ describe('@madauth/web', () => {
     expect(Object.keys(madauth.Madauth.totp).sort()).toEqual(
       ['confirmSetup', 'newRecoveryCodes', 'pendingStep', 'policy', 'remove', 'sendVerificationEmail', 'signIn', 'signUp', 'startSetup', 'status', 'verify', 'verifyEmail'].sort(),
     );
+    expect(Object.keys(madauth.Madauth.emailLink).sort()).toEqual(['policy', 'send', 'verify']);
     expectTypeOf(madauth.Madauth.password).toEqualTypeOf<madauth.PasswordApi>();
+    expectTypeOf(madauth.Madauth.emailLink).toEqualTypeOf<madauth.EmailLinkApi>();
     expectTypeOf(madauth.Madauth.google).toEqualTypeOf<madauth.GoogleApi>();
     expectTypeOf(madauth.Madauth.totp).toEqualTypeOf<madauth.TotpApi>();
   });

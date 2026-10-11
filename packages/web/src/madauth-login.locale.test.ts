@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './index.js';
 import { Madauth, type MadauthOptions } from './madauth.js';
 import type { MadauthLogin } from './madauth-login.js';
+import { EmailLink } from './providers/email-link.js';
 import { GoogleRedirect } from './providers/google-redirect.js';
 import { Password } from './providers/password.js';
 import { Totp } from './providers/totp.js';
@@ -153,6 +154,22 @@ describe('<madauth-login> in German', () => {
     await openDialog({ locale: 'de' });
 
     expect(text('h2')).toBe('Willkommen zurück');
+  });
+
+  it('shows the views of the e-mail link', async () => {
+    const server = fakeServer();
+    server.methods['email-link'] = true;
+
+    await openDialog({ providers: [new Password(), new EmailLink()], locale: 'de' });
+    await click('[data-method="email-link"]');
+
+    expect(text('h2')).toBe(de.emailLink.heading);
+    expect(text('p.lead')).toBe(de.emailLink.lead);
+    expect(text('form.email-link button.submit')).toBe(de.emailLink.send);
+    fill({ email: 'linda@example.com' });
+    await submit('email-link');
+    expect(text('h2')).toBe(de.checkInbox);
+    expect(text('p.lead')).toBe(`${de.signInInboxLead.before}linda@example.com${de.signInInboxLead.after}`);
   });
 
   it('shows the views for creating an account', async () => {
