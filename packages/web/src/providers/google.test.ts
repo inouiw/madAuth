@@ -205,6 +205,33 @@ describe('GoogleFedcm', () => {
     await Madauth.signOut();
 
     expect(gis.id.disableAutoSelect).toHaveBeenCalledOnce();
+    expect(gis.id.revoke).not.toHaveBeenCalled();
+  });
+
+  it('G7: deleting the account revokes the app’s access to the Google account', async () => {
+    const server = fakeServer();
+    server.user = ada;
+    const gis = fakeGis();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+
+    expect(await Madauth.deleteAccount()).toEqual({ isSuccess: true });
+
+    expect(gis.id.revoke).toHaveBeenCalledExactlyOnceWith(ada.email);
+    expect(gis.id.disableAutoSelect).toHaveBeenCalledOnce();
+  });
+
+  it('G8: revokes nothing when the account was not deleted', async () => {
+    const server = fakeServer();
+    const gis = fakeGis();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+    expect(await Madauth.deleteAccount()).toMatchObject({ isSuccess: false, error: { code: 'no_session' } });
+
+    server.user = ada;
+    await Madauth.getSession();
+    server.down = true;
+    expect(await Madauth.deleteAccount()).toMatchObject({ isSuccess: false, error: { code: 'network' } });
+
+    expect(gis.id.revoke).not.toHaveBeenCalled();
   });
 });
 

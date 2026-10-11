@@ -73,4 +73,6 @@ export interface SignInProvider {
   /** Someone signed in, with this or another method. */
   onSignedIn?(): void;
   onSignedOut?(): void;
+  /** The signed-in user deleted their account (called after {@link onSignedOut}). */
+  onAccountDeleted?(user: MadauthUser): void;
 }

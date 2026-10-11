@@ -13,6 +13,7 @@ function stubProvider(overrides: Partial<SignInProvider> = {}) {
     method: 'google' as const,
     setup: vi.fn(async () => ok()),
     onSignedOut: vi.fn(),
+    onAccountDeleted: vi.fn(),
     ...overrides,
   };
   return provider;
@@ -206,6 +207,7 @@ describe('Madauth.deleteAccount', () => {
     expect(Madauth.currentUser).toBeNull();
     expect(listener).toHaveBeenLastCalledWith(null);
     expect(provider.onSignedOut).toHaveBeenCalledOnce();
+    expect(provider.onAccountDeleted).toHaveBeenCalledExactlyOnceWith(ada);
   });
 
   it('reports no_session when nobody is signed in, and keeps the user when the server can not be reached', async () => {

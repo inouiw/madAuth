@@ -397,6 +397,7 @@ export function fakeGis(): { id: Mocked<GoogleAccountsId>; signIn(credential?: s
     renderButton: vi.fn(),
     disableAutoSelect: vi.fn(),
     cancel: vi.fn(),
+    revoke: vi.fn(),
   };
   window.google = { accounts: { id } };
   return {

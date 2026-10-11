@@ -368,6 +368,7 @@ The secrets are stored encrypted with a key derived from `MADAUTH_SIGNING_KEY`: 
 
 - The user is deleted with all their sign-in methods (the password, the Google account, the authenticator app with its recovery codes), their claims, and their pending confirmation and reset links. The session proves who they are, whichever way they signed in.
 - Once the user has an authenticator app, and while the app is on (a policy asks for it, or it signs in on its own), the request needs a current code from it or a recovery code (`Madauth.deleteAccount({ code })`; `401 code_required` without one): like removing the app, so a stolen session can't destroy the account.
+- With `GoogleFedcm`, the web library also revokes the app's access to the user's Google account (`google.accounts.id.revoke`): the app leaves their connected apps at Google, and the Google button says "Sign in with Google" again instead of "Continue as …".
 - The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`, with the user as the session held them.
 
 Delete the user's data in your own backend first, while the user is still signed in. Sessions on other devices end when the app next checks them; your own backends accept them until they expire (see [Password security](password-security.md#sessions)).

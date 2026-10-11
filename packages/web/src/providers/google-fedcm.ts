@@ -65,6 +65,11 @@ export class GoogleFedcm implements SignInProvider {
     this.#gis?.disableAutoSelect();
   }
 
+  onAccountDeleted(user: MadauthUser): void {
+    // Removes the app from the user's connected apps at Google, and the button no longer says "Continue as …".
+    if (user.email) this.#gis?.revoke(user.email);
+  }
+
   /** Gets a fresh nonce from the server and (re)initializes GIS with it. */
   async #prepare(): Promise<Result> {
     const ctx = this.#ctx!;
