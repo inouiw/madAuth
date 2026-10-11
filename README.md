@@ -147,7 +147,7 @@ The login form can be styled to match your app (colors, corner radius, font, and
 ## Adding a sign-in method
 
 1. Add or update the entry in [`packages/web/src/methods.ts`](packages/web/src/methods.ts), and its texts in [`strings.ts`](packages/web/src/strings.ts).
-2. Implement a `SignInProvider` (see [`packages/web/src/providers`](packages/web/src/providers)). The dialog lists a method once its provider is passed to `Madauth.initialize`.
+2. Implement a `SignInProvider` (see [`packages/web/src/providers`](packages/web/src/providers)). The dialog lists a method once its provider is passed to `Madauth.initialize` and the server offers it (a provider whose `setup` answers `flow_not_enabled` is left out).
 3. Add the server endpoints in a module in [`packages/server/src/routes`](packages/server/src/routes) and register it in [`app.ts`](packages/server/src/app.ts). Store what it needs as models in [`madauthSchema`](packages/server/src/store/schema.ts).
 4. Add the method's actions as a scope on `Madauth` (see [`packages/web/src/scopes`](packages/web/src/scopes)), so custom login screens can use it.
 5. Add tests next to the code (`*.test.ts`) and run `npm test`.

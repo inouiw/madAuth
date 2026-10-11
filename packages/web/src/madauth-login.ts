@@ -89,7 +89,8 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
 };
 
 /**
- * Modal sign-in dialog listing the login methods passed to `Madauth.initialize`. Usually opened with
+ * Modal sign-in dialog listing the login methods that are on: those whose provider was passed to
+ * `Madauth.initialize` and not left out because the server doesn't offer them. Usually opened with
  * `Madauth.signIn()`, which creates it when the page has none; add it to your HTML yourself only to customize it.
  *
  * It is built only on the public `Madauth` API, so a custom login screen can do everything it does.

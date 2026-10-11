@@ -15,6 +15,6 @@ const order: LoginMethodId[] = ['google', 'password', 'totp', 'email', 'sms'];
 
 /**
  * All sign-in methods, in the order they appear in the dialog. The dialog lists only the methods whose
- * provider is passed to `Madauth.initialize`.
+ * provider is passed to `Madauth.initialize` and not left out because the server doesn't offer them.
  */
 export const loginMethods: LoginMethod[] = order.map((id) => ({ id, ...en.methods[id] }));
