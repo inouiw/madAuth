@@ -16,6 +16,9 @@
 ## To 0.4.0-beta.2
 
 - **The dialog lists only the methods that are on.** A method is listed when its provider is passed to `Madauth.initialize` and the server offers it; methods without one (e.g. E-mail link and SMS code) no longer show up as "coming soon". `<madauth-login>`'s `open()` now waits until madAuth is ready before the dialog shows, so it never fills in while open; when madAuth isn't initialized or couldn't reach the server, the dialog shows the error and no method buttons. The plain "Continue with Google" button the dialog showed without a Google provider is gone; with one, Google's own button is shown as before. Tests or screenshots of your page that rely on the placeholder buttons need updating.
+- **Password rules are a setting.** `PASSWORD_MIN_LENGTH` is gone, and a server that still has it refuses to start, so a stricter minimum is never lowered without notice. Remove it and set the minimum with `npx @madauth/server set-password-rules min-length=<n>` (needs only `DATABASE_URL`) or `Madauth.admin.setSettings({ password: { minLength } })`. See [Password rules](server.md#password-rules).
+- **Easy-to-guess passwords are refused.** New passwords (sign-up, reset, `create-user`) also need a zxcvbn strength score of at least 2 by default, which refuses common passwords like `password1234`. Existing passwords keep working. To check the length only, as before, run `set-password-rules min-score=0`.
+- `GET /auth/config`, `Madauth.password.policy` and the admin settings have `minScore` next to `minLength`, and a `weak_password` error has `minLength` or `minScore`. `Madauth.admin.setSettings` takes `methods`, `password` or both.
 
 ## To 0.4
 

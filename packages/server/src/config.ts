@@ -35,11 +35,11 @@ export interface MadauthConfig {
   };
   /** Where the users, their accounts, claims and the settings are kept (DATABASE_URL or the `store` option). */
   store: StoreAdapter;
-  /** E-mail & password sign-in; off unless the webhook sends the e-mails (`email.verify` and `email.reset`). */
-  password?: {
-    /** PASSWORD_MIN_LENGTH. */
-    minLength: number;
-  };
+  /**
+   * E-mail & password sign-in; off unless the webhook sends the e-mails (`email.verify` and `email.reset`).
+   * Its rules for new passwords are a setting, see `Settings.passwordRules`.
+   */
+  password?: Record<string, never>;
   /** Where madAuth sends e-mails, sign-up checks and events (WEBHOOK_URL). */
   webhook?: WebhookSettings;
   /** Test hook: resolves Google's signing keys. Defaults to Google's published JWKS. */
@@ -82,7 +82,6 @@ export const envVars = {
   GOOGLE_CLIENT_ID: false,
   GOOGLE_CLIENT_SECRET: false,
   DATABASE_URL: true,
-  PASSWORD_MIN_LENGTH: false,
   TOTP_ISSUER: false,
   WEBHOOK_URL: false,
   WEBHOOK_SECRET: false,
@@ -116,7 +115,6 @@ export async function resolveEnv(source: EntryOptions['env'] = process.env): Pro
 
 const DEFAULT_SESSION_TTL = 8 * 60 * 60;
 const DEFAULT_RENEWAL_TTL = 30 * 24 * 60 * 60;
-const DEFAULT_PASSWORD_MIN_LENGTH = 8;
 
 export class ConfigError extends Error {
   override name = 'ConfigError';
@@ -155,6 +153,15 @@ export async function loadConfig(
     return value;
   };
 
+  // Removed after 0.4.0-beta.1. Ignoring it could lower the minimum an operator chose, so the server doesn't start with it.
+  if (env.PASSWORD_MIN_LENGTH?.trim()) {
+    throw new ConfigError(
+      'PASSWORD_MIN_LENGTH was removed: the password rules are a setting now (default: at least 8 characters). ' +
+        'Remove the variable and set the rules with `npx @madauth/server set-password-rules min-length=' +
+        `${env.PASSWORD_MIN_LENGTH.trim()}\` or Madauth.admin.setSettings. See docs/upgrading.md.`,
+    );
+  }
+
   const issuerValue = require('MADAUTH_ISSUER');
   parseOrigin('MADAUTH_ISSUER', issuerValue);
   const issuer = issuerValue.replace(/\/+$/, '');
@@ -192,7 +199,7 @@ export async function loadConfig(
   const webhook = webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_EVENTS'));
   // E-mail & password sign-in needs its e-mails sent, so it is on exactly when the webhook handles them.
   const sendsEmails = !!webhook && REQUIRED_EMAIL_TYPES.every((type) => webhook.events.has(type));
-  const password = sendsEmails ? { minLength: passwordMinLength(read('PASSWORD_MIN_LENGTH')) } : undefined;
+  const password = sendsEmails ? {} : undefined;
   // Sign-up with the authenticator app only needs the address confirmed; the e-mail link needs its own e-mail.
   const emailVerification = !!webhook && webhook.events.has('email.verify');
   const emailLink = !!webhook && webhook.events.has('email.signin');
@@ -243,29 +250,11 @@ export async function loadConfig(
   };
 }
 
-/**
- * Only the settings needed to manage users from the command line (DATABASE_URL, PASSWORD_MIN_LENGTH), so
- * `create-user` works without a running webhook receiver.
- */
-export async function loadUserStoreConfig(
-  env: Record<string, string | undefined>,
-): Promise<{ store: StoreAdapter; minLength: number }> {
-  return { store: await loadStore(env), minLength: passwordMinLength(readEnv(env, 'PASSWORD_MIN_LENGTH')) };
-}
-
 /** Only the store from DATABASE_URL, e.g. to manage claims and settings from the command line. */
 export async function loadStore(env: Record<string, string | undefined>): Promise<StoreAdapter> {
   const store = await storeFromDatabaseUrl(readEnv(env, 'DATABASE_URL'));
   if (!store) throw new ConfigError('Set DATABASE_URL to manage users.');
   return store;
-}
-
-function passwordMinLength(value: string | undefined): number {
-  const minLength = value ? Number(value) : DEFAULT_PASSWORD_MIN_LENGTH;
-  if (!Number.isInteger(minLength) || minLength < 1 || minLength > 128) {
-    throw new ConfigError(`PASSWORD_MIN_LENGTH must be a whole number from 1 to 128 but is "${value}".`);
-  }
-  return minLength;
 }
 
 /**

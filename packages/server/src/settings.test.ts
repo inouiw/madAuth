@@ -1,7 +1,7 @@
 // Settings admins change at runtime: which sign-in methods are on, and which ask for the authenticator app.
 // See "Sign-in methods" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Settings, anyOn, authenticatorOn, canSignUp, initialMethods, isOn, parseMethodSettings, policyOf } from './settings.js';
+import { Settings, anyOn, authenticatorOn, canSignUp, initialMethods, isOn, parseMethodSettings, parsePasswordRules, policyOf } from './settings.js';
 import { APP_ORIGIN, cookies, getNonce, googleIdToken, passwordApp, post, setClaims, signUpVerified, testApp, verify } from './test/helpers.js';
 
 afterEach(() => {
@@ -124,13 +124,14 @@ describe('Settings', () => {
 describe('switching sign-in methods off and on', () => {
   it('an admin switches a method off: it leaves /auth/config and its routes answer method_disabled, at once', async () => {
     const { app, cookie } = await withAdmin();
-    expect(await config(app)).toMatchObject({ google: { clientId: expect.any(String) }, password: { minLength: 8 } });
+    expect(await config(app)).toMatchObject({ google: { clientId: expect.any(String) }, password: { minLength: 8, minScore: 2 } });
 
     // The list replaces what was on: password is not in it any more.
     const off = await settingsApi(app, cookie, 'set', { methods: { google: {} } });
 
     expect(off.status).toBe(200);
     expect(await off.json()).toEqual({
+      password: { minLength: 8, minScore: 2 },
       methods: {
         google: { configured: true, enabled: true, secondFactor: 'none' },
         password: { configured: true, enabled: false, secondFactor: 'none' },
@@ -214,5 +215,66 @@ describe('switching sign-in methods off and on', () => {
     expect((await settingsApi(app, cookie, 'set', { methods: { google: {}, sms: { secondFactor: 'required' } } })).status).toBe(400);
     expect(await (await settingsApi(app, cookie, 'set', { methods: { sms: {} } })).json()).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('At least one') });
     expect((await settingsApi(app, cookie, 'set', {})).status).toBe(400);
+  });
+});
+
+describe('password rules', () => {
+  it('parsePasswordRules takes minLength and minScore, each with its default', () => {
+    expect(parsePasswordRules({})).toEqual({ minLength: 8, minScore: 2 });
+    expect(parsePasswordRules({ minLength: 12, minScore: 0 })).toEqual({ minLength: 12, minScore: 0 });
+    for (const bad of [null, [], 8, { minLength: 0 }, { minLength: 129 }, { minLength: 8.5 }, { minScore: 5 }, { minScore: '3' }, { require: ['digit'] }]) {
+      expect(parsePasswordRules(bad)).toBeNull();
+    }
+  });
+
+  it('are at least 8 characters and score 2 until set; an unusable stored value is warned about and the defaults hold', async () => {
+    const { store } = passwordApp();
+    const settings = new Settings(store);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(await settings.passwordRules()).toEqual({ minLength: 8, minScore: 2 });
+    await settings.set('password', { minLength: 'long' }, null);
+    expect(await settings.passwordRules()).toEqual({ minLength: 8, minScore: 2 });
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it('an admin sets them: /auth/config shows them, and sign-up and reset follow them at once', async () => {
+    const { app, cookie } = await withAdmin();
+
+    const res = await settingsApi(app, cookie, 'set', { password: { minLength: 12, minScore: 3 } });
+
+    expect(await res.json()).toMatchObject({ password: { minLength: 12, minScore: 3 }, methods: { password: { enabled: true } } });
+    expect(await (await settingsApi(app, cookie, 'get')).json()).toMatchObject({ password: { minLength: 12, minScore: 3 } });
+    expect(await config(app)).toMatchObject({ password: { minLength: 12, minScore: 3, secondFactor: 'none' } });
+    const signUp = (password: string) => post(app, '/auth/password/signup', { email: 'new@example.com', password, redirectTo: `${APP_ORIGIN}/` });
+    expect(await (await signUp('long enough')).json()).toMatchObject({ error: 'weak_password', minLength: 12 });
+    // Long enough, but a common word with digits.
+    expect(await (await signUp('password1234')).json()).toMatchObject({ error: 'weak_password', minScore: 3 });
+    expect((await signUp('correct horse battery')).status).toBe(202);
+  });
+
+  it('the admin API checks them before it writes anything', async () => {
+    const { app, cookie } = await withAdmin();
+
+    const bad = await settingsApi(app, cookie, 'set', { methods: { google: {} }, password: { minScore: 9 } });
+
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('minScore') });
+    // The methods were not changed either.
+    expect(await config(app)).toMatchObject({ password: { minLength: 8 } });
+  });
+
+  it('a failed write of the methods undoes the password rules, so a failed request changes nothing', async () => {
+    const { app, cookie } = await withAdmin();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(Settings.prototype, 'changeMethods').mockRejectedValueOnce(new Error('throttled'));
+
+    const res = await settingsApi(app, cookie, 'set', { methods: { google: {} }, password: { minLength: 12 } });
+
+    expect(res.status).toBe(500);
+    expect(await (await settingsApi(app, cookie, 'get')).json()).toMatchObject({
+      password: { minLength: 8, minScore: 2 },
+      methods: { password: { enabled: true } },
+    });
   });
 });

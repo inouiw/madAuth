@@ -1,6 +1,7 @@
 import { Password, clearResetToken, pendingResetToken } from '../providers/password.js';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
 import { secondStepOf, type SecondFactorPolicy } from '../providers/provider.js';
+import { loadPasswordRating, type RatePassword } from '../strength.js';
 import type { Core } from './core.js';
 import { currentPage, emailConfirmation, signedIn, type SendEmailOptions } from './email.js';
 
@@ -62,10 +63,17 @@ export interface PasswordApi {
    */
   confirmReset(options: ConfirmResetOptions): Promise<Result<{ user: MadauthUser }>>;
   /**
-   * The server's password rules, for hints in your form, and whether the method asks for the authenticator
-   * app as a second factor (`none`, `optional`, `required`); null until initialized.
+   * The server's rules for new passwords, for hints in your form: the fewest characters (`minLength`) and how
+   * hard to guess a password must be (`minScore`, 0 to 4 as zxcvbn rates it). And whether the method asks for
+   * the authenticator app as a second factor (`none`, `optional`, `required`). Null until initialized.
    */
-  readonly policy: { minLength: number; secondFactor: SecondFactorPolicy } | null;
+  readonly policy: { minLength: number; minScore: number; secondFactor: SecondFactorPolicy } | null;
+  /**
+   * Loads the password rating the server uses for `minScore`, for a strength meter in your own form. The
+   * function it resolves to rates a password from 0 to 4; pass the user's name and e-mail address as
+   * `userInputs`, as the server does. It downloads zxcvbn-ts (about 230 kB compressed) on the first call.
+   */
+  loadRating(): Promise<RatePassword>;
 }
 
 const notRegistered = () => fail('flow_not_enabled', 'Pass new Password() to Madauth.initialize to use Madauth.password.');
@@ -135,6 +143,8 @@ export function createPasswordApi(core: Core): PasswordApi {
       if (over) clearResetToken(p);
       return result;
     },
+
+    loadRating: loadPasswordRating,
 
     get policy() {
       return provider() ? (core.config()?.password ?? null) : null;

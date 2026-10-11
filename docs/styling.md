@@ -64,6 +64,7 @@ Use `::part()` to style an element directly.
 | `link` | The text buttons: "Forgot password?", "Create account", "Back to sign in", "Send the e-mail again", "Use a recovery code instead", "Send a code by SMS instead", "Use your phone number instead", "Cancel", "Start again". |
 | `qr` | The QR code of the authenticator app's key: an inline SVG whose modules are drawn in its text color, black on a white background. Keep it dark on light; not every authenticator app reads an inverted code. |
 | `codes` | The list of recovery codes, shown once after the setup. |
+| `strength` | The strength meter under a new password (create account, new password): four bars and a word. It has `data-score` (0 to 4), and `data-too-easy` while the password is below the server's `minScore`. |
 
 ```css
 madauth-login::part(dialog) {
@@ -88,6 +89,7 @@ To change more than the look, e.g. the layout or the texts, build your own scree
 | Attribute | Default | Description |
 | --- | --- | --- |
 | `heading` | `Sign in`, in the dialog's language | Title shown at the top of the dialog. A heading you set is shown as it is in every language. |
+| `code-autocomplete` | `off` | `autocomplete` of the fields for the code from the authenticator app. `one-time-code` lets Apple Passwords, 1Password or Bitwarden offer a stored code, but the iCloud Passwords extension for Chrome then opens its panel on the field even with nothing stored. See [Password managers](custom-ui.md#password-managers). |
 
 ```html
 <madauth-login heading="Log in to projectmatch"></madauth-login>

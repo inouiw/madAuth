@@ -88,7 +88,7 @@
           <p id="totp-status"></p>
           <label class="code-field" hidden>
             Code from the app, or a recovery code
-            <input id="totp-code" type="text" autocomplete="one-time-code" spellcheck="false" />
+            <input id="totp-code" type="text" autocomplete="off" spellcheck="false" />
           </label>
           <p class="buttons">
             <button type="button" data-call="setUpAuthenticator" hidden>Madauth.setUpAuthenticator()</button>
@@ -140,7 +140,7 @@
             <button type="button" class="api-row" aria-expanded="false">Madauth.deleteAccount()</button>
             <div class="api-detail" hidden>
               <p>Deletes the signed-in user with their sign-in methods and claims, for good; the page asks first. Once the authenticator app is set up, a current code from it is needed.</p>
-              <label data-needs-authenticator hidden>Code from the app, or a recovery code <input data-param="code" type="text" autocomplete="one-time-code" spellcheck="false" /></label>
+              <label data-needs-authenticator hidden>Code from the app, or a recovery code <input data-param="code" type="text" autocomplete="off" spellcheck="false" /></label>
             </div>
           </li>
         </ul>

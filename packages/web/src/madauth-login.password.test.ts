@@ -159,6 +159,40 @@ describe('<madauth-login> with e-mail & password', () => {
     expect($('h2')!.textContent).toBe('Create account');
   });
 
+  it('rates the new password as it is typed, against the server’s minimum score', async () => {
+    fakeServer();
+    void openDialog();
+    await settle();
+    await click('[data-action="signup"]');
+    const type = (password: string) => {
+      const input = $<HTMLInputElement>('input[name="password"]')!;
+      input.value = password;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const meter = () => $('[part="strength"]');
+
+    expect(meter()).toBeNull();
+    type('password1234');
+    await vi.waitFor(() => expect(meter()?.dataset.score).toBe('1'));
+    expect(meter()!.hasAttribute('data-too-easy')).toBe(true);
+    expect(meter()!.textContent).toContain('Weak: too easy to guess');
+    expect($('[role="meter"]')!.getAttribute('aria-valuetext')).toBe('Weak: too easy to guess');
+
+    type('correct horse battery');
+    await vi.waitFor(() => expect(meter()?.dataset.score).toBe('4'));
+    expect(meter()!.hasAttribute('data-too-easy')).toBe(false);
+    expect(meter()!.textContent).toContain('Strong');
+
+    // The user's own name and address count as easy to guess, as on the server.
+    await fill({ name: 'Grace Hopper', email: 'grace@example.com' });
+    type('Grace Hopper 1');
+    await vi.waitFor(() => expect(meter()?.dataset.score).toBe('0'));
+
+    type('');
+    await settle();
+    expect(meter()).toBeNull();
+  });
+
   it('K8: tells the user when sign-up or e-mails are not available', async () => {
     const server = fakeServer();
     server.emailsDown = true;
@@ -321,6 +355,7 @@ describe('<madauth-login> with e-mail & password', () => {
     expect([autocomplete('name'), autocomplete('email'), autocomplete('password')]).toEqual(['name', 'email', 'new-password']);
     await fill({ email: 'x@example.com', password: 'long enough' });
     await submit('signup');
+    // The code from the e-mail: Safari and iOS fill it from Mail and Messages.
     expect(autocomplete('code')).toBe('one-time-code');
   });
 

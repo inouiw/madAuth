@@ -69,7 +69,7 @@ describe('deployment entry points', () => {
     expect(config).toMatchObject({ statusCode: 200 });
     expect(JSON.parse((config as { body: string }).body)).toEqual({
       google: { clientId: CLIENT_ID, codeFlow: false, secondFactor: 'none' },
-      password: { minLength: 8, secondFactor: 'none' },
+      password: { minLength: 8, minScore: 2, secondFactor: 'none' },
       totp: null,
       email: { verification: true },
       emailLink: null,
@@ -261,6 +261,27 @@ describe('deployment entry points', () => {
     expect(await runCli(['set-roles', 'ada@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com has no roles.' });
     expect(await runCli(['get-claims', 'ada@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com: {"plan":"pro"}' });
     expect(await runCli(['set-roles', 'ada@example.com', 'admin'], io, {})).toMatchObject({ exitCode: 1, output: expect.stringContaining('DATABASE_URL') });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('set-password-rules sets the rules for new passwords, which create-user follows', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
+    const env = { DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}` };
+    const io = (password: string) => ({ ask: async () => '', askSecret: async () => password });
+    const rules = (minLength: number, minScore: number) =>
+      `New passwords: at least ${minLength} characters, and a strength score of at least ${minScore} (0 to 4).`;
+
+    expect(await runCli(['get-password-rules'], io(''), env)).toEqual({ exitCode: 0, output: rules(8, 2) });
+    expect(await runCli(['create-user', 'ada@example.com'], io('password1'), env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('too easy to guess') });
+    expect(await runCli(['set-password-rules', 'min-score=0', 'min-length=10'], io(''), env)).toEqual({ exitCode: 0, output: rules(10, 0) });
+    expect(await runCli(['create-user', 'ada@example.com'], io('password1'), env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('at least 10') });
+    expect(await runCli(['create-user', 'ada@example.com'], io('password12'), env)).toMatchObject({ exitCode: 0 });
+    // What is left out takes its default.
+    expect(await runCli(['set-password-rules', 'min-score=3'], io(''), env)).toEqual({ exitCode: 0, output: rules(8, 3) });
+    for (const bad of ['min-score=5', 'min-length=0', 'min-length=129', 'min-length=x', 'uppercase']) {
+      expect(await runCli(['set-password-rules', bad], io(''), env)).toMatchObject({ exitCode: 1 });
+    }
+    expect(await runCli(['get-password-rules'], io(''), env)).toEqual({ exitCode: 0, output: rules(8, 3) });
     rmSync(dir, { recursive: true, force: true });
   });
 

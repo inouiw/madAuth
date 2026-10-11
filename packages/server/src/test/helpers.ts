@@ -185,7 +185,7 @@ export function passwordApp(overrides: Partial<MadauthConfig> = {}) {
   const store = createSqliteAdapter(':memory:');
   const app = testApp({
     store,
-    password: { minLength: 8 },
+    password: {},
     webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: ALL_EVENTS },
     webhookFetch: hook.fetch,
     ...overrides,

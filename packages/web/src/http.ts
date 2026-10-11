@@ -25,7 +25,7 @@ export async function request<T>(serverUrl: string, path: string, init: RequestI
     };
   }
   const data = (await response.json().catch(() => undefined)) as
-    | (T & { error?: unknown; message?: unknown; method?: unknown; methods?: unknown; factors?: unknown })
+    | (T & { error?: unknown; message?: unknown; method?: unknown; methods?: unknown; factors?: unknown; minLength?: unknown; minScore?: unknown })
     | undefined;
   if (response.ok) {
     // E.g. an SPA fallback page answering for /auth/... because the server is not behind this URL.
@@ -46,5 +46,8 @@ export async function request<T>(serverUrl: string, path: string, init: RequestI
   if (typeof data?.method === 'string') error.method = data.method;
   if (Array.isArray(data?.methods)) error.methods = data.methods.filter((m): m is string => typeof m === 'string');
   if (Array.isArray(data?.factors)) error.factors = data.factors.filter((f): f is SecondFactor => f === 'totp' || f === 'sms');
+  // Which password rule a weak password breaks, so the dialog can say it in the user's language.
+  if (typeof data?.minLength === 'number') error.minLength = data.minLength;
+  if (typeof data?.minScore === 'number') error.minScore = data.minScore;
   return { ok: false, status: response.status, error };
 }

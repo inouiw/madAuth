@@ -97,8 +97,15 @@ describe('<madauth-login> and the authenticator app on its own', () => {
     expect(text('h2')).toBe('Authenticator app');
     expect($<HTMLInputElement>('form.totp input[name="email"]')!.value).toBe('grace@example.com');
     const code = $<HTMLInputElement>('form.totp input[name="code"]')!;
-    expect(code.getAttribute('autocomplete')).toBe('one-time-code');
+    expect(code.getAttribute('autocomplete')).toBe('off');
     expect(code.getAttribute('inputmode')).toBe('numeric');
+    // The code-autocomplete attribute opts into one-time-code; removing it is back to off.
+    login().setAttribute('code-autocomplete', 'one-time-code');
+    await settle();
+    expect($('form.totp input[name="code"]')!.getAttribute('autocomplete')).toBe('one-time-code');
+    login().removeAttribute('code-autocomplete');
+    await settle();
+    expect($('form.totp input[name="code"]')!.getAttribute('autocomplete')).toBe('off');
     expect(text('form.totp .hint')).toBe('Enter the 6-digit code from your authenticator app.');
     expect(text('form.totp .submit')).toBe('Sign in');
     await click('[data-action="toggle-recovery"]');
@@ -203,6 +210,7 @@ describe('<madauth-login> and the second step', () => {
 
     expect(text('h2')).toBe('Enter your code');
     expect(text('.lead')).toBe('Enter the code from your authenticator app to finish signing in.');
+    expect($('form.totp-code input[name="code"]')!.getAttribute('autocomplete')).toBe('off');
     expect($('[part="error"]')).toBeNull();
     expect(Madauth.currentUser).toBeNull();
     fill({ code: '000000' });
@@ -249,6 +257,7 @@ describe('<madauth-login> and the second step', () => {
     expect(qr.getAttribute('aria-label')).toBe('QR code for your authenticator app');
     expect(text('.secret')).toBe('JBSW Y3DP EHPK 3PXP');
     expect(login().shadowRoot!.activeElement).toBe($('form.totp-setup input[name="code"]'));
+    expect($('form.totp-setup input[name="code"]')!.getAttribute('autocomplete')).toBe('off');
     expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/totp/setup` });
 
     fill({ code: '000000' });

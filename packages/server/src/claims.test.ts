@@ -229,7 +229,7 @@ describe('the admin API for claims', () => {
     const { app, hook, cookie } = await withAdmin();
     advance(61_000);
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new password!' });
+    await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new teapot sky!' });
 
     expect((await admin(app, cookie, 'set', { email: 'ada@example.com', claims: {} })).status).toBe(401);
   });

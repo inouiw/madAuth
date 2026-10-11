@@ -44,16 +44,19 @@ const readEnvFile = (file: string) => parseEnv(readFileSync(file, 'utf8'));
 describe('--env-file', () => {
   it('gives any command the variables of the file, before or after the command; the environment wins', async () => {
     const envFile = tempFile();
-    writeFileSync(envFile, `DATABASE_URL=sqlite:${tempFile('madauth.db')}\nPASSWORD_MIN_LENGTH=20\n`);
+    writeFileSync(envFile, `DATABASE_URL=sqlite:${tempFile('madauth.db')}\n`);
     const io = { ...noQuestions, askSecret: async () => 'correct horse' };
 
     const fromFile = await runCli(['create-user', 'ada@example.com', '--env-file', envFile], io, {});
+    // The same address again, in another database: the one from the environment.
     const environmentWins = await runCli([`--env-file=${envFile}`, 'create-user', 'ada@example.com'], io, {
-      PASSWORD_MIN_LENGTH: '8',
+      DATABASE_URL: `sqlite:${tempFile('other.db')}`,
     });
+    const again = await runCli(['create-user', 'ada@example.com', '--env-file', envFile], io, {});
 
-    expect(fromFile).toMatchObject({ exitCode: 1, output: expect.stringContaining('at least 20') });
+    expect(fromFile).toMatchObject({ exitCode: 0, output: expect.stringContaining('Created user') });
     expect(environmentWins).toMatchObject({ exitCode: 0, output: expect.stringContaining('Created user') });
+    expect(again).toMatchObject({ exitCode: 1, output: expect.stringContaining('already exists') });
   });
 
   it('is an error when the file is missing or not named', async () => {
@@ -115,7 +118,7 @@ describe('init', () => {
         signingKey: { kty: 'EC', crv: 'P-256', d: expect.any(String) },
         allowedOrigins: ['http://localhost:5173'],
         google: undefined,
-        password: { minLength: 8 },
+        password: {},
         webhook: { url: 'http://localhost:8790/webhook', events: new Set(EMAIL_TYPES.split(',')) },
       });
     }

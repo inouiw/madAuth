@@ -15,6 +15,8 @@ import { smsRoutes } from './routes/sms.js';
 import { checkCode, totpRoutes, type TotpKeys } from './routes/totp.js';
 import {
   METHODS,
+  MAX_MIN_LENGTH,
+  DEFAULT_PASSWORD_RULES,
   SIGN_IN_METHODS,
   Settings,
   anyOn,
@@ -24,10 +26,12 @@ import {
   isConfigured,
   isOn,
   parseMethodSettings,
+  parsePasswordRules,
   policyOf,
   authenticatorOn,
   type MethodId,
   type MethodSettings,
+  type PasswordRules,
   type SignInMethod,
 } from './settings.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims } from './tokens.js';
@@ -321,9 +325,10 @@ export function createApp(config: MadauthConfig): Hono {
   app.get('/auth/config', async (c) => {
     const current = await ctx.methods(c);
     const on = (method: MethodId) => isOn(method, configured, current);
+    const rules = on('password') ? await settings.passwordRules() : null;
     return c.json({
       google: on('google') ? { clientId: config.google!.clientId, codeFlow: !!config.google!.clientSecret, secondFactor: policyOf('google', current) } : null,
-      password: on('password') ? { minLength: config.password!.minLength, secondFactor: policyOf('password', current) } : null,
+      password: rules ? { ...rules, secondFactor: policyOf('password', current) } : null,
       // The app can be set up when it is in use at all; `signIn` says whether it signs in on its own.
       totp: authenticatorOn(configured, current) ? { signIn: on('totp'), signUp: on('totp') && emailVerification } : null,
       email: { verification: emailVerification },
@@ -337,7 +342,7 @@ export function createApp(config: MadauthConfig): Hono {
   if (configured('email-link') && ctx.webhook) emailLinkRoutes(app, ctx, users, ctx.webhook);
   if (configured('sms') && ctx.webhook) smsRoutes(app, ctx, users, ctx.webhook);
   if (config.google) googleRoutes(app, ctx, config.google);
-  if (config.password && ctx.webhook) passwordRoutes(app, ctx, config.password, users, ctx.webhook);
+  if (config.password && ctx.webhook) passwordRoutes(app, ctx, users, ctx.webhook);
   totpRoutes(app, ctx, totpKeys);
 
   app.get('/auth/session', async (c) => {
@@ -440,9 +445,11 @@ export function createApp(config: MadauthConfig): Hono {
 
   /**
    * The settings as the admin API answers them: for each method (and `sms`), whether the server is configured
-   * for it, whether it is on, and (the methods with a second factor) whether it asks for one.
+   * for it, whether it is on, and (the methods with a second factor) whether it asks for one; and the rules
+   * for new passwords.
    */
-  const settingsAnswer = (methods: MethodSettings) => ({
+  const settingsAnswer = (methods: MethodSettings, password: PasswordRules) => ({
+    password,
     methods: Object.fromEntries(
       METHODS.map((method) => [
         method,
@@ -458,7 +465,8 @@ export function createApp(config: MadauthConfig): Hono {
   app.post('/auth/admin/settings/get', async (c) => {
     const caller = await admin(c);
     if ('answer' in caller) return caller.answer;
-    return c.json(settingsAnswer(await settings.methods()));
+    const [methods, password] = await Promise.all([settings.methods(), settings.passwordRules()]);
+    return c.json(settingsAnswer(methods, password));
   });
 
   app.post('/auth/admin/settings/set', async (c) => {
@@ -466,18 +474,40 @@ export function createApp(config: MadauthConfig): Hono {
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
-    const next = parseMethodSettings(data.methods, { booleans: true });
-    if (!next) {
+    if (data.methods === undefined && data.password === undefined) return invalid('Pass methods, password or both.');
+    // Both are checked before either is written.
+    const next = data.methods === undefined ? undefined : parseMethodSettings(data.methods, { booleans: true });
+    if (next === null) {
       return invalid(
         `methods must list the sign-in methods that are on (${SIGN_IN_METHODS.join(', ')}; sms for SMS codes as a second factor), each as true, {} or ` +
           '{ "secondFactor": "none" | "optional" | "required" } (google, password and email-link), e.g. ' +
           '{ "google": {}, "password": { "secondFactor": "optional" }, "sms": {} }. A method that is not listed is off.',
       );
     }
-    // The whole list is replaced; the guard runs on the value that is written.
-    const methods = await settings.changeMethods(() => (anyOn(signsUp, next) ? next : null), caller.email);
-    if (!methods) return invalid('At least one sign-in method that creates users must stay on: Google, e-mail & password, the e-mail link, or the authenticator app with sign-up by e-mail.');
-    return c.json(settingsAnswer(methods));
+    const rules = data.password === undefined ? undefined : parsePasswordRules(data.password);
+    if (rules === null) {
+      return invalid(
+        `password must be { "minLength": 1 to ${MAX_MIN_LENGTH}, "minScore": 0 to 4 }, both optional, e.g. ` +
+          `{ "minLength": 10, "minScore": 3 }. What is left out takes its default (${DEFAULT_PASSWORD_RULES.minLength}, ${DEFAULT_PASSWORD_RULES.minScore}).`,
+      );
+    }
+    if (next && !anyOn(signsUp, next)) {
+      return invalid('At least one sign-in method that creates users must stay on: Google, e-mail & password, the e-mail link, or the authenticator app with sign-up by e-mail.');
+    }
+    // Two writes: if the second fails, the first is undone, so a failed request has changed nothing.
+    const previousRules = rules && next ? await settings.passwordRules() : undefined;
+    const password = rules ? await settings.setPasswordRules(rules, caller.email) : await settings.passwordRules();
+    if (next) {
+      try {
+        // The whole list is replaced.
+        await settings.changeMethods(() => next, caller.email);
+      } catch (e) {
+        if (previousRules) await settings.setPasswordRules(previousRules, caller.email).catch(() => {});
+        throw e;
+      }
+    }
+    const methods = next ?? (await settings.methods());
+    return c.json(settingsAnswer(methods, password));
   });
 
   // The last resort for a user who lost the phone and the recovery codes.

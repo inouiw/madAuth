@@ -29,6 +29,12 @@ export const en = {
   optional: '(optional)',
   code: 'Code',
   minLength: (characters: number) => `At least ${characters} characters.`,
+  /** The strength meter under a new password: zxcvbn's score 0 to 4, and a score below what the server needs. */
+  strength: {
+    label: 'Password strength',
+    levels: ['Very weak', 'Weak', 'Fair', 'Good', 'Strong'],
+    tooEasy: 'too easy to guess',
+  },
 
   // Buttons and links
   forgotPassword: 'Forgot password?',
@@ -180,9 +186,10 @@ export const en = {
   smsUnavailable: 'Sending SMS is not available right now. Please try again later.',
   /**
    * `weak_password` and `too_many_attempts` come with a message from the server that is written for the
-   * user, in English. `minLength` is given when the password is shorter than that.
+   * user, in English. With `weak_password`, `minLength` is set when the password is too short and `minScore`
+   * when it is too easy to guess.
    */
-  weakPassword: (serverMessage: string, _minLength?: number) => serverMessage,
+  weakPassword: (serverMessage: string, _rule?: { minLength?: number; minScore?: number }) => serverMessage,
   tooManyAttempts: (serverMessage: string) => serverMessage,
 
   /** `GoogleRedirect`: why the sign-in failed, by the error code the server reported. */
@@ -219,6 +226,11 @@ export const de: Strings = {
   optional: '(optional)',
   code: 'Bestätigungscode',
   minLength: (characters) => `Mindestens ${characters} Zeichen.`,
+  strength: {
+    label: 'Passwortstärke',
+    levels: ['Sehr schwach', 'Schwach', 'Mittel', 'Gut', 'Stark'],
+    tooEasy: 'zu leicht zu erraten',
+  },
 
   forgotPassword: 'Passwort vergessen?',
   createAccount: 'Konto erstellen',
@@ -344,10 +356,12 @@ export const de: Strings = {
     'Derzeit kann kein Konto mit E-Mail-Adresse und Passwort erstellt werden. Bitte versuchen Sie es später erneut.',
   emailsUnavailable: 'Derzeit können keine E-Mails gesendet werden. Bitte versuchen Sie es später erneut.',
   smsUnavailable: 'Derzeit können keine SMS gesendet werden. Bitte versuchen Sie es später erneut.',
-  weakPassword: (_serverMessage, minLength) =>
-    minLength
-      ? `Das Passwort muss mindestens ${minLength} Zeichen lang sein.`
-      : 'Dieses Passwort ist nicht zulässig. Bitte wählen Sie ein anderes.',
+  weakPassword: (_serverMessage, rule) =>
+    rule?.minLength
+      ? `Das Passwort muss mindestens ${rule.minLength} Zeichen lang sein.`
+      : rule?.minScore
+        ? 'Dieses Passwort ist zu leicht zu erraten. Fügen Sie ein, zwei Wörter hinzu oder wählen Sie weniger gebräuchliche.'
+        : 'Dieses Passwort ist nicht zulässig. Bitte wählen Sie ein anderes.',
   tooManyAttempts: () => 'Zu viele Versuche. Bitte warten Sie einen Moment und versuchen Sie es erneut.',
 
   googleErrors: {

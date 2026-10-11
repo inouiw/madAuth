@@ -261,7 +261,18 @@ describe('Madauth.password', () => {
 
     await settle();
 
-    expect(Madauth.password.policy).toEqual({ minLength: 8, secondFactor: 'none' });
+    expect(Madauth.password.policy).toEqual({ minLength: 8, minScore: 2, secondFactor: 'none' });
+  });
+
+  it('loadRating rates passwords as the server does, for a custom strength meter', async () => {
+    const rate = await Madauth.password.loadRating();
+
+    expect(rate('password1234')).toBe(1);
+    expect(rate('correct horse battery')).toBe(4);
+    expect(rate('Grace Hopper 1')).toBe(4);
+    expect(rate('Grace Hopper 1', ['Grace Hopper', 'grace@example.com'])).toBe(0);
+    // Loaded once.
+    expect(await Madauth.password.loadRating()).toBe(rate);
   });
 
   it('methods wait for initialize and fail with not_initialized without it', async () => {

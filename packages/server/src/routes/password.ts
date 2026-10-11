@@ -1,7 +1,6 @@
 // E-mail & password sign-in. The security rules are described in docs/password-security.md.
-import type { Hono } from 'hono';
+import type { Context, Hono } from 'hono';
 import type { AppContext } from '../app.js';
-import type { MadauthConfig } from '../config.js';
 import {
   MAX_PASSWORD_LENGTH,
   checkPasswordPolicy,
@@ -10,6 +9,7 @@ import {
   normalizeEmail,
   verifyAgainstDummy,
   verifyPassword,
+  type PasswordProblem,
 } from '../password.js';
 import { passwordAccountKey, toMadauthUser, type Users } from '../users.js';
 import { localeOf, type WebhookClient } from '../webhooks.js';
@@ -20,14 +20,22 @@ import { countSignInAttempt } from './lockout.js';
 export { MAIL_INTERVAL_MS, RESET_LINK_PARAM, RESET_TTL_MS, VERIFY_LINK_PARAM, VERIFY_TTL_MS } from './emails.js';
 export { FREE_ATTEMPTS, MAX_LOCK_MS } from './lockout.js';
 
-export function passwordRoutes(
-  app: Hono,
-  ctx: AppContext,
-  password: NonNullable<MadauthConfig['password']>,
-  users: Users,
-  webhook: WebhookClient,
-): void {
-  const { minLength } = password;
+/** A new password breaks the rules: the message, and what the dialog needs to say it in the user's language. */
+function weakPassword(c: Context, problem: PasswordProblem): Response {
+  const { message, ...details } = problem;
+  return c.json({ error: 'weak_password', message, ...details }, 400);
+}
+
+export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook: WebhookClient): void {
+  /**
+   * Why a new password breaks the rules an admin set, as the answer; null if it doesn't. `userInputs` are the
+   * user's address and name: a password made of them is easy to guess.
+   */
+  const refused = async (c: Context, password: unknown, userInputs: (string | null | undefined)[]) => {
+    const words = userInputs.filter((word): word is string => !!word);
+    const problem = await checkPasswordPolicy(password, await ctx.settings.passwordRules(), words);
+    return problem ? weakPassword(c, problem) : null;
+  };
   const emails = createEmails(ctx, users, webhook);
 
   // Every route of the method: an admin switched it off for sign-ups and sign-ins alike.
@@ -74,10 +82,10 @@ export function passwordRoutes(
     const target = redirectTarget(ctx, c, data.redirectTo);
     if (target instanceof Response) return target;
     if (!isValidEmail(data.email)) return error(c, 400, 'invalid_email', 'This is not a valid e-mail address.');
-    const policy = checkPasswordPolicy(data.password, minLength);
-    if (policy) return error(c, 400, 'weak_password', policy);
     const name = nameOf(data.name);
     const email = data.email.trim();
+    const weak = await refused(c, data.password, [email, name]);
+    if (weak) return weak;
     const locale = localeOf(data.locale);
 
     // The operator's check comes first and fails closed: without an answer, nobody signs up.
@@ -136,9 +144,10 @@ export function passwordRoutes(
 
   app.post('/auth/password/reset', async (c) => {
     const data = await body(c);
-    // Checked first, so a weak password doesn't use up the link.
-    const policy = checkPasswordPolicy(data.password, minLength);
-    if (policy) return error(c, 400, 'weak_password', policy);
+    // Checked first, so a weak password doesn't use up the link. The user's words are only what the page knows
+    // too (the address typed with the code), so the strength meter and this check agree.
+    const weak = await refused(c, data.password, [isValidEmail(data.email) ? data.email.trim() : null]);
+    if (weak) return weak;
     const consumed = await emails.consume(data, 'reset');
     const user = consumed.userId ? await users.findById(consumed.userId) : null;
     const account = user ? await users.passwordAccount(user.id) : null;
