@@ -66,6 +66,23 @@ describe('<madauth-login> with e-mail & password', () => {
     expect($('[data-action="signup"]')).not.toBeNull();
   });
 
+  it('D1: opened while madAuth gets ready, the dialog shows up with the form already in place', async () => {
+    const server = fakeServer();
+    let answer!: () => void;
+    server.held = new Promise((resolve) => (answer = resolve));
+    void Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    document.body.append(document.createElement('madauth-login'));
+    const opened = login().open();
+    await settle();
+    expect($<HTMLDialogElement>('dialog')!.open).toBe(false);
+
+    answer();
+    await opened;
+
+    expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
+    expect($('form.signin')).not.toBeNull();
+  });
+
   it('D1: offers no form when madAuth could not get ready, only the error', async () => {
     const server = fakeServer();
     server.down = true;

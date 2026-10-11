@@ -199,7 +199,6 @@ export class MadauthLogin extends LitElement {
     const email = typeof options.email === 'string' ? options.email.trim() : '';
     if (email) this.email = email;
     const ready = await this.show();
-    if (!ready) return;
     if (ready.isSuccess && Madauth.password.pendingReset) this.view = 'reset';
     // A sign-in that started outside the dialog (the redirect flow, an e-mail link) goes on with the app.
     const pending = ready.isSuccess ? takePendingStep() : undefined;
@@ -220,7 +219,6 @@ export class MadauthLogin extends LitElement {
     this.setupForSignIn = false;
     this.view = 'totp-setup';
     const ready = await this.show();
-    if (!ready) return;
     if (!ready.isSuccess) {
       this.showError(ready.error, 'totp');
       return;
@@ -228,15 +226,17 @@ export class MadauthLogin extends LitElement {
     await this.startSetup();
   }
 
-  /** Shows the dialog and waits for madAuth; undefined if the dialog was closed meanwhile. */
-  private async show(): Promise<Result | undefined> {
-    await this.updateComplete;
-    this.dialog.showModal();
+  /**
+   * Waits for madAuth, then shows the dialog: it opens with the methods the server offers already in place
+   * instead of filling in while it is open.
+   */
+  private async show(): Promise<Result> {
     const ready = await readyForDialog();
-    if (!this.dialog.open) return undefined;
     this.usable = ready.isSuccess;
     // What the views show depends on the providers and the server's settings, which a new initialize may have changed.
     this.requestUpdate();
+    await this.updateComplete;
+    if (!this.dialog.open) this.dialog.showModal();
     return ready;
   }
 

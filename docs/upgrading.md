@@ -2,7 +2,7 @@
 
 ## To 0.4.0-beta.2
 
-- **The dialog lists only the methods that are on.** A method is listed when its provider is passed to `Madauth.initialize` and the server offers it; methods without one (e.g. E-mail link and SMS code) no longer show up as "coming soon". The methods appear once madAuth is ready, so a dialog that opens before that, or when madAuth isn't initialized or couldn't reach the server, shows no method buttons, only the error if there is one. The plain "Continue with Google" button the dialog showed without a Google provider is gone; with one, Google's own button is shown as before. Tests or screenshots of your page that rely on the placeholder buttons need updating.
+- **The dialog lists only the methods that are on.** A method is listed when its provider is passed to `Madauth.initialize` and the server offers it; methods without one (e.g. E-mail link and SMS code) no longer show up as "coming soon". `<madauth-login>`'s `open()` now waits until madAuth is ready before the dialog shows, so it never fills in while open; when madAuth isn't initialized or couldn't reach the server, the dialog shows the error and no method buttons. The plain "Continue with Google" button the dialog showed without a Google provider is gone; with one, Google's own button is shown as before. Tests or screenshots of your page that rely on the placeholder buttons need updating.
 
 ## To 0.4
 

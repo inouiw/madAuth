@@ -57,6 +57,8 @@ export interface FakeServer {
   verifyError: string | undefined;
   /** Makes every request fail like an unreachable server. */
   down: boolean;
+  /** Every request waits for this before it is answered, if set: a slow server. */
+  held: Promise<void> | undefined;
   nonces: number;
   requests: RecordedRequest[];
   /** Claims by e-mail address, as set through the admin API. */
@@ -98,6 +100,7 @@ export function fakeServer(): FakeServer {
     user: null,
     verifyError: undefined,
     down: false,
+    held: undefined,
     nonces: 0,
     requests: [],
     claims: new Map(),
@@ -158,6 +161,7 @@ export function fakeServer(): FakeServer {
       body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined,
       credentials: init.credentials,
     });
+    if (server.held) await server.held;
     if (server.down) throw new TypeError('Failed to fetch');
     const body = (typeof init.body === 'string' ? JSON.parse(init.body) : {}) as Record<string, string>;
     const email = body.email?.trim().toLowerCase();
