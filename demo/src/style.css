@@ -461,6 +461,17 @@ pre {
   background: light-dark(#33353a, #d9dadc);
 }
 
+/* A call under way: the button waits, like a disabled one. */
+.api-method[data-busy] .api-execute {
+  opacity: 0.6;
+  cursor: default;
+}
+
+#last-response {
+  width: min(560px, 100%);
+  box-sizing: border-box;
+}
+
 /* The sign-in methods and their policies in the admin panel. */
 .methods {
   border-collapse: collapse;

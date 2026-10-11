@@ -32,7 +32,11 @@ let authenticator = false;
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 // The API explorer: a row per method, opened to its parameters, the request and the response.
 const row = (id: string) => $<HTMLLIElement>(`.api-method[data-call="${id}"]`);
-const open = (id: string) => row(id).querySelector<HTMLButtonElement>('.api-row')!.click();
+const detail = (id: string) => row(id).querySelector<HTMLElement>('.api-detail')!;
+/** Opens a row (a click on an open row would close it). */
+const open = (id: string) => {
+  if (detail(id).hidden) row(id).querySelector<HTMLButtonElement>('.api-row')!.click();
+};
 const execute = (id: string) => row(id).querySelector<HTMLButtonElement>('.api-execute')!;
 const request = (id: string) => row(id).querySelector('.api-request')!.textContent;
 const response = (id: string) => row(id).querySelector('.api-response')!.textContent;
@@ -210,10 +214,10 @@ describe('demo page', () => {
     expect($('#amr').textContent).toBe('');
 
     // A row opens to its request; executing it shows the response.
-    expect(row('getSession').querySelector<HTMLElement>('.api-detail')!.hidden).toBe(true);
+    expect(detail('getSession').hidden).toBe(true);
     open('getSession');
-    expect(row('getSession').querySelector<HTMLElement>('.api-detail')!.hidden).toBe(false);
-    expect(request('getSession')).toBe('GET /auth/session\n(no body)');
+    expect(detail('getSession').hidden).toBe(false);
+    expect(request('getSession')).toBe('Madauth.getSession()\n(no arguments)');
     execute('getSession').click();
     await expect.poll(() => response('getSession')).toContain('"isSuccess": true');
     type(param('getClaims', 'email'), 'someone@example.com');
@@ -225,7 +229,7 @@ describe('demo page', () => {
     expect($('#api').hidden).toBe(true);
     // Nothing of the previous user stays for the next one: the rows are closed, the fields and responses empty.
     expect(param('getClaims', 'email').value).toBe('');
-    expect(row('getSession').querySelector<HTMLElement>('.api-detail')!.hidden).toBe(true);
+    expect(detail('getSession').hidden).toBe(true);
     expect(response('getSession')).toBe('');
     expect($('#totp-output').hidden).toBe(true);
     expect($('#output').textContent).toBe('');
@@ -239,7 +243,7 @@ describe('demo page', () => {
     await expect.poll(() => execute('setSettings').disabled).toBe(false);
 
     open('getSettings');
-    expect(request('getSettings')).toBe('POST /auth/admin/settings/get\n{}');
+    expect(request('getSettings')).toBe('Madauth.admin.getSettings()\n(no arguments)');
     execute('getSettings').click();
     await expect.poll(() => response('getSettings')).toContain('"enabled": false');
     expect($<HTMLInputElement>('#method-google').checked).toBe(true);
@@ -255,7 +259,7 @@ describe('demo page', () => {
     $<HTMLInputElement>('#method-totp').checked = true;
     changed($('#method-totp'));
     expect(request('setSettings')).toBe(
-      `POST /auth/admin/settings/set\n${JSON.stringify({ methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true } }, null, 2)}`,
+      `Madauth.admin.setSettings({ methods })\n${JSON.stringify({ methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true } }, null, 2)}`,
     );
     execute('setSettings').click();
     await expect.poll(() => settings.password.enabled).toBe(true);
@@ -269,13 +273,13 @@ describe('demo page', () => {
     expect(execute('setSettings').disabled).toBe(false);
 
     open('sessionReady');
-    expect(request('sessionReady')).toBe('No request of its own: waits for the session\n(no body)');
+    expect(request('sessionReady')).toBe('Madauth.sessionReady()\n(no arguments)');
     execute('sessionReady').click();
     await expect.poll(() => response('sessionReady')).toBe('true');
 
     open('setClaims');
     type(param('setClaims', 'claims'), '{ "plan": "pro" }');
-    expect(request('setClaims')).toBe(`POST /auth/admin/claims/set\n${JSON.stringify({ email: 'ada@example.com', claims: { plan: 'pro' } }, null, 2)}`);
+    expect(request('setClaims')).toBe(`Madauth.admin.setClaims(email, claims)\n${JSON.stringify({ email: 'ada@example.com', claims: { plan: 'pro' } }, null, 2)}`);
     execute('setClaims').click();
     await expect.poll(() => response('setClaims')).toContain('"plan": "pro"');
     const [, init] = vi.mocked(fetch).mock.calls.at(-1) as [string, RequestInit];
@@ -290,9 +294,17 @@ describe('demo page', () => {
     expect(vi.mocked(fetch).mock.calls.length).toBe(calls);
 
     open('getClaims');
-    expect(request('getClaims')).toBe(`POST /auth/admin/claims/get\n${JSON.stringify({ email: 'ada@example.com' }, null, 2)}`);
+    expect(request('getClaims')).toBe(`Madauth.admin.getClaims(email)\n${JSON.stringify({ email: 'ada@example.com' }, null, 2)}`);
     execute('getClaims').click();
     await expect.poll(() => response('getClaims')).toContain('"userId": "usr_1"');
+
+    // The two admin calls target the same address: typed into one, it is in the other as well.
+    type(param('setClaims', 'claims'), '{ "plan": "pro" }');
+    type(param('getClaims', 'email'), 'bob@example.com');
+    expect(param('setClaims', 'email').value).toBe('bob@example.com');
+    expect(request('setClaims')).toContain('"email": "bob@example.com"');
+    type(param('setClaims', 'email'), 'ada@example.com');
+    expect(param('getClaims', 'email').value).toBe('ada@example.com');
   });
 
   it('shows the authenticator app as set up, and removes it with a code', async () => {
@@ -305,6 +317,18 @@ describe('demo page', () => {
     expect($('[data-call="removeAuthenticator"]').hidden).toBe(false);
     expect($('[data-call="newRecoveryCodes"]').hidden).toBe(false);
     expect($('.authenticator .code-field').hidden).toBe(false);
+    // With the app, deleting the account takes a code: the open row says so right away.
+    open('deleteAccount');
+    expect($('[data-needs-authenticator]').hidden).toBe(false);
+    expect(request('deleteAccount')).toContain('"code"');
+
+    // Signing out forgets the app at once, before the next user's status arrives.
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    expect($('[data-needs-authenticator]').hidden).toBe(true);
+    expect($('.authenticator .code-field').hidden).toBe(true);
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $('#totp-status').textContent).toBe('Set up, 10 recovery codes left.');
 
     $<HTMLInputElement>('#totp-code').value = '000000';
     $<HTMLButtonElement>('[data-call="removeAuthenticator"]').click();
@@ -318,25 +342,32 @@ describe('demo page', () => {
     $<HTMLButtonElement>('[data-call="removeAuthenticator"]').click();
     await expect.poll(() => $('#totp-status').textContent).toBe('Not set up.');
     expect($('[data-call="removeAuthenticator"]').hidden).toBe(true);
+    // Without the app, deleteAccount's request follows at once.
+    open('deleteAccount');
+    expect($('[data-needs-authenticator]').hidden).toBe(true);
+    expect(request('deleteAccount')).toBe('Madauth.deleteAccount()\n(no arguments)');
     const [, sent] = [...vi.mocked(fetch).mock.calls].reverse().find(([url]: [unknown, RequestInit?]) => String(url).endsWith('/auth/totp/remove')) as [string, RequestInit];
     expect(JSON.parse(String(sent.body))).toEqual({ code: '123456' });
   });
 
-  it('deletes the account only after a confirmation', async () => {
-    // Without the app (removed above) no code is asked for.
-    expect($('[data-needs-authenticator]').hidden).toBe(true);
+  it('deletes the account only after a confirmation, and shows the result below the sign-in button', async () => {
     open('deleteAccount');
-    expect(request('deleteAccount')).toBe('POST /auth/account/delete\n(no body)');
     vi.mocked(confirm).mockReturnValueOnce(false);
     execute('deleteAccount').click();
     await expect.poll(() => response('deleteAccount')).toBe('Cancelled.');
     expect($('#sign-in').hidden).toBe(true);
+    expect($('#last-response').hidden).toBe(true);
 
     execute('deleteAccount').click();
 
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     expect($('#api').hidden).toBe(true);
     expect(sessionUser).toBeNull();
+    // The API is gone with the session, so the result lands where the user can see it; the rows are clean.
+    await expect.poll(() => $('#last-response').hidden).toBe(false);
+    expect($('#last-response').textContent).toContain('Madauth.deleteAccount()');
+    expect($('#last-response').textContent).toContain('"isSuccess": true');
+    expect(response('deleteAccount')).toBe('');
   });
 
   it('tells a user without the role admin why the admin calls fail, and loads no settings for them', async () => {
@@ -346,6 +377,8 @@ describe('demo page', () => {
     gis.callback!({ credential: 'token' });
 
     await expect.poll(() => $('#api').hidden).toBe(false);
+    // The previous user's deletion result is gone with the new sign-in.
+    expect($('#last-response').hidden).toBe(true);
     expect($('#admin-note').hidden).toBe(false);
     expect($('#admin-note').textContent).toContain('forbidden');
     // The sentence about madauth.com is only for that host.
