@@ -110,8 +110,8 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
 };
 
 /**
- * Modal sign-in dialog listing all madAuth login methods. Usually opened with `Madauth.signIn()`, which
- * creates it when the page has none; add it to your HTML yourself only to customize it.
+ * Modal sign-in dialog listing the login methods passed to `Madauth.initialize`. Usually opened with
+ * `Madauth.signIn()`, which creates it when the page has none; add it to your HTML yourself only to customize it.
  *
  * It is built only on the public `Madauth` API, so a custom login screen can do everything it does.
  *
@@ -382,11 +382,6 @@ export class MadauthLogin extends LitElement {
   }
 
   private onMethodChosen(m: LoginMethod): void {
-    if (!providerFor(m.id)) {
-      this.error = null;
-      this.notice = (strings) => strings.comingSoon(strings.methods[m.id].label);
-      return;
-    }
     if (m.id === 'totp' && this.totpAvailable) {
       this.useRecovery = false;
       this.goTo('totp');
@@ -632,12 +627,12 @@ export class MadauthLogin extends LitElement {
   }
 
   private renderSignInView() {
-    const google = loginMethods.find((m) => m.id === 'google');
-    const password = loginMethods.find((m) => m.id === 'password');
-    // The authenticator app is listed when it signs in on its own; with its provider but without that, not at all.
-    // Once madAuth is initialized, the app is listed only when it signs in on its own here: it is implemented,
-    // so it is never "coming soon" then.
-    const others = loginMethods.filter((m) => m !== google && m !== password && (m.id !== 'totp' || !this.usable || this.totpAvailable));
+    // Only the methods whose provider was passed to Madauth.initialize (and not left out because the server
+    // doesn't offer them) are listed. The authenticator app is listed only when it signs in on its own here.
+    const offered = loginMethods.filter((m) => providerFor(m.id) && (m.id !== 'totp' || this.totpAvailable));
+    const google = offered.find((m) => m.id === 'google');
+    const password = offered.find((m) => m.id === 'password');
+    const others = offered.filter((m) => m !== google && m !== password);
     const s = this.strings;
     return html`
       ${google ? this.renderGoogle(google) : null}

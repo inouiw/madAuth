@@ -54,9 +54,9 @@ describe('<madauth-login> with e-mail & password', () => {
     fakeGis();
     void openDialog([new GoogleFedcm({ autoPrompt: false })]);
     await settle();
+    expect($('form.signin')).toBeNull();
     expect($('[data-action="forgot"]')).toBeNull();
-    await click('[data-method="password"]');
-    expect($('.notice')!.textContent).toContain('coming soon');
+    expect($('[data-action="signup"]')).toBeNull();
     login().close();
 
     void openDialog();
@@ -350,7 +350,7 @@ describe('<madauth-login> with e-mail & password', () => {
     expect(element.shadowRoot!.activeElement).toBe($('form.signin input[name="password"]'));
   });
 
-  it('signIn({ email }) fills the field without the Password provider, but leaves the focus alone', async () => {
+  it('signIn({ email }) opens the dialog without the Password provider, which has no e-mail field then', async () => {
     fakeServer();
     fakeGis();
 
@@ -360,8 +360,8 @@ describe('<madauth-login> with e-mail & password', () => {
     void Madauth.signIn({ email: 'grace@example.com' });
     await settle();
 
-    expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('grace@example.com');
-    expect(login().shadowRoot!.activeElement).not.toBe($('form.signin input[name="password"]'));
+    expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
+    expect($('input[name="email"]')).toBeNull();
   });
 
   it('signIn() without an e-mail leaves the field and the focus alone', async () => {
