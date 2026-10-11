@@ -107,12 +107,12 @@
           For users with the role <code>admin</code>, which is given on the server:
           <code>npx @madauth/server set-roles you@example.com admin</code>
         </p>
-        <!-- Shown to a signed-in user without the role. madauth.com gives it to nobody: see src/main.ts. -->
+        <!-- Shown to a signed-in user without the role. madauth.com gives it to no visitor: see src/main.ts. -->
         <p id="admin-note" class="note" hidden>
           You don't have the role, so these calls answer <code>forbidden</code>.
           <span data-hosted hidden>
-            Nobody gets it on madauth.com: an admin could change every visitor's claims and switch sign-in methods
-            off for everyone.
+            Visitors don't get it on madauth.com: an admin could change every visitor's claims and switch sign-in
+            methods off for everyone.
           </span>
           To try the admin API, <a href="https://github.com/inouiw/madAuth#getting-started">run the demo on your machine</a>
           and give yourself the role: <code>npm run cli -w packages/server -- set-roles you@example.com admin</code>

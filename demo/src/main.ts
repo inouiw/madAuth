@@ -26,7 +26,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('button.info')
 
 const google = flow === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();
 
-// The public demo gives nobody the role admin: an admin could change every visitor's claims and switch
+// The public demo gives no visitor the role admin: an admin could change every visitor's claims and switch
 // sign-in methods off for everyone. Visitors are told so, and how to try the admin API on their machine.
 const { hostname } = location;
 $('[data-hosted]').hidden = !(hostname === 'madauth.com' || hostname.endsWith('.madauth.com'));
