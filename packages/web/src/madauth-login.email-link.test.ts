@@ -69,7 +69,7 @@ describe('<madauth-login> and the e-mail link', () => {
 
     void openDialog();
     await settle();
-    expect(text('[data-method="email-link"]')).toBe('E-mail link');
+    expect(text('[data-method="email-link"]')).toBe('Email link');
     expect(text('.others h3')).toBe('Other ways to sign in');
   });
 
@@ -82,17 +82,24 @@ describe('<madauth-login> and the e-mail link', () => {
     login().addEventListener('madauth-signed-in', (e) => onSignedIn(e.detail));
 
     await click('[data-method="email-link"]');
-    expect(text('h2')).toBe('Sign in with an e-mail link');
+    expect(text('h2')).toBe('Sign in with an email link');
     expect($('form.email-link input[name="email"]')).not.toBeNull();
+    // `email`, not `username`: without a password, password managers have nothing to fill.
+    expect($('form.email-link input[name="email"]')!.getAttribute('autocomplete')).toBe('email');
+    // A new user learns that the link makes the account, and everyone what the code is for.
+    expect(text('p.lead')).toBe('We’ll email you a link to sign in. New here? The link creates your account.');
+    expect(text('p.hint')).toBe('The email also has a code, for when you open it on another device.');
+    // The row that led here is gone: the focus moved to the address field, not to the page behind.
+    expect(login().shadowRoot!.activeElement).toBe($('form.email-link input[name="email"]'));
     fill({ email: linda.email });
     await submit('email-link');
 
     expect(text('h2')).toBe('Check your inbox');
-    expect(text('p.lead')).toBe(`We sent an e-mail to ${linda.email}. Open the link in it to sign in, or enter the 6-digit code from the e-mail.`);
+    expect(text('p.lead')).toBe(`We sent an email to ${linda.email}. Open the link in it to sign in, or enter the 6-digit code from the email.`);
     expect(server.mails.at(-1)).toMatchObject({ purpose: 'signin', to: linda.email });
     await click('[data-action="resend"]');
     expect(server.mails.filter((m) => m.purpose === 'signin')).toHaveLength(2);
-    expect(text('.notice[role="status"]')).toBe('We sent the e-mail again.');
+    expect(text('.notice[role="status"]')).toBe('We sent the email again.');
 
     fill({ code: '000000' });
     await submit('code');
@@ -120,14 +127,14 @@ describe('<madauth-login> and the e-mail link', () => {
     server.rejectSignUp = undefined;
     server.emailsDown = true;
     await submit('email-link');
-    expect(text('[part="error"]')).toBe('Sending e-mails is not available right now. Please try again later.');
+    expect(text('[part="error"]')).toBe('Sending emails is not available right now. Please try again later.');
     server.emailsDown = false;
     await submit('email-link');
     expect(text('h2')).toBe('Check your inbox');
     server.locked = true;
     fill({ code: CODE });
     await submit('code');
-    expect(text('[part="error"]')).toBe('Too many wrong codes. Please ask for a new e-mail and use the link in it.');
+    expect(text('[part="error"]')).toBe('Too many wrong codes. Please ask for a new email and use the link in it.');
 
     await click('[data-action="back"]');
     expect(text('h2')).toBe('Sign in');

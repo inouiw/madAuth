@@ -61,7 +61,7 @@ Use `::part()` to style an element directly.
 | `error` | The message shown when a sign-in fails. |
 | `form` | Each form: sign in (`signin`), create account (`signup`), forgot password (`forgot`), code (`code`), new password (`reset`), the e-mail link (`email-link`), the authenticator app's: sign in with it (`totp`), the second step (`totp-code`), the setup (`totp-setup`), and the SMS code's: the second step (`sms-code`), adding a phone (`sms-setup`, `sms-setup-code`). The class names tell them apart. |
 | `input` | Each text field. |
-| `link` | The text buttons: "Forgot password?", "Create account", "Back to sign in", "Send the e-mail again", "Use a recovery code instead", "Send a code by SMS instead", "Use your phone number instead", "Cancel", "Start again". |
+| `link` | The text buttons: "Forgot password?", "No account? Create one", "Already have an account? Sign in" (only the action, a `<span>`, is underlined), "Back to sign in", "Send the email again", "Use a recovery code instead", "Send a code by SMS instead", "Use your phone number instead", "Cancel", "Start again". |
 | `qr` | The QR code of the authenticator app's key: an inline SVG whose modules are drawn in its text color, black on a white background. Keep it dark on light; not every authenticator app reads an inverted code. |
 | `codes` | The list of recovery codes, shown once after the setup. |
 | `strength` | The strength meter under a new password (create account, new password): four bars and a word. It has `data-score` (0 to 4), and `data-too-easy` while the password is below the server's `minScore`. |

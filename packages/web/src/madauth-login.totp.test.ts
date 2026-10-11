@@ -131,7 +131,7 @@ describe('<madauth-login> and the authenticator app on its own', () => {
     fill({ email: 'grace@example.com', code: '000000' });
     await submit('totp');
     expect($('[part="error"]')!.dataset.code).toBe('invalid_credentials');
-    expect(text('[part="error"]')).toContain('E-mail or code is wrong. To sign in with an authenticator app, set it up first');
+    expect(text('[part="error"]')).toContain('Email or code is wrong. To sign in with an authenticator app, set it up first');
     expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
     server.locked = true;
     await submit('totp');
@@ -168,7 +168,7 @@ describe('<madauth-login> and the authenticator app on its own', () => {
 
     expect(text('h2')).toBe('Create account');
     expect($('form.signup input[name="password"]')).toBeNull();
-    expect(text('.hint')).toBe('You will set up your authenticator app after confirming your e-mail address.');
+    expect(text('.hint')).toBe('You will set up your authenticator app after confirming your email address.');
     fill({ email: 'new@example.com', name: 'New User' });
     await submit('signup');
     expect(text('h2')).toBe('Check your inbox');
@@ -184,6 +184,8 @@ describe('<madauth-login> and the authenticator app on its own', () => {
     fill({ code: CODE });
     await submit('totp-setup');
     expect(text('h2')).toBe('Save your recovery codes');
+    // A view without a field: the focus moves to its heading.
+    expect(login().shadowRoot!.activeElement).toBe($('h2'));
     expect($$('[part="codes"] li').map((li) => li.textContent!.trim())).toEqual(RECOVERY_CODES);
     await click('[data-action="saved"]');
 
@@ -340,7 +342,7 @@ describe('Madauth.setUpAuthenticator', () => {
     expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
     expect(text('h2')).toBe('Set up authenticator app');
     expect(text('.lead')).toBe('Scan this QR code with your authenticator app (e.g. Google Authenticator or 1Password), then enter the code it shows.');
-    expect(text('.hint')).toBe('From then on, signing in with E-mail & password also asks for a code from the app.');
+    expect(text('.hint')).toBe('From then on, signing in with Email & password also asks for a code from the app.');
     expect($('[part="qr"] path')).not.toBeNull();
     expect(text('.secret')).toBe('JBSW Y3DP EHPK 3PXP');
     expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/totp/setup` });
@@ -381,9 +383,9 @@ describe('Madauth.setUpAuthenticator', () => {
 
     const result = Madauth.setUpAuthenticator();
     await settle();
-    expect(text('.hint')).toBe('From then on, signing in with E-mail & password also asks for a code from the app.');
+    expect(text('.hint')).toBe('From then on, signing in with Email & password also asks for a code from the app.');
     // The app signs in on its own on this server, but only for people who signed up with it: for Grace it is a step of her password.
-    expect($$('.hint').map((hint) => hint.textContent!.trim())).not.toContain('You can then sign in with your e-mail address and a code from the app.');
+    expect($$('.hint').map((hint) => hint.textContent!.trim())).not.toContain('You can then sign in with your email address and a code from the app.');
     fill({ code: CODE });
     await submit('totp-setup');
     await click('.close');

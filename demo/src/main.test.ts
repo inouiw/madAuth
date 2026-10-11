@@ -164,7 +164,7 @@ describe('demo page', () => {
     expect(buttons[0].textContent).toBe('Sign in');
   });
 
-  it('marks One Tap / FedCM as the current demo and links to the redirect demo', () => {
+  it('marks the in-browser flow (One Tap / FedCM) as the current demo and links to the redirect demo', () => {
     const links = [...document.querySelectorAll<HTMLAnchorElement>('#flow a')];
     expect(links.map((a) => a.dataset.flow)).toEqual(['fedcm', 'redirect']);
     expect(links[0].getAttribute('aria-current')).toBe('page');
@@ -178,7 +178,7 @@ describe('demo page', () => {
     expect($('#flow-info').hidden).toBe(false);
     expect(info.getAttribute('aria-expanded')).toBe('true');
     expect($('.flow-description[data-flow="fedcm"]').getAttribute('aria-current')).toBe('true');
-    expect($('.flow-description[data-flow="fedcm"]').textContent).toContain('One Tap / FedCM (current)');
+    expect($('.flow-description[data-flow="fedcm"]').textContent).toContain('In the browser (current)');
     expect($('.flow-description[data-flow="redirect"]').getAttribute('aria-current')).toBeNull();
     expect($('.flow-description[data-flow="redirect"]').textContent).not.toContain('(current)');
     expect($('#flow-info').textContent).toContain('new GoogleFedcm()');

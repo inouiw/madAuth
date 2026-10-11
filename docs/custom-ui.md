@@ -84,14 +84,15 @@ Use these `autocomplete` values so browsers offer to save and fill passwords and
 
 | Field | `autocomplete` |
 | --- | --- |
-| E-mail | `email` (or `username`) |
+| E-mail, next to a password | `username` (with `type="email"`: password managers save and fill it together with the password) |
+| E-mail without a password (e-mail link, forgot password, authenticator app) | `email` |
 | Password when signing in | `current-password` |
 | Password when signing up or resetting | `new-password` |
 | Code from the e-mail, or from an SMS | `one-time-code` |
 | Code from the authenticator app, or a recovery code | `off` |
 | Phone number | `tel` |
 
-`one-time-code` lets Safari and iOS fill the code from Mail or Messages, and lets password managers offer a stored authenticator code. The iCloud Passwords extension for Chrome, though, opens its panel on every such field even with nothing stored for the site, so the dialog uses `off` for the authenticator code and keeps `one-time-code` for the e-mail and SMS codes, where the panel still appears in Chrome. The dialog's [`code-autocomplete` attribute](styling.md#attributes) switches the authenticator fields to `one-time-code`.
+`one-time-code` lets Safari and iOS fill the code from Mail or Messages, and lets password managers offer a stored authenticator code. The iCloud Passwords extension for Chrome, though, opens its panel on every such field even with nothing stored for the site, so the dialog uses `off` for the authenticator code and keeps `one-time-code` for the e-mail and SMS codes, where the panel still appears in Chrome. The dialog's [`code-autocomplete` attribute](styling.md#attributes) switches the authenticator fields to `one-time-code`. The extension does the same on a `username` field, which is why an address field without a password gets `email`.
 
 ## E-mail link: `Madauth.emailLink`
 
