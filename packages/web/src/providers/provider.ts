@@ -68,7 +68,8 @@ export interface ProviderContext {
   /** A sign-in succeeded (also when it happened outside the dialog, e.g. One Tap). */
   signedIn(user: MadauthUser): void;
   /**
-   * A sign-in failed outside the dialog (e.g. after the redirect flow); shown the next time the dialog opens.
+   * A sign-in failed outside the dialog (e.g. after the redirect flow): with `ui: 'dialog'` and nobody signed
+   * in, the dialog opens by itself and shows it; otherwise it is shown the next time the dialog opens.
    * A `totp_required`, `sms_required` or `totp_setup_required` error is not a failure: the sign-in goes on
    * with its second step, see {@link signInContinues}.
    */

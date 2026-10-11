@@ -11,6 +11,12 @@ import { fileURLToPath } from 'node:url';
 /** The events a receiver that sends the e-mails handles, e.g. the aws-ses-mailer of madAuth-webhooks. */
 export const EMAIL_EVENTS = ['email.send_verification', 'email.send_password_reset', 'email.send_already_registered', 'email.send_password_reset_no_password'] as const;
 
+/**
+ * {@link EMAIL_EVENTS} and the sign-in e-mail of the e-mail link (`email.send_signin_link`), so an admin can
+ * switch that method on. The receiver must send it, e.g. the aws-ses-mailer from madAuth 0.5 on.
+ */
+export const EMAIL_LINK_EVENTS = [...EMAIL_EVENTS, 'email.send_signin_link'] as const;
+
 /** How madAuth's Lambda functions are bundled: one ESM file, with the AWS SDK left to the runtime. */
 export const lambdaBundling: nodejs.BundlingOptions = {
   format: nodejs.OutputFormat.ESM,
@@ -37,7 +43,8 @@ export interface MadAuthServerProps {
   readonly secretsPath?: string;
   /**
    * WEBHOOK_URL and WEBHOOK_EVENTS, e.g. the aws-ses-mailer of madAuth-webhooks. E-mail & password sign-in
-   * is on when the events include the e-mails; default: {@link EMAIL_EVENTS}. Without a webhook, Google and GitHub only.
+   * is on when the events include the e-mails; default: {@link EMAIL_EVENTS}. The e-mail link needs
+   * `email.send_signin_link` as well, e.g. {@link EMAIL_LINK_EVENTS}. Without a webhook, Google and GitHub only.
    */
   readonly webhook?: { readonly url: string; readonly events?: readonly string[] };
   /** More environment variables, e.g. `SESSION_TTL` or `TOTP_ISSUER` (see docs/server.md). */

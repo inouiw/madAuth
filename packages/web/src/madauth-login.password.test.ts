@@ -7,7 +7,7 @@ import { GoogleFedcm } from './providers/google-fedcm.js';
 import { GoogleRedirect } from './providers/google-redirect.js';
 import { Password } from './providers/password.js';
 import type { SignInProvider } from './providers/provider.js';
-import { CODE, SERVER, fakeGis, fakeServer, grace, resetAll, settle } from './test-helpers.js';
+import { CODE, SERVER, ada, fakeGis, fakeServer, grace, resetAll, settle } from './test-helpers.js';
 
 beforeEach(() => {
   resetAll();
@@ -50,6 +50,29 @@ async function openDialog(providers: SignInProvider[] = [new Password()]) {
 }
 
 describe('<madauth-login> with e-mail & password', () => {
+  it('opened from a confirmation link that failed, the dialog opens by itself with the error', async () => {
+    fakeServer();
+    history.replaceState(null, '', '/page#madauth_verify=used-up');
+
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    await settle();
+
+    expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
+    expect($('.error')?.getAttribute('data-code')).toBe('link_invalid');
+  });
+
+  it('opened from a used-up confirmation link while signed in, the dialog stays closed', async () => {
+    fakeServer().user = ada;
+    history.replaceState(null, '', '/page#madauth_verify=used-up');
+    const signIn = vi.spyOn(Madauth, 'signIn');
+
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    await settle();
+
+    expect(signIn).not.toHaveBeenCalled();
+    expect(Madauth.currentUser).toEqual(ada);
+  });
+
   it('D1: offers the form, "Forgot password?" and "Create account" only with the provider', async () => {
     fakeServer();
     fakeGis();

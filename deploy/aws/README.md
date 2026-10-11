@@ -58,7 +58,7 @@ Set your values in [`cdk.json`](cdk.json) under `context`:
 | `githubClientId` | `Iv1.0123456789abcdef` | Empty: no GitHub sign-in. With one, step 2 needs the client secret |
 | `secretsPath` | `/madauth` | Where step 2 stored the secrets |
 | `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: Google and GitHub sign-in only |
-| `webhookEvents` | `email.send_verification,email.send_password_reset,email.send_already_registered` | What the receiver handles. This default turns on e-mail & password sign-in. |
+| `webhookEvents` | `email.send_verification,email.send_password_reset,email.send_already_registered` | What the receiver handles. This default turns on e-mail & password sign-in; add `email.send_signin_link` for the e-mail link. |
 
 Then deploy:
 
@@ -86,14 +86,15 @@ For Google's redirect flow, also add `https://example.com/auth/google/callback` 
 Copy `lib/madauth-server.ts` and `lambda/server.ts` into your app, or install this folder (`npm install <path>/deploy/aws`). Then use it:
 
 ```ts
-import { MadAuthServer } from '@madauth/deploy-aws';
+import { EMAIL_LINK_EVENTS, MadAuthServer } from '@madauth/deploy-aws';
 
 const madauth = new MadAuthServer(this, 'MadAuth', {
   issuer: 'https://example.com',
   googleClientId: '123.apps.googleusercontent.com',
   githubClientId: 'Iv1.0123456789abcdef',
   secretsPath: '/madauth',
-  webhook: { url: mailerUrl, events: ['email.send_verification', 'email.send_password_reset', 'email.send_already_registered', 'email.send_password_reset_no_password'] },
+  // The e-mails of e-mail & password and of the e-mail link; EMAIL_EVENTS without the e-mail link.
+  webhook: { url: mailerUrl, events: EMAIL_LINK_EVENTS },
   reservedConcurrentExecutions: 10,
 });
 // madauth.functionUrl, madauth.function, madauth.table

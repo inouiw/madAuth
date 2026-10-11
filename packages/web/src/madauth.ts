@@ -23,7 +23,7 @@ export interface MadauthOptions {
   /**
    * `'dialog'` (default): madAuth's sign-in dialog, opened with `Madauth.signIn()`; it also opens by itself
    * when the page was opened from a password reset link, when a sign-in goes on with a second step, or with
-   * the error of a redirect sign-in or a link that failed.
+   * the error of a sign-in that failed outside it (a redirect, a link, One Tap) while nobody is signed in.
    * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.github`, `Madauth.totp`,
    * `Madauth.emailLink` and `Madauth.sms`; the dialog never opens.
    */
@@ -135,7 +135,20 @@ function nextStepOf(error: MadauthError): PendingStep | undefined {
 /** A sign-in outside the dialog goes on with its second step: the dialog opens on that step. */
 function continueSignIn(pending: PendingStep): void {
   stepPending(pending);
-  if (state?.ui === 'dialog') queueMicrotask(() => void Madauth.signIn());
+  openDialogSoon();
+}
+
+/** Whether the dialog is about to open by itself, so a page load with a reason or two opens it once. */
+let dialogQueued = false;
+
+/** Opens madAuth's dialog by itself (with `ui: 'dialog'`) once madAuth is ready. */
+function openDialogSoon(): void {
+  if (state?.ui !== 'dialog' || dialogQueued) return;
+  dialogQueued = true;
+  void whenReady().then(() => {
+    dialogQueued = false;
+    void Madauth.signIn();
+  });
 }
 
 /**
@@ -288,6 +301,9 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
       signInError ??= error;
       pendingError = error;
       console.error('[madauth]', error.code, error.message);
+      // The user left the dialog or the page to sign in (a redirect, a link, One Tap): the dialog shows why
+      // it failed. Not over a session, e.g. a confirmation link clicked again after it signed the user in.
+      if (!user) openDialogSoon();
     },
     signInContinues: continueSignIn,
   };
@@ -313,10 +329,7 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
     return failed(fail('flow_not_enabled', `No sign-in method is enabled on the madAuth server. ${notEnabled.join(' ')}`), leftOut);
   }
   // Opened from a password reset link: show the dialog's "new password" form once madAuth is ready.
-  if (target.ui === 'dialog' && Madauth.password.pendingReset) queueMicrotask(() => void Madauth.signIn());
-  // Back from a sign-in that failed outside the page (a redirect, a link): the dialog opens with the error,
-  // since the user left it to sign in.
-  else if (target.ui === 'dialog' && signInError) queueMicrotask(() => void Madauth.signIn());
+  if (Madauth.password.pendingReset) openDialogSoon();
   // A failed redirect sign-in is reported by initialize, but madAuth itself is ready.
   return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError, leftOut } : { isSuccess: true, leftOut } };
 }
@@ -667,6 +680,7 @@ export function resetMadauthForTests(): void {
   userKnown = false;
   pendingError = undefined;
   pendingStep = undefined;
+  dialogQueued = false;
   configuredLocale = undefined;
   listeners.clear();
   localeListeners.clear();
