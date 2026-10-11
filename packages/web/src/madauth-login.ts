@@ -726,7 +726,10 @@ export class MadauthLogin extends LitElement {
 
   // --- The authenticator app ---
 
-  /** The field for the code from the app, or for a recovery code. */
+  /**
+   * The field for the code from the app, or for a recovery code. Not `autocomplete="one-time-code"`: that makes
+   * the iCloud Passwords extension open its panel on the field even with nothing stored (see custom-ui.md).
+   */
   private codeField() {
     const s = this.strings;
     return this.useRecovery
@@ -739,7 +742,7 @@ export class MadauthLogin extends LitElement {
       : html`
           <div class="field">
             <label for="code">${s.appCode}</label>
-            <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" />
+            <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="off" maxlength="7" />
             <p class="hint">${s.totpHint}</p>
           </div>
         `;
@@ -841,7 +844,7 @@ export class MadauthLogin extends LitElement {
             <form part="form" class="totp-setup" @submit=${this.onConfirmSetup}>
               <div class="field">
                 <label for="code">${s.appCode}</label>
-                <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" />
+                <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="off" maxlength="7" />
               </div>
               <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
                 <span class="label">${s.totpSetup.turnOn}</span>

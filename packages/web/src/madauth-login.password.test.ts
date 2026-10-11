@@ -355,6 +355,7 @@ describe('<madauth-login> with e-mail & password', () => {
     expect([autocomplete('name'), autocomplete('email'), autocomplete('password')]).toEqual(['name', 'email', 'new-password']);
     await fill({ email: 'x@example.com', password: 'long enough' });
     await submit('signup');
+    // The code from the e-mail: Safari and iOS fill it from Mail and Messages.
     expect(autocomplete('code')).toBe('one-time-code');
   });
 
