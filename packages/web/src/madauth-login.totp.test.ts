@@ -310,7 +310,7 @@ describe('<madauth-login> and the second step', () => {
     await Madauth.signOut();
     login().remove();
     server.codeFlow = true;
-    server.challenge = { email: 'ada@example.com', next: 'totp', method: 'google' };
+    server.challenge = { email: 'ada@example.com', next: 'totp', method: 'google', factors: ['totp'] };
     history.replaceState(null, '', '/page?x=1#madauth_next=totp');
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect(), new Totp()] });
     await settle();

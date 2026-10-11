@@ -1,4 +1,15 @@
-import { GoogleFedcm, GoogleRedirect, Madauth, Password, Totp, type DeleteAccountOptions, type MadauthUser, type MethodsToSet, type Settings } from '@madauth/web';
+import {
+  EmailLink,
+  GoogleFedcm,
+  GoogleRedirect,
+  Madauth,
+  Password,
+  Totp,
+  type DeleteAccountOptions,
+  type MadauthUser,
+  type MethodsToSet,
+  type Settings,
+} from '@madauth/web';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -35,8 +46,9 @@ const { hostname } = location;
 $('[data-hosted]').hidden = !(hostname === 'madauth.com' || hostname.endsWith('.madauth.com'));
 
 // No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin. The authenticator
-// app is left out when the server has it switched off (no policy asks for it, and it signs in nobody alone).
-void Madauth.initialize({ providers: [google, new Password(), new Totp()] }).then((result) => {
+// app is left out when the server has it switched off (no policy asks for it, and it signs in nobody alone),
+// and the e-mail link when the server's webhook doesn't send its e-mails or an admin has it off.
+void Madauth.initialize({ providers: [google, new Password(), new Totp(), new EmailLink()] }).then((result) => {
   // The server offers the redirect flow only with a client secret (and Google switched on); otherwise
   // initialize left GoogleRedirect out and the dialog has no Google button.
   if (flow === 'redirect' && result.leftOut.includes('google')) $('#flow-note').hidden = false;
@@ -61,12 +73,13 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   $('#amr').textContent = user?.amr?.join(', ') ?? '';
 
   if (!user) {
-    // Nothing of the previous user stays on the page: the parameters, the responses, the settings, the app.
+    // Nothing of the previous user stays on the page: the parameters, the responses, the settings, the app, the phone.
     resetExplorer();
     $('#totp-output').hidden = true;
     output.textContent = '';
     $<HTMLInputElement>('#totp-code').value = '';
     showAuthenticator(false, false);
+    showPhone(false, false);
     settingsLoadedFor = undefined;
     showSettings(null);
     return;
@@ -78,6 +91,7 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   }
   $('#admin-note').hidden = isAdmin(user);
   void refreshAuthenticator();
+  void refreshPhone();
   // An admin sees the server's settings in the controls before they can send them back.
   if (isAdmin(user) && settingsLoadedFor !== user.id) {
     settingsLoadedFor = user.id;
@@ -129,7 +143,31 @@ function codeOptions(typed = $<HTMLInputElement>('#totp-code').value): { code: s
   return value.includes('-') || value.length > 7 ? { recoveryCode: value } : { code: value.replace(/\s/g, '') };
 }
 
-// --- The authenticator calls in the account section: each shows what it resolved to below the buttons ---
+// --- The phone for SMS codes, a second factor next to the app ---
+
+/** Shows whether the signed-in user has a phone number, and the buttons that apply. */
+async function refreshPhone(): Promise<void> {
+  const user = Madauth.currentUser;
+  const status = await Madauth.sms.status();
+  if (Madauth.currentUser?.id !== user?.id) return;
+  const offered = status.isSuccess || status.error.code !== 'flow_not_enabled';
+  $('#sms-status').textContent = !status.isSuccess
+    ? status.error.code === 'flow_not_enabled'
+      ? 'Not offered by this madAuth server: SMS codes are switched off.'
+      : status.error.message
+    : status.enabled
+      ? `Phone ${status.phone}.`
+      : 'No phone number.';
+  showPhone(status.isSuccess && status.enabled, offered);
+}
+
+function showPhone(on: boolean, offered: boolean): void {
+  $('[data-call="setUpSms"]').hidden = !offered;
+  $('[data-call="setUpSms"]').textContent = on ? 'Madauth.setUpSms() (replace)' : 'Madauth.setUpSms()';
+  $('[data-call="removeSms"]').hidden = !on;
+}
+
+// --- The authenticator and phone calls in the account section: each shows what it resolved to below the buttons ---
 
 const output = $('#output');
 const asText = (result: unknown) => (typeof result === 'string' ? result : JSON.stringify(result, null, 2));
@@ -144,6 +182,16 @@ const accountCalls: Record<string, () => Promise<unknown>> = {
   setUpAuthenticator: () => Madauth.setUpAuthenticator().then(async (result) => (await refreshAuthenticator(), result)),
   newRecoveryCodes: () => Madauth.totp.newRecoveryCodes(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
   removeAuthenticator: () => Madauth.totp.remove(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
+  // The dialog asks for the number, then for the code sent to it (and, replacing one, for a code to the current number first).
+  setUpSms: () => Madauth.setUpSms().then(async (result) => (await refreshPhone(), result)),
+  // Removing the number takes a code sent to it: send, ask for it, remove.
+  removeSms: async () => {
+    const sent = await Madauth.sms.send();
+    if (!sent.isSuccess) return sent;
+    const code = prompt(`The code we sent to ${sent.phone}:`);
+    if (!code) return 'Cancelled.';
+    return Madauth.sms.remove({ code: code.replace(/\s/g, '') }).then(async (result) => (await refreshPhone(), result));
+  },
 };
 
 for (const button of document.querySelectorAll<HTMLButtonElement>('.authenticator button[data-call]')) {
@@ -182,8 +230,10 @@ function api<A extends Args>(build: (values: Values) => A | string, call: (args:
   return { build, call: (args) => call(args as A) };
 }
 
-const methodBox = (method: 'google' | 'password' | 'totp') => $<HTMLInputElement>(`#method-${method}`);
-const policySelect = (method: 'google' | 'password') => $<HTMLSelectElement>(`#policy-${method}`);
+type MethodId = 'google' | 'password' | 'totp' | 'email-link' | 'sms';
+type WithPolicy = 'google' | 'password' | 'email-link';
+const methodBox = (method: MethodId) => $<HTMLInputElement>(`#method-${method}`);
+const policySelect = (method: WithPolicy) => $<HTMLSelectElement>(`#policy-${method}`);
 /** The user whose sign-in loaded the settings, so a claims change (which also notifies) doesn't load them again. */
 let settingsLoadedFor: string | undefined;
 /** Whether the controls show the server's settings; only then may setSettings send them. */
@@ -196,11 +246,11 @@ let settingsLoaded = false;
  */
 function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSettings>> | null>(result: T): T {
   const methods: Settings['methods'] | undefined = result?.isSuccess ? result.methods : undefined;
-  for (const method of ['google', 'password', 'totp'] as const) {
+  for (const method of ['google', 'password', 'totp', 'email-link', 'sms'] as const) {
     methodBox(method).checked = methods?.[method].enabled ?? false;
     methodBox(method).disabled = !methods?.[method].configured;
   }
-  for (const method of ['google', 'password'] as const) {
+  for (const method of ['google', 'password', 'email-link'] as const) {
     policySelect(method).value = methods?.[method].secondFactor ?? 'none';
     policySelect(method).disabled = !methods?.[method].configured;
   }
@@ -213,11 +263,13 @@ function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSetti
 
 /** The list to send: what is checked is on, with the policy next to it; the rest is off. */
 function methodsToSet(): MethodsToSet {
-  const policy = (method: 'google' | 'password') => ({ secondFactor: policySelect(method).value as 'none' | 'optional' | 'required' });
+  const policy = (method: WithPolicy) => ({ secondFactor: policySelect(method).value as 'none' | 'optional' | 'required' });
   return {
     google: methodBox('google').checked ? policy('google') : false,
     password: methodBox('password').checked ? policy('password') : false,
     totp: methodBox('totp').checked,
+    'email-link': methodBox('email-link').checked ? policy('email-link') : false,
+    sms: methodBox('sms').checked,
   };
 }
 

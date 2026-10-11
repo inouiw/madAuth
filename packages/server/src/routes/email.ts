@@ -47,6 +47,9 @@ export function emailRoutes(app: Hono, ctx: AppContext, users: Users, webhook: W
     if (!user) return emails.invalidVerification(c, consumed);
     const method = await signUpMethod(user.id);
     if (!(await ctx.enabled(c, method))) return disabled(c);
+    // The address is proven for this sign-up: the e-mail link account another unfinished sign-up set with it
+    // (perhaps by someone else) goes; a password of this sign-up stays.
+    if (!user.emailVerified) await users.dropUnprovenAccounts(user.id, method === 'password' ? 'password' : undefined);
     // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.
     await users.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
     const verified = { ...user, emailVerified: true, wrongCodes: 0 };

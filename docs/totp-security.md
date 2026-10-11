@@ -30,7 +30,7 @@ Code: `deriveTotpKey`, `encryptSecret` and `decryptSecret` in [`totp.ts`](../pac
 - A user who has an app gives a current code from it (or a recovery code) before a new key is issued: a new app replaces the old one and its recovery codes, and a stolen session alone must not swap them for the thief's. The approval holds for ten minutes in the setup cookie, so starting the setup again costs no second code and no second recovery code.
 - The new secret is not stored until the first code proves that the app has it. Until then it travels in a cookie (`madauth_totp_setup`, HttpOnly, ten minutes, only sent to `/auth/totp`), as a signed token that carries the user's id and the encrypted secret. A setup expires, is bound to its user, and can't be confirmed from another browser or by another user.
 - A new setup replaces the earlier app and its recovery codes, and resets the failed attempts. It confirms only the state it started in: the recovery codes are written first, under the setup's id, and the secret only if the account still has the setup it had when this one started (a compare-and-set write). Of two setups confirmed at once, exactly one wins; the other drops its codes and is told to start again. So the app and its recovery codes always belong together, and a code of a replaced app never works.
-- The setup screen says what the app will do: that signing in with the password (or Google) then asks for a code, and whether the app signs in on its own. Setting it up is the user's consent; an admin's policy can't make an account weaker than what the user agreed to, only ask for more.
+- The setup screen says what the app will do: that signing in with the password (or Google, or the e-mail link) then asks for a code, and whether the app signs in on its own. Setting it up is the user's consent; an admin's policy can't make an account weaker than what the user agreed to, only ask for more.
 
 Code: `/auth/totp/setup` and `/auth/totp/confirm` in [`routes/totp.ts`](../packages/server/src/routes/totp.ts).
 
@@ -46,10 +46,10 @@ Code: `generateRecoveryCodes`, `hashRecoveryCode` in [`totp.ts`](../packages/ser
 
 ## The second step
 
-After Google or a password whose policy asks for the app, the first step gives no session. Instead the server sets a challenge cookie (`madauth_challenge`, HttpOnly, ten minutes, only sent to `/auth/totp`): a signed token with the user's id, their session version, how they signed in so far and what comes next. The code, or the setup, turns it into the session.
+After Google, a password or an e-mail link whose policy asks for a second factor, the first step gives no session. Instead the server sets a challenge cookie (`madauth_challenge`, HttpOnly, ten minutes, sent to `/auth`): a signed token with the user's id, their session version, how they signed in so far, what comes next, and which factors can finish it (the app, and the phone when the user has one and [SMS codes](sms-security.md) are on; the app comes first). The code, or the setup, turns it into the session.
 
 - The challenge is bound to the user and to its step: a challenge for the setup can't be used to skip the setup with a code, and the other way round.
-- It finishes only while its method is still on: an admin who switches Google or password off also ends the sign-ins that were between their two steps.
+- It finishes only while its method is still on: an admin who switches Google, password or the e-mail link off also ends the sign-ins that were between their two steps.
 - Issuing it clears the session there was at that browser: a sign-in that reaches the second step signs out whoever was signed in until the step is done, so an abandoned step can't be taken for that user's own setup later.
 - A password reset in between ends the challenge (the session version changed), as it ends every session.
 - The session issued afterwards says how it was authenticated: `amr: ["pwd", "otp"]` or `["google", "otp"]`. The web library's `user.amr` and `createSessionVerifier` expose it, so a backend can require `otp` before a sensitive action. A webhook `user.signed_in` carries `secondFactor: "totp"` or `"recovery_code"`.
@@ -88,5 +88,4 @@ All `POST` routes of the app are accepted only from an `Origin` in `ALLOWED_ORIG
 
 - Trusted devices ("remember this browser for 30 days"): the code is asked for at every sign-in.
 - Apps that want SHA-256 or 8-digit codes; the QR code asks for the defaults every app supports.
-- SMS codes as a second factor.
 - Passkeys, which would also resist phishing; a code from the app can be phished like a password.

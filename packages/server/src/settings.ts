@@ -1,17 +1,25 @@
 // Settings that admins change while the server runs, kept in the store: which sign-in methods are on, which
-// of them ask for a second factor, and the rules for new passwords. See "Sign-in methods" and "Password
-// rules" in docs/server.md.
+// of them ask for a second factor, whether SMS codes are one, and the rules for new passwords. See "Sign-in
+// methods" and "Password rules" in docs/server.md.
 import type { Row, StoreAdapter } from './store/schema.js';
 
 /**
- * The primary sign-in methods madAuth has: Google, e-mail & password, and the authenticator app on its own
- * (the e-mail address and a code from the app).
+ * The primary sign-in methods madAuth has: Google, e-mail & password, the authenticator app on its own
+ * (`totp`: the e-mail address and a code from the app), and the passwordless e-mail link (`email-link`:
+ * the address, then the link or the code from an e-mail).
  */
-export const SIGN_IN_METHODS = ['google', 'password', 'totp'] as const;
+export const SIGN_IN_METHODS = ['google', 'password', 'totp', 'email-link'] as const;
 export type SignInMethod = (typeof SIGN_IN_METHODS)[number];
 
-/** The methods that can ask for a code from the authenticator app after they succeeded. */
-export const METHODS_WITH_SECOND_FACTOR = ['google', 'password'] as const;
+/**
+ * Every key of the methods setting: the primary methods, and `sms`, which signs nobody in by itself: SMS
+ * codes as a second factor of the methods whose policy asks for one, next to the authenticator app.
+ */
+export const METHODS = [...SIGN_IN_METHODS, 'sms'] as const;
+export type MethodId = (typeof METHODS)[number];
+
+/** The methods that can ask for a second factor (a code from the authenticator app) after they succeeded. */
+export const METHODS_WITH_SECOND_FACTOR = ['google', 'password', 'email-link'] as const;
 export type MethodWithSecondFactor = (typeof METHODS_WITH_SECOND_FACTOR)[number];
 
 /**
@@ -21,13 +29,13 @@ export type MethodWithSecondFactor = (typeof METHODS_WITH_SECOND_FACTOR)[number]
 export const SECOND_FACTOR_POLICIES = ['none', 'optional', 'required'] as const;
 export type SecondFactorPolicy = (typeof SECOND_FACTOR_POLICIES)[number];
 
-/** The settings of a method that is on. `secondFactor` is for Google and password; it defaults to `none`. */
+/** The settings of a method that is on. `secondFactor` is for the METHODS_WITH_SECOND_FACTOR; it defaults to `none`. */
 export interface MethodSetting {
   secondFactor?: SecondFactorPolicy;
 }
 
 /** The sign-in methods that are on, each with its settings. A method that is not listed is off. */
-export type MethodSettings = Partial<Record<SignInMethod, MethodSetting>>;
+export type MethodSettings = Partial<Record<MethodId, MethodSetting>>;
 
 /** The id of the setting that holds {@link MethodSettings}. */
 export const METHODS_SETTING = 'methods';
@@ -75,14 +83,21 @@ export interface MethodConfig {
   password?: object;
   /** The webhook sends the e-mails that confirm an address, so people can sign up. */
   emailVerification?: boolean;
+  /** The webhook sends the sign-in e-mails of the e-mail link (`email.signin`). */
+  emailLink?: boolean;
+  /** The webhook sends the SMS (`sms.code`). */
+  sms?: boolean;
 }
 
-const isSignInMethod = (value: string): value is SignInMethod => (SIGN_IN_METHODS as readonly string[]).includes(value);
+const isMethodId = (value: string): value is MethodId => (METHODS as readonly string[]).includes(value);
+/** Whether a method takes a `secondFactor` policy. */
+export const hasSecondFactor = (method: string): method is MethodWithSecondFactor =>
+  (METHODS_WITH_SECOND_FACTOR as readonly string[]).includes(method);
 const isPolicy = (value: unknown): value is SecondFactorPolicy => (SECOND_FACTOR_POLICIES as readonly unknown[]).includes(value);
 
 /**
  * Checks a methods setting and returns it as {@link MethodSettings}, or null if `input` is not one: an
- * object keyed by sign-in method, each `{}` (on) or `{ secondFactor }` (Google and password). With
+ * object keyed by method id, each `{}` (on) or `{ secondFactor }` (the methods with a second factor). With
  * `booleans`, as the admin API takes it, `true` means `{}` and `false` means left out; what is stored
  * never has them, so a value stored by madAuth 0.3 (booleans with another meaning) is not mistaken for one.
  */
@@ -90,7 +105,7 @@ export function parseMethodSettings(input: unknown, options: { booleans?: boolea
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const settings: MethodSettings = {};
   for (const [method, value] of Object.entries(input)) {
-    if (!isSignInMethod(method)) return null;
+    if (!isMethodId(method)) return null;
     if (typeof value === 'boolean') {
       if (!options.booleans) return null;
       if (value) settings[method] = {};
@@ -99,7 +114,7 @@ export function parseMethodSettings(input: unknown, options: { booleans?: boolea
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const setting: MethodSetting = {};
     for (const [field, fieldValue] of Object.entries(value as Record<string, unknown>)) {
-      if (field !== 'secondFactor' || method === 'totp' || !isPolicy(fieldValue)) return null;
+      if (field !== 'secondFactor' || !hasSecondFactor(method) || !isPolicy(fieldValue)) return null;
       setting.secondFactor = fieldValue;
     }
     settings[method] = setting;
@@ -108,31 +123,36 @@ export function parseMethodSettings(input: unknown, options: { booleans?: boolea
 }
 
 /** Whether the server has what a method needs; only a configured method can be on. */
-export function isConfigured(config: MethodConfig, method: SignInMethod): boolean {
+export function isConfigured(config: MethodConfig, method: MethodId): boolean {
   if (method === 'google') return !!config.google;
   if (method === 'password') return !!config.password;
+  if (method === 'email-link') return !!config.emailLink;
+  if (method === 'sms') return !!config.sms;
   // The authenticator app needs nothing but the store, which every server has.
   return true;
 }
 
 /**
- * Whether a method creates users on this server: Google and password when configured, the authenticator app
- * only when the webhook sends the confirmation e-mails (sign-up with it). An app that existing users set up
- * is no way in for anyone new.
+ * Whether a method creates users on this server: Google, password and the e-mail link when configured, the
+ * authenticator app only when the webhook sends the confirmation e-mails (sign-up with it). An app that
+ * existing users set up is no way in for anyone new.
  */
 export function canSignUp(config: MethodConfig, method: SignInMethod): boolean {
   return method === 'totp' ? !!config.emailVerification : isConfigured(config, method);
 }
 
 /**
- * The methods a server runs until an admin sets them: the configured ones, without a second factor. The
- * authenticator app on its own only when nothing else can create users, i.e. on an authenticator-only server.
+ * The methods a server runs until an admin sets them: the configured ones, without a second factor, and SMS
+ * codes when the webhook sends them. The authenticator app on its own only when nothing else can create
+ * users, i.e. on an authenticator-only server.
  */
 export function initialMethods(config: MethodConfig): MethodSettings {
   const methods: MethodSettings = {};
   if (config.google) methods.google = { secondFactor: 'none' };
   if (config.password) methods.password = { secondFactor: 'none' };
-  if (!config.google && !config.password && config.emailVerification) methods.totp = {};
+  if (config.emailLink) methods['email-link'] = { secondFactor: 'none' };
+  if (!config.google && !config.password && !config.emailLink && config.emailVerification) methods.totp = {};
+  if (config.sms) methods.sms = {};
   return methods;
 }
 
@@ -238,7 +258,7 @@ export class Settings {
 }
 
 /** Whether a method is on: configured on the server, and listed in the settings. */
-export function isOn(method: SignInMethod, configured: (method: SignInMethod) => boolean, methods: MethodSettings): boolean {
+export function isOn(method: MethodId, configured: (method: MethodId) => boolean, methods: MethodSettings): boolean {
   return configured(method) && methods[method] !== undefined;
 }
 
@@ -260,7 +280,7 @@ export function anyOn(signsUp: (method: SignInMethod) => boolean, methods: Metho
  * Whether the authenticator app is in use at all, so it can be set up: on its own, or as the second factor
  * of a method that is on.
  */
-export function authenticatorOn(configured: (method: SignInMethod) => boolean, methods: MethodSettings): boolean {
+export function authenticatorOn(configured: (method: MethodId) => boolean, methods: MethodSettings): boolean {
   if (isOn('totp', configured, methods)) return true;
   return METHODS_WITH_SECOND_FACTOR.some((method) => isOn(method, configured, methods) && policyOf(method, methods) !== 'none');
 }

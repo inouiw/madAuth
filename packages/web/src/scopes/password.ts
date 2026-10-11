@@ -1,6 +1,6 @@
 import { Password, clearResetToken, pendingResetToken } from '../providers/password.js';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
-import type { SecondFactorPolicy } from '../providers/provider.js';
+import { secondStepOf, type SecondFactorPolicy } from '../providers/provider.js';
 import { loadPasswordRating, type RatePassword } from '../strength.js';
 import type { Core } from './core.js';
 import { currentPage, emailConfirmation, signedIn, type SendEmailOptions } from './email.js';
@@ -139,7 +139,7 @@ export function createPasswordApi(core: Core): PasswordApi {
       }
       const result = signedIn(core, 'password', await call('/auth/password/reset', body));
       // A used or expired link stays useless, so forget it either way; a weak password can be retried.
-      const over = result.isSuccess || result.error.code === 'link_invalid' || result.error.code === 'totp_required' || result.error.code === 'totp_setup_required';
+      const over = result.isSuccess || result.error.code === 'link_invalid' || secondStepOf(result.error) !== undefined;
       if (over) clearResetToken(p);
       return result;
     },

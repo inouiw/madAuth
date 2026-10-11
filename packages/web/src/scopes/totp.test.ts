@@ -73,7 +73,7 @@ describe('Madauth.totp', () => {
 
     // The server's policy decides the second step; the page needs nothing for it.
     expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'totp_required' } });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password' });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password', factors: ['totp'] });
     expect(await Madauth.totp.verify({ code: CODE })).toEqual({ isSuccess: true, user: grace });
     expect(Madauth.totp.pendingStep).toBeNull();
     expect(await Madauth.totp.status()).toMatchObject({ isSuccess: true, enabled: true });
@@ -92,7 +92,7 @@ describe('Madauth.totp', () => {
 
     expect(result).toMatchObject({ isSuccess: false, error: { code: 'totp_required' } });
     expect(Madauth.currentUser).toBeNull();
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password' });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password', factors: ['totp'] });
     expect(await Madauth.totp.verify({ code: CODE })).toMatchObject({ isSuccess: true, user: { email: 'ada@example.com' } });
     expect(Madauth.currentUser?.email).toBe('ada@example.com');
   });
@@ -206,12 +206,12 @@ describe('Madauth.totp', () => {
     const first = await Madauth.password.signIn(credentials);
 
     expect(first).toMatchObject({ isSuccess: false, error: { code: 'totp_required', method: 'password' } });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password' });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password', factors: ['totp'] });
     expect(listener).not.toHaveBeenCalled();
     expect(Madauth.currentUser).toBeNull();
 
     expect(await Madauth.totp.verify({ code: '000000' })).toMatchObject({ isSuccess: false, error: { code: 'code_invalid' } });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password' });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password', factors: ['totp'] });
     const second = await Madauth.totp.verify({ recoveryCode: RECOVERY_CODES[1] });
     expect(second).toEqual({ isSuccess: true, user: grace });
     expect(listener).toHaveBeenLastCalledWith(grace);

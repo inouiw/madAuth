@@ -18,8 +18,7 @@ export const en = {
     google: { label: 'Continue with Google', description: 'Use your Google account' },
     password: { label: 'E-mail & password', description: 'Sign in with your e-mail address and password' },
     totp: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
-    email: { label: 'E-mail link', description: 'Passwordless sign-in by e-mail' },
-    sms: { label: 'SMS code', description: 'One-time code sent to your phone' },
+    'email-link': { label: 'E-mail link', description: 'Passwordless sign-in by e-mail' },
   } satisfies Record<LoginMethodId, { label: string; description: string }>,
 
   // Fields
@@ -62,6 +61,18 @@ export const en = {
   emailSentAgain: 'We sent the e-mail again.',
   chooseNewPassword: 'Choose a new password',
 
+  // The e-mail link
+  emailLink: {
+    heading: 'Sign in with an e-mail link',
+    lead: 'Enter your e-mail address. We will send you a link that signs you in, and a code.',
+    send: 'Send link',
+  },
+  /** The check-inbox lead after asking for a sign-in link; the e-mail address is shown between the two parts. */
+  signInInboxLead: {
+    before: 'We sent an e-mail to ',
+    after: '. Open the link in it to sign in, or enter the 6-digit code from the e-mail.',
+  },
+
   // The authenticator app
   cancel: 'Cancel',
   loading: 'Loading…',
@@ -103,9 +114,39 @@ export const en = {
     lead: 'If you lose your authenticator app, one of these codes signs you in instead. Each works once. Keep them somewhere safe.',
     saved: 'I have saved them',
   },
+
+  // SMS codes as a second factor
+  useSms: 'Send a code by SMS instead',
+  /** The second step with a code sent to the phone; `phone` is the masked number. */
+  smsCode: {
+    heading: 'Enter the code from the SMS',
+    lead: (phone: string) => `Enter the code we sent to ${phone} to finish signing in.`,
+    /** Replacing the number: the current one has to agree. */
+    replaceLead: (phone: string) => `Enter the code we sent to ${phone}, your current number, to replace it with a new one.`,
+    sending: 'Sending the code…',
+    sendAgain: 'Send the code again',
+    sentAgain: 'We sent the code again.',
+  },
+  smsSetup: {
+    heading: 'Add your phone number',
+    lead: 'Enter your mobile number. We will send you a code to confirm it.',
+    /** When a sign-in requires a second factor and the user has none yet. */
+    requiredLead: 'Signing in requires a second factor. Enter your mobile number, and we will send you a code to confirm it.',
+    phone: 'Mobile number',
+    phoneHint: 'With the country code, e.g. +41 79 123 45 67.',
+    sendCode: 'Send code',
+    codeLead: (phone: string) => `Enter the code we sent to ${phone}.`,
+    confirm: 'Confirm',
+    /** In the app's setup during a sign-in, when the server has SMS codes on. */
+    usePhone: 'Use your phone number instead',
+    /** In the phone's setup during a sign-in: back to the app. */
+    useAppInstead: 'Set up an authenticator app instead',
+    /** What the phone will do, from the server's policy. */
+    effect: (methods: string) => `From then on, signing in with ${methods} can also ask for a code sent to your phone.`,
+  },
   /** `other_method` with the methods the server named, e.g. "a password". */
   otherMethod: (how: string) => `This e-mail address signs in with ${how}. Use that instead of Google.`,
-  methodNames: { google: 'Google', password: 'a password', totp: 'an authenticator app' },
+  methodNames: { google: 'Google', password: 'a password', totp: 'an authenticator app', 'email-link': 'an e-mail link' },
   and: ' and ',
   /** Between alternatives in a sentence. */
   orList: ' or ',
@@ -126,11 +167,14 @@ export const en = {
     no_session: 'You are not signed in. Please sign in first.',
     setup_expired: 'The setup took too long. Please start again.',
     challenge_expired: 'The sign-in took too long. Please sign in again.',
-    required_by_policy: 'Signing in requires the authenticator app, so it can’t be removed.',
+    required_by_policy: 'Signing in requires a second factor, so it can’t be removed.',
     code_required: 'Please enter a code from your authenticator app.',
     no_authenticator: 'No authenticator app is set up.',
     only_method: 'The authenticator app is the only way you sign in, so it can’t be removed.',
     other_method: 'This e-mail address signs in another way. Use that instead of Google.',
+    invalid_phone: 'Please enter a valid mobile number with the country code, e.g. +41 79 123 45 67.',
+    no_phone: 'No phone number is set up.',
+    too_soon: 'We sent a code less than a minute ago. Enter that one, or wait a minute for a new one.',
   } satisfies Partial<Record<MadauthErrorCode, string>>,
   /** For every other error code. */
   errorFallback: 'Sign-in is not available right now.',
@@ -139,6 +183,7 @@ export const en = {
   /** `temporarily_unavailable` when creating an account, and when asking for an e-mail. */
   signUpUnavailable: 'E-mail & password sign-up is not available right now. Please try again later.',
   emailsUnavailable: 'Sending e-mails is not available right now. Please try again later.',
+  smsUnavailable: 'Sending SMS is not available right now. Please try again later.',
   /**
    * `weak_password` and `too_many_attempts` come with a message from the server that is written for the
    * user, in English. With `weak_password`, `minLength` is set when the password is too short and `minScore`
@@ -171,8 +216,7 @@ export const de: Strings = {
     google: { label: 'Weiter mit Google', description: 'Mit Ihrem Google-Konto anmelden' },
     password: { label: 'E-Mail-Adresse und Passwort', description: 'Mit E-Mail-Adresse und Passwort anmelden' },
     totp: { label: 'Authentifizierungs-App', description: 'Einmalcode aus Ihrer Authentifizierungs-App' },
-    email: { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
-    sms: { label: 'SMS-Code', description: 'Einmalcode per SMS an Ihr Mobiltelefon' },
+    'email-link': { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
   },
 
   email: 'E-Mail-Adresse',
@@ -209,6 +253,16 @@ export const de: Strings = {
   emailSentAgain: 'Wir haben die E-Mail erneut gesendet.',
   chooseNewPassword: 'Neues Passwort wählen',
 
+  emailLink: {
+    heading: 'Mit E-Mail-Link anmelden',
+    lead: 'Geben Sie Ihre E-Mail-Adresse ein. Wir senden Ihnen einen Link, der Sie anmeldet, und einen Bestätigungscode.',
+    send: 'Link senden',
+  },
+  signInInboxLead: {
+    before: 'Wir haben eine E-Mail an ',
+    after: ' gesendet. Öffnen Sie den Link darin, um sich anzumelden, oder geben Sie den 6-stelligen Bestätigungscode aus der E-Mail ein.',
+  },
+
   cancel: 'Abbrechen',
   loading: 'Wird geladen …',
   appCode: 'Code aus der App',
@@ -243,8 +297,31 @@ export const de: Strings = {
     lead: 'Wenn Sie Ihre Authentifizierungs-App verlieren, meldet Sie stattdessen einer dieser Codes an. Jeder funktioniert einmal. Bewahren Sie sie sicher auf.',
     saved: 'Ich habe sie gespeichert',
   },
+
+  useSms: 'Stattdessen einen Code per SMS erhalten',
+  smsCode: {
+    heading: 'Code aus der SMS eingeben',
+    lead: (phone) => `Geben Sie den Code ein, den wir an ${phone} gesendet haben, um die Anmeldung abzuschließen.`,
+    replaceLead: (phone) => `Geben Sie den Code ein, den wir an Ihre bisherige Nummer ${phone} gesendet haben, um sie durch eine neue zu ersetzen.`,
+    sending: 'Code wird gesendet …',
+    sendAgain: 'Code erneut senden',
+    sentAgain: 'Wir haben den Code erneut gesendet.',
+  },
+  smsSetup: {
+    heading: 'Mobilnummer hinzufügen',
+    lead: 'Geben Sie Ihre Mobilnummer ein. Wir senden Ihnen einen Code, um sie zu bestätigen.',
+    requiredLead: 'Für die Anmeldung ist ein zweiter Faktor erforderlich. Geben Sie Ihre Mobilnummer ein, und wir senden Ihnen einen Code, um sie zu bestätigen.',
+    phone: 'Mobilnummer',
+    phoneHint: 'Mit Ländervorwahl, z. B. +41 79 123 45 67.',
+    sendCode: 'Code senden',
+    codeLead: (phone) => `Geben Sie den Code ein, den wir an ${phone} gesendet haben.`,
+    confirm: 'Bestätigen',
+    usePhone: 'Stattdessen Ihre Mobilnummer verwenden',
+    useAppInstead: 'Stattdessen eine Authentifizierungs-App einrichten',
+    effect: (methods) => `Die Anmeldung mit ${methods} kann dann zusätzlich nach einem Code fragen, der an Ihr Mobiltelefon gesendet wird.`,
+  },
   otherMethod: (how) => `Diese E-Mail-Adresse meldet sich mit ${how} an. Verwenden Sie das statt Google.`,
-  methodNames: { google: 'Google', password: 'einem Passwort', totp: 'einer Authentifizierungs-App' },
+  methodNames: { google: 'Google', password: 'einem Passwort', totp: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link' },
   and: ' und ',
   orList: ' oder ',
 
@@ -263,11 +340,14 @@ export const de: Strings = {
     no_session: 'Sie sind nicht angemeldet. Bitte melden Sie sich zuerst an.',
     setup_expired: 'Die Einrichtung hat zu lange gedauert. Bitte beginnen Sie neu.',
     challenge_expired: 'Die Anmeldung hat zu lange gedauert. Bitte melden Sie sich erneut an.',
-    required_by_policy: 'Für die Anmeldung ist die Authentifizierungs-App erforderlich, daher kann sie nicht entfernt werden.',
+    required_by_policy: 'Für die Anmeldung ist ein zweiter Faktor erforderlich, daher kann er nicht entfernt werden.',
     code_required: 'Bitte geben Sie einen Code aus Ihrer Authentifizierungs-App ein.',
     no_authenticator: 'Es ist keine Authentifizierungs-App eingerichtet.',
     only_method: 'Die Authentifizierungs-App ist Ihre einzige Anmeldemethode, daher kann sie nicht entfernt werden.',
     other_method: 'Diese E-Mail-Adresse meldet sich auf andere Weise an. Verwenden Sie diese statt Google.',
+    invalid_phone: 'Bitte geben Sie eine gültige Mobilnummer mit Ländervorwahl ein, z. B. +41 79 123 45 67.',
+    no_phone: 'Es ist keine Mobilnummer eingerichtet.',
+    too_soon: 'Wir haben vor weniger als einer Minute einen Code gesendet. Geben Sie diesen ein, oder warten Sie eine Minute auf einen neuen.',
   },
   errorFallback: 'Die Anmeldung ist derzeit nicht möglich.',
   confirmEmailFirst:
@@ -275,6 +355,7 @@ export const de: Strings = {
   signUpUnavailable:
     'Derzeit kann kein Konto mit E-Mail-Adresse und Passwort erstellt werden. Bitte versuchen Sie es später erneut.',
   emailsUnavailable: 'Derzeit können keine E-Mails gesendet werden. Bitte versuchen Sie es später erneut.',
+  smsUnavailable: 'Derzeit können keine SMS gesendet werden. Bitte versuchen Sie es später erneut.',
   weakPassword: (_serverMessage, rule) =>
     rule?.minLength
       ? `Das Passwort muss mindestens ${rule.minLength} Zeichen lang sein.`

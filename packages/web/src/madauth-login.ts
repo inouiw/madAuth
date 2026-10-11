@@ -10,10 +10,10 @@ import {
   type SignInOptions,
 } from './madauth.js';
 import { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
-import type { PendingStep } from './providers/provider.js';
+import { secondStepOf, type PendingStep } from './providers/provider.js';
 import type { CodeOptions } from './scopes/totp.js';
 import { qrModules, qrViewBox, type QrModules } from './qr.js';
-import type { MadauthError, MadauthErrorCode, MadauthUser, Result } from './result.js';
+import type { MadauthError, MadauthErrorCode, MadauthUser, Result, SecondFactor } from './result.js';
 import { languageOf, stringsFor, type Strings } from './strings.js';
 
 export interface SignedInDetail {
@@ -33,13 +33,34 @@ export interface AuthenticatorFailedDetail {
   error: MadauthError;
 }
 
+/** `madauth-sms-enabled`: the signed-in user added (or replaced) their phone number for SMS codes. `phone` is masked. */
+export interface SmsEnabledDetail {
+  phone: string;
+}
+
+/** `madauth-sms-failed`: the setup opened by `Madauth.setUpSms()` can't go on. */
+export interface SmsFailedDetail {
+  error: MadauthError;
+}
+
 /** The screens of the dialog. */
-type View = 'signin' | 'signup' | 'check-inbox' | 'forgot' | 'reset' | 'totp' | 'totp-code' | 'totp-setup' | 'totp-codes';
+type View =
+  | 'signin'
+  | 'signup'
+  | 'check-inbox'
+  | 'forgot'
+  | 'reset'
+  | 'totp'
+  | 'totp-code'
+  | 'totp-setup'
+  | 'totp-codes'
+  | 'email-link'
+  | 'sms-code'
+  | 'sms-setup'
+  | 'sms-setup-code';
 
 /** The step a sign-in goes on with, from the error that says so. */
-function nextStep(error: MadauthError): PendingStep['step'] | undefined {
-  return error.code === 'totp_required' ? 'code' : error.code === 'totp_setup_required' ? 'setup' : undefined;
-}
+const nextStep = secondStepOf;
 
 /** The key in groups of four, as authenticator apps show it. */
 const groupSecret = (secret: string) => secret.replace(/(.{4})(?=.)/g, '$1 ');
@@ -75,15 +96,10 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
       <path d="m9 12 2 2 4-4" />
     </svg>
   `,
-  email: html`
+  'email-link': html`
     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
       <rect x="2" y="4" width="20" height="16" rx="2" />
       <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-    </svg>
-  `,
-  sms: html`
-    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   `,
 };
@@ -99,6 +115,7 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
  * @fires madauth-cancel - The dialog was closed without signing in (or before the authenticator app was set up).
  * @fires madauth-error - A sign-in failed, or madAuth is not initialized. `detail` is an {@link ErrorDetail}.
  * @fires madauth-authenticator-enabled - The signed-in user set up the authenticator app and saw the recovery codes. `detail` is an {@link AuthenticatorEnabledDetail}.
+ * @fires madauth-sms-enabled - The signed-in user added a phone number for SMS codes. `detail` is an {@link SmsEnabledDetail}.
  *
  * @cssprop --madauth-primary - Fill color of the primary buttons.
  * @cssprop --madauth-radius - Corner radius of the dialog, buttons and fields.
@@ -107,7 +124,7 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
  * @csspart dialog - The `<dialog>` element.
  * @csspart method - Each sign-in method button.
  * @csspart error - The error message.
- * @csspart form - Each form (sign-in, create account, code, new password, the authenticator app's).
+ * @csspart form - Each form (sign-in, create account, code, new password, the e-mail link's, the authenticator app's, the SMS code's).
  * @csspart input - Each text field.
  * @csspart link - The text buttons, e.g. "Forgot password?".
  * @csspart qr - The QR code of the authenticator app's key (an inline SVG, dark on a white background).
@@ -127,6 +144,8 @@ export class MadauthLogin extends LitElement {
     recoveryCodes: { state: true },
     useRecovery: { state: true },
     setupNeedsCode: { state: true },
+    smsPhone: { state: true },
+    factors: { state: true },
     passwordScore: { state: true },
   };
 
@@ -157,8 +176,8 @@ export class MadauthLogin extends LitElement {
   /** The e-mail address last entered, kept across the views. */
   private email = '';
 
-  /** What the e-mail in the check-inbox view is for. */
-  private inboxPurpose: 'verify' | 'reset' = 'verify';
+  /** What the e-mail in the check-inbox view is for: confirming the address, a password reset, or a sign-in link. */
+  private inboxPurpose: 'verify' | 'reset' | 'signin' = 'verify';
 
   /** The reset code entered in the check-inbox view, used with the new password. */
   private resetCode?: string;
@@ -186,6 +205,15 @@ export class MadauthLogin extends LitElement {
   private rateRun = 0;
   /** The setup replaces an app the user has: a code from the current one comes first. */
   private setupNeedsCode = false;
+
+  /** The second factors the sign-in under way can finish with, so the code views offer the switch. */
+  private factors?: SecondFactor[];
+  /** The phone number (masked) a code was sent to. */
+  private smsPhone?: string;
+  /** The number typed into the phone setup, for the code to the current number and for "send again". */
+  private pendingPhone?: string;
+  /** What the code in the sms-code view is for: the second step, or approving a new number. */
+  private smsCodePurpose: 'signin' | 'replace' = 'signin';
 
   private stopFollowingLocale?: () => void;
 
@@ -252,18 +280,34 @@ export class MadauthLogin extends LitElement {
     return ready;
   }
 
-  /** Goes on with the authenticator app where a sign-in left off. */
+  /** Goes on with the second step where a sign-in left off. */
   private continueWith(pending: PendingStep): void {
     this.primary = pending.method;
     this.useRecovery = false;
     this.setupNeedsCode = false;
+    this.factors = pending.factors;
     if (pending.step === 'code') {
       this.view = 'totp-code';
+      return;
+    }
+    if (pending.step === 'sms') {
+      void this.startSmsStep();
       return;
     }
     this.setupForSignIn = true;
     this.view = 'totp-setup';
     void this.startSetup();
+  }
+
+  /**
+   * Opens the dialog on the "Add your phone number" screen for the signed-in user. Usually called through
+   * `Madauth.setUpSms()`, which resolves once the number is confirmed.
+   */
+  async openSmsSetup(): Promise<void> {
+    this.setupForSignIn = false;
+    this.view = 'sms-setup';
+    const ready = await this.show();
+    if (!ready.isSuccess) this.showError(ready.error);
   }
 
   /** Shows `email` in the e-mail field, also if the field was edited since, and moves on to the password. */
@@ -320,6 +364,7 @@ export class MadauthLogin extends LitElement {
     this.view = 'signin';
     this.busy = false;
     this.resetCode = undefined;
+    this.inboxPurpose = 'verify';
     this.primary = 'password';
     this.setup = undefined;
     this.setupForSignIn = false;
@@ -327,18 +372,22 @@ export class MadauthLogin extends LitElement {
     this.setupUser = undefined;
     this.useRecovery = false;
     this.setupNeedsCode = false;
+    this.factors = undefined;
+    this.smsPhone = undefined;
+    this.pendingPhone = undefined;
+    this.smsCodePurpose = 'signin';
     this.clearStrength();
   }
 
   /**
-   * Ends a sign-in attempt: closes on success, goes on with the authenticator app when the method's
-   * policy asks for it, and shows the error otherwise.
+   * Ends a sign-in attempt: closes on success, goes on with the second step when the method's policy asks
+   * for it, and shows the error otherwise.
    */
   private finish(method: LoginMethodId, result: Result<{ user: MadauthUser }>): void {
     if (!result.isSuccess) {
       const step = nextStep(result.error);
       if (step) {
-        this.continueWith({ step, method });
+        this.continueWith({ step, method, factors: result.error.factors });
         this.notice = undefined;
         this.error = null;
         return;
@@ -379,6 +428,7 @@ export class MadauthLogin extends LitElement {
       this.useRecovery = false;
       this.goTo('totp');
     }
+    if (m.id === 'email-link' && this.emailLinkAvailable) this.goTo('email-link');
   }
 
   private get passwordAvailable(): boolean {
@@ -388,6 +438,11 @@ export class MadauthLogin extends LitElement {
   /** Whether the authenticator app signs in on its own here (the e-mail address and a code). */
   private get totpAvailable(): boolean {
     return this.usable && !!providerFor('totp') && !!Madauth.totp.policy?.signIn;
+  }
+
+  /** Whether the e-mail link is offered here: its provider is registered and the server has it on. */
+  private get emailLinkAvailable(): boolean {
+    return this.usable && !!providerFor('email-link') && !!Madauth.emailLink.policy;
   }
 
   /** Switches the view, keeping the e-mail address typed so far. */
@@ -494,6 +549,11 @@ export class MadauthLogin extends LitElement {
       this.goTo('reset');
       return;
     }
+    if (this.inboxPurpose === 'signin') {
+      const result = await this.run(() => Madauth.emailLink.verify({ email: this.email, code }));
+      if (result) this.finish('email-link', result);
+      return;
+    }
     const result = await this.run(() => this.signUpScope.verifyEmail({ email: this.email, code }));
     if (result) this.finish(this.primary, result);
   }
@@ -513,14 +573,18 @@ export class MadauthLogin extends LitElement {
     this.finish('password', result);
   }
 
-  private async resend(purpose: 'verify' | 'reset'): Promise<void> {
+  private async resend(purpose: 'verify' | 'reset' | 'signin'): Promise<void> {
     const email = this.email;
     const result = await this.run(() =>
-      purpose === 'verify' ? this.signUpScope.sendVerificationEmail({ email }) : Madauth.password.sendResetEmail({ email }),
+      purpose === 'verify'
+        ? this.signUpScope.sendVerificationEmail({ email })
+        : purpose === 'reset'
+          ? Madauth.password.sendResetEmail({ email })
+          : Madauth.emailLink.send({ email }),
     );
     if (!result) return;
     if (!result.isSuccess) {
-      this.showError(result.error, purpose === 'verify' ? this.primary : 'password');
+      this.showError(result.error, purpose === 'verify' ? this.primary : purpose === 'reset' ? 'password' : 'email-link');
       return;
     }
     this.inboxPurpose = purpose;
@@ -547,6 +611,13 @@ export class MadauthLogin extends LitElement {
         return s.totpSetup.heading;
       case 'totp-codes':
         return s.totpCodes.heading;
+      case 'email-link':
+        return s.emailLink.heading;
+      case 'sms-code':
+        return s.smsCode.heading;
+      case 'sms-setup':
+      case 'sms-setup-code':
+        return s.smsSetup.heading;
       default:
         return this.heading || s.signIn;
     }
@@ -561,7 +632,9 @@ export class MadauthLogin extends LitElement {
       return s.weakPassword(error.message, { minLength: error.minLength, minScore: error.minScore });
     }
     if (error.code === 'too_many_attempts') return s.tooManyAttempts(error.message);
-    if (error.code === 'temporarily_unavailable') return this.view === 'signup' ? s.signUpUnavailable : s.emailsUnavailable;
+    if (error.code === 'temporarily_unavailable') {
+      return this.view === 'signup' ? s.signUpUnavailable : this.view.startsWith('sms') ? s.smsUnavailable : s.emailsUnavailable;
+    }
     if (error.code === 'email_unverified' && error.method === 'password') return s.confirmEmailFirst;
     if (error.code === 'invalid_credentials' && error.method === 'totp') return s.totpInvalid;
     if (error.code === 'other_method' && error.methods?.length) {
@@ -596,6 +669,7 @@ export class MadauthLogin extends LitElement {
   private renderError(error: MadauthError & { method?: LoginMethodId }) {
     const resend = error.code === 'email_unverified' && error.method === 'password' && this.view === 'signin';
     const restart = error.code === 'setup_expired' && this.view === 'totp-setup';
+    const restartSms = error.code === 'setup_expired' && this.view === 'sms-setup-code';
     return html`
       <div class="notice error" part="error" role="alert" data-code=${error.code}>
         ${infoIcon}
@@ -608,6 +682,10 @@ export class MadauthLogin extends LitElement {
           ${restart
             ? html`<button class="link" part="link" type="button" data-action="restart-setup" ?disabled=${this.busy}
                 @click=${() => this.startSetup()}>${this.strings.totpSetup.startAgain}</button>`
+            : null}
+          ${restartSms
+            ? html`<button class="link" part="link" type="button" data-action="restart-sms-setup" ?disabled=${this.busy}
+                @click=${() => this.startSmsSetup({ phone: this.pendingPhone ?? '' })}>${this.strings.totpSetup.startAgain}</button>`
             : null}
         </span>
       </div>
@@ -632,6 +710,14 @@ export class MadauthLogin extends LitElement {
         return this.renderTotpSetup();
       case 'totp-codes':
         return this.renderTotpCodes();
+      case 'email-link':
+        return this.renderEmailLink();
+      case 'sms-code':
+        return this.renderSmsCode();
+      case 'sms-setup':
+        return this.renderSmsSetup();
+      case 'sms-setup-code':
+        return this.renderSmsSetupCode();
       default:
         return this.renderSignInView();
     }
@@ -641,7 +727,11 @@ export class MadauthLogin extends LitElement {
     // Once madAuth is ready, only the methods whose provider was passed to Madauth.initialize (and not left out
     // because the server doesn't offer them) are listed, all at once. The authenticator app is listed only when
     // it signs in on its own here.
-    const offered = this.usable ? loginMethods.filter((m) => providerFor(m.id) && (m.id !== 'totp' || this.totpAvailable)) : [];
+    const offered = this.usable
+      ? loginMethods.filter(
+          (m) => providerFor(m.id) && (m.id !== 'totp' || this.totpAvailable) && (m.id !== 'email-link' || this.emailLinkAvailable),
+        )
+      : [];
     const google = offered.find((m) => m.id === 'google');
     const password = offered.find((m) => m.id === 'password');
     const others = offered.filter((m) => m !== google && m !== password);
@@ -813,6 +903,9 @@ export class MadauthLogin extends LitElement {
       </form>
       <p class="links">
         ${this.toggleRecoveryLink()}
+        ${!this.setupNeedsCode && this.factors?.includes('sms')
+          ? html`<button class="link" part="link" type="button" data-action="use-sms" @click=${() => this.startSmsStep()}>${s.useSms}</button>`
+          : null}
         ${this.setupNeedsCode
           ? html`<button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>`
           : html`<button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${s.backToSignIn}</button>`}
@@ -865,6 +958,10 @@ export class MadauthLogin extends LitElement {
           ? html`<p class="hint" role="status">${s.loading}</p>`
           : null}
       <p class="links">
+        ${/* A sign-up with the app sets the app up, never a phone: the server refuses the phone for it. */
+        this.setupForSignIn && this.primary !== 'totp' && Madauth.sms.available
+          ? html`<button class="link" part="link" type="button" data-action="use-phone" @click=${() => this.goTo('sms-setup')}>${s.smsSetup.usePhone}</button>`
+          : null}
         <button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>
       </p>
     `;
@@ -932,6 +1029,230 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
+  // --- SMS codes ---
+
+  /** The second step with a code by SMS: the view, and the SMS itself. */
+  private async startSmsStep(): Promise<void> {
+    this.smsCodePurpose = 'signin';
+    this.smsPhone = undefined;
+    this.notice = undefined;
+    this.error = null;
+    this.view = 'sms-code';
+    await this.sendSms();
+  }
+
+  /** Asks the server to send the code to the user's number, and shows where it went. */
+  private async sendSms(again = false): Promise<void> {
+    const result = await this.run(() => Madauth.sms.send());
+    if (!result) return;
+    if (!result.isSuccess) {
+      // The sign-in starts over.
+      if (result.error.code === 'challenge_expired') this.goTo('signin');
+      this.showError(result.error, this.primary);
+      return;
+    }
+    this.smsPhone = result.phone;
+    if (again) this.notice = (strings) => strings.smsCode.sentAgain;
+  }
+
+  /** The second step after a sign-in, or the current number agreeing to be replaced. */
+  private renderSmsCode() {
+    const s = this.strings;
+    const replacing = this.smsCodePurpose === 'replace';
+    const phone = this.smsPhone;
+    return html`
+      <p class="lead">${phone ? (replacing ? s.smsCode.replaceLead(phone) : s.smsCode.lead(phone)) : s.smsCode.sending}</p>
+      <form part="form" class="sms-code" @submit=${this.onSmsVerify}>
+        <div class="field">
+          <label for="code">${s.code}</label>
+          <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" />
+        </div>
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.continue}</span>
+        </button>
+      </form>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="resend-sms" ?disabled=${this.busy} @click=${() => this.sendSms(true)}>
+          ${s.smsCode.sendAgain}
+        </button>
+        ${!replacing && this.factors?.includes('totp')
+          ? html`<button class="link" part="link" type="button" data-action="use-app" @click=${() => this.switchToApp()}>${s.useApp}</button>`
+          : null}
+        ${replacing
+          ? html`<button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>`
+          : html`<button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${s.backToSignIn}</button>`}
+      </p>
+    `;
+  }
+
+  /** From the SMS step to the app's code: the user has both. */
+  private switchToApp(): void {
+    this.useRecovery = false;
+    this.setupNeedsCode = false;
+    this.goTo('totp-code');
+  }
+
+  private async onSmsVerify(e: Event): Promise<void> {
+    const code = (this.fields(e).code ?? '').replace(/\s/g, '');
+    // Replacing the number: the code is for the current one, and the new one's setup starts once it agrees.
+    if (this.smsCodePurpose === 'replace') return this.startSmsSetup({ phone: this.pendingPhone ?? '', code });
+    const result = await this.run(() => Madauth.sms.verify({ code }));
+    if (!result) return;
+    if (!result.isSuccess && result.error.code === 'challenge_expired') {
+      // The sign-in starts over.
+      this.goTo('signin');
+      this.showError(result.error, this.primary);
+      return;
+    }
+    this.finish(this.primary, result);
+  }
+
+  /** Adding a phone number: the number, then (next view) the code sent to it. */
+  private renderSmsSetup() {
+    const s = this.strings;
+    const asks = (Madauth.totp.policy?.secondFactorFor ?? []).map((method) => s.methods[method].label).join(s.and);
+    return html`
+      <p class="lead">${this.setupForSignIn ? s.smsSetup.requiredLead : s.smsSetup.lead}</p>
+      ${!this.setupForSignIn && asks ? html`<p class="hint">${s.smsSetup.effect(asks)}</p>` : null}
+      <form part="form" class="sms-setup" @submit=${this.onSmsSetup}>
+        <div class="field">
+          <label for="phone">${s.smsSetup.phone}</label>
+          <input part="input" id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" .value=${this.pendingPhone ?? ''} />
+          <p class="hint">${s.smsSetup.phoneHint}</p>
+        </div>
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.smsSetup.sendCode}</span>
+        </button>
+      </form>
+      <p class="links">
+        ${this.setupForSignIn
+          ? html`<button class="link" part="link" type="button" data-action="use-app-setup" @click=${() => this.backToAppSetup()}>${s.smsSetup.useAppInstead}</button>`
+          : null}
+        <button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>
+      </p>
+    `;
+  }
+
+  /** From the phone's setup back to the app's, during a sign-in. */
+  private backToAppSetup(): void {
+    this.notice = undefined;
+    this.error = null;
+    this.view = 'totp-setup';
+    void this.startSetup();
+  }
+
+  private async onSmsSetup(e: Event): Promise<void> {
+    const { phone = '' } = this.fields(e);
+    this.pendingPhone = phone.trim();
+    await this.startSmsSetup({ phone: this.pendingPhone });
+  }
+
+  /**
+   * Asks the server to send the code to the new number, also for "send again" and after the current
+   * number agreed (`code`). A user who has a number already is sent to the code view first, which calls
+   * this again with the code.
+   */
+  private async startSmsSetup(options: { phone: string; code?: string }): Promise<void> {
+    const result = await this.run(() => Madauth.sms.setUp(options));
+    if (!result) return;
+    if (!result.isSuccess) {
+      if (result.error.code === 'code_required') {
+        this.smsCodePurpose = 'replace';
+        this.smsPhone = undefined;
+        this.notice = undefined;
+        this.error = null;
+        this.view = 'sms-code';
+        await this.sendSms();
+        return;
+      }
+      this.showError(result.error);
+      // Nothing the user can do here: the caller of setUpSms() learns it as well.
+      if (!this.setupForSignIn && (result.error.code === 'no_session' || result.error.code === 'method_disabled' || result.error.code === 'flow_not_enabled')) {
+        const detail: SmsFailedDetail = { error: result.error };
+        this.dispatchEvent(new CustomEvent('madauth-sms-failed', { detail, bubbles: true, composed: true }));
+      }
+      return;
+    }
+    this.smsCodePurpose = 'signin';
+    this.smsPhone = result.phone;
+    this.notice = undefined;
+    this.error = null;
+    this.view = 'sms-setup-code';
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLInputElement>('form.sms-setup-code input[name="code"]')?.focus();
+  }
+
+  /** The code that confirms the new number. */
+  private renderSmsSetupCode() {
+    const s = this.strings;
+    return html`
+      <p class="lead">${s.smsSetup.codeLead(this.smsPhone ?? '')}</p>
+      <form part="form" class="sms-setup-code" @submit=${this.onSmsConfirm}>
+        <div class="field">
+          <label for="code">${s.code}</label>
+          <input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" />
+        </div>
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.smsSetup.confirm}</span>
+        </button>
+      </form>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="resend-sms" ?disabled=${this.busy}
+          @click=${() => this.startSmsSetup({ phone: this.pendingPhone ?? '' })}>${s.smsCode.sendAgain}</button>
+        <button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>
+      </p>
+    `;
+  }
+
+  private async onSmsConfirm(e: Event): Promise<void> {
+    const code = (this.fields(e).code ?? '').replace(/\s/g, '');
+    const result = await this.run(() => Madauth.sms.confirmSetup({ code }));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      return;
+    }
+    // The setup finished a sign-in: the user is in.
+    if (result.user) {
+      this.finish(this.primary, { isSuccess: true, user: result.user });
+      return;
+    }
+    const detail: SmsEnabledDetail = { phone: this.smsPhone ?? '' };
+    this.dispatchEvent(new CustomEvent('madauth-sms-enabled', { detail, bubbles: true, composed: true }));
+    this.dialog.returnValue = 'done';
+    if (this.dialog.open) this.dialog.close('done');
+  }
+
+  // --- The e-mail link ---
+
+  /** Asking for the sign-in e-mail: the address, and a button that sends the link and the code. */
+  private renderEmailLink() {
+    const s = this.strings;
+    return html`
+      <p class="lead">${s.emailLink.lead}</p>
+      <form part="form" class="email-link" @submit=${this.onEmailLink}>
+        ${this.emailField('email')}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.emailLink.send}</span>
+        </button>
+      </form>
+      ${this.backLink()}
+    `;
+  }
+
+  private async onEmailLink(e: Event): Promise<void> {
+    const { email = '' } = this.fields(e);
+    this.email = email.trim();
+    const result = await this.run(() => Madauth.emailLink.send({ email }));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, 'email-link');
+      return;
+    }
+    this.inboxPurpose = 'signin';
+    this.view = 'check-inbox';
+  }
+
   private renderForgot() {
     const s = this.strings;
     return html`
@@ -949,8 +1270,9 @@ export class MadauthLogin extends LitElement {
 
   private renderCheckInbox() {
     const s = this.strings;
+    const lead = this.inboxPurpose === 'signin' ? s.signInInboxLead : s.inboxLead;
     return html`
-      <p class="lead">${s.inboxLead.before}<strong>${this.email}</strong>${s.inboxLead.after}</p>
+      <p class="lead">${lead.before}<strong>${this.email}</strong>${lead.after}</p>
       <form part="form" class="code" @submit=${this.onCode}>
         <div class="field">
           <label for="code">${s.code}</label>
@@ -1484,5 +1806,7 @@ declare global {
     'madauth-error': CustomEvent<ErrorDetail>;
     'madauth-authenticator-enabled': CustomEvent<AuthenticatorEnabledDetail>;
     'madauth-authenticator-failed': CustomEvent<AuthenticatorFailedDetail>;
+    'madauth-sms-enabled': CustomEvent<SmsEnabledDetail>;
+    'madauth-sms-failed': CustomEvent<SmsFailedDetail>;
   }
 }

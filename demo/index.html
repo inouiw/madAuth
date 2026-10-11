@@ -80,7 +80,7 @@
             Admin section below; the first admin gets the role on the server's command line.
           </p>
         </div>
-        <!-- How this session was authenticated (Madauth.currentUser.amr), e.g. pwd and otp. -->
+        <!-- How this session was authenticated (Madauth.currentUser.amr), e.g. pwd and otp, or email for the e-mail link. -->
         <p class="amr">Signed in with <code id="amr"></code></p>
         <!-- The authenticator app: Madauth.setUpAuthenticator() opens the dialog with the QR code; the other calls take a code. -->
         <div class="authenticator">
@@ -100,6 +100,15 @@
             <span class="caption">Response</span>
             <pre id="output" role="status"></pre>
           </div>
+        </div>
+        <!-- SMS codes as a second factor: Madauth.setUpSms() opens the dialog for the number and its code; removing takes a code sent to it. -->
+        <div class="authenticator phone">
+          <span class="caption">Phone (SMS codes)</span>
+          <p id="sms-status"></p>
+          <p class="buttons">
+            <button type="button" data-call="setUpSms" hidden>Madauth.setUpSms()</button>
+            <button type="button" data-call="removeSms" hidden>Madauth.sms.remove({ code })</button>
+          </p>
         </div>
         <button id="sign-out" type="button">Sign out</button>
       </section>
@@ -176,7 +185,7 @@
           <li class="api-method" data-call="setSettings">
             <button type="button" class="api-row" aria-expanded="false">Madauth.admin.setSettings({ methods })</button>
             <div class="api-detail" hidden>
-              <p>Sends the list of the methods that are on, with the policy of Google and password for the authenticator app; a method that is not listed is off. It applies at once, for everyone.</p>
+              <p>Sends the list of the methods that are on, with the policy of Google, password and the e-mail link for the authenticator app; a method that is not listed is off. It applies at once, for everyone.</p>
               <!--
                 The controls show the server's settings once getSettings succeeded; only then can they be sent back.
               -->
@@ -203,6 +212,19 @@
                 <tr>
                   <td><label><input id="method-totp" type="checkbox" /> Authenticator app on its own</label></td>
                   <td></td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-sms" type="checkbox" /> SMS codes (as a second factor, next to the app)</label></td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-email-link" type="checkbox" /> E-mail link</label></td>
+                  <td>
+                    <label class="policy">
+                      Authenticator app
+                      <select id="policy-email-link"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
+                    </label>
+                  </td>
                 </tr>
               </table>
             </div>

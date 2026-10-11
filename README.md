@@ -7,8 +7,8 @@ A self-hostable alternative to Cognito / Auth0. Sign-in methods:
 | Google sign-in (FedCM / One Tap, or server-side redirect) | available |
 | E-mail & password (with e-mail confirmation and password reset) | available |
 | Authenticator app (TOTP): as a second factor for Google and password, and on its own | available |
-| Passwordless e-mail link | coming soon |
-| SMS code | coming soon |
+| Passwordless e-mail link (a link and a code by e-mail, sign-up on first use) | available |
+| SMS code (as a second factor, next to the authenticator app) | available |
 
 ## Repository layout
 
@@ -112,9 +112,9 @@ docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data ghcr.io/inoui
 Then sign users in:
 
 ```ts
-import { Madauth, GoogleFedcm, Password, Totp } from '@madauth/web';
+import { Madauth, GoogleFedcm, Password, Totp, EmailLink } from '@madauth/web';
 
-Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp()] });
+Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp(), new EmailLink()] });
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 signInButton.onclick = () => Madauth.signIn();
 ```
@@ -122,12 +122,14 @@ signInButton.onclick = () => Madauth.signIn();
 - **`initialize`** checks the server and loads the current session. You don't need to await it. Problems are logged to the console and returned as `{ isSuccess: false, error }`. A provider whose method the server doesn't offer (e.g. `GoogleRedirect` on a development server without a Google client) is left out with a warning and named in the result's `leftOut`, and the other methods work; `initialize` fails only when no method is left.
 - **Google sign-in:** `new GoogleFedcm()` shows Google One Tap on page load ("Continue as …"). `Madauth.signIn()` opens the sign-in dialog with Google's button, which keeps working when Chrome holds One Tap back. For the server-side redirect flow use `new GoogleRedirect()`.
 - **E-mail & password:** `new Password()` adds the form to the dialog, with "Create account" and "Forgot password?". New accounts confirm their address with a link or a code from an e-mail. The links in the e-mails lead back to your page: `initialize` handles them, and opens the dialog to choose a new password after a reset link. See [Password security](docs/password-security.md).
+- **E-mail link:** `new EmailLink()` adds "E-mail link" to the dialog: the user enters their address and gets an e-mail with a link that signs them in and a 6-digit code. An unknown address is signed up on first use (your sign-up check permitting); the owner of an address that signs in another way gets an e-mail that says so instead. The policy for the authenticator app applies as for a password. See [E-mail link security](docs/email-link-security.md).
+- **SMS codes:** a second factor only, never a sign-in on its own. A signed-in user adds a phone number with `Madauth.setUpSms()` (a code confirms it); from then on, Google, the password and the e-mail link ask for a code sent to it when the policy is `optional` or `required`. A user who has the app as well is asked for the app first and can switch. `Madauth.sms.status()` and `remove({ code })` manage it from your account page. Your webhook receiver sends the SMS (`sms.code`). See [SMS code security](docs/sms-security.md).
 - **Authenticator app** (TOTP: Google Authenticator, 1Password and the like). What it does is the server's [sign-in policy](docs/server.md#sign-in-methods): a second factor after Google or the password (`optional`: for users who set it up; `required`: everyone sets it up at their next sign-in), which the dialog handles by itself, and/or a method of its own (the e-mail address and a code, with sign-up by e-mail confirmation), which `new Totp()` adds to the dialog. `Madauth.setUpAuthenticator()` opens the dialog with the QR code and shows the recovery codes once; `Madauth.totp.status()`, `newRecoveryCodes(...)` and `remove(...)` manage it from your account page, the last two with a current code. See [Authenticator app security](docs/totp-security.md).
 - **The dialog:** `signIn()` adds a `<madauth-login>` to the page; put one in your HTML only to customize it. `signIn({ email })` opens it with the e-mail address filled in, e.g. from a link like `/?email=…`, so the user only types the password.
 - **Language:** the dialog has English and German texts. It follows the page's `<html lang>`, then the browser's language. To set the language yourself, pass `locale: 'de'` (or e.g. `'de-CH'`) to `initialize`, and call `Madauth.setLocale('en')` when the user switches the language of your app; an open dialog changes at once. Every other language shows English. The same locale goes to your e-mail webhook, so the e-mails can match the dialog.
-- **Your own login screen:** pass `ui: 'custom'` and use `Madauth.password`, `Madauth.google` and `Madauth.totp` instead of the dialog. See [Building your own login screen](docs/custom-ui.md).
+- **Your own login screen:** pass `ui: 'custom'` and use `Madauth.password`, `Madauth.google`, `Madauth.totp`, `Madauth.emailLink` and `Madauth.sms` instead of the dialog. See [Building your own login screen](docs/custom-ui.md).
 - **Other methods:** `signOut()`, `getSession()`, `currentUser`, `deleteAccount()` to [delete the signed-in user's account](docs/server.md#deleting-an-account) (with a code from the authenticator app once it is set up), and `sessionReady()` to wait for a fresh session before calling your own backend (see [Sessions](docs/server.md#sessions)). All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
-- **Claims:** `currentUser.claims` holds what admins attached to the user, e.g. `{ roles: ['admin'] }`; it is in the session token for your backends too, as is `currentUser.amr`, how the session was authenticated (e.g. `['pwd', 'otp']`). Admins set claims with `Madauth.admin.setClaims(email, claims)`, and the sign-in methods and their policies with `Madauth.admin.setSettings(...)`. See [Claims](docs/server.md#claims) and [Sign-in methods](docs/server.md#sign-in-methods).
+- **Claims:** `currentUser.claims` holds what admins attached to the user, e.g. `{ roles: ['admin'] }`; it is in the session token for your backends too, as is `currentUser.amr`, how the session was authenticated (e.g. `['pwd', 'otp']`, or `['email']` after an e-mail link). Admins set claims with `Madauth.admin.setClaims(email, claims)`, and the sign-in methods and their policies with `Madauth.admin.setSettings(...)`. See [Claims](docs/server.md#claims) and [Sign-in methods](docs/server.md#sign-in-methods).
 - **Server URL:** the server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 'https://auth.example.com'` to `initialize` if it runs elsewhere on the same site.
 
 ### Running the server
@@ -148,7 +150,7 @@ The login form can be styled to match your app (colors, corner radius, font, and
 
 1. Add or update the entry in [`packages/web/src/methods.ts`](packages/web/src/methods.ts), and its texts in [`strings.ts`](packages/web/src/strings.ts).
 2. Implement a `SignInProvider` (see [`packages/web/src/providers`](packages/web/src/providers)). The dialog lists a method once its provider is passed to `Madauth.initialize` and the server offers it (a provider whose `setup` answers `flow_not_enabled` is left out).
-3. Add the server endpoints in a module in [`packages/server/src/routes`](packages/server/src/routes) and register it in [`app.ts`](packages/server/src/app.ts). Store what it needs as models in [`madauthSchema`](packages/server/src/store/schema.ts).
+3. Add the server endpoints in a module in [`packages/server/src/routes`](packages/server/src/routes) and register it in [`app.ts`](packages/server/src/app.ts). Store what it needs as models in [`madauthSchema`](packages/server/src/store/schema.ts). A second factor (like SMS codes) has no provider and no row in the dialog: it is a scope, views for its step, and a `step` in `PendingStep` with the `factors` the server names.
 4. Add the method's actions as a scope on `Madauth` (see [`packages/web/src/scopes`](packages/web/src/scopes)), so custom login screens can use it.
 5. Add tests next to the code (`*.test.ts`) and run `npm test`.
 

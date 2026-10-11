@@ -8,11 +8,15 @@ export interface MadauthUser {
   /** What admins attached to the user, e.g. `{ roles: ['admin'] }`. Absent without claims. */
   claims?: Record<string, unknown>;
   /**
-   * How the session was authenticated (RFC 8176): `pwd` (password), `google`, `otp` (the authenticator app,
-   * on its own or as the second factor), e.g. `['pwd', 'otp']`. Present on a user that comes with a session.
+   * How the session was authenticated (RFC 8176): `pwd` (password), `google`, `email` (the e-mail link),
+   * `otp` (the authenticator app, on its own or as the second factor), `sms` (a code by SMS as the second
+   * factor), e.g. `['pwd', 'otp']`. Present on a user that comes with a session.
    */
   amr?: string[];
 }
+
+/** A second factor: a code from the authenticator app, or one sent by SMS. */
+export type SecondFactor = 'totp' | 'sms';
 
 const errorCodes = [
   'invalid_options',
@@ -40,6 +44,10 @@ const errorCodes = [
   'invalid_settings',
   'totp_required',
   'totp_setup_required',
+  'sms_required',
+  'invalid_phone',
+  'no_phone',
+  'too_soon',
   'challenge_expired',
   'setup_expired',
   'required_by_policy',
@@ -56,8 +64,10 @@ export interface MadauthError {
   code: MadauthErrorCode;
   /** Human-readable details, e.g. which option is invalid. */
   message: string;
-  /** With `totp_required` and `totp_setup_required`: the method whose sign-in goes on with the authenticator app. */
+  /** With `totp_required`, `sms_required` and `totp_setup_required`: the method whose sign-in goes on with the second step. */
   method?: string;
+  /** With `totp_required` and `sms_required`: the second factors the user can finish the sign-in with, e.g. `['totp', 'sms']`. */
+  factors?: SecondFactor[];
   /** With `other_method`: how the address signs in instead, e.g. `['password']`. */
   methods?: string[];
   /** With `weak_password` for a password that is too short: the fewest characters it may have. */

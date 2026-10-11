@@ -26,6 +26,8 @@ const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 export const REDIRECT_ERROR_PARAM = 'madauth_error';
 /** Hash parameter that says what the sign-in still needs after the code flow: the authenticator app's code or setup. */
 export const REDIRECT_NEXT_PARAM = 'madauth_next';
+/** Hash parameter next to it: which second factors can finish the step, comma-separated (`madauth_factors=totp,sms`). */
+export const REDIRECT_FACTORS_PARAM = 'madauth_factors';
 
 interface OAuthState {
   state: string;
@@ -82,11 +84,13 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
       if (existing) {
         if (existing.emailVerified && (await users.hasAccounts(existing.id))) {
           const methods = await users.signInMethods(existing.id, await ctx.settings.methods());
-          const how = methods.map((method) => ({ password: 'a password', totp: 'an authenticator app', google: 'Google' })[method]).join(' or ');
+          const how = methods
+            .map((method) => ({ password: 'a password', totp: 'an authenticator app', google: 'Google', 'email-link': 'an e-mail link' })[method])
+            .join(' or ');
           return { ok: false, error: 'other_method', message: `This e-mail address signs in with ${how || 'another method'}. Use that instead of Google.`, methods };
         }
         // Google verified the address, and nobody has proven this user yet (an unconfirmed sign-up, whose
-        // password goes) or nobody can sign in as them: the Google account takes the user over.
+        // password or e-mail link goes) or nobody can sign in as them: the Google account takes the user over.
         await users.verifyByProvider(existing);
         if (!(await users.linkAccount(existing.id, { key, email: profile.email }))) {
           // The account appeared meanwhile; it belongs to whoever has it now.
@@ -214,10 +218,11 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     if (!oauth) return c.text('Sign-in expired or was started in another browser. Please try again.', 400);
     deleteCookie(c, OAUTH_COOKIE, { path: '/auth/google', secure });
 
-    const back = (error?: string, next?: string) => {
+    const back = (error?: string, next?: string, factors: string[] = []) => {
       const url = new URL(oauth.returnTo);
       if (error) url.hash = `${REDIRECT_ERROR_PARAM}=${error}`;
-      if (next) url.hash = `${REDIRECT_NEXT_PARAM}=${next}`;
+      // The step, and which second factors can finish it, so the page can offer the switch.
+      if (next) url.hash = `${REDIRECT_NEXT_PARAM}=${next}${factors.length ? `&${REDIRECT_FACTORS_PARAM}=${factors.join(',')}` : ''}`;
       return c.redirect(url.href, 302);
     };
 
@@ -256,8 +261,8 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     if (!resolved.ok) return back(resolved.error);
     const step = await ctx.secondStep(c, resolved.user, ['google'], 'google', result.profile);
     if ('disabled' in step) return back('method_disabled');
-    // The app continues with the authenticator app's code or setup; the challenge cookie is set.
-    if ('next' in step) return back(undefined, step.next);
+    // The app continues with the second step (a code, or the app's setup); the challenge cookie is set.
+    if ('next' in step) return back(undefined, step.next, step.factors);
     return back();
   });
 }

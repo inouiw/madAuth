@@ -101,8 +101,9 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     }
     if (existing) {
       // Nobody has proven this address yet (or nobody can sign in with it): the latest sign-up sets the
-      // password, and only its e-mail works.
+      // password, and only its e-mail works. An e-mail link an unfinished sign-up asked for goes with it.
       if (Date.now() - existing.lastMailAt < MAIL_INTERVAL_MS) return accepted(c);
+      if (!existing.emailVerified) await users.dropUnprovenAccounts(existing.id, 'password');
       const account = await users.passwordAccount(existing.id);
       if (account) await users.updateAccount(account.id, { secret: passwordHash, failedAttempts: 0, lockedUntil: 0 });
       else await users.linkAccount(existing.id, { key: passwordAccountKey(existing.id), secret: passwordHash });

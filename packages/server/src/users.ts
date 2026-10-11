@@ -14,6 +14,8 @@ export interface StoredUser {
   name: string | null;
   sessionVersion: number;
   lastMailAt: number;
+  /** When the last SMS was sent. Empty in records from before schema version 6. */
+  lastSmsAt: number | null;
   /** Wrong e-mail codes in a row. Empty in records that a store keeps from before schema version 2. */
   wrongCodes: number | null;
   /** The user's claims as JSON. Empty without claims, and in records from before schema version 4. */
@@ -24,7 +26,7 @@ export interface StoredUser {
 export interface StoredAccount {
   id: string;
   userId: string;
-  /** `password:<userId>`, `google:<sub>` or `totp:<userId>`. */
+  /** `password:<userId>`, `google:<sub>`, `totp:<userId>`, `email-link:<userId>` or `sms:<userId>`. */
   key: string;
   /** The password hash, or the encrypted secret of the authenticator app. Empty for Google. */
   secret: string | null;
@@ -36,6 +38,8 @@ export interface StoredAccount {
   lastUsedStep: number | null;
   /** The setup the authenticator secret came from; its recovery codes carry the same id. Empty for other accounts. */
   setupId: string | null;
+  /** The phone number of an sms account (E.164). Empty for other accounts, and in records from before schema version 6. */
+  phone: string | null;
   createdAt: number;
 }
 
@@ -48,7 +52,14 @@ interface StoredVerification {
   expiresAt: number;
 }
 
-export type VerificationPurpose = 'verify' | 'reset';
+/**
+ * What a link and code are for: confirming an address, resetting the password, signing in (the e-mail link),
+ * or an SMS code (no link is sent for it).
+ */
+export type VerificationPurpose = 'verify' | 'reset' | 'signin' | 'sms';
+
+/** The methods an unconfirmed sign-up can set an account for before the address is proven, see {@link Users.dropUnprovenAccounts}. */
+export type UnprovenMethod = 'password' | 'email-link';
 
 /** Wrong codes allowed per e-mail before the code (and its link) stop working. */
 export const MAX_CODE_ATTEMPTS = 5;
@@ -80,6 +91,16 @@ export function totpAccountKey(userId: string): string {
   return `totp:${userId}`;
 }
 
+/** The account of a user who signs in with the e-mail link; it has no secret, the inbox is the key. */
+export function emailLinkAccountKey(userId: string): string {
+  return `email-link:${userId}`;
+}
+
+/** The account that holds the user's phone number for SMS codes as a second factor. */
+export function smsAccountKey(userId: string): string {
+  return `sms:${userId}`;
+}
+
 /**
  * The user as apps see them. `profile` is what the sign-in method knows beyond the record, e.g. Google's
  * picture; the stored name wins over the provider's.
@@ -103,6 +124,8 @@ export interface NewAccount {
   lastUsedStep?: number;
   /** For an authenticator app: the setup the secret came from. */
   setupId?: string;
+  /** For SMS codes: the phone number (E.164). */
+  phone?: string;
 }
 
 export class Users {
@@ -132,6 +155,16 @@ export class Users {
   /** The user's authenticator app, if they set one up. */
   async totpAccount(userId: string): Promise<StoredAccount | null> {
     return this.findAccountByKey(totpAccountKey(userId));
+  }
+
+  /** The user's e-mail link account, if they sign in that way. */
+  async emailLinkAccount(userId: string): Promise<StoredAccount | null> {
+    return this.findAccountByKey(emailLinkAccountKey(userId));
+  }
+
+  /** The user's phone number for SMS codes, if they added one. */
+  async smsAccount(userId: string): Promise<StoredAccount | null> {
+    return this.findAccountByKey(smsAccountKey(userId));
   }
 
   /** Whether the user has any way to sign in; a sign-up with the authenticator app has none until it is set up. */
@@ -182,6 +215,7 @@ export class Users {
       name: data.name,
       sessionVersion: 0,
       lastMailAt: 0,
+      lastSmsAt: 0,
       wrongCodes: 0,
       claims: null,
       createdAt: Date.now(),
@@ -197,12 +231,25 @@ export class Users {
   }
 
   /**
-   * A provider verified the user's address: an unconfirmed password sign-up with it, whose password nobody
-   * has proven, is dropped (the account and its pending links and codes), and the user counts as verified.
+   * Removes what an unconfirmed sign-up set without proving it: the password, and the e-mail link account of
+   * a first link nobody used. Only `except`'s own account stays: the method that proves the address, or
+   * signs it up anew, is the one the user ends up with.
    */
-  async verifyByProvider(user: StoredUser): Promise<void> {
+  async dropUnprovenAccounts(userId: string, except?: UnprovenMethod): Promise<void> {
+    const keys: Record<UnprovenMethod, string> = { password: passwordAccountKey(userId), 'email-link': emailLinkAccountKey(userId) };
+    for (const [method, key] of Object.entries(keys)) {
+      if (method !== except) await this.store.delete('account', { key });
+    }
+  }
+
+  /**
+   * A provider verified the user's address: an unconfirmed sign-up with it, whose password or e-mail link
+   * nobody has proven, is dropped (its accounts, except `proven`'s own, and its pending links and codes),
+   * and the user counts as verified.
+   */
+  async verifyByProvider(user: StoredUser, proven?: UnprovenMethod): Promise<void> {
     if (user.emailVerified) return;
-    await this.store.delete('account', { key: passwordAccountKey(user.id) });
+    await this.dropUnprovenAccounts(user.id, proven);
     await this.clearVerifications(user.id);
     await this.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
   }
@@ -224,6 +271,11 @@ export class Users {
     return removed;
   }
 
+  /** Removes the user's phone number for SMS codes. Resolves to false if they had none. */
+  async removeSms(userId: string): Promise<boolean> {
+    return this.unlinkAccount(smsAccountKey(userId));
+  }
+
   /** Adds a sign-in method to a user. Resolves to null if the account key is taken. */
   async linkAccount(userId: string, account: NewAccount): Promise<StoredAccount | null> {
     const record: StoredAccount = {
@@ -236,6 +288,7 @@ export class Users {
       email: account.email ?? null,
       lastUsedStep: account.lastUsedStep ?? 0,
       setupId: account.setupId ?? null,
+      phone: account.phone ?? null,
       createdAt: Date.now(),
     };
     return (await this.store.create('account', record as unknown as Row)) ? record : null;
@@ -352,7 +405,7 @@ export class Users {
   }
 
   /**
-   * Starts a verification or password reset: replaces the user's earlier one for the same purpose and
+   * Starts a verification, password reset or e-mail link sign-in: replaces the user's earlier one for the same purpose and
    * returns the link token and the code for the e-mail. Only their hashes are stored.
    */
   async issueVerification(userId: string, purpose: VerificationPurpose, ttlMs: number): Promise<{ token: string; code: string }> {
@@ -386,11 +439,15 @@ export class Users {
 
   /**
    * Uses up the user's verification if `code` matches. Too many wrong codes delete it, and after
-   * MAX_WRONG_CODES wrong codes in a row the user's codes stop working until an e-mail link is used.
+   * MAX_WRONG_CODES wrong e-mail codes in a row the user's codes stop working until an e-mail link is used.
+   * SMS codes are not counted that way: that lock is only lifted by an e-mail link or a password reset, which
+   * a Google user with a phone never has. Their record's attempts, one SMS per minute and the lock on the
+   * sms account (routes/lockout.ts) are their limits.
    */
   async consumeCode(user: StoredUser, purpose: VerificationPurpose, code: string): Promise<CodeResult> {
+    const counted = purpose !== 'sms';
     // A locked user's verification is left alone, so the link in the e-mail keeps working.
-    if ((user.wrongCodes ?? 0) >= MAX_WRONG_CODES) return { userId: null, locked: true };
+    if (counted && (user.wrongCodes ?? 0) >= MAX_WRONG_CODES) return { userId: null, locked: true };
     const record = (await this.store.findOne('verification', { userId: user.id, purpose })) as StoredVerification | null;
     if (!record) return { userId: null, locked: false };
     // The attempt is counted before the code is compared, and only if no other request counted one
@@ -401,12 +458,16 @@ export class Users {
     }
     // The code is also counted as wrong for the user before it is compared, so codes for confirming and
     // for resetting tried at the same time can't get past the limit either. A right code sets it back.
-    const wrongCodes = await this.countWrongCode(user);
-    if (wrongCodes === null) return { userId: null, locked: false };
-    if (wrongCodes > MAX_WRONG_CODES) return { userId: null, locked: true };
+    let wrongCodes = 0;
+    if (counted) {
+      const count = await this.countWrongCode(user);
+      if (count === null) return { userId: null, locked: false };
+      if (count > MAX_WRONG_CODES) return { userId: null, locked: true };
+      wrongCodes = count;
+    }
     if (!safeEqual(hashCode(this.key, code), record.codeHash)) {
       if (attempts >= MAX_CODE_ATTEMPTS) await this.store.delete('verification', { id: record.id });
-      return { userId: null, locked: wrongCodes >= MAX_WRONG_CODES };
+      return { userId: null, locked: counted && wrongCodes >= MAX_WRONG_CODES };
     }
     return { userId: await this.consume(record), locked: false };
   }
