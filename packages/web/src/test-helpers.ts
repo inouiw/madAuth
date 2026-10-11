@@ -53,7 +53,7 @@ export interface FakeServer {
   accounts: Map<string, FakeAccount>;
   /** The webhook can't take e-mails over: sign-up and the e-mail requests answer 503. */
   emailsDown: boolean;
-  /** The sign-up check (signup.before) refuses with this message. */
+  /** The sign-up check (user.signing_up) refuses with this message. */
   rejectSignUp: string | undefined;
   /** The rules for new passwords, as an admin set them. */
   passwordRules: { minLength: number; minScore: number };

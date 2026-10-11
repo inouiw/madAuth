@@ -46,7 +46,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 6,
+  version: 7,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -65,6 +65,12 @@ export const madauthSchema = {
         wrongCodes: { type: 'number' },
         /** What admins attached to the user, as JSON, e.g. `{"roles":["admin"]}` (since version 4). */
         claims: { type: 'string', nullable: true },
+        /**
+         * When the user's first session started: the sign-up was complete, with every second factor the
+         * policy asked for. 0 until then. Empty in records from before version 7, whose sign-up counts as
+         * complete (since version 7).
+         */
+        signedUpAt: { type: 'number', nullable: true },
         createdAt: { type: 'number' },
       },
     },
@@ -92,6 +98,11 @@ export const madauthSchema = {
         setupId: { type: 'string', nullable: true },
         /** The phone number of an `sms:` account, in E.164 form (`+41791234567`). Empty for other accounts (since version 6). */
         phone: { type: 'string', nullable: true },
+        /**
+         * The user's id when the account is how they sign in (their one primary method), empty for a second
+         * factor. Unique, so a user has one primary method at most (since version 7; empty in older records).
+         */
+        primaryUserId: { type: 'string', nullable: true, unique: true },
         createdAt: { type: 'number' },
       },
     },

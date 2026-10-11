@@ -42,7 +42,7 @@ describe('sign-up and e-mail verification', () => {
     expect(hook.emails()).toHaveLength(1);
     const mail = hook.emails()[0];
     expect(mail).toMatchObject({
-      type: 'email.verify',
+      type: 'email.send_verification',
       data: { to: 'grace@example.com', site: 'app.example.com', user: { name: 'Grace Hopper' }, expiresAt: expect.any(Number) },
     });
     const { link, token, code } = linkAndCode(mail);
@@ -65,7 +65,7 @@ describe('sign-up and e-mail verification', () => {
 
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({});
-    expect(hook.lastEmail()).toMatchObject({ type: 'email.already_registered', data: { to: 'grace@example.com', link: REDIRECT_TO, methods: ['password'] } });
+    expect(hook.lastEmail()).toMatchObject({ type: 'email.send_already_registered', data: { to: 'grace@example.com', link: REDIRECT_TO, methods: ['password'] } });
     // The existing password still works; the new one doesn't.
     expect((await signIn(app)).status).toBe(200);
     expect((await signIn(app, { password: 'another password' })).status).toBe(401);
@@ -333,7 +333,7 @@ describe('password reset', () => {
     const unknown = await post(app, '/auth/password/send-reset', { email: 'nobody@example.com', redirectTo: REDIRECT_TO });
 
     expect([first.status, second.status, unknown.status]).toEqual([202, 202, 202]);
-    expect(hook.emails().filter((m) => m.type === 'email.reset')).toHaveLength(1);
+    expect(hook.emails().filter((m) => m.type === 'email.send_password_reset')).toHaveLength(1);
   });
 
   it('A11: a code stops working after 5 wrong attempts', async () => {
@@ -454,7 +454,7 @@ describe('configuration', () => {
       password: { minLength: 8, minScore: 2, secondFactor: 'none' },
       totp: null,
       email: { verification: true },
-      // The test receiver asks for every type, email.signin and sms.code included: the e-mail link and SMS codes are configured and on.
+      // The test receiver asks for every type, email.send_signin_link and sms.send_code included: the e-mail link and SMS codes are configured and on.
       emailLink: { secondFactor: 'none' },
       sms: true,
     });

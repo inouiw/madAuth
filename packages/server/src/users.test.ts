@@ -1,7 +1,6 @@
 // Every sign-in belongs to a stored user: Google accounts are known by their `sub`, and a primary method
 // signs in only users who have it. See "How it works" and "Sessions" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Users } from './users.js';
 import {
   APP_ORIGIN,
   REDIRECT_TO,
@@ -17,6 +16,7 @@ import {
   signUpVerified,
   testApp,
   verify,
+  linkGoogleAsBefore,
 } from './test/helpers.js';
 
 afterEach(() => {
@@ -96,7 +96,7 @@ describe('Google users', () => {
     const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook, 'Ada@Example.com');
     const [user] = await store.findMany('user', {});
-    await new Users(store).linkAccount(user.id as string, { key: 'google:1001', email: 'ada@example.com' });
+    await linkGoogleAsBefore(store, user.id as string, '1001', 'ada@example.com');
 
     const google = (await (await googleSignIn(app)).json()).user;
 
@@ -112,7 +112,7 @@ describe('Google users', () => {
     await post(app, '/auth/password/signup', { email: 'ada@example.com', password: 'adas password!', redirectTo: REDIRECT_TO });
 
     // Her address is confirmed already, so the sign-up only tells her she is registered; no new user.
-    expect(hook.lastEmail()?.type).toBe('email.already_registered');
+    expect(hook.lastEmail()?.type).toBe('email.send_already_registered');
     expect(await store.findMany('user', {})).toHaveLength(1);
     expect(await store.findMany('account', { userId: google.id })).toHaveLength(1);
   });
@@ -162,13 +162,13 @@ describe('Google users', () => {
 
     expect(res.status).toBe(202);
     expect(hook.emails()).toEqual([
-      expect.objectContaining({ type: 'email.no_password', data: expect.objectContaining({ to: 'ada@example.com', link: REDIRECT_TO, methods: ['google'] }) }),
+      expect.objectContaining({ type: 'email.send_password_reset_no_password', data: expect.objectContaining({ to: 'ada@example.com', link: REDIRECT_TO, methods: ['google'] }) }),
     ]);
     expect((await store.findMany('account', { userId: google.id })).map((a) => a.key)).toEqual(['google:1001']);
   });
 
-  it('without email.no_password in the list, a Google user asking for a reset gets nothing', async () => {
-    const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) } });
+  it('without email.send_password_reset_no_password in the list, a Google user asking for a reset gets nothing', async () => {
+    const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.send_verification', 'email.send_password_reset']) } });
     await googleSignIn(app);
     hook.calls.length = 0;
 
@@ -198,7 +198,7 @@ describe('Google users', () => {
     const { app, hook, store } = passwordApp();
     await signUpVerified(app, hook);
     const [user] = await store.findMany('user', {});
-    await new Users(store).linkAccount(user.id as string, { key: 'google:3003', email: 'grace@example.com' });
+    await linkGoogleAsBefore(store, user.id as string, '3003', 'grace@example.com');
     const google = await googleSignIn(app, { email: 'grace@example.com', sub: '3003' });
     expect(google.status).toBe(200);
     advance(61_000);
@@ -210,7 +210,7 @@ describe('Google users', () => {
 
   it('the sign-up guard can refuse a Google sign-up in the redirect flow too', async () => {
     const { app, hook, store } = passwordApp();
-    hook.respond = (call) => (call.type === 'signup.before' ? { allow: false, message: 'No' } : undefined);
+    hook.respond = (call) => (call.type === 'user.signing_up' ? { allow: false, message: 'No' } : undefined);
     const started = await app.request(`/auth/google/start?return_to=${encodeURIComponent(`${APP_ORIGIN}/page`)}`);
     const location = new URL(started.headers.get('location')!);
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id_token: await googleIdToken({ nonce: location.searchParams.get('nonce')! }) })));

@@ -96,8 +96,8 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     const passwordHash = await hashPassword(data.password as string);
     const existing = await users.findByEmail(normalizeEmail(email));
 
-    if (existing?.emailVerified && (await users.hasAccounts(existing.id))) {
-      return (await emails.sendAccountEmail(existing, 'email.already_registered', target, locale)) ? accepted(c) : unavailable(c);
+    if (existing?.emailVerified && (await users.hasSignInMethod(existing.id))) {
+      return (await emails.sendAccountEmail(existing, 'email.send_already_registered', target, locale)) ? accepted(c) : unavailable(c);
     }
     if (existing) {
       // Nobody has proven this address yet (or nobody can sign in with it): the latest sign-up sets the
@@ -119,7 +119,6 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
       account: (userId) => ({ key: passwordAccountKey(userId), secret: passwordHash }),
     });
     if (!user) return accepted(c);
-    await ctx.emit('user.created', { user: toMadauthUser(user), method: 'password' });
     // If this fails, signing up again is allowed: the account is not confirmed yet.
     return (await emails.sendLinkEmail(user, 'verify', target, locale)) ? accepted(c) : unavailable(c);
   });
@@ -137,7 +136,7 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     } else if (user) {
       // A user who signs in with Google alone has nothing to reset (Firebase Auth and Auth0 send nothing).
       // Rather than leave them waiting for an e-mail, the inbox's owner is told how they sign in.
-      if (!(await emails.sendAccountEmail(user, 'email.no_password', target, locale))) return unavailable(c);
+      if (!(await emails.sendAccountEmail(user, 'email.send_password_reset_no_password', target, locale))) return unavailable(c);
     }
     return accepted(c);
   });
@@ -163,7 +162,7 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     // An unused confirmation link would otherwise still sign in.
     await users.clearVerifications(user.id);
     const reset = { ...user, emailVerified: true, sessionVersion, wrongCodes: 0 };
-    await ctx.emit('email.password_reset', { user: toMadauthUser(reset) });
+    await ctx.emit('user.password_reset', { user: toMadauthUser(reset) });
     // The authenticator app, if the policy asks for it, is still needed: the inbox alone does not sign in.
     return signInAnswer(c, await ctx.secondStep(c, reset, ['pwd'], 'password'));
   });

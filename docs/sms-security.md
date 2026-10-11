@@ -34,7 +34,7 @@ Code: `secondStep` in [`packages/server/src/app.ts`](../packages/server/src/app.
 
 ## Sending
 
-madAuth sends no SMS itself: it hands the code to your [webhook](server.md#webhooks) as `sms.code` (`to`, `code`, `purpose`, `expiresAt`, `site`, `locale`, `user`), and your receiver sends it, e.g. through Amazon SNS or Twilio. The call is signed like every webhook call, and `WEBHOOK_URL` must be https (except on the same machine), since the call carries the code. If the receiver does not take the SMS over within ten seconds, the request fails with `503 temporarily_unavailable` and nothing is stored; the user can retry at once.
+madAuth sends no SMS itself: it hands the code to your [webhook](server.md#webhooks) as `sms.send_code` (`to`, `code`, `purpose`, `expiresAt`, `site`, `locale`, `user`), and your receiver sends it, e.g. through Amazon SNS or Twilio. The call is signed like every webhook call, and `WEBHOOK_URL` must be https (except on the same machine), since the call carries the code. If the receiver does not take the SMS over within ten seconds, the request fails with `503 temporarily_unavailable` and nothing is stored; the user can retry at once.
 
 At most one SMS per minute goes to a user (`429 too_soon` otherwise), whoever asks, counted apart from the e-mails: the link of a sign-in and the SMS of its second step may follow each other at once. The code is the same for that minute, so a sign-in that repeats within it still works with the code already sent. Per-IP limits in front of madAuth (see [Password security](password-security.md#brute-force)) slow down anyone who makes madAuth send SMS, which cost money.
 

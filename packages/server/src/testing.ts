@@ -26,6 +26,7 @@ function testUser(overrides: Row = {}): Row {
     lastSmsAt: null,
     wrongCodes: 0,
     claims: null,
+    signedUpAt: null,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };
@@ -44,6 +45,7 @@ function testAccount(overrides: Row = {}): Row {
     lastUsedStep: 0,
     setupId: null,
     phone: null,
+    primaryUserId: null,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };
@@ -166,6 +168,23 @@ export function storeAdapterContract(t: ContractRunner, createAdapter: () => Sto
 
       expect(await store.findOne('account', { key: account.key })).toEqual(account);
       expect(await store.findOne('account', { key: unique('password:missing') })).toBe(null);
+    });
+
+    it('lets many records leave a unique field empty, but refuses a value that is taken', async () => {
+      const store = await createAdapter();
+      const userId = unique('usr_contract');
+      // A user's second factors have no primaryUserId; their one sign-in method has it.
+      const first = testAccount({ userId, key: unique('totp:contract') });
+      const second = testAccount({ userId, key: unique('sms:contract') });
+      const primary = testAccount({ userId, primaryUserId: userId });
+      const another = testAccount({ userId, primaryUserId: userId });
+
+      expect(await store.create('account', first)).toBe(true);
+      expect(await store.create('account', second)).toBe(true);
+      expect(await store.create('account', primary)).toBe(true);
+      expect(await store.create('account', another)).toBe(false);
+      expect(await store.findOne('account', { primaryUserId: userId })).toEqual(primary);
+      expect(await store.findOne('account', { id: another.id })).toBe(null);
     });
 
     it('sets a field to a value and to null', async () => {

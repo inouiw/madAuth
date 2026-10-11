@@ -16,9 +16,9 @@ import {
 } from '../test/helpers.js';
 
 describe('e-mail confirmation', () => {
-  it('E1: a server whose webhook only sends email.verify confirms addresses, without password sign-in', async () => {
+  it('E1: a server whose webhook only sends email.send_verification confirms addresses, without password sign-in', async () => {
     const hook = recordingWebhook();
-    const app = testApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify']) }, webhookFetch: hook.fetch });
+    const app = testApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.send_verification']) }, webhookFetch: hook.fetch });
 
     expect(await (await app.request('/auth/config')).json()).toMatchObject({ password: null, email: { verification: true } });
     // The password routes are not there at all; the confirmation routes are.
@@ -36,7 +36,10 @@ describe('e-mail confirmation', () => {
     expect(res.status).toBe(200);
     expect((await res.json()).user).toMatchObject({ email: 'grace@example.com', amr: ['pwd'] });
     expect(cookies(res).madauth_session.value).toBeTruthy();
-    expect(hook.types().slice(-2)).toEqual(['email.verified', 'user.signed_in']);
+    // Confirmed, and in for the first time: the sign-up is complete.
+    expect(hook.types().slice(-3)).toEqual(['user.email_verified', 'user.signed_up', 'user.signed_in']);
+    expect(hook.calls.at(-3)!.data).toMatchObject({ method: 'password', via: 'link' });
+    expect(hook.calls.at(-2)!.data).toMatchObject({ method: 'password', user: { email: 'grace@example.com' } });
     expect(hook.calls.at(-1)!.data).toMatchObject({ method: 'password' });
     expect((await post(app, '/auth/password/verify-email', { token: 'x' })).status).toBe(404);
   });

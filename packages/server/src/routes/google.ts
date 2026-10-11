@@ -7,7 +7,7 @@ import { verifyGoogleIdToken, type GoogleProfile } from '../google.js';
 import { normalizeEmail } from '../password.js';
 import type { SignInMethod } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
-import { googleAccountKey, toMadauthUser, type StoredUser } from '../users.js';
+import { googleAccountKey, type StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
 import { signInAnswer } from './helpers.js';
 
@@ -82,7 +82,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     for (let attempt = 0; attempt < 2; attempt++) {
       const existing = await users.findByEmail(emailNormalized);
       if (existing) {
-        if (existing.emailVerified && (await users.hasAccounts(existing.id))) {
+        if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) {
           const methods = await users.signInMethods(existing.id, await ctx.settings.methods());
           const how = methods
             .map((method) => ({ password: 'a password', totp: 'an authenticator app', google: 'Google', 'email-link': 'an e-mail link' })[method])
@@ -117,7 +117,6 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
         account: { key, email: profile.email },
       });
       if (user) {
-        await ctx.emit('user.created', { user: toMadauthUser(user), method: 'google' });
         return signedIn(user);
       }
     }

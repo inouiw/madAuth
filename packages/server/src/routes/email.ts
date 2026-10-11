@@ -53,7 +53,7 @@ export function emailRoutes(app: Hono, ctx: AppContext, users: Users, webhook: W
     // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.
     await users.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
     const verified = { ...user, emailVerified: true, wrongCodes: 0 };
-    await ctx.emit('email.verified', { user: toMadauthUser(verified), via });
+    await ctx.emit('user.email_verified', { user: toMadauthUser(verified), method, via });
     // A password user is signed in (or asked for their code); a sign-up with the authenticator app sets it up now.
     return signInAnswer(c, await ctx.secondStep(c, verified, method === 'password' ? ['pwd'] : [], method));
   });

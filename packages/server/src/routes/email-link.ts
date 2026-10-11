@@ -34,8 +34,8 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
     if (existing && (await users.emailLinkAccount(existing.id))) return send(existing);
     // A method signs in only users who have it: an address that signs in another way is told so instead
     // (if the receiver sends that e-mail).
-    if (existing?.emailVerified && (await users.hasAccounts(existing.id))) {
-      return (await emails.sendAccountEmail(existing, 'email.already_registered', target, locale)) ? accepted(c) : unavailable(c);
+    if (existing?.emailVerified && (await users.hasSignInMethod(existing.id))) {
+      return (await emails.sendAccountEmail(existing, 'email.send_already_registered', target, locale)) ? accepted(c) : unavailable(c);
     }
 
     // A new address, or a sign-up nobody finished: the first link signs the user up. The operator's check
@@ -59,7 +59,6 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
     });
     // Created by another request meanwhile: the same answer, and the next request finds the user.
     if (!user) return accepted(c);
-    await ctx.emit('user.created', { user: toMadauthUser(user), method: 'email-link' });
     return send(user);
   });
 
@@ -71,7 +70,7 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
       // The link proves access to the inbox, and nobody had proven the address before: a password an
       // unconfirmed sign-up set meanwhile (perhaps by someone else) goes, with its links and codes.
       await users.verifyByProvider(user, 'email-link');
-      await ctx.emit('email.verified', { user: toMadauthUser({ ...user, emailVerified: true }), via: consumed.via });
+      await ctx.emit('user.email_verified', { user: toMadauthUser({ ...user, emailVerified: true }), method: 'email-link', via: consumed.via });
     } else {
       // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.
       await users.updateUser(user.id, { wrongCodes: 0 });

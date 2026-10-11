@@ -19,7 +19,7 @@ vi.stubEnv('GOOGLE_CLIENT_ID', CLIENT_ID);
 vi.stubEnv('DATABASE_URL', 'sqlite::memory:');
 vi.stubEnv('WEBHOOK_URL', WEBHOOK_URL);
 vi.stubEnv('WEBHOOK_SECRET', WEBHOOK_SECRET);
-vi.stubEnv('WEBHOOK_EVENTS', 'email.verify,email.reset');
+vi.stubEnv('WEBHOOK_EVENTS', 'email.send_verification,email.send_password_reset');
 
 /** A store adapter that records which models are read. */
 function recordingAdapter(): StoreAdapter & { models: string[] } {
@@ -224,12 +224,14 @@ describe('deployment entry points', () => {
     expect(fromFour.output).toContain('CREATE TABLE madauth_recovery_code (');
     expect(await runCli(['schema', '--from', '5'])).toEqual({
       exitCode: 0,
-      output: 'ALTER TABLE madauth_account ADD COLUMN phone TEXT;\nALTER TABLE madauth_user ADD COLUMN last_sms_at DOUBLE PRECISION;',
+      output: 'ALTER TABLE madauth_account ADD COLUMN phone TEXT;\nALTER TABLE madauth_user ADD COLUMN last_sms_at DOUBLE PRECISION;\n' +
+        'ALTER TABLE madauth_user ADD COLUMN signed_up_at DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN primary_user_id TEXT;\nCREATE UNIQUE INDEX madauth_account_primary_user_id ON madauth_account (primary_user_id);',
     });
-    expect(await runCli(['schema', '--from', '6'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
+    expect(await runCli(['schema', '--from', '6'])).toEqual({ exitCode: 0, output: 'ALTER TABLE madauth_user ADD COLUMN signed_up_at DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN primary_user_id TEXT;\nCREATE UNIQUE INDEX madauth_account_primary_user_id ON madauth_account (primary_user_id);' });
+    expect(await runCli(['schema', '--from', '7'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
     expect(await runCli(['schema', '--from', 'x'])).toMatchObject({ exitCode: 1 });
     // A version this madAuth does not know yet.
-    expect(await runCli(['schema', '--from', '7'])).toMatchObject({ exitCode: 1 });
+    expect(await runCli(['schema', '--from', '8'])).toMatchObject({ exitCode: 1 });
   });
 
   it('set-roles makes the first admin without a running server, and get-roles prints the roles', async () => {
@@ -295,7 +297,7 @@ describe('deployment entry points', () => {
       GOOGLE_CLIENT_ID: CLIENT_ID,
       WEBHOOK_URL,
       WEBHOOK_SECRET,
-      WEBHOOK_EVENTS: 'email.verify,email.reset',
+      WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset',
       DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}`,
     };
     const io = { ask: async () => '', askSecret: async () => '' };
@@ -310,9 +312,9 @@ describe('deployment entry points', () => {
       output: 'Switched on: google, password (second factor required), totp.',
     });
     expect(await runCli(['set-methods', 'fax'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('Unknown sign-in method "fax"') });
-    // The e-mail link and SMS codes are not configured here (no email.signin, no sms.code): listing them changes nothing.
+    // The e-mail link and SMS codes are not configured here (no email.send_signin_link, no sms.send_code): listing them changes nothing.
     expect(await runCli(['set-methods', 'google', 'email-link=optional', 'sms'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp.' });
-    const withLink = { ...env, WEBHOOK_EVENTS: 'email.verify,email.reset,email.signin,sms.code' };
+    const withLink = { ...env, WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset,email.send_signin_link,sms.send_code' };
     expect(await runCli(['get-methods'], io, withLink)).toEqual({ exitCode: 0, output: 'Switched on: google, email-link (second factor optional), sms. Switched off: password, totp.' });
     expect(await runCli(['set-methods', 'email-link=required'], io, withLink)).toEqual({ exitCode: 0, output: 'Switched on: email-link (second factor required). Switched off: google, password, totp, sms.' });
     expect(await runCli(['set-methods', 'email-link=maybe'], io, withLink)).toMatchObject({ exitCode: 1, output: expect.stringContaining('none, optional, required') });

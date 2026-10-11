@@ -109,6 +109,7 @@ const user = {
   lastSmsAt: null,
   wrongCodes: 0,
   claims: null,
+  signedUpAt: null,
   createdAt: 1,
 };
 
@@ -125,6 +126,7 @@ const userItem = {
   lastSmsAt: { NULL: true },
   wrongCodes: { N: '0' },
   claims: { NULL: true },
+  signedUpAt: { NULL: true },
   createdAt: { N: '1' },
 };
 

@@ -75,6 +75,18 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
         `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('lastSmsAt')} ${columnTypes[dialect].number};`,
       ].join('\n'),
   },
+  {
+    // One primary sign-in method per user, and when a user's sign-up was complete. Older records stay empty:
+    // madAuth tells their primary method from the account's key, and counts their sign-up as complete.
+    version: 7,
+    sql: (dialect) =>
+      [
+        `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('signedUpAt')} ${columnTypes[dialect].number};`,
+        // SQLite can't add a UNIQUE column, so the constraint is an index; MySQL only indexes strings of a fixed length.
+        `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('primaryUserId')} ${dialect === 'mysql' ? 'VARCHAR(255)' : columnTypes[dialect].string};`,
+        `CREATE UNIQUE INDEX ${tableName('account')}_${columnName('primaryUserId')} ON ${tableName('account')} (${columnName('primaryUserId')});`,
+      ].join('\n'),
+  },
 ];
 
 /**

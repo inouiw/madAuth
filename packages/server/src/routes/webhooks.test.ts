@@ -16,6 +16,7 @@ import {
   signUpVerified,
   verify,
 } from '../test/helpers.js';
+import { Settings } from '../settings.js';
 import { generateWebhookSecret } from '../webhooks.js';
 
 afterEach(() => {
@@ -43,7 +44,7 @@ describe('e-mails through the webhook', () => {
     expect((await signUp(app)).status).toBe(202);
 
     expect(hook.lastEmail()).toMatchObject({
-      type: 'email.verify',
+      type: 'email.send_verification',
       data: { to: 'grace@example.com', code: expect.stringMatching(/^\d{6}$/), locale: 'de-CH', site: 'app.example.com' },
     });
     expect(linkAndCode(hook.lastEmail()).link.startsWith(`${REDIRECT_TO}#madauth_verify=`)).toBe(true);
@@ -60,7 +61,7 @@ describe('e-mails through the webhook', () => {
 
       expect(res.status).toBe(503);
       expect(await res.json()).toMatchObject({ error: 'temporarily_unavailable' });
-      expect(errors).toHaveBeenCalledWith(expect.stringContaining('"email.verify"'));
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining('"email.send_verification"'));
       const [user] = await store.findMany('user', {});
       expect(user.lastMailAt).toBe(0);
 
@@ -117,16 +118,16 @@ describe('e-mails through the webhook', () => {
   });
 });
 
-describe('the sign-up guard (signup.before)', () => {
+describe('the sign-up guard (user.signing_up)', () => {
   it('K3: can refuse a sign-up with a message, before anything is stored or sent', async () => {
     const { app, hook, store } = passwordApp();
-    hook.respond = (call) => (call.type === 'signup.before' ? { allow: false, message: 'Company addresses only' } : undefined);
+    hook.respond = (call) => (call.type === 'user.signing_up' ? { allow: false, message: 'Company addresses only' } : undefined);
 
     const res = await signUp(app);
 
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: 'signup_rejected', message: 'Company addresses only' });
-    expect(hook.calls).toEqual([{ type: 'signup.before', data: { email: 'grace@example.com', name: 'Grace Hopper', locale: 'de-CH', method: 'password' } }]);
+    expect(hook.calls).toEqual([{ type: 'user.signing_up', data: { email: 'grace@example.com', name: 'Grace Hopper', locale: 'de-CH', method: 'password' } }]);
     expect(await store.findMany('user', {})).toEqual([]);
   });
 
@@ -146,30 +147,31 @@ describe('the sign-up guard (signup.before)', () => {
     const { app, hook } = passwordApp();
     expect((await signUp(app)).status).toBe(202);
 
-    hook.respond = (call) => (call.type === 'signup.before' ? { allow: false } : undefined);
+    hook.respond = (call) => (call.type === 'user.signing_up' ? { allow: false } : undefined);
     const res = await signUp(app, { email: 'other@example.com' });
     expect(await res.json()).toMatchObject({ error: 'signup_rejected', message: expect.stringContaining('not possible') });
   });
 
   it('K6: is skipped when WEBHOOK_EVENTS does not select it', async () => {
-    const events = new Set(['email.verify', 'email.reset', 'user.created']);
+    const events = new Set(['email.send_verification', 'email.send_password_reset', 'user.signed_up']);
     const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events } });
 
     expect((await signUp(app)).status).toBe(202);
 
-    expect(hook.types()).toEqual(['user.created', 'email.verify']);
+    // No check without user.signing_up in the list, and no user.signed_up before the address is confirmed.
+    expect(hook.types()).toEqual(['email.send_verification']);
   });
 });
 
 describe('a receiver that sends only the two required e-mails', () => {
-  const events = new Set(['email.verify', 'email.reset']);
+  const events = new Set(['email.send_verification', 'email.send_password_reset']);
 
   it('K6: gets nothing else, so a sign-in makes no call', async () => {
     const { app, hook } = passwordApp({ webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events } });
     await signUpVerified(app, hook);
     await post(app, '/auth/password/signin', grace);
 
-    expect(hook.types()).toEqual(['email.verify']);
+    expect(hook.types()).toEqual(['email.send_verification']);
   });
 
   it('K6: a sign-up with a confirmed address answers like any other and sends nothing', async () => {
@@ -181,15 +183,15 @@ describe('a receiver that sends only the two required e-mails', () => {
 
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({});
-    expect(hook.types()).toEqual(['email.verify']);
+    expect(hook.types()).toEqual(['email.send_verification']);
     // No e-mail was counted either: the reset e-mail goes out right away.
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
-    expect(hook.types()).toEqual(['email.verify', 'email.reset']);
+    expect(hook.types()).toEqual(['email.send_verification', 'email.send_password_reset']);
   });
 });
 
 describe('events', () => {
-  it('K5: reports creation, verification, sign-in and reset', async () => {
+  it('K5: reports the sign-up, the confirmation, sign-ins and the reset', async () => {
     const { app, hook } = passwordApp();
     await signUpVerified(app, hook);
     await post(app, '/auth/password/signin', grace);
@@ -198,18 +200,19 @@ describe('events', () => {
     await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new teapot sky!' });
 
     expect(hook.types()).toEqual([
-      'signup.before',
-      'user.created',
-      'email.verify',
-      'email.verified',
+      'user.signing_up',
+      'email.send_verification',
+      'user.email_verified',
+      'user.signed_up',
       'user.signed_in',
       'user.signed_in',
-      'email.reset',
-      'email.password_reset',
+      'email.send_password_reset',
+      'user.password_reset',
       'user.signed_in',
     ]);
     const user = { id: expect.stringMatching(/^usr_/), email: 'grace@example.com', name: 'Grace Hopper' };
-    expect(hook.calls.find((c) => c.type === 'email.verified')!.data).toEqual({ user, via: 'link' });
+    expect(hook.calls.find((c) => c.type === 'user.email_verified')!.data).toEqual({ user, method: 'password', via: 'link' });
+    expect(hook.calls.find((c) => c.type === 'user.signed_up')!.data).toEqual({ user, method: 'password' });
     expect(hook.calls.find((c) => c.type === 'user.signed_in')!.data).toEqual({ user, method: 'password' });
   });
 
@@ -220,8 +223,8 @@ describe('events', () => {
     const first = await getNonce(app);
     await verify(app, await googleIdToken({ nonce: first.nonce }), first.cookie);
     expect(hook.calls).toEqual([
-      { type: 'signup.before', data: { email: 'ada@example.com', name: 'Ada Lovelace', method: 'google' } },
-      { type: 'user.created', data: { user, method: 'google' } },
+      { type: 'user.signing_up', data: { email: 'ada@example.com', name: 'Ada Lovelace', method: 'google' } },
+      { type: 'user.signed_up', data: { user: { ...user, picture: 'https://example.com/ada.png' }, method: 'google' } },
       { type: 'user.signed_in', data: { user: { ...user, picture: 'https://example.com/ada.png' }, method: 'google' } },
     ]);
 
@@ -233,7 +236,7 @@ describe('events', () => {
 
   it('K3: the sign-up guard applies to Google too, before anything is stored', async () => {
     const { app, hook, store } = passwordApp();
-    hook.respond = (call) => (call.type === 'signup.before' ? { allow: false, message: 'Company addresses only' } : undefined);
+    hook.respond = (call) => (call.type === 'user.signing_up' ? { allow: false, message: 'Company addresses only' } : undefined);
     const { nonce, cookie } = await getNonce(app);
 
     const res = await verify(app, await googleIdToken({ nonce }), cookie);
@@ -242,7 +245,7 @@ describe('events', () => {
     expect(await res.json()).toEqual({ error: 'signup_rejected', message: 'Company addresses only' });
     expect(cookies(res).madauth_session).toBeUndefined();
     expect(await store.findMany('user', {})).toEqual([]);
-    expect(hook.types()).toEqual(['signup.before']);
+    expect(hook.types()).toEqual(['user.signing_up']);
   });
 
   it('K5: a failing receiver does not fail the sign-in, but is logged', async () => {
@@ -265,5 +268,81 @@ describe('events', () => {
     expect(res.status).toBe(403);
     expect(hook.calls).toEqual([]);
     expect(APP_ORIGIN).toBe('https://app.example.com');
+  });
+});
+
+describe('user.signed_up', () => {
+  const setMethods = (store: ReturnType<typeof passwordApp>['store'], methods: ConstructorParameters<typeof Settings>[1]) =>
+    new Settings(store).set('methods', methods, null);
+
+  it('is sent once, at the first session, also when two sign-ins come at once', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 1_700_000_000_000 });
+    const { app, hook, store } = passwordApp();
+    await signUpVerified(app, hook);
+    expect(hook.types().filter((type) => type === 'user.signed_up')).toHaveLength(1);
+    const [user] = await store.findMany('user', {});
+    expect(user.signedUpAt).toBe(1_700_000_000_000);
+
+    // A later sign-in is no sign-up.
+    hook.calls.length = 0;
+    await post(app, '/auth/password/signin', grace);
+    expect(hook.types()).toEqual(['user.signed_in']);
+
+    // The write decides between sign-ins at the same time: one of them tells.
+    await store.update('user', { id: user.id }, { signedUpAt: 0 });
+    hook.calls.length = 0;
+    await Promise.all([post(app, '/auth/password/signin', grace), post(app, '/auth/password/signin', grace)]);
+    expect(hook.types().filter((type) => type === 'user.signed_up')).toHaveLength(1);
+  });
+
+  it('is not sent for a user from before it existed', async () => {
+    const { app, hook, store } = passwordApp();
+    await signUpVerified(app, hook);
+    // Schema version 6 had no signedUpAt: such a user signed up long ago.
+    const [user] = await store.findMany('user', {});
+    await store.update('user', { id: user.id }, { signedUpAt: null });
+    hook.calls.length = 0;
+
+    await post(app, '/auth/password/signin', grace);
+
+    expect(hook.types()).toEqual(['user.signed_in']);
+  });
+
+  it('waits for the second factor a policy requires, and comes when the policy no longer does', async () => {
+    const { app, hook, store } = passwordApp();
+    await setMethods(store, { password: { secondFactor: 'required' } });
+    await signUp(app);
+    const confirmed = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
+    expect(await confirmed.json()).toMatchObject({ error: 'totp_setup_required' });
+    expect(hook.types()).not.toContain('user.signed_up');
+
+    // The admin drops the requirement before Grace set the app up: her next sign-in completes the sign-up.
+    await setMethods(store, { password: { secondFactor: 'optional' } });
+    hook.calls.length = 0;
+    expect((await post(app, '/auth/password/signin', grace)).status).toBe(200);
+    expect(hook.calls).toEqual([
+      { type: 'user.signed_up', data: { user: expect.objectContaining({ email: grace.email }), method: 'password' } },
+      { type: 'user.signed_in', data: { user: expect.objectContaining({ email: grace.email }), method: 'password' } },
+    ]);
+  });
+
+  it('comes when a sign-up nobody confirmed is finished another way: a password reset, or Google', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+    const reset = passwordApp();
+    await signUp(reset.app);
+    advance(61_000);
+    await post(reset.app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
+    const { token } = linkAndCode(reset.hook.lastEmail());
+    reset.hook.calls.length = 0;
+    await post(reset.app, '/auth/password/reset', { token, password: 'new teapot sky!' });
+    expect(reset.hook.types()).toEqual(['user.password_reset', 'user.signed_up', 'user.signed_in']);
+
+    const google = passwordApp();
+    await post(google.app, '/auth/password/signup', { email: 'ada@example.com', password: 'adas password!', redirectTo: REDIRECT_TO });
+    google.hook.calls.length = 0;
+    const { nonce, cookie } = await getNonce(google.app);
+    await verify(google.app, await googleIdToken({ nonce }), cookie);
+    expect(google.hook.types()).toEqual(['user.signed_up', 'user.signed_in']);
+    expect(google.hook.calls[0].data).toMatchObject({ method: 'google' });
   });
 });

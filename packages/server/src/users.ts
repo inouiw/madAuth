@@ -20,6 +20,11 @@ export interface StoredUser {
   wrongCodes: number | null;
   /** The user's claims as JSON. Empty without claims, and in records from before schema version 4. */
   claims: string | null;
+  /**
+   * When the user's first session started, so `user.signed_up` is sent once: 0 until then. Empty in records
+   * from before schema version 7, whose sign-up counts as complete.
+   */
+  signedUpAt: number | null;
   createdAt: number;
 }
 
@@ -40,6 +45,11 @@ export interface StoredAccount {
   setupId: string | null;
   /** The phone number of an sms account (E.164). Empty for other accounts, and in records from before schema version 6. */
   phone: string | null;
+  /**
+   * The user's id when the account is how they sign in (their one primary method), null for a second factor.
+   * Null in records from before schema version 7 as well: see {@link isPrimary}.
+   */
+  primaryUserId: string | null;
   createdAt: number;
 }
 
@@ -101,6 +111,24 @@ export function smsAccountKey(userId: string): string {
   return `sms:${userId}`;
 }
 
+/** The method of an account: the start of its key, e.g. `password` or `sms`. */
+const methodOf = (account: Pick<StoredAccount, 'key'>): string => String(account.key).split(':')[0];
+
+/** The methods whose accounts are always a sign-in method; the authenticator app is one only for a user who signed up with it. */
+const ALWAYS_PRIMARY = ['password', 'google', 'email-link'];
+
+/**
+ * Whether an account is how its user signs in, as opposed to a second factor; `accounts` are all of the
+ * user's. Records from before schema version 7 don't say so: password, Google and the e-mail link always
+ * are, SMS never is, and the authenticator app is when the user has none of the others (they signed up with it).
+ */
+export function isPrimary(account: StoredAccount, accounts: StoredAccount[]): boolean {
+  if (account.primaryUserId) return true;
+  const method = methodOf(account);
+  if (method !== 'totp') return ALWAYS_PRIMARY.includes(method);
+  return !accounts.some((other) => ALWAYS_PRIMARY.includes(methodOf(other)));
+}
+
 /**
  * The user as apps see them. `profile` is what the sign-in method knows beyond the record, e.g. Google's
  * picture; the stored name wins over the provider's.
@@ -126,6 +154,11 @@ export interface NewAccount {
   setupId?: string;
   /** For SMS codes: the phone number (E.164). */
   phone?: string;
+  /**
+   * Whether the account is how the user signs in. By default it is for a password, Google and the e-mail
+   * link; the authenticator app is one only for a sign-up with it, SMS never.
+   */
+  primary?: boolean;
 }
 
 export class Users {
@@ -167,20 +200,46 @@ export class Users {
     return this.findAccountByKey(smsAccountKey(userId));
   }
 
-  /** Whether the user has any way to sign in; a sign-up with the authenticator app has none until it is set up. */
-  async hasAccounts(userId: string): Promise<boolean> {
-    return (await this.store.findMany('account', { userId }, { limit: 1 })).length > 0;
+  /** The user's accounts: their sign-in method and their second factors. */
+  private async accounts(userId: string): Promise<StoredAccount[]> {
+    return (await this.store.findMany('account', { userId })) as unknown as StoredAccount[];
+  }
+
+  /** The account the user signs in with (they have one at most), or null; a sign-up with the authenticator app has none until it is set up. */
+  async primaryAccount(userId: string): Promise<StoredAccount | null> {
+    const accounts = await this.accounts(userId);
+    return accounts.find((account) => isPrimary(account, accounts)) ?? null;
+  }
+
+  /** Whether the account is how its user signs in, as opposed to a second factor. */
+  async signsIn(account: StoredAccount): Promise<boolean> {
+    return isPrimary(account, await this.accounts(account.userId));
+  }
+
+  /** Whether someone can sign in as the user: they have a sign-in method. */
+  async hasSignInMethod(userId: string): Promise<boolean> {
+    return (await this.primaryAccount(userId)) !== null;
   }
 
   /**
-   * The ways the user can sign in, from their accounts: e.g. `['google']` for a user without a password.
-   * The authenticator app counts only when it signs in on its own (`methods` lists it); as a second
-   * factor it is a step of another method, not a way in.
+   * How the user signs in, e.g. `['google']`; empty while nobody can. A user has one sign-in method (only
+   * users from before madAuth 0.4 may have a password and Google); a second factor (the authenticator app of
+   * a password user, SMS) is a step of it, not a way in. The app of a user who signed up with it counts only
+   * while it signs in on its own (`methods` lists it).
    */
   async signInMethods(userId: string, methods: MethodSettings): Promise<SignInMethod[]> {
-    const accounts = await this.store.findMany('account', { userId });
-    const keys = accounts.map((account) => String(account.key).split(':')[0]);
-    return SIGN_IN_METHODS.filter((method) => keys.includes(method) && (method !== 'totp' || methods.totp !== undefined));
+    const accounts = await this.accounts(userId);
+    const signIn = accounts.filter((account) => isPrimary(account, accounts)).map(methodOf);
+    return SIGN_IN_METHODS.filter((m) => signIn.includes(m) && (m !== 'totp' || methods.totp !== undefined));
+  }
+
+  /**
+   * Notes that the user's first session started: their sign-up is complete. Resolves to true only for the
+   * request that wrote it, so `user.signed_up` is sent once; false for a later session, and for a user from
+   * before schema version 7.
+   */
+  async markSignedUp(userId: string): Promise<boolean> {
+    return (await this.store.update('user', { id: userId, signedUpAt: 0 }, { signedUpAt: Date.now() })) === 1;
   }
 
   /** The `sub` of the user's linked Google account, if they have one. */
@@ -218,6 +277,7 @@ export class Users {
       lastSmsAt: 0,
       wrongCodes: 0,
       claims: null,
+      signedUpAt: 0,
       createdAt: Date.now(),
     };
     if (!(await this.store.create('user', user as unknown as Row))) return null;
@@ -276,8 +336,12 @@ export class Users {
     return this.unlinkAccount(smsAccountKey(userId));
   }
 
-  /** Adds a sign-in method to a user. Resolves to null if the account key is taken. */
+  /**
+   * Adds a sign-in method or a second factor to a user. Resolves to null if the account key is taken, or if
+   * it is a sign-in method and the user has one already.
+   */
   async linkAccount(userId: string, account: NewAccount): Promise<StoredAccount | null> {
+    const primary = account.primary ?? ALWAYS_PRIMARY.includes(methodOf(account));
     const record: StoredAccount = {
       id: newId('acc'),
       userId,
@@ -289,6 +353,7 @@ export class Users {
       lastUsedStep: account.lastUsedStep ?? 0,
       setupId: account.setupId ?? null,
       phone: account.phone ?? null,
+      primaryUserId: primary ? userId : null,
       createdAt: Date.now(),
     };
     return (await this.store.create('account', record as unknown as Row)) ? record : null;

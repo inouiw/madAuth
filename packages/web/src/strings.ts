@@ -106,7 +106,6 @@ export const en = {
     /** What the app will do, from the server's policy, so the user knows what they turn on. */
     effects: {
       secondFactor: (methods: string) => `From then on, signing in with ${methods} also asks for a code from the app.`,
-      standalone: 'You can then sign in with your e-mail address and a code from the app.',
     },
   },
   totpCodes: {
@@ -289,7 +288,6 @@ export const de: Strings = {
     startAgain: 'Neu beginnen',
     effects: {
       secondFactor: (methods) => `Die Anmeldung mit ${methods} fragt dann zusätzlich nach einem Code aus der App.`,
-      standalone: 'Sie können sich dann mit Ihrer E-Mail-Adresse und einem Code aus der App anmelden.',
     },
   },
   totpCodes: {

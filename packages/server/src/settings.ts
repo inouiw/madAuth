@@ -83,9 +83,9 @@ export interface MethodConfig {
   password?: object;
   /** The webhook sends the e-mails that confirm an address, so people can sign up. */
   emailVerification?: boolean;
-  /** The webhook sends the sign-in e-mails of the e-mail link (`email.signin`). */
+  /** The webhook sends the sign-in e-mails of the e-mail link (`email.send_signin_link`). */
   emailLink?: boolean;
-  /** The webhook sends the SMS (`sms.code`). */
+  /** The webhook sends the SMS (`sms.send_code`). */
   sms?: boolean;
 }
 

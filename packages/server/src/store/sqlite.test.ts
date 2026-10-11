@@ -28,6 +28,7 @@ const user = {
   lastSmsAt: null,
   wrongCodes: 0,
   claims: null,
+  signedUpAt: null,
   createdAt: 1,
 };
 
@@ -57,8 +58,8 @@ describe('SQLite adapter', () => {
     const path = join(dir, 'madauth.db');
     // Schema version 1: users had no count of wrong codes and no claims, accounts no e-mail and no last code,
     // and there were no settings and no recovery codes.
-    const { wrongCodes: _, claims: __, lastSmsAt: _________, ...v1Fields } = madauthSchema.models.user.fields;
-    const { email: ___, lastUsedStep: _____, setupId: _______, phone: ________, ...v1AccountFields } = madauthSchema.models.account.fields;
+    const { wrongCodes: _, claims: __, lastSmsAt: _________, signedUpAt: __________, ...v1Fields } = madauthSchema.models.user.fields;
+    const { email: ___, lastUsedStep: _____, setupId: _______, phone: ________, primaryUserId: ___________, ...v1AccountFields } = madauthSchema.models.account.fields;
     const { setting: ____, recoveryCode: ______, ...v1Models } = madauthSchema.models;
     const v1 = { version: 1, models: { ...v1Models, user: { fields: v1Fields }, account: { fields: v1AccountFields } } };
     const db = new DatabaseSync(path);
@@ -73,8 +74,9 @@ describe('SQLite adapter', () => {
     expect(await store.findOne('user', { id: 'usr_1' })).toEqual(user);
     expect(await store.update('user', { id: 'usr_1', wrongCodes: 0 }, { wrongCodes: 1 })).toBe(1);
     expect(await store.create('setting', { id: 'methods', value: '{}', updatedAt: 1, updatedBy: null })).toBe(true);
-    // An account from before version 5 reads as if no authenticator code was ever used, and before 6 has no phone.
-    expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ email: null, lastUsedStep: 0, setupId: null, phone: null });
+    // An account from before version 5 reads as if no authenticator code was ever used, before 6 has no phone,
+    // and before 7 doesn't say whether it is the user's sign-in method.
+    expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ email: null, lastUsedStep: 0, setupId: null, phone: null, primaryUserId: null });
     expect(await store.update('account', { id: 'acc_1', lastUsedStep: 0 }, { lastUsedStep: 7 })).toBe(1);
     expect(await store.update('account', { id: 'acc_1' }, { phone: '+41791234567' })).toBe(1);
     expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ phone: '+41791234567' });
@@ -127,6 +129,10 @@ describe('createTablesSql', () => {
   });
 
   it('upgradeTablesSql lists what newer schema versions added, per dialect', () => {
+    const V7 =
+      'ALTER TABLE madauth_user ADD COLUMN signed_up_at DOUBLE PRECISION;\n' +
+      'ALTER TABLE madauth_account ADD COLUMN primary_user_id TEXT;\n' +
+      'CREATE UNIQUE INDEX madauth_account_primary_user_id ON madauth_account (primary_user_id);';
     expect(upgradeTablesSql('postgres', 1).split('\n')[0]).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE PRECISION NOT NULL DEFAULT 0;');
     expect(upgradeTablesSql('mysql', 1).split('\n')[0]).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE NOT NULL DEFAULT 0;');
     expect(upgradeTablesSql('mysql', 2).split('\n')[0]).toBe('CREATE TABLE madauth_role (');
@@ -144,11 +150,16 @@ describe('createTablesSql', () => {
         'CREATE TABLE madauth_recovery_code (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  setup_id TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL\n);\n' +
         'CREATE INDEX madauth_recovery_code_user_id ON madauth_recovery_code (user_id);\n' +
         'ALTER TABLE madauth_account ADD COLUMN phone TEXT;\n' +
-        'ALTER TABLE madauth_user ADD COLUMN last_sms_at DOUBLE PRECISION;',
+        'ALTER TABLE madauth_user ADD COLUMN last_sms_at DOUBLE PRECISION;\n' +
+        V7,
     );
     expect(upgradeTablesSql('mysql', 4).split('\n')[0]).toBe('ALTER TABLE madauth_account ADD COLUMN last_used_step DOUBLE NOT NULL DEFAULT 0;');
     // Version 6 added SMS codes: the phone number on the account, and when the last SMS went to a user.
-    expect(upgradeTablesSql('postgres', 5)).toBe('ALTER TABLE madauth_account ADD COLUMN phone TEXT;\nALTER TABLE madauth_user ADD COLUMN last_sms_at DOUBLE PRECISION;');
+    expect(upgradeTablesSql('postgres', 5)).toBe('ALTER TABLE madauth_account ADD COLUMN phone TEXT;\nALTER TABLE madauth_user ADD COLUMN last_sms_at DOUBLE PRECISION;\n' + V7);
+    // Version 7 added when a sign-up was complete, and which account is the user's one sign-in method: a
+    // unique index, since SQLite can't add a UNIQUE column, and on a fixed-length string for MySQL.
+    expect(upgradeTablesSql('postgres', 6)).toBe(V7);
+    expect(upgradeTablesSql('mysql', 6).split('\n')[1]).toBe('ALTER TABLE madauth_account ADD COLUMN primary_user_id VARCHAR(255);');
     expect(upgradeTablesSql('sqlite', madauthSchema.version)).toBe('');
   });
 
