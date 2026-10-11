@@ -104,11 +104,20 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
       // password, and only its e-mail works. An e-mail link an unfinished sign-up asked for goes with it.
       if (Date.now() - existing.lastMailAt < MAIL_INTERVAL_MS) return accepted(c);
       if (!existing.emailVerified) await users.dropUnprovenAccounts(existing.id, 'password');
+      // A confirmed address without a sign-in method (an unfinished sign-up with the app, an interrupted one
+      // with Google) is confirmed again for the password: whoever sent it hasn't proven the inbox. Until then,
+      // an app sign-up or a Google sign-in drops the password, as for any unconfirmed sign-up.
+      if (existing.emailVerified) await users.updateUser(existing.id, { emailVerified: false });
       const account = await users.passwordAccount(existing.id);
       if (account) await users.updateAccount(account.id, { secret: passwordHash, failedAttempts: 0, lockedUntil: 0 });
       // Another sign-up gave the user a sign-in method meanwhile: theirs stands, and no e-mail goes out for a
       // password that was never stored. The answer is the same.
-      else if (!(await users.linkAccount(existing.id, { key: passwordAccountKey(existing.id), secret: passwordHash }))) return accepted(c);
+      else if (!(await users.linkAccount(existing.id, { key: passwordAccountKey(existing.id), secret: passwordHash }))) {
+        // The confirmation comes back only for a method that won without a password (an app sign-up whose
+        // address was confirmed): a password another sign-up linked meanwhile still waits for its own e-mail.
+        if (existing.emailVerified && !(await users.passwordAccount(existing.id))) await users.updateUser(existing.id, { emailVerified: true });
+        return accepted(c);
+      }
       await users.reopenSignUp(existing);
       await users.updateUser(existing.id, { name });
       return (await emails.sendLinkEmail({ ...existing, name }, 'verify', target, locale)) ? accepted(c) : unavailable(c);

@@ -904,23 +904,54 @@ describe('signing up with the app alone', () => {
     expect((await other.store.findMany('account', {})).map((a) => a.key)).toEqual(['google:1001']);
   });
 
-  it('T33: a user has one way to sign in: an app sign-up that got a password meanwhile can\'t add the app as a second', async () => {
+  it('T33: a password sign-up for a confirmed address without a sign-in method needs its own e-mail; until then the pending app setup wins', async () => {
     vi.useFakeTimers({ toFake: ['Date'], now: START });
     const { app, hook, store } = passwordApp();
     await setMethods(store, standalone);
     await signUp(app);
     const confirmed = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
     const challenge = `madauth_challenge=${cookies(confirmed).madauth_challenge.value}`;
-    // Before the app is set up, a password sign-up gives the user a way to sign in.
+    // Before the app is set up, someone signs the address up with their own password.
     advance(61_000);
-    await post(app, '/auth/password/signup', { ...grace, redirectTo: REDIRECT_TO });
+    expect((await post(app, '/auth/password/signup', { ...grace, redirectTo: REDIRECT_TO })).status).toBe(202);
     const [{ id: userId }] = await store.findMany('user', {});
-    expect(await store.findMany('account', { userId })).toEqual([expect.objectContaining({ key: `password:${userId}`, primaryUserId: userId })]);
+    expect(await store.findMany('account', { userId })).toEqual([expect.objectContaining({ key: `password:${userId}` })]);
+    // The password doesn't sign in before its confirmation e-mail is used.
+    const signIn = await post(app, '/auth/password/signin', grace);
+    expect(signIn.status).toBe(403);
+    expect(await signIn.json()).toMatchObject({ error: 'email_unverified' });
+    const passwordLink = linkAndCode(hook.lastEmail()).token;
 
     const setup = await post(app, '/auth/totp/setup', {}, { Cookie: challenge });
     const secret = base32Decode(((await setup.json()) as { secret: string }).secret)!;
     const confirm = await post(app, '/auth/totp/confirm', { code: codeFor(secret) }, { Cookie: `${challenge}; madauth_totp_setup=${cookies(setup).madauth_totp_setup.value}` });
 
+    expect(confirm.status).toBe(200);
+    expect(await confirm.json()).toMatchObject({ user: { id: userId, email: 'grace@example.com' } });
+    expect(await store.findMany('account', { userId })).toEqual([expect.objectContaining({ key: `totp:${userId}`, primaryUserId: userId })]);
+    expect((await post(app, '/auth/password/signin', grace)).status).toBe(401);
+    expect((await post(app, '/auth/email/verify', { token: passwordLink })).status).toBe(400);
+  });
+
+  it('T33: the password of such a sign-up signs in once its confirmation e-mail is used; then the app setup is refused', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: START });
+    const { app, hook, store } = passwordApp();
+    await setMethods(store, standalone);
+    await signUp(app);
+    const confirmed = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
+    const challenge = `madauth_challenge=${cookies(confirmed).madauth_challenge.value}`;
+    advance(61_000);
+    await post(app, '/auth/password/signup', { ...grace, redirectTo: REDIRECT_TO });
+    const [{ id: userId }] = await store.findMany('user', {});
+
+    const verified = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
+    expect(verified.status).toBe(200);
+    expect((await post(app, '/auth/password/signin', grace)).status).toBe(200);
+
+    // The password is now the user's one sign-in method: the app can't be added as a second.
+    const setup = await post(app, '/auth/totp/setup', {}, { Cookie: challenge });
+    const secret = base32Decode(((await setup.json()) as { secret: string }).secret)!;
+    const confirm = await post(app, '/auth/totp/confirm', { code: codeFor(secret) }, { Cookie: `${challenge}; madauth_totp_setup=${cookies(setup).madauth_totp_setup.value}` });
     expect(confirm.status).toBe(400);
     expect(await confirm.json()).toMatchObject({ error: 'setup_expired' });
     expect(await store.findMany('account', { userId })).toHaveLength(1);
