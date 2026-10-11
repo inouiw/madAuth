@@ -36,6 +36,7 @@ new SiteStack(app, 'MadAuthSite', {
   zone: zone.zone,
   certificate: certificate.certificate,
   googleClientId: context('googleClientId'),
+  githubClientId: context('githubClientId'),
   webhooksDir: context('webhooksDir') ?? fileURLToPath(new URL('../../../../madAuth-webhooks', import.meta.url)),
   alertEmail: context('alertEmail'),
 });

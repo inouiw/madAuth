@@ -3,9 +3,9 @@
 madAuth's dialog (`Madauth.signIn()`) is optional. Everything it does is available as methods, grouped by sign-in method, so you can build a login screen that fits your app. The dialog itself is built only on these methods.
 
 ```ts
-import { Madauth, GoogleFedcm, Password, Totp, EmailLink } from '@madauth/web';
+import { Madauth, GoogleFedcm, GitHub, Password, Totp, EmailLink } from '@madauth/web';
 
-Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp(), new EmailLink()], ui: 'custom' });
+Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Totp(), new EmailLink()], ui: 'custom' });
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 ```
 
@@ -58,7 +58,7 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 - The link opens `redirectTo`. After `initialize`, `pendingReset` is true: show a new-password field and call `confirmReset({ newPassword })`.
 - With the code, ask for it and the new password, and call `confirmReset({ newPassword, email, code })`.
 
-If Google is one of your methods, say on the form that a Google user has no password to reset and should use the Google button instead, as the dialog does. (The server tells such a user the same by e-mail: `email.send_password_reset_no_password` in [Webhooks](server.md#webhooks).)
+If Google or GitHub is one of your methods, say on the form that such a user has no password to reset and should use that button instead, as the dialog does. (The server tells such a user the same by e-mail: `email.send_password_reset_no_password` in [Webhooks](server.md#webhooks).)
 
 A completed reset signs the user in and ends their sessions on other devices.
 
@@ -143,12 +143,12 @@ The methods work whenever the app is in use on the server: as the second factor 
 | `signUp({ email, name?, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `temporarily_unavailable`, `method_disabled` |
 | `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
 | `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `totp_setup_required` for a sign-up with the app |
-| `pendingStep` | `{ step: 'code' \| 'sms' \| 'setup', method, factors? } \| null` | What a sign-in under way still needs, e.g. after the redirect flow or a link from an e-mail; `method` is the method whose sign-in it is (`google`, `password`, `totp` or `email-link`), `factors` which second factors can finish it (`totp`, `sms`) |
+| `pendingStep` | `{ step: 'code' \| 'sms' \| 'setup', method, factors? } \| null` | What a sign-in under way still needs, e.g. after the redirect flow or a link from an e-mail; `method` is the method whose sign-in it is (`google`, `github`, `password`, `totp` or `email-link`), `factors` which second factors can finish it (`totp`, `sms`) |
 | `policy` | `{ signIn, signUp, secondFactorFor } \| null` | What the app does on this server: whether it signs in on its own (for the users who signed up with it), whether people can sign up with it, and which methods ask for it |
 
 ### The second step
 
-When the policy of Google, password or the e-mail link asks for a second factor, `password.signIn` (also `verifyEmail` and `confirmReset`), `emailLink.verify` and the Google button's `onResult` end with `totp_required` instead of a user: the first step was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. The error's `factors` says what the user can finish with: with `sms` among them (they have a phone as well, see [SMS codes](#sms-codes-madauthsms)), offer "send a code by SMS instead". With `sms_required` the user has a phone and no app: the SMS step. With `totp_setup_required` the user has no factor yet and the policy requires one: run the setup below, or, when `Madauth.sms.available`, offer adding a phone instead; `confirmSetup` then signs them in and returns `user` as well. A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
+When the policy of Google, GitHub, password or the e-mail link asks for a second factor, `password.signIn` (also `verifyEmail` and `confirmReset`), `emailLink.verify` and the Google button's `onResult` end with `totp_required` instead of a user: the first step was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. The error's `factors` says what the user can finish with: with `sms` among them (they have a phone as well, see [SMS codes](#sms-codes-madauthsms)), offer "send a code by SMS instead". With `sms_required` the user has a phone and no app: the SMS step. With `totp_setup_required` the user has no factor yet and the policy requires one: run the setup below, or, when `Madauth.sms.available`, offer adding a phone instead; `confirmSetup` then signs them in and returns `user` as well. A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
 
 A sign-in that started outside your screen, i.e. the redirect flow (`#madauth_next=…`) or the link in a confirmation or sign-in e-mail, leaves its step in `pendingStep` after `initialize`: show the matching form.
 
@@ -165,7 +165,7 @@ codeForm.onsubmit = async () => {
 
 ### Setting the app up
 
-While the user is signed in (whichever way), or in the setup step of a sign-in, call `startSetup()`: it returns the key as `secret` (base32, to type into the app), `uri` (`otpauth://totp/...`) and `qrSvg`, the QR code of the URI as an SVG string. Put `qrSvg` into the page with `innerHTML`; it draws the dark modules in `currentColor` with no background, so give the container a white background and a size. Then ask for the first code the app shows and call `confirmSetup({ code })` within ten minutes; after that it fails with `setup_expired`, and you start again. Show the `recoveryCodes` it returns once, and tell the user to save them. Say on the screen what the app will do (`policy`): that signing in with the password or Google then asks for a code, and whether the app signs in on its own. A user who has an app already replaces it: `startSetup()` then fails with `code_required`, so ask for a current code from the old app (or a recovery code) and call `startSetup({ code })`.
+While the user is signed in (whichever way), or in the setup step of a sign-in, call `startSetup()`: it returns the key as `secret` (base32, to type into the app), `uri` (`otpauth://totp/...`) and `qrSvg`, the QR code of the URI as an SVG string. Put `qrSvg` into the page with `innerHTML`; it draws the dark modules in `currentColor` with no background, so give the container a white background and a size. Then ask for the first code the app shows and call `confirmSetup({ code })` within ten minutes; after that it fails with `setup_expired`, and you start again. Show the `recoveryCodes` it returns once, and tell the user to save them. Say on the screen what the app will do (`policy`): that signing in with the password, Google or GitHub then asks for a code, and whether the app signs in on its own. A user who has an app already replaces it: `startSetup()` then fails with `code_required`, so ask for a current code from the old app (or a recovery code) and call `startSetup({ code })`.
 
 ```ts
 const setup = await Madauth.totp.startSetup();
@@ -251,6 +251,20 @@ You can call `renderButton` before `initialize` has finished. The button appears
 
 One Tap (`GoogleFedcm` with its default `autoPrompt: true`) works on custom screens as well.
 
+## GitHub: `Madauth.github`
+
+Needs `new GitHub()` in `initialize`.
+
+```ts
+const result = Madauth.github.renderButton(document.querySelector('#github-button')!, {
+  theme: 'auto', // or 'light' / 'dark'; 'auto' follows the container's color-scheme
+});
+// Later, e.g. when the screen closes:
+if (result.isSuccess) result.remove();
+```
+
+It renders a "Continue with GitHub" button (GitHub's mark, black on white or white on dark) that starts the server's redirect flow: the browser goes to GitHub and comes back to the page, without its hash. The user then arrives through `onAuthStateChanged`. A sign-in that failed is returned by `initialize` (e.g. `cancelled`, `email_unverified` for a GitHub account without a verified address, `other_method` when the address signs in another way), and one that goes on with a second factor is in `Madauth.totp.pendingStep` with `method: 'github'`. The button is labelled in English or German, see [Language](#language).
+
 ## Language
 
 Pass `locale` to `initialize` to tell madAuth the language of your screen, and call `Madauth.setLocale` when the user switches it:
@@ -264,8 +278,8 @@ Without a locale, madAuth uses the page's `<html lang>`, then the browser's lang
 
 The locale is used for:
 - **The e-mails.** `signUp`, `sendVerificationEmail`, `sendResetEmail` and `emailLink.send` send it to the server, which passes it to your [webhook](server.md#webhooks) and your sign-up check.
-- **The `GoogleRedirect` button.** It says "Weiter mit Google" for a German locale and "Continue with Google" for every other. `setLocale` also changes a button that is already on the page.
-- **The `message` of a failed `GoogleRedirect` sign-in**, which `initialize` returns. It is German for a German locale, English otherwise.
+- **The `GoogleRedirect` and `GitHub` buttons.** They say "Weiter mit Google" / "Weiter mit GitHub" for a German locale and "Continue with Google" / "Continue with GitHub" for every other. `setLocale` also changes a button that is already on the page.
+- **The `message` of a failed redirect sign-in** (`GoogleRedirect`, `GitHub`), which `initialize` returns. It is German for a German locale, English otherwise.
 
 ## Signing out and the session
 

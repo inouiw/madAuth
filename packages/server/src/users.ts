@@ -31,9 +31,9 @@ export interface StoredUser {
 export interface StoredAccount {
   id: string;
   userId: string;
-  /** `password:<userId>`, `google:<sub>`, `totp:<userId>`, `email-link:<userId>` or `sms:<userId>`. */
+  /** `password:<userId>`, `google:<sub>`, `github:<id>`, `totp:<userId>`, `email-link:<userId>` or `sms:<userId>`. */
   key: string;
-  /** The password hash, or the encrypted secret of the authenticator app. Empty for Google. */
+  /** The password hash, the encrypted secret of the authenticator app, or GitHub's encrypted access token. Empty for Google. */
   secret: string | null;
   failedAttempts: number;
   lockedUntil: number;
@@ -102,6 +102,11 @@ export function googleAccountKey(sub: string): string {
   return `google:${sub}`;
 }
 
+/** `id` is GitHub's numeric user id: unlike the login, it never changes. */
+export function githubAccountKey(id: string): string {
+  return `github:${id}`;
+}
+
 export function totpAccountKey(userId: string): string {
   return `totp:${userId}`;
 }
@@ -120,7 +125,7 @@ export function smsAccountKey(userId: string): string {
 const methodOf = (account: Pick<StoredAccount, 'key'>): string => String(account.key).split(':')[0];
 
 /** The methods whose accounts are always a sign-in method; the authenticator app is one only for a user who signed up with it. */
-const ALWAYS_PRIMARY = ['password', 'google', 'email-link'];
+const ALWAYS_PRIMARY = ['password', 'google', 'github', 'email-link'];
 
 /**
  * Whether an account is how its user signs in, as opposed to a second factor; `accounts` are all of the
@@ -270,6 +275,12 @@ export class Users {
     const accounts = await this.store.findMany('account', { userId });
     const key = accounts.map((account) => String(account.key)).find((k) => k.startsWith('google:'));
     return key ? key.slice('google:'.length) : null;
+  }
+
+  /** The user's GitHub account, if linked: its key holds GitHub's user id, its secret the encrypted access token of the last sign-in. */
+  async githubAccount(userId: string): Promise<StoredAccount | null> {
+    const accounts = await this.accounts(userId);
+    return accounts.find((account) => account.key.startsWith('github:')) ?? null;
   }
 
   async findAccountByKey(key: string): Promise<StoredAccount | null> {

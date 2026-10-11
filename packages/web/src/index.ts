@@ -11,6 +11,7 @@ export {
 export type { MadauthError, MadauthErrorCode, MadauthUser, Result, SecondFactor } from './result.js';
 export { GoogleFedcm, type GoogleFedcmOptions } from './providers/google-fedcm.js';
 export { GoogleRedirect } from './providers/google-redirect.js';
+export { GitHub } from './providers/github.js';
 export { Password } from './providers/password.js';
 export { Totp } from './providers/totp.js';
 export { EmailLink } from './providers/email-link.js';
@@ -23,6 +24,7 @@ export type {
   SignUpOptions,
 } from './scopes/password.js';
 export type { GoogleApi, GoogleButtonOptions } from './scopes/google.js';
+export type { GitHubApi, GitHubButtonOptions } from './scopes/github.js';
 export type { CodeOptions, SignInWithTotpOptions, TotpApi, TotpPolicy, TotpSetup, TotpSignUpOptions } from './scopes/totp.js';
 export type { EmailLinkApi } from './scopes/email-link.js';
 export type { SmsApi } from './scopes/sms.js';

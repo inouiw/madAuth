@@ -1,9 +1,11 @@
 // Deleting the account: POST /auth/account/delete. See "HTTP API" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { APP_ORIGIN, REDIRECT_TO, cookies, linkAndCode, linkGoogleAsBefore, passwordApp, post, signIn, signUpVerified, type testApp } from './test/helpers.js';
+import { APP_ORIGIN, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, REDIRECT_TO, cookies, linkAndCode, linkGoogleAsBefore, passwordApp, post, signIn, signInWithGitHub, signUpVerified, stubGitHub, type testApp } from './test/helpers.js';
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const grace = { email: 'grace@example.com', password: 'correct horse battery' };
@@ -105,5 +107,61 @@ describe('deleting the account', () => {
     await post(app, '/auth/password/reset', { token: linkAndCode(hook.lastEmail()).token, password: 'new teapot sky!' });
     expect((await deleteAccount(app, session)).status).toBe(401);
     expect(await store.findMany('user', {})).toHaveLength(1);
+  });
+
+  it("O12: a GitHub user's deletion revokes the OAuth App's authorization at GitHub, with the token of the last sign-in", async () => {
+    const { app, hook, store } = passwordApp({ github: { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET } });
+    const github = stubGitHub({ token: 'gho_latest' });
+    const session = cookies(await signInWithGitHub(app)).madauth_session.value;
+
+    const res = await deleteAccount(app, session);
+
+    expect(res.status).toBe(204);
+    const [revoke] = github.revocations();
+    expect(revoke.url).toBe(`https://api.github.com/applications/${GITHUB_CLIENT_ID}/grant`);
+    expect(new Headers(revoke.init.headers).get('authorization')).toBe(`Basic ${Buffer.from(`${GITHUB_CLIENT_ID}:${GITHUB_CLIENT_SECRET}`).toString('base64')}`);
+    expect(JSON.parse(String(revoke.init.body))).toEqual({ access_token: 'gho_latest' });
+    expect(await store.findMany('user', {})).toEqual([]);
+    expect(await store.findMany('account', {})).toEqual([]);
+    expect(hook.calls.at(-1)).toMatchObject({ type: 'user.deleted', data: { user: { email: 'ada@example.com' } } });
+    expect((await app.request('/auth/session', { headers: { Cookie: `madauth_session=${session}` } })).status).toBe(401);
+  });
+
+  it("O13: a token that can't be read any more (the signing key changed) is logged, and the deletion goes ahead", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { app, store } = passwordApp({ github: { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET } });
+    const github = stubGitHub();
+    const session = cookies(await signInWithGitHub(app)).madauth_session.value;
+    const [account] = await store.findMany('account', {});
+    await store.update('account', { id: account.id }, { secret: 'v1.not.a.token' });
+
+    expect((await deleteAccount(app, session)).status).toBe(204);
+
+    expect(github.revocations()).toHaveLength(0);
+    expect(await store.findMany('user', {})).toEqual([]);
+    expect(error).toHaveBeenLastCalledWith(expect.stringContaining("can't be read"));
+  });
+
+  it("O13: the deletion goes ahead when GitHub refuses the revocation or can't be reached, and the log says so", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const github = { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET };
+    const refusing = passwordApp({ github });
+    stubGitHub({ revokeStatus: 422 });
+    const first = cookies(await signInWithGitHub(refusing.app)).madauth_session.value;
+    expect((await deleteAccount(refusing.app, first)).status).toBe(204);
+    expect(await refusing.store.findMany('user', {})).toEqual([]);
+    expect(error).toHaveBeenLastCalledWith(expect.stringContaining('did not revoke'));
+    expect(error).toHaveBeenLastCalledWith(expect.stringContaining('HTTP 422'));
+
+    vi.unstubAllGlobals();
+    const unreachable = passwordApp({ github });
+    const failing = stubGitHub({});
+    const second = cookies(await signInWithGitHub(unreachable.app)).madauth_session.value;
+    failing.calls.length = 0;
+    vi.unstubAllGlobals();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+    expect((await deleteAccount(unreachable.app, second)).status).toBe(204);
+    expect(await unreachable.store.findMany('user', {})).toEqual([]);
+    expect(error).toHaveBeenLastCalledWith(expect.stringContaining('did not revoke'));
   });
 });

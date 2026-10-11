@@ -1,8 +1,6 @@
-import { REDIRECT_ERROR_PARAM } from '../constants.js';
-import { takeHashParam } from '../hash.js';
-import { fail, ok, toErrorCode, type Result } from '../result.js';
-import { stringsFor, type Strings } from '../strings.js';
+import { fail, ok, type Result } from '../result.js';
 import type { ButtonOptions, ProviderContext, SignInProvider } from './provider.js';
+import { renderRedirectButton } from './redirect.js';
 
 const GOOGLE_LOGO = `<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
 <path fill="#ea4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
@@ -20,6 +18,7 @@ const buttonColors = {
 /**
  * Google sign-in with the server-side authorization-code flow (like Cognito): the browser is redirected
  * to Google and back, and the madAuth server exchanges the code. Needs GOOGLE_CLIENT_SECRET on the server.
+ * A failed sign-in, or one that goes on with a second step, is reported by `Madauth.initialize` on the return.
  */
 export class GoogleRedirect implements SignInProvider {
   readonly method = 'google' as const;
@@ -33,58 +32,15 @@ export class GoogleRedirect implements SignInProvider {
         'GoogleRedirect needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the madAuth server. Set them there, or use GoogleFedcm.',
       );
     }
-    // Coming back from a failed redirect sign-in: report it and tidy up the URL.
-    const error = takeHashParam(REDIRECT_ERROR_PARAM);
-    if (error) {
-      const code = toErrorCode(error);
-      const strings = stringsFor(ctx.locale);
-      const message = Object.hasOwn(strings.googleErrors, code)
-        ? strings.googleErrors[code as keyof Strings['googleErrors']]
-        : strings.googleFailed(error);
-      ctx.signInFailed({ code, message });
-    }
     return ok();
   }
 
   /** Renders a "Continue with Google" button that starts the redirect. The result arrives after the return. */
   renderButton(container: HTMLElement, options: ButtonOptions): () => void {
-    const ctx = this.#ctx!;
-    const colors = buttonColors[options.theme];
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.innerHTML = `${GOOGLE_LOGO}<span></span>`;
-    const label = button.querySelector('span')!;
-    const setLabel = () => {
-      label.textContent = stringsFor(ctx.locale).methods.google.label;
-    };
-    setLabel();
-    // The button follows Madauth.setLocale while it is shown.
-    const stopFollowingLocale = ctx.onLocaleChanged(setLabel);
-    Object.assign(button.style, {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: '10px',
-      width: '100%',
-      height: '40px',
-      padding: '0 12px',
-      border: `1px solid ${colors.border}`,
-      borderRadius: '4px',
-      background: colors.background,
-      color: colors.color,
-      font: "500 14px/20px Roboto, 'Google Sans', Arial, sans-serif",
-      cursor: 'pointer',
+    return renderRedirectButton(container, options, {
+      ctx: this.#ctx!,
+      method: 'google',
+      style: { logo: GOOGLE_LOGO, colors: buttonColors, font: "500 14px/20px Roboto, 'Google Sans', Arial, sans-serif" },
     });
-    button.addEventListener('click', () => this.#start());
-    container.replaceChildren(button);
-    return () => {
-      stopFollowingLocale();
-      container.replaceChildren();
-    };
-  }
-
-  #start(): void {
-    const returnTo = location.href.split('#')[0];
-    location.assign(`${this.#ctx!.serverUrl}/auth/google/start?return_to=${encodeURIComponent(returnTo)}`);
   }
 }

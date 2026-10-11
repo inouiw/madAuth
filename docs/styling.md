@@ -57,7 +57,7 @@ Use `::part()` to style an element directly.
 | Part | Element |
 | --- | --- |
 | `dialog` | The dialog box itself (`<dialog>`). |
-| `method` | Each sign-in method button: the submit buttons of the forms ("Sign in", "Create account", "Turn on", …), and every row under "Other ways to sign in". Google's own button (with `GoogleFedcm`) and the redirect button (with `GoogleRedirect`) follow Google's design and can't be styled. |
+| `method` | Each sign-in method button: the submit buttons of the forms ("Sign in", "Create account", "Turn on", …), and every row under "Other ways to sign in". Google's own button (with `GoogleFedcm`) and the redirect buttons (with `GoogleRedirect` and `GitHub`) follow the providers' design and can't be styled; they take the dialog's light or dark look. |
 | `error` | The message shown when a sign-in fails. |
 | `form` | Each form: sign in (`signin`), create account (`signup`), forgot password (`forgot`), code (`code`), new password (`reset`), the e-mail link (`email-link`), the authenticator app's: sign in with it (`totp`), the second step (`totp-code`), the setup (`totp-setup`), and the SMS code's: the second step (`sms-code`), adding a phone (`sms-setup`, `sms-setup-code`). The class names tell them apart. |
 | `input` | Each text field. |

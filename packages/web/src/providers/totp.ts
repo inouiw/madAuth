@@ -6,7 +6,7 @@ import type { ProviderContext, SignInProvider } from './provider.js';
  * `Madauth.totp.signIn` and `signUp` and, in the dialog, the "Authenticator app" entry when the server lets
  * the app sign in on its own, and "Create account" with it when the server lets people sign up with it.
  *
- * Not needed for the app as a second factor: the code step after a password or Google sign-in, the setup
+ * Not needed for the app as a second factor: the code step after a password, Google, GitHub or e-mail link sign-in, the setup
  * (`Madauth.setUpAuthenticator()`) and the account methods of `Madauth.totp` work whenever the server has
  * the app switched on, with or without this provider, so an admin's policy applies to every app.
  */

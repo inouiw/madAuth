@@ -285,7 +285,7 @@ describe('GoogleRedirect', () => {
     shadow<HTMLButtonElement>('.google-slot button')!.click();
 
     expect(assign).toHaveBeenCalledExactlyOnceWith(
-      `${SERVER}/auth/google/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}`,
+      `${SERVER}/auth/google/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}&locale=${encodeURIComponent(navigator.language)}`,
     );
     expect(shadow('.notice')).toBeNull();
   });

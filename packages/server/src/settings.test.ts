@@ -1,7 +1,7 @@
 // Settings admins change at runtime: which sign-in methods are on, and which ask for the authenticator app.
 // See "Sign-in methods" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Settings, anyOn, authenticatorOn, canSignUp, initialMethods, isOn, parseMethodSettings, parsePasswordRules, policyOf } from './settings.js';
+import { Settings, anyOn, authenticatorOn, canSignUp, initialMethods, isConfigured, isOn, parseMethodSettings, parsePasswordRules, policyOf } from './settings.js';
 import { APP_ORIGIN, cookies, getNonce, googleIdToken, passwordApp, post, setClaims, signUpVerified, testApp, verify } from './test/helpers.js';
 
 afterEach(() => {
@@ -28,6 +28,17 @@ async function withAdmin() {
 }
 
 describe('parseMethodSettings', () => {
+  it('O15: GitHub is configured by its OAuth App, on from the start, and takes a policy like Google', () => {
+    expect(isConfigured({ github: {} }, 'github')).toBe(true);
+    expect(isConfigured({ google: {} }, 'github')).toBe(false);
+    expect(canSignUp({ github: {} }, 'github')).toBe(true);
+    expect(initialMethods({ github: {} })).toEqual({ github: { secondFactor: 'none' } });
+    // The app alone is the default only on a server where nothing else creates users.
+    expect(initialMethods({ github: {}, emailVerification: true })).toEqual({ github: { secondFactor: 'none' } });
+    expect(parseMethodSettings({ github: { secondFactor: 'required' } })).toEqual({ github: { secondFactor: 'required' } });
+    expect(authenticatorOn(() => true, { github: { secondFactor: 'optional' } })).toBe(true);
+  });
+
   it('reads the list of methods that are on, each with its policy for the authenticator app', () => {
     expect(parseMethodSettings({ google: {}, password: { secondFactor: 'required' }, totp: {} })).toEqual({
       google: {},
@@ -134,6 +145,7 @@ describe('switching sign-in methods off and on', () => {
       password: { minLength: 8, minScore: 2 },
       methods: {
         google: { configured: true, enabled: true, secondFactor: 'none' },
+        github: { configured: false, enabled: false, secondFactor: 'none' },
         password: { configured: true, enabled: false, secondFactor: 'none' },
         totp: { configured: true, enabled: false },
         'email-link': { configured: true, enabled: false, secondFactor: 'none' },
@@ -165,7 +177,10 @@ describe('switching sign-in methods off and on', () => {
     const nonce = await app.request('/auth/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } });
     expect(nonce.status).toBe(403);
     expect(await nonce.json()).toMatchObject({ error: 'method_disabled' });
-    expect((await app.request(`/auth/google/start?return_to=${encodeURIComponent(APP_ORIGIN)}`)).status).toBe(403);
+    // The redirect flow's start sends the browser back to the app: it is on its way, and a JSON error would strand it.
+    const start = await app.request(`/auth/google/start?return_to=${encodeURIComponent(APP_ORIGIN)}`);
+    expect(start.status).toBe(302);
+    expect(start.headers.get('location')).toBe(`${APP_ORIGIN}/#madauth_error=method_disabled&madauth_method=google`);
   });
 
   it('the last method can not be switched off, and a method the server is not configured for is never on', async () => {
@@ -183,6 +198,7 @@ describe('switching sign-in methods off and on', () => {
     await settingsApi(googleOnly.app, undefined, 'get');
     expect(await config(googleOnly.app)).toEqual({
       google: { clientId: expect.any(String), codeFlow: true, secondFactor: 'none' },
+      github: null,
       password: null,
       totp: null,
       email: { verification: false },

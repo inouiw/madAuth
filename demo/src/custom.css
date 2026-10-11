@@ -102,10 +102,15 @@
   background: light-dark(#fef3f2, rgb(240 68 56 / 0.12));
 }
 
-#google-button {
+#google-button,
+#github-button {
   display: flex;
   justify-content: center;
   min-height: 40px;
+}
+
+#github-button {
+  margin-top: 12px;
 }
 
 /* The QR code from Madauth.totp.startSetup(): an SVG in the current color, so give it a light background. */

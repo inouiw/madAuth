@@ -38,7 +38,7 @@ export interface TotpPolicy {
   /** People can sign up with the app alone. */
   signUp: boolean;
   /** The methods that ask for a code from the app once it is set up (`optional`) or always (`required`). */
-  secondFactorFor: ('google' | 'password' | 'email-link')[];
+  secondFactorFor: ('google' | 'github' | 'password' | 'email-link')[];
 }
 
 /**
@@ -55,7 +55,7 @@ export interface TotpApi {
    */
   signIn(options: SignInWithTotpOptions): Promise<Result<{ user: MadauthUser }>>;
   /**
-   * Finishes a sign-in that `password.signIn`, `verifyEmail`, `confirmReset` or Google ended with
+   * Finishes a sign-in that `password.signIn`, `verifyEmail`, `confirmReset`, Google or GitHub ended with
    * `totp_required`: the code from the app, or a recovery code. Fails with `code_invalid`,
    * `too_many_attempts` or `challenge_expired` (more than ten minutes passed: sign in again).
    */
@@ -192,8 +192,9 @@ export function createTotpApi(core: Core): TotpApi {
     get policy() {
       const config = core.config();
       if (!config?.totp) return null;
-      const secondFactorFor: ('google' | 'password' | 'email-link')[] = [];
+      const secondFactorFor: ('google' | 'github' | 'password' | 'email-link')[] = [];
       if (config.google && config.google.secondFactor !== 'none') secondFactorFor.push('google');
+      if (config.github && config.github.secondFactor !== 'none') secondFactorFor.push('github');
       if (config.password && config.password.secondFactor !== 'none') secondFactorFor.push('password');
       if (config.emailLink && config.emailLink.secondFactor !== 'none') secondFactorFor.push('email-link');
       return { signIn: config.totp.signIn, signUp: config.totp.signUp, secondFactorFor };

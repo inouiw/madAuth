@@ -4,11 +4,11 @@
 import type { Row, StoreAdapter } from './store/schema.js';
 
 /**
- * The primary sign-in methods madAuth has: Google, e-mail & password, the authenticator app on its own
- * (`totp`: the e-mail address and a code from the app), and the passwordless e-mail link (`email-link`:
+ * The primary sign-in methods madAuth has: Google, GitHub, e-mail & password, the authenticator app on its
+ * own (`totp`: the e-mail address and a code from the app), and the passwordless e-mail link (`email-link`:
  * the address, then the link or the code from an e-mail).
  */
-export const SIGN_IN_METHODS = ['google', 'password', 'totp', 'email-link'] as const;
+export const SIGN_IN_METHODS = ['google', 'github', 'password', 'totp', 'email-link'] as const;
 export type SignInMethod = (typeof SIGN_IN_METHODS)[number];
 
 /**
@@ -19,7 +19,7 @@ export const METHODS = [...SIGN_IN_METHODS, 'sms'] as const;
 export type MethodId = (typeof METHODS)[number];
 
 /** The methods that can ask for a second factor (a code from the authenticator app) after they succeeded. */
-export const METHODS_WITH_SECOND_FACTOR = ['google', 'password', 'email-link'] as const;
+export const METHODS_WITH_SECOND_FACTOR = ['google', 'github', 'password', 'email-link'] as const;
 export type MethodWithSecondFactor = (typeof METHODS_WITH_SECOND_FACTOR)[number];
 
 /**
@@ -80,6 +80,7 @@ export function parsePasswordRules(input: unknown): PasswordRules | null {
 /** What decides whether the server has what a method needs. `MadauthConfig` has these fields. */
 export interface MethodConfig {
   google?: object;
+  github?: object;
   password?: object;
   /** The webhook sends the e-mails that confirm an address, so people can sign up. */
   emailVerification?: boolean;
@@ -125,6 +126,7 @@ export function parseMethodSettings(input: unknown, options: { booleans?: boolea
 /** Whether the server has what a method needs; only a configured method can be on. */
 export function isConfigured(config: MethodConfig, method: MethodId): boolean {
   if (method === 'google') return !!config.google;
+  if (method === 'github') return !!config.github;
   if (method === 'password') return !!config.password;
   if (method === 'email-link') return !!config.emailLink;
   if (method === 'sms') return !!config.sms;
@@ -133,7 +135,7 @@ export function isConfigured(config: MethodConfig, method: MethodId): boolean {
 }
 
 /**
- * Whether a method creates users on this server: Google, password and the e-mail link when configured, the
+ * Whether a method creates users on this server: Google, GitHub, password and the e-mail link when configured, the
  * authenticator app only when the webhook sends the confirmation e-mails (sign-up with it). An app that
  * existing users set up is no way in for anyone new.
  */
@@ -149,9 +151,10 @@ export function canSignUp(config: MethodConfig, method: SignInMethod): boolean {
 export function initialMethods(config: MethodConfig): MethodSettings {
   const methods: MethodSettings = {};
   if (config.google) methods.google = { secondFactor: 'none' };
+  if (config.github) methods.github = { secondFactor: 'none' };
   if (config.password) methods.password = { secondFactor: 'none' };
   if (config.emailLink) methods['email-link'] = { secondFactor: 'none' };
-  if (!config.google && !config.password && !config.emailLink && config.emailVerification) methods.totp = {};
+  if (!config.google && !config.github && !config.password && !config.emailLink && config.emailVerification) methods.totp = {};
   if (config.sms) methods.sms = {};
   return methods;
 }

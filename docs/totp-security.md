@@ -30,7 +30,7 @@ Code: `deriveTotpKey`, `encryptSecret` and `decryptSecret` in [`totp.ts`](../pac
 - A user who has an app gives a current code from it (or a recovery code) before a new key is issued: a new app replaces the old one and its recovery codes, and a stolen session alone must not swap them for the thief's. The approval holds for ten minutes in the setup cookie, so starting the setup again costs no second code and no second recovery code.
 - The new secret is not stored until the first code proves that the app has it. Until then it travels in a cookie (`madauth_totp_setup`, HttpOnly, ten minutes, only sent to `/auth/totp`), as a signed token that carries the user's id and the encrypted secret. A setup expires, is bound to its user, and can't be confirmed from another browser or by another user.
 - A new setup replaces the earlier app and its recovery codes, and resets the failed attempts. It confirms only the state it started in: the recovery codes are written first, under the setup's id, and the secret only if the account still has the setup it had when this one started (a compare-and-set write). Of two setups confirmed at once, exactly one wins; the other drops its codes and is told to start again. So the app and its recovery codes always belong together, and a code of a replaced app never works.
-- The setup screen says what the app will do: that signing in with the password (or Google, or the e-mail link) then asks for a code. Setting it up is the user's consent; an admin's policy can't make an account weaker than what the user agreed to, only ask for more.
+- The setup screen says what the app will do: that signing in with the password (or Google, GitHub, or the e-mail link) then asks for a code. Setting it up is the user's consent; an admin's policy can't make an account weaker than what the user agreed to, only ask for more.
 - A user has one sign-in method, and the app is either that method or a second factor, never both. It is the method only for a user who signed up with it: the account records that (`primaryUserId`), and the store refuses a second sign-in method for a user. For everyone else the app is a step of their method, so it never signs in alone, even when an admin turns on signing in with the app: a password and a code never become a code alone.
 
 Code: `/auth/totp/setup` and `/auth/totp/confirm` in [`routes/totp.ts`](../packages/server/src/routes/totp.ts).
@@ -47,10 +47,10 @@ Code: `generateRecoveryCodes`, `hashRecoveryCode` in [`totp.ts`](../packages/ser
 
 ## The second step
 
-After Google, a password or an e-mail link whose policy asks for a second factor, the first step gives no session. Instead the server sets a challenge cookie (`madauth_challenge`, HttpOnly, ten minutes, sent to `/auth`): a signed token with the user's id, their session version, how they signed in so far, what comes next, and which factors can finish it (the app, and the phone when the user has one and [SMS codes](sms-security.md) are on; the app comes first). The code, or the setup, turns it into the session.
+After Google, GitHub, a password or an e-mail link whose policy asks for a second factor, the first step gives no session. Instead the server sets a challenge cookie (`madauth_challenge`, HttpOnly, ten minutes, sent to `/auth`): a signed token with the user's id, their session version, how they signed in so far, what comes next, and which factors can finish it (the app, and the phone when the user has one and [SMS codes](sms-security.md) are on; the app comes first). The code, or the setup, turns it into the session.
 
 - The challenge is bound to the user and to its step: a challenge for the setup can't be used to skip the setup with a code, and the other way round.
-- It finishes only while its method is still on: an admin who switches Google, password or the e-mail link off also ends the sign-ins that were between their two steps.
+- It finishes only while its method is still on: an admin who switches Google, GitHub, password or the e-mail link off also ends the sign-ins that were between their two steps.
 - Issuing it clears the session there was at that browser: a sign-in that reaches the second step signs out whoever was signed in until the step is done, so an abandoned step can't be taken for that user's own setup later.
 - A password reset in between ends the challenge (the session version changed), as it ends every session.
 - The session issued afterwards says how it was authenticated: `amr: ["pwd", "otp"]` or `["google", "otp"]`. The web library's `user.amr` and `createSessionVerifier` expose it, so a backend can require `otp` before a sensitive action. A webhook `user.signed_in` carries `secondFactor: "totp"` or `"recovery_code"`.
@@ -61,7 +61,7 @@ Code: `secondStep` in [`packages/server/src/app.ts`](../packages/server/src/app.
 
 Signing in with the app alone answers `401 invalid_credentials` for an unknown address, an address without the app, an address whose app is a second factor, an address nobody confirmed, and a wrong code alike. Nothing slow happens in any of these cases, so the answer takes about as long for each of them. Sign-up with the app answers `202` whether or not the address has an account, like a password sign-up: an address that is registered gets the `email.send_already_registered` e-mail (saying how it signs in) instead.
 
-What stays visible, as with passwords: after five wrong codes the answer becomes `too_many_attempts`, only for an address that has the app. A Google sign-in with the address of a user who signs in another way is told so (`403 other_method`), to the owner of a Google account that Google verified for that address.
+What stays visible, as with passwords: after five wrong codes the answer becomes `too_many_attempts`, only for an address that has the app. A Google or GitHub sign-in with the address of a user who signs in another way is told so (`403 other_method`, or `madauth_error=other_method` after a redirect), to the owner of an account whose address the provider verified.
 
 ## Brute force
 
@@ -77,9 +77,9 @@ Removing the app, and new recovery codes, take a current code from the app or a 
 
 ## A method signs in only users who have it
 
-A Google sign-in with the address of a user who signs in with a password, with the app, or both, is refused (`403 other_method`): whoever controls the Google account for the address must not get past the password and the app. A password can't be added to a Google user either ("Forgot password?" only resets a password that exists). The authenticator app is added only by the user, while signed in, or when a policy requires it. The one takeover that remains is of a sign-up nobody finished, since nobody has proven it: the latest unproven sign-up wins, so a sign-up with the app drops the password an earlier unconfirmed sign-up set, and a password sign-up replaces an unfinished app sign-up.
+A Google or GitHub sign-in with the address of a user who signs in with a password, with the app, or both, is refused (`403 other_method`): whoever controls that account for the address must not get past the password and the app. A password can't be added to a Google or GitHub user either ("Forgot password?" only resets a password that exists). The authenticator app is added only by the user, while signed in, or when a policy requires it. The one takeover that remains is of a sign-up nobody finished, since nobody has proven it: the latest unproven sign-up wins, so a sign-up with the app drops the password an earlier unconfirmed sign-up set, and a password sign-up replaces an unfinished app sign-up.
 
-Code: `resolveUser` in [`packages/server/src/routes/google.ts`](../packages/server/src/routes/google.ts).
+Code: `resolveProviderUser` in [`packages/server/src/routes/oauth.ts`](../packages/server/src/routes/oauth.ts).
 
 ## Cross-site requests
 

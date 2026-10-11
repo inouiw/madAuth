@@ -1,4 +1,5 @@
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type JWTPayload } from 'jose';
+import { vi } from 'vitest';
 import { createApp } from '../app.js';
 import type { MadauthConfig } from '../config.js';
 import { generateSigningKey } from '../keys.js';
@@ -222,6 +223,81 @@ export async function signUpVerified(
   await post(app, '/auth/password/signup', { email, password, name: 'Grace Hopper', redirectTo: REDIRECT_TO });
   const res = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
   return cookies(res).madauth_session.value;
+}
+
+// --- GitHub ---
+
+export const GITHUB_CLIENT_ID = 'Iv1.0123456789abcdef';
+export const GITHUB_CLIENT_SECRET = 'github-test-secret';
+
+/** An app with GitHub sign-in next to Google, in-memory SQLite; no webhook unless overridden. */
+export function githubApp(overrides: Partial<MadauthConfig> = {}) {
+  return testApp({ github: { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET }, ...overrides });
+}
+
+/** What the GitHub stand-in answers; every field has a default that signs Ada in. */
+export interface GitHubStub {
+  /** The token the code exchange issues; null makes GitHub answer `{ error }` (HTTP 200) instead. */
+  token?: string | null;
+  user?: { id?: number; login?: string; name?: string | null; avatar_url?: string; email?: string | null };
+  emails?: { email: string; primary: boolean; verified: boolean }[];
+  /** The status GitHub answers the grant's revocation with. */
+  revokeStatus?: number;
+  /** The status api.github.com answers with instead of the account (e.g. 401 for a bad token). */
+  apiStatus?: number;
+  /** Makes every call to GitHub fail like a network error. */
+  fail?: boolean;
+}
+
+export const GITHUB_USER = { id: 7001, login: 'ada', name: 'Ada Lovelace', avatar_url: 'https://avatars.githubusercontent.com/u/7001', email: null };
+export const GITHUB_EMAILS = [{ email: 'ada@example.com', primary: true, verified: true }];
+
+/**
+ * Stands in for github.com and api.github.com by stubbing `fetch` (undo with `vi.unstubAllGlobals()`):
+ * records every call and answers as GitHub would. Webhooks are unaffected: they use `webhookFetch`.
+ */
+export function stubGitHub(stub: GitHubStub = {}) {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const fetchMock = vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (stub.fail) throw new TypeError('fetch failed');
+    if (url === 'https://github.com/login/oauth/access_token') {
+      return stub.token === null
+        ? Response.json({ error: 'bad_verification_code', error_description: 'The code passed is incorrect or expired.' })
+        : Response.json({ access_token: stub.token ?? 'gho_test', scope: 'user:email', token_type: 'bearer' });
+    }
+    if (stub.apiStatus && url.startsWith('https://api.github.com/user')) return Response.json({ message: 'Bad credentials' }, { status: stub.apiStatus });
+    if (url === 'https://api.github.com/user') return Response.json({ ...GITHUB_USER, ...stub.user });
+    if (url === 'https://api.github.com/user/emails') return Response.json(stub.emails ?? GITHUB_EMAILS);
+    if (url.startsWith('https://api.github.com/applications/') && init.method === 'DELETE') return new Response(null, { status: stub.revokeStatus ?? 204 });
+    return new Response('not found', { status: 404 });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return {
+    calls,
+    /** The bodies of the code exchanges so far. */
+    exchanges: () => calls.filter((c) => c.url === 'https://github.com/login/oauth/access_token').map((c) => ({ ...c, body: new URLSearchParams(c.init.body as URLSearchParams) })),
+    /** The revocations so far. */
+    revocations: () => calls.filter((c) => c.init.method === 'DELETE'),
+  };
+}
+
+/** Starts the GitHub redirect flow as the browser would; returns where GitHub would send the user and the state cookie. */
+export async function startGitHub(app: App, returnTo = `${APP_ORIGIN}/page`) {
+  const res = await app.request(`/auth/github/start?return_to=${encodeURIComponent(returnTo)}`);
+  const location = new URL(res.headers.get('location') ?? 'about:blank');
+  return { res, location, state: location.searchParams.get('state') ?? '', cookie: `madauth_oauth=${cookies(res).madauth_oauth?.value}` };
+}
+
+/** Comes back from GitHub with a code, as the browser would after the user agreed. */
+export function githubCallback(app: App, started: { state: string; cookie: string }, query = `code=c&state=${started.state}`): Promise<Response> {
+  return Promise.resolve(app.request(`/auth/github/callback?${query}`, { headers: { Cookie: started.cookie } }));
+}
+
+/** Signs in through the GitHub flow (the stand-in must be in place) and returns the callback's redirect, with its cookies. */
+export async function signInWithGitHub(app: App, returnTo?: string): Promise<Response> {
+  return githubCallback(app, await startGitHub(app, returnTo));
 }
 
 /**

@@ -3,7 +3,7 @@
 Templates that host the madAuth server in your own cloud account, one folder per target. Each one runs the
 same server; they differ in where the users are stored and how the secrets are kept.
 
-| Target | Folder | Google sign-in | E-mail & password | Users stored in |
+| Target | Folder | Google / GitHub sign-in | E-mail & password | Users stored in |
 | --- | --- | --- | --- | --- |
 | AWS Lambda | [`aws/`](aws/README.md) | yes | yes | DynamoDB |
 | Docker (any VM or container host) | [`docs/server.md`](../docs/server.md#docker) | yes | yes | SQLite on a volume |

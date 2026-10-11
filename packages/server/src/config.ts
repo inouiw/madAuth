@@ -33,6 +33,13 @@ export interface MadauthConfig {
     /** Enables the server-side code flow (GOOGLE_CLIENT_SECRET). */
     clientSecret?: string;
   };
+  /** GitHub sign-in; off when GITHUB_CLIENT_ID is not set. GitHub only has the redirect flow, so the secret is needed too. */
+  github?: {
+    /** The client ID of the OAuth App (GITHUB_CLIENT_ID). */
+    clientId: string;
+    /** Its client secret (GITHUB_CLIENT_SECRET). */
+    clientSecret: string;
+  };
   /** Where the users, their accounts, claims and the settings are kept (DATABASE_URL or the `store` option). */
   store: StoreAdapter;
   /**
@@ -67,6 +74,7 @@ export function sendsSms(config: Pick<MadauthConfig, 'webhook'>): boolean {
 export function methodConfig(config: MadauthConfig): MethodConfig {
   return {
     google: config.google,
+    github: config.github,
     password: config.password,
     emailVerification: sendsVerificationEmails(config),
     emailLink: sendsSignInEmails(config),
@@ -81,6 +89,8 @@ export const envVars = {
   ALLOWED_ORIGINS: true,
   GOOGLE_CLIENT_ID: false,
   GOOGLE_CLIENT_SECRET: false,
+  GITHUB_CLIENT_ID: false,
+  GITHUB_CLIENT_SECRET: false,
   DATABASE_URL: true,
   TOTP_ISSUER: false,
   WEBHOOK_URL: false,
@@ -194,6 +204,15 @@ export async function loadConfig(
   if (clientId && !clientId.endsWith('.apps.googleusercontent.com')) {
     throw new ConfigError(`GOOGLE_CLIENT_ID must end with ".apps.googleusercontent.com" but is "${clientId}".`);
   }
+  // GitHub has no browser-only flow: the server exchanges the code itself, which takes the secret. A secret
+  // without the ID is ignored, like Google's: a secrets store may hold one for a server that has GitHub off.
+  const githubClientId = read('GITHUB_CLIENT_ID');
+  const githubClientSecret = read('GITHUB_CLIENT_SECRET');
+  if (githubClientId && !githubClientSecret) {
+    throw new ConfigError(
+      'GITHUB_CLIENT_ID needs GITHUB_CLIENT_SECRET: GitHub only has the redirect flow, in which the server exchanges the code. Set both from your OAuth App at https://github.com/settings/developers.',
+    );
+  }
 
   // Validate the webhook before opening the store, so a configuration error doesn't leave a database open.
   const webhook = webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_EVENTS'));
@@ -204,9 +223,9 @@ export async function loadConfig(
   const emailVerification = !!webhook && webhook.events.has('email.send_verification');
   const emailLink = !!webhook && webhook.events.has('email.send_signin_link');
 
-  if (!clientId && !password && !emailVerification && !emailLink) {
+  if (!clientId && !githubClientId && !password && !emailVerification && !emailLink) {
     throw new ConfigError(
-      'No sign-in method is configured. Set GOOGLE_CLIENT_ID for Google sign-in, and/or a webhook that sends ' +
+      'No sign-in method is configured. Set GOOGLE_CLIENT_ID for Google sign-in, GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET for GitHub sign-in, and/or a webhook that sends ' +
         'the e-mails: e-mail & password sign-in needs email.send_verification and email.send_password_reset, the passwordless e-mail link ' +
         `needs email.send_signin_link, sign-up with the authenticator app needs email.send_verification. For development, run the ` +
         `receiver at ${DEV_WEBHOOK_RECEIVER_URL} and set WEBHOOK_URL=http://localhost:8790/webhook and ` +
@@ -244,6 +263,7 @@ export async function loadConfig(
     cookieDomain: read('COOKIE_DOMAIN'),
     totpIssuer: read('TOTP_ISSUER'),
     google: clientId ? { clientId, clientSecret: read('GOOGLE_CLIENT_SECRET') } : undefined,
+    github: githubClientId && githubClientSecret ? { clientId: githubClientId, clientSecret: githubClientSecret } : undefined,
     store,
     password,
     webhook,

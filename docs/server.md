@@ -1,18 +1,19 @@
 # Running the madAuth server
 
-`@madauth/server` signs users in with Google, with e-mail & password, with a passwordless e-mail link or with an authenticator app (TOTP), asks for a second factor (the app, or a code by SMS) when the policy says so, and issues the madAuth session. You can run it with Node, as a Docker container, an AWS Lambda function or an Azure Function.
+`@madauth/server` signs users in with Google, with GitHub, with e-mail & password, with a passwordless e-mail link or with an authenticator app (TOTP), asks for a second factor (the app, or a code by SMS) when the policy says so, and issues the madAuth session. You can run it with Node, as a Docker container, an AWS Lambda function or an Azure Function.
 
 To set it up on your machine step by step, see [Getting started](getting-started.md).
 
-Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method they have: the password, the Google account (known by Google's stable `sub`), the authenticator app, the e-mail link, and the phone number for SMS codes. A method signs in only users who have it: a Google sign-in with the address of a user who signs in with a password (and perhaps the authenticator app) is refused with `403 other_method`, since whoever controls the Google account must not get past them. The one exception is a sign-up nobody finished (its e-mail link was never used, or the app was never set up): a Google sign-in with its address takes that user over and drops the unproven password. "Forgot password?" only resets a password that exists: a user who signs in with Google alone gets an e-mail that says how they sign in instead (`email.send_password_reset_no_password`), and the answer is the same as for any address.
+Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method they have: the password, the Google account (known by Google's stable `sub`), the GitHub account (known by GitHub's user id), the authenticator app, the e-mail link, and the phone number for SMS codes. A method signs in only users who have it: a Google or GitHub sign-in with the address of a user who signs in with a password (and perhaps the authenticator app) is refused (`403 other_method`; after a redirect flow, `madauth_error=other_method`), since whoever controls that account must not get past them. The one exception is a sign-up nobody finished (its e-mail link was never used, or the app was never set up): a Google or GitHub sign-in with its address takes that user over and drops the unproven password. "Forgot password?" only resets a password that exists: a user who signs in with Google or GitHub alone gets an e-mail that says how they sign in instead (`email.send_password_reset_no_password`), and the answer is the same as for any address.
 
 ## How it works
 
 1. The browser signs in:
    - with Google, either in the browser with FedCM / One Tap (`GoogleFedcm`) or through the server-side redirect flow (`GoogleRedirect`). The server verifies Google's ID token: signature, issuer, audience, expiry, nonce and a verified e-mail address.
+   - or with GitHub (`GitHub`), through the server-side redirect flow: GitHub has no other. The server exchanges the code, reads the account from GitHub's API and takes an address GitHub has verified. See [GitHub security](github-security.md).
    - or with an e-mail address and password (`Password`). The server checks the password against its scrypt hash; new accounts confirm their address first. See [Password security](password-security.md).
    - or with an e-mail link (`EmailLink`): the address, then the link or the code from the e-mail madAuth sends. A new address is signed up on first use. See [E-mail link security](email-link-security.md).
-   - or with a code from the authenticator app (`Totp`): as the second step after Google, the password or the e-mail link, when the [sign-in policy](#sign-in-methods) asks for it, or on its own with the e-mail address. See [Authenticator app](#authenticator-app).
+   - or with a code from the authenticator app (`Totp`): as the second step after Google, GitHub, the password or the e-mail link, when the [sign-in policy](#sign-in-methods) asks for it, or on its own with the e-mail address. See [Authenticator app](#authenticator-app).
    - The second step can also be a code sent by SMS to a phone the user added, next to the app. See [SMS codes](#sms-codes).
 2. The server finds or creates the user, and sets its own session: an ES256-signed JWT in an HttpOnly cookie named `madauth_session`, with the user's [claims](#claims). It is short-lived and renewed without the user noticing; see [Sessions](#sessions).
 3. Your app backends verify that JWT with [`createSessionVerifier`](#verifying-the-session-in-your-backend) or any JWT library, using the public key at `/.well-known/jwks.json`.
@@ -25,11 +26,13 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `MADAUTH_ISSUER` | yes | Public base URL of the server, e.g. `https://auth.example.com`. Used as the JWT issuer and for the code-flow callback `<issuer>/auth/google/callback`. |
+| `MADAUTH_ISSUER` | yes | Public base URL of the server, e.g. `https://auth.example.com`. Used as the JWT issuer and for the callbacks of the redirect flows, `<issuer>/auth/google/callback` and `<issuer>/auth/github/callback`. |
 | `MADAUTH_SIGNING_KEY` | yes | Private ES256 key (JWK JSON) used to sign sessions. Use the same key on every instance and keep it secret. The secrets of authenticator apps are encrypted with a key derived from it: a new key makes them unusable. |
 | `ALLOWED_ORIGINS` | yes | Comma-separated origins of your apps, e.g. `https://app.example.com`. Only these may call the server or be redirected back to. |
 | `GOOGLE_CLIENT_ID` | for Google | OAuth client ID of type "Web application", ending in `.apps.googleusercontent.com`. Turns on Google sign-in. |
 | `GOOGLE_CLIENT_SECRET` | no | Client secret of the same client. Enables the server-side redirect flow (`GoogleRedirect`); without it those routes return 404. |
+| `GITHUB_CLIENT_ID` | for GitHub | Client ID of an OAuth App, see [GitHub OAuth App setup](#github-oauth-app-setup). Turns on GitHub sign-in, together with the secret. |
+| `GITHUB_CLIENT_SECRET` | for GitHub | Client secret of the same OAuth App. GitHub only has the server-side redirect flow, so it is needed. |
 | `DATABASE_URL` | yes | Where the users are stored: `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). For other databases pass your own [store adapter](#custom-store-adapter) instead. |
 | `WEBHOOK_URL` | for the e-mail methods | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
@@ -40,7 +43,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `COOKIE_DOMAIN` | no | Cookie domain, e.g. `.example.com`, so backends on sibling subdomains receive the session cookie. By default the cookie belongs to the server's host only. |
 | `PORT` | no | Port for the Node / Docker server. Default `8787`. |
 
-At least one way to create users must be configured: `GOOGLE_CLIENT_ID`, or a webhook that sends the e-mails (e-mail & password sign-in needs `email.send_verification` and `email.send_password_reset` among its events, the e-mail link needs `email.send_signin_link`, sign-up with the authenticator app alone needs `email.send_verification`), or both. Which configured methods are on, and whether they ask for the authenticator app, admins set while the server runs, see [Sign-in methods](#sign-in-methods).
+At least one way to create users must be configured: `GOOGLE_CLIENT_ID`, `GITHUB_CLIENT_ID` with its secret, or a webhook that sends the e-mails (e-mail & password sign-in needs `email.send_verification` and `email.send_password_reset` among its events, the e-mail link needs `email.send_signin_link`, sign-up with the authenticator app alone needs `email.send_verification`), or both. Which configured methods are on, and whether they ask for the authenticator app, admins set while the server runs, see [Sign-in methods](#sign-in-methods).
 
 ### Signing key
 
@@ -56,6 +59,15 @@ npx @madauth/server generate-key
 2. Under **Authorized JavaScript origins**, add every origin your app runs on (e.g. `https://app.example.com`, and `http://localhost:3000` plus `http://localhost` for development). The FedCM / One Tap flow needs only this.
 3. For the redirect flow, add `<MADAUTH_ISSUER>/auth/google/callback` under **Authorized redirect URIs** and set `GOOGLE_CLIENT_SECRET`.
 4. Set `GOOGLE_CLIENT_ID` to the client ID.
+
+## GitHub OAuth App setup
+
+1. Open [GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers) and register a **New OAuth App** (an OAuth App, not a GitHub App: madAuth only needs to know who signs in).
+2. Set the **Homepage URL** to your app and a **Redirect URI** of `<MADAUTH_ISSUER>/auth/github/callback`, e.g. `https://app.example.com/auth/github/callback` (an OAuth App takes up to ten, so one app can serve `http://localhost:3000/auth/github/callback` for development as well; a production app of its own keeps the secrets apart). Leave **Allow wildcard matching** and **Enable Device Flow** off.
+3. Untick **Expire user access tokens**, which GitHub ticks by default: madAuth keeps the token to revoke the app's authorization when a user deletes their account, and an expiring token (eight hours) could not do that any more.
+4. Generate a client secret and set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Both are needed: GitHub only has the server-side redirect flow, in which the server exchanges the code.
+
+Users are asked to grant the scope `user:email`, which lets madAuth read their e-mail addresses: it takes the primary one if GitHub has verified it, else another verified one, and refuses an account without one (`email_unverified`). The public address on the profile is not used. The access token is kept on the user's account, encrypted like the authenticator secrets, for one thing: revoking the OAuth App's authorization when the user deletes their account. See [GitHub security](github-security.md).
 
 ## E-mail & password sign-in
 
@@ -236,13 +248,13 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `email.send_password_reset` | "Forgot password?" | the same | the same | the same |
 | `email.send_signin_link` | A sign-in with the [e-mail link](email-link-security.md): the link signs in, the code too | the same (the link lives 15 minutes) | the same | the same |
 | `email.send_already_registered` | Sign-up with an address that already has a confirmed account | `to`, `link` (the sign-in page), `site`, `locale`, `user`, `methods` (how the user signs in, e.g. `["google"]`) | the same | the same |
-| `email.send_password_reset_no_password` | "Forgot password?" for a user without a password, who signs in with Google, the e-mail link or the authenticator app: tell them so | the same | the same | the same |
+| `email.send_password_reset_no_password` | "Forgot password?" for a user without a password, who signs in with Google, GitHub, the e-mail link or the authenticator app: tell them so | the same | the same | the same |
 | `sms.send_code` | An [SMS code](sms-security.md): confirming a new number (`setup`), the second step of a sign-in (`signin`), or approving a change to the number (`approve`) | `to` (the number, E.164), `code`, `purpose`, `expiresAt`, `site`, `locale`, `user { id, name }` | 2xx within 10 s, once your SMS service accepted it | `503 temporarily_unavailable`; the user can retry at once |
-| `user.signing_up` | Before a user is created: a sign-up with a password or with the authenticator app, the first Google sign-in of an address nobody has, or the first e-mail link for one | `email`, `name`, `locale`, `method` (`password`, `google`, `totp` or `email-link`) | 2xx within 10 s. `{ "allow": false, "message": "…" }` refuses the sign-up and the user sees your message (`403 signup_rejected`); any other 2xx allows it. | The sign-up is refused with `503 temporarily_unavailable`: without your answer, nobody signs up. |
+| `user.signing_up` | Before a user is created: a sign-up with a password or with the authenticator app, the first Google or GitHub sign-in of an address nobody has, or the first e-mail link for one | `email`, `name`, `locale`, `method` (`password`, `google`, `github`, `totp` or `email-link`) | 2xx within 10 s. `{ "allow": false, "message": "…" }` refuses the sign-up and the user sees your message (`403 signup_rejected`); any other 2xx allows it. | The sign-up is refused with `503 temporarily_unavailable`: without your answer, nobody signs up. |
 | `user.signed_up` | A user's sign-up is complete: their first session started, so they have their sign-in method and every second factor its policy requires. Sent once per user, before that sign-in's `user.signed_in`. | `user`, `method` | 2xx within 5 s | Logged; the request still succeeds. |
 | `user.email_verified` | An address was confirmed with the link or code of `email.send_verification` or `email.send_signin_link` | `user`, `method` (`password`, `totp` or `email-link`), `via` (`link` or `code`) | the same | the same |
 | `user.password_reset` | A password was reset (older sessions end) | `user` | the same | the same |
-| `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `totp` or `email-link`), `secondFactor` (`totp`, `recovery_code` or `sms`, when there was a second step) | the same | the same |
+| `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `github`, `totp` or `email-link`), `secondFactor` (`totp`, `recovery_code` or `sms`, when there was a second step) | the same | the same |
 | `user.deleted` | A user deleted their account | `user` | the same | the same |
 | `user.claims_changed` | An admin set the claims of a user | `user` (with the new claims), `claims`, `by` (the admin's address) | the same | the same |
 | `user.second_factor_enabled` | A user set up or replaced a second factor: the authenticator app as the second step of their sign-in method, or a phone number for SMS codes | `user`, `method` (`totp` or `sms`), `phone` (for `sms`) | the same | the same |
@@ -328,40 +340,41 @@ Whether the caller is an admin is asked from the store each time, not read from 
 
 ## Sign-in methods
 
-madAuth has four primary sign-in methods, named by these ids in the settings and on the command line:
+madAuth has five primary sign-in methods, named by these ids in the settings and on the command line:
 
 | Id | Method | In the web library |
 | --- | --- | --- |
 | `google` | Google sign-in (One Tap / FedCM or the redirect flow) | `GoogleFedcm`, `GoogleRedirect`, `Madauth.google` |
+| `github` | [GitHub sign-in](github-security.md) (the redirect flow) | `GitHub`, `Madauth.github` |
 | `password` | E-mail & password | `Password`, `Madauth.password` |
 | `totp` | The [authenticator app](#authenticator-app) on its own (the e-mail address and a code from the app), for users who signed up with it | `Totp`, `Madauth.totp` |
 | `email-link` | The passwordless [e-mail link](email-link-security.md) (the address, then the link or the code from the e-mail) | `EmailLink`, `Madauth.emailLink` |
 | `sms` | Not a method of its own: [SMS codes](sms-security.md) as a second factor, next to the app, for the methods whose policy asks for one | `Madauth.sms`, `Madauth.setUpSms()` |
 
-A user has one of these methods: the one they signed up with. The authenticator app is also the second factor of Google, password and the e-mail link: a code from it after the first step. As a second factor it never signs in by itself, whatever is on: a password user who set the app up still needs the password. With `sms` on, a code sent to the user's phone is one as well; the policy says *that* a second factor is needed, and the user chooses which they set up (the app comes first when they have both, and the dialog offers the switch).
+A user has one of these methods: the one they signed up with. The authenticator app is also the second factor of Google, GitHub, password and the e-mail link: a code from it after the first step. As a second factor it never signs in by itself, whatever is on: a password user who set the app up still needs the password. With `sms` on, a code sent to the user's phone is one as well; the policy says *that* a second factor is needed, and the user chooses which they set up (the app comes first when they have both, and the dialog offers the switch).
 
-Which methods the server can offer is configured at start: `GOOGLE_CLIENT_ID` for Google, the webhook that sends the e-mails for password sign-in, for the e-mail link and for sign-up with the app; the app itself needs nothing but the store. Which of them are on is a setting in the database that admins change while the server runs, at once and for every instance: the list of the methods that are on, each with its policy for the authenticator app as a second factor. A method that is not in the list is off.
+Which methods the server can offer is configured at start: `GOOGLE_CLIENT_ID` for Google, `GITHUB_CLIENT_ID` with its secret for GitHub, the webhook that sends the e-mails for password sign-in, for the e-mail link and for sign-up with the app; the app itself needs nothing but the store. Which of them are on is a setting in the database that admins change while the server runs, at once and for every instance: the list of the methods that are on, each with its policy for the authenticator app as a second factor. A method that is not in the list is off.
 
-| Policy | For Google, password and the e-mail link |
+| Policy | For Google, GitHub, password and the e-mail link |
 | --- | --- |
 | `none` | The method signs in on its own. |
 | `optional` | A user who set the app up (`Madauth.setUpAuthenticator()`) or added a phone (`Madauth.setUpSms()`, with `sms` on) is asked for a code after this method; a user with neither signs in as before. Setting a factor up never makes an account weaker. |
 | `required` | Everyone is asked for a code. A user with neither factor sets one up at their next sign-in, before they are in: the app, or a phone when `sms` is on. |
 
-Until an admin sets the list, a server runs its configured primary methods, Google, password and/or the e-mail link, without a second factor, and SMS codes when the webhook sends them; a server that only has the webhook runs the authenticator app alone. The app on its own is never on until it is listed, since it lets a user in with one factor: that is the admin's decision. It signs in only the users who signed up with it; for everyone else the app stays a step of their method.
+Until an admin sets the list, a server runs its configured primary methods, Google, GitHub, password and/or the e-mail link, without a second factor, and SMS codes when the webhook sends them; a server that only has the webhook runs the authenticator app alone. The app on its own is never on until it is listed, since it lets a user in with one factor: that is the admin's decision. It signs in only the users who signed up with it; for everyone else the app stays a step of their method.
 
-A method that is off is not shown by the web library (`GET /auth/config` reports it as `null`), and its routes answer `403 method_disabled`; a sign-in that was between its two steps ends too. Existing sessions continue. At least one method that creates users stays on: Google, e-mail & password, the e-mail link, or the app on a server whose webhook confirms addresses (the app alone on another server would let in only the users who have one).
+A method that is off is not shown by the web library (`GET /auth/config` reports it as `null`), and its routes answer `403 method_disabled` (the `start` and `callback` routes of the redirect flows send the browser back to the app with `madauth_error=method_disabled` instead, since it is on its way there); a sign-in that was between its two steps ends too. Existing sessions continue. At least one method that creates users stays on: Google, GitHub, e-mail & password, the e-mail link, or the app on a server whose webhook confirms addresses (the app alone on another server would let in only the users who have one).
 
 From your app with the web library, or with the HTTP API:
 
 ```ts
 // The list replaces the old one: what is sent is what is on, with the policy for the app.
-await Madauth.admin.setSettings({ methods: { google: {}, password: { secondFactor: 'optional' }, totp: true, 'email-link': { secondFactor: 'required' }, sms: {} } });
+await Madauth.admin.setSettings({ methods: { google: {}, github: { secondFactor: 'optional' }, password: { secondFactor: 'optional' }, totp: true, 'email-link': { secondFactor: 'required' }, sms: {} } });
 const result = await Madauth.admin.getSettings();
-// { isSuccess: true, methods: { google: { configured, enabled, secondFactor }, password: { … }, totp: { configured, enabled }, 'email-link': { … }, sms: { configured, enabled } } }
+// { isSuccess: true, methods: { google: { configured, enabled, secondFactor }, github: { … }, password: { … }, totp: { configured, enabled }, 'email-link': { … }, sms: { configured, enabled } } }
 ```
 
-On the command line, `set-methods google password=required totp email-link=optional sms` switches on the listed methods, with the policy after `=` (`none` without one), and off the others; `get-methods` prints them.
+On the command line, `set-methods google github password=required totp email-link=optional sms` switches on the listed methods, with the policy after `=` (`none` without one), and off the others; `get-methods` prints them.
 
 ## Password rules
 
@@ -389,11 +402,11 @@ The authenticator app (TOTP, RFC 6238: Google Authenticator, 1Password, Microsof
 
 **Setting it up.** A signed-in user calls `Madauth.setUpAuthenticator()` (a custom screen: `Madauth.totp.startSetup()` and `confirmSetup()`). The server makes a new secret and the web library shows it as a QR code (an `otpauth://` URI) and as text; the first code from the app proves the setup. The user then gets ten recovery codes to save, each good for one sign-in without the app. A new setup replaces an earlier app and its recovery codes, so it takes a current code from the old app (or a recovery code) first, like removing it. With a `required` policy, a user without the app is taken into the setup at their next sign-in, before they are in. A sign-up with the app alone (`Madauth.totp.signUp`; the server must confirm addresses by e-mail) confirms the address first and then sets the app up.
 
-**Signing in.** After Google, a password or an e-mail link whose policy asks for it, the server answers `401 totp_required` (or `totp_setup_required`) instead of a session and sets a ten-minute challenge cookie; the dialog asks for the code, and `POST /auth/totp/verify` finishes the sign-in. With the app listed as a method of its own, `POST /auth/totp/signin` takes the e-mail address and a code. A recovery code works wherever a code does, once; `user.recovery_code_used` tells your webhook how many are left.
+**Signing in.** After Google, GitHub, a password or an e-mail link whose policy asks for it, the server answers `401 totp_required` (or `totp_setup_required`) instead of a session and sets a ten-minute challenge cookie; the dialog asks for the code, and `POST /auth/totp/verify` finishes the sign-in. With the app listed as a method of its own, `POST /auth/totp/signin` takes the e-mail address and a code. A recovery code works wherever a code does, once; `user.recovery_code_used` tells your webhook how many are left.
 
 **Removing it.** `Madauth.totp.remove(...)` and `newRecoveryCodes(...)` take a current code from the app or a recovery code, so a stolen session can't switch the protection off; while any method's policy is `required`, the app can only go if the user has a phone for [SMS codes](#sms-codes) (`403 required_by_policy`), and a user who signed up with the app alone can't remove their only way in (`403 only_method`; they can delete the account). Deleting the account takes a code as well once the app is set up, while the app is on. A user who lost both the phone and the recovery codes needs the operator: `npx @madauth/server remove-totp <email>` (with `DATABASE_URL`; it calls no webhook), or `POST /auth/admin/totp/remove` as an admin; with a `required` policy they set the app up again at their next sign-in.
 
-The session says how it was authenticated: `amr` is `["pwd", "otp"]`, `["google", "otp"]` or `["email", "otp"]` after the second step and `["otp"]` for the app alone, as `user.amr` in the web library and in [`createSessionVerifier`](#verifying-the-session-in-your-backend). A backend can require `otp` before a sensitive action.
+The session says how it was authenticated: `amr` is `["pwd", "otp"]`, `["google", "otp"]`, `["github", "otp"]` or `["email", "otp"]` after the second step and `["otp"]` for the app alone, as `user.amr` in the web library and in [`createSessionVerifier`](#verifying-the-session-in-your-backend). A backend can require `otp` before a sensitive action.
 
 The secrets are stored encrypted with a key derived from `MADAUTH_SIGNING_KEY`: a copy of the database alone gives no codes, and a new signing key makes every enrolled app stop working until it is set up again. See [Authenticator app security](totp-security.md) for the rules in detail.
 
@@ -411,9 +424,10 @@ With `sms` among the [sign-in methods](#sign-in-methods) and a webhook that send
 
 `Madauth.deleteAccount()` in the web library (`POST /auth/account/delete`) lets a signed-in user delete their account:
 
-- The user is deleted with all their sign-in methods (the password, the Google account, the authenticator app with its recovery codes, the e-mail link, the phone number), their claims, and their pending confirmation, reset and sign-in links and SMS codes. The session proves who they are, whichever way they signed in.
+- The user is deleted with all their sign-in methods (the password, the Google account, the GitHub account, the authenticator app with its recovery codes, the e-mail link, the phone number), their claims, and their pending confirmation, reset and sign-in links and SMS codes. The session proves who they are, whichever way they signed in.
 - Once the user has an authenticator app, and while the app is on (a policy asks for it, or it signs in on its own), the request needs a current code from it or a recovery code (`Madauth.deleteAccount({ code })`; `401 code_required` without one): like removing the app, so a stolen session can't destroy the account.
 - If the user had a Google account, the answer is `200 { googleSub }` (otherwise `204`). With `GoogleFedcm`, the web library revokes the app's access to that Google account by its id (`google.accounts.id.revoke`): the app leaves their connected apps at Google, and the Google button says "Sign in with Google" again instead of "Continue as …". A user without a Google account is never sent to Google.
+- If the user had a GitHub account, the server revokes the OAuth App's authorization at GitHub with the access token it kept from their last sign-in (`DELETE /applications/{client_id}/grant`): madAuth leaves their authorized apps. This is best effort: when GitHub can't be reached or refuses, the deletion goes ahead and the server's log says so; the user can then remove the app under GitHub → Settings → Applications.
 - The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`, with the user as the session held them.
 
 Delete the user's data in your own backend first, while the user is still signed in. Sessions on other devices end when the app next checks them; your own backends accept them until they expire (see [Password security](password-security.md#sessions)).
@@ -571,7 +585,7 @@ if (!user) return new Response('Unauthorized', { status: 401 });
 console.log(user.id, user.email, user.claims, user.amr); // claims: e.g. { roles: ['admin'] }; amr: e.g. ['pwd', 'otp']
 ```
 
-`user.amr` says how the session was authenticated: `pwd` (password), `google`, `email` (the [e-mail link](email-link-security.md)), `otp` (the [authenticator app](#authenticator-app), as the second step or on its own), `sms` (a code by SMS as the second step). Require `otp` before a sensitive action if your users have the app.
+`user.amr` says how the session was authenticated: `pwd` (password), `google`, `github`, `email` (the [e-mail link](email-link-security.md)), `otp` (the [authenticator app](#authenticator-app), as the second step or on its own), `sms` (a code by SMS as the second step). Require `otp` before a sensitive action if your users have the app.
 
 A session token is valid for `SESSION_TTL`. When `verifySession` finds none, answer 401: the web library then renews the session, and the app sends the request again (see [Sessions](#sessions)).
 
@@ -581,17 +595,19 @@ Other languages can verify the JWT with any JOSE library:
 - header `typ` `madauth-session+jwt`
 - keys from `/.well-known/jwks.json`
 
-The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the session was authenticated: `pwd`, `google`, `email`, `otp`, `sms`) and `claims` (what admins attached, see [Claims](#claims)).
+The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the session was authenticated: `pwd`, `google`, `github`, `email`, `otp`, `sms`) and `claims` (what admins attached, see [Claims](#claims)).
 
 ## HTTP API
 
 | Method & path | Description |
 | --- | --- |
-| `GET /auth/config` | Public settings for the web library: `{ google: { clientId, codeFlow, secondFactor } \| null, password: { minLength, minScore, secondFactor } \| null, totp: { signIn, signUp } \| null, email: { verification }, emailLink: { secondFactor } \| null, sms }` (`sms`: whether SMS codes are on as a second factor). A method is `null` when it is not configured or [switched off](#sign-in-methods); `totp` is `null` when the app is neither a second factor of a method that is on nor a method itself (`signIn`). |
+| `GET /auth/config` | Public settings for the web library: `{ google: { clientId, codeFlow, secondFactor } \| null, github: { secondFactor } \| null, password: { minLength, minScore, secondFactor } \| null, totp: { signIn, signUp } \| null, email: { verification }, emailLink: { secondFactor } \| null, sms }` (`sms`: whether SMS codes are on as a second factor). A method is `null` when it is not configured or [switched off](#sign-in-methods); `totp` is `null` when the app is neither a second factor of a method that is on nor a method itself (`signIn`). |
 | `POST /auth/google/nonce` | Starts a FedCM / One Tap sign-in: returns `{ nonce }` and sets a 5-minute nonce cookie |
 | `POST /auth/google/verify` | `{ credential, locale? }` (Google ID token) → `{ user }` and the session cookie, or the [second step](#the-second-step); 403 `signup_rejected` (a first sign-in the sign-up check refused), 403 `other_method` (the address signs in another way; `methods` says how), 503 `temporarily_unavailable` |
 | `GET /auth/google/start?return_to=` | Starts the redirect flow (needs `GOOGLE_CLIENT_SECRET`) |
-| `GET /auth/google/callback` | Google redirects here; redirects back to `return_to`, to `return_to#madauth_error=<code>`, or to `return_to#madauth_next=totp` / `sms` / `totp-setup` for the second step, with `&madauth_factors=totp,sms` naming the factors that can finish it |
+| `GET /auth/google/callback` | Google redirects here; redirects back to `return_to`, to `return_to#madauth_error=<code>`, or to `return_to#madauth_next=totp` / `sms` / `totp-setup` for the second step, with `&madauth_factors=totp,sms` naming the factors that can finish it; `&madauth_method=google` names the method in both cases |
+| `GET /auth/github/start?return_to=` | Starts GitHub's redirect flow |
+| `GET /auth/github/callback` | GitHub redirects here; redirects back like Google's callback, with `&madauth_method=github`; `email_unverified` when the GitHub account has no verified e-mail address |
 | `POST /auth/password/signin` | `{ email, password }` → `{ user }` and the session cookie, or the second step; 401 `invalid_credentials`, 403 `email_unverified`, 429 `too_many_attempts` |
 | `POST /auth/password/signup` | `{ email, password, name?, redirectTo, locale? }` → 202, and the confirmation e-mail; 400 `invalid_email` or `weak_password`, 403 `signup_rejected`, 503 `temporarily_unavailable` |
 | `POST /auth/password/send-reset` | `{ email, redirectTo, locale? }` → 202, and the reset e-mail if the address has a password (`email.send_password_reset_no_password` if its user has none); 503 `temporarily_unavailable` |
@@ -618,16 +634,16 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/logout` | Clears the cookies of the session |
 | `POST /auth/admin/claims/get` | `{ email }` → `{ email, userId, claims }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`, 404 `user_not_found`. See [Claims](#claims). |
 | `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims` |
-| `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, secondFactor }, password: { … }, totp: { configured, enabled }, 'email-link': { configured, enabled, secondFactor }, sms: { configured, enabled } }, password: { minLength, minScore } }`, for admins. See [Sign-in methods](#sign-in-methods) and [Password rules](#password-rules). |
-| `POST /auth/admin/settings/set` | `{ methods?: { google?: {}, password?: { secondFactor }, totp?: {}, 'email-link'?: { secondFactor }, sms?: {} }, password?: { minLength?, minScore? } }`, one or both (`methods` is the list of the methods that are on, `true` for `{}`; what `password` leaves out takes its default) → the same; 400 `invalid_settings`, also when no method that creates users would stay on, and then nothing is changed |
+| `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, secondFactor }, github: { … }, password: { … }, totp: { configured, enabled }, 'email-link': { configured, enabled, secondFactor }, sms: { configured, enabled } }, password: { minLength, minScore } }`, for admins. See [Sign-in methods](#sign-in-methods) and [Password rules](#password-rules). |
+| `POST /auth/admin/settings/set` | `{ methods?: { google?: {}, github?: { secondFactor }, password?: { secondFactor }, totp?: {}, 'email-link'?: { secondFactor }, sms?: {} }, password?: { minLength?, minScore? } }`, one or both (`methods` is the list of the methods that are on, `true` for `{}`; what `password` leaves out takes its default) → the same; 400 `invalid_settings`, also when no method that creates users would stay on, and then nothing is changed |
 | `POST /auth/admin/totp/remove` | `{ email }` → `{ email, userId, enabled: false }`: removes the user's authenticator app and recovery codes, for admins. See [Authenticator app](#authenticator-app). |
 | `POST /auth/admin/sms/remove` | `{ email }` → `{ email, userId, enabled: false }`: removes the user's phone number, for admins. See [SMS codes](#sms-codes). |
 | `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`. See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
 | `GET /health` | `ok` |
 
-POST requests must come from an origin in `ALLOWED_ORIGINS`. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The routes of Google, of e-mail & password, of the e-mail link and of SMS codes return 404 when the method is not configured; every method's routes return 403 `method_disabled` when it is not on.
+POST requests must come from an origin in `ALLOWED_ORIGINS`. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The routes of Google, of GitHub, of e-mail & password, of the e-mail link and of SMS codes return 404 when the method is not configured; every method's routes return 403 `method_disabled` when it is not on, except the redirect flows' `start` and `callback`, which send the browser back to `return_to` with `madauth_error=method_disabled`.
 
 ### The second step
 
-When the [policy](#sign-in-methods) of Google, password or the e-mail link asks for a second factor, `google/verify`, `password/signin`, `password/reset`, `email/verify` and `email-link/verify` answer `401 { "error": "totp_required", "method": "password", "factors": ["totp"] }` (the user has the app; `factors` lists what they can finish with, e.g. `["totp", "sms"]` when they have a phone as well), `401 { "error": "sms_required", …, "factors": ["sms"] }` (a phone only) or `401 { "error": "totp_setup_required", …, "factors": [] }` (they set a factor up first) instead of `{ user }`, and set a 10-minute challenge cookie on `/auth`; the session there was at that browser, if any, is cleared, so whoever was signed in is signed out until the step is done. The sign-in then goes on with `POST /auth/totp/verify` or `POST /auth/sms/send` and `verify` (each for a factor in `factors`), or with the setup pair of the app or of the phone; if an admin switched the method off meanwhile, they answer `403 method_disabled`. The redirect flow returns with `#madauth_next=totp`, `sms` or `totp-setup` instead, and `madauth_factors`. The web library handles the second step by itself, with or without `new Totp()`.
+When the [policy](#sign-in-methods) of Google, GitHub, password or the e-mail link asks for a second factor, `google/verify`, `password/signin`, `password/reset`, `email/verify` and `email-link/verify` answer `401 { "error": "totp_required", "method": "password", "factors": ["totp"] }` (the user has the app; `factors` lists what they can finish with, e.g. `["totp", "sms"]` when they have a phone as well), `401 { "error": "sms_required", …, "factors": ["sms"] }` (a phone only) or `401 { "error": "totp_setup_required", …, "factors": [] }` (they set a factor up first) instead of `{ user }`, and set a 10-minute challenge cookie on `/auth`; the session there was at that browser, if any, is cleared, so whoever was signed in is signed out until the step is done. The sign-in then goes on with `POST /auth/totp/verify` or `POST /auth/sms/send` and `verify` (each for a factor in `factors`), or with the setup pair of the app or of the phone; if an admin switched the method off meanwhile, they answer `403 method_disabled`. The redirect flows (Google's code flow, GitHub) return with `#madauth_next=totp`, `sms` or `totp-setup` instead, with `madauth_factors` and `madauth_method`. The web library handles the second step by itself, with or without `new Totp()`.

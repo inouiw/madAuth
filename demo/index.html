@@ -55,6 +55,10 @@
         This madAuth server doesn't offer the redirect flow: it needs <code>GOOGLE_CLIENT_ID</code> and
         <code>GOOGLE_CLIENT_SECRET</code>, with Google switched on. The dialog offers e-mail &amp; password only.
       </p>
+      <p id="github-note" class="note" hidden>
+        This madAuth server doesn't offer GitHub sign-in: it needs <code>GITHUB_CLIENT_ID</code> and
+        <code>GITHUB_CLIENT_SECRET</code> from a GitHub OAuth App, with GitHub switched on. The dialog has no GitHub button.
+      </p>
 
       <button id="sign-in" type="button">Sign in</button>
       <!-- What a call resolved to when it ended the session, e.g. deleteAccount: shown here, since the API is gone then. -->
@@ -187,7 +191,7 @@
           <li class="api-method" data-call="setSettings">
             <button type="button" class="api-row" aria-expanded="false">Madauth.admin.setSettings({ methods })</button>
             <div class="api-detail" hidden>
-              <p>Sends the list of the methods that are on, with the policy of Google, password and the e-mail link for the authenticator app; a method that is not listed is off. It applies at once, for everyone.</p>
+              <p>Sends the list of the methods that are on, with the policy of Google, GitHub, password and the e-mail link for the authenticator app; a method that is not listed is off. It applies at once, for everyone.</p>
               <!--
                 The controls show the server's settings once getSettings succeeded; only then can they be sent back.
               -->
@@ -199,6 +203,15 @@
                     <label class="policy">
                       Authenticator app
                       <select id="policy-google"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
+                    </label>
+                  </td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-github" type="checkbox" /> GitHub</label></td>
+                  <td>
+                    <label class="policy">
+                      Authenticator app
+                      <select id="policy-github"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
                     </label>
                   </td>
                 </tr>

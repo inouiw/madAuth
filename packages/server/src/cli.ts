@@ -39,7 +39,8 @@ const usage = `Usage: npx @madauth/server <command> [--env-file <path>]
 Commands:
   init                         Ask a few questions, write the configuration to .env and print the next steps.
                                An answer given as an option is not asked for: --app-url <url>,
-                               --google-client-id <id>, --google-client-secret <secret>, --password or
+                               --google-client-id <id>, --google-client-secret <secret>,
+                               --github-client-id <id>, --github-client-secret <secret>, --password or
                                --no-password, --totp or --no-totp (sign-up with the authenticator app),
                                --email-link or --no-email-link (passwordless sign-in by e-mail),
                                --sms or --no-sms (SMS codes as a second factor),
@@ -58,11 +59,11 @@ Commands:
   get-claims <email>           Print the claims of a user as JSON.
   set-methods [method[=policy]...]
                                Switch sign-in methods on and off while the server runs: the listed ones
-                               are on, the others off. Methods: google, password, totp (the authenticator
-                               app on its own), email-link (passwordless sign-in by e-mail), and sms (SMS
-                               codes as a second factor, next to the app). google, password and email-link
-                               take a policy for the second factor: none (default), optional or required,
-                               e.g. set-methods google password=required totp email-link=optional sms
+                               are on, the others off. Methods: google, github, password, totp (the
+                               authenticator app on its own), email-link (passwordless sign-in by e-mail),
+                               and sms (SMS codes as a second factor, next to the app). google, github,
+                               password and email-link take a policy for the second factor: none (default),
+                               optional or required, e.g. set-methods google password=required totp email-link=optional sms
   get-methods                  Print which sign-in methods are switched on, with their policies.
   set-password-rules [min-length=<n>] [min-score=<0-4>]
                                Set the rules for new passwords: the minimum length (default 8, at most 128)
@@ -195,6 +196,8 @@ function parseCliArgs(args: string[]) {
       'app-url': { type: 'string' },
       'google-client-id': { type: 'string' },
       'google-client-secret': { type: 'string' },
+      'github-client-id': { type: 'string' },
+      'github-client-secret': { type: 'string' },
       password: { type: 'boolean' },
       totp: { type: 'boolean' },
       'email-link': { type: 'boolean' },
@@ -333,6 +336,16 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   }
   const clientSecret = clientId ? (options['google-client-secret'] ?? (await askClientSecret())).trim() : '';
 
+  const githubClientId = await answer(options['github-client-id'], 'GitHub client ID (empty: no GitHub sign-in)');
+  if (!githubClientId && options['github-client-secret'] !== undefined) {
+    return fail('--github-client-secret needs a GitHub client ID.');
+  }
+  const githubClientSecret = githubClientId ? (options['github-client-secret'] ?? (options.yes ? '' : await io.askSecret('GitHub client secret: '))).trim() : '';
+  // GitHub has no browser-only flow: the server exchanges the code itself, which takes the secret.
+  if (githubClientId && !githubClientSecret) {
+    return fail('GitHub sign-in needs the client secret of the OAuth App too (--github-client-secret).');
+  }
+
   const password = options.password ?? /^y/i.test(await answer(undefined, 'E-mail & password sign-in? (yes/no)', 'yes'));
   // The app as a second factor needs no setting here; signing up with it alone needs the confirmation e-mails.
   const totp = options.totp ?? /^y/i.test(await answer(undefined, 'Sign-up with the authenticator app alone, without a password? (yes/no)', 'no'));
@@ -344,8 +357,8 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   if (!webhook && options['webhook-url'] !== undefined) {
     return fail('--webhook-url is for the e-mails of e-mail & password sign-in, of the e-mail link and of sign-up with the authenticator app, and for SMS codes, which are turned off.');
   }
-  if (!clientId && !emails) {
-    return fail('No sign-in method is chosen. Give a Google client ID, turn on e-mail & password sign-in, the e-mail link or sign-up with the authenticator app.');
+  if (!clientId && !githubClientId && !emails) {
+    return fail('No sign-in method is chosen. Give a Google or GitHub client ID, turn on e-mail & password sign-in, the e-mail link or sign-up with the authenticator app.');
   }
   // Every user is stored, whichever way they sign in.
   const database = await answer(options.database, 'Database for the users', 'sqlite:./madauth.db');
@@ -385,6 +398,8 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
     variable('ALLOWED_ORIGINS', origin, 'Origins of your apps, comma-separated. Only these may call the server.'),
     clientId && variable('GOOGLE_CLIENT_ID', clientId, 'Google sign-in: your OAuth client ID, of the type Web application.'),
     clientSecret && variable('GOOGLE_CLIENT_SECRET', clientSecret, 'Client secret of the same client. It enables the redirect flow.'),
+    githubClientId && variable('GITHUB_CLIENT_ID', githubClientId, 'GitHub sign-in: the client ID of your OAuth App.'),
+    githubClientSecret && variable('GITHUB_CLIENT_SECRET', githubClientSecret, 'Client secret of the same OAuth App.'),
     variable('DATABASE_URL', database, 'Where the users are stored, whichever way they sign in.'),
     webhook && variable('WEBHOOK_URL', webhookUrl, `Your webhook receiver. madAuth hands its ${sms ? 'e-mails and SMS' : 'e-mails'} to it.`),
     webhook && variable('WEBHOOK_SECRET', generateWebhookSecret(), 'Signs every webhook call. Your receiver needs the same one.'),
@@ -404,7 +419,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   writeFileSync(file, content, { mode: 0o600, flag: 'wx' });
 
   const google = clientSecret ? 'GoogleRedirect' : clientId ? 'GoogleFedcm' : undefined;
-  return { output: `Wrote ${file}.\n\nNext steps:\n\n${nextSteps(file, origin, google, password, totp, emailLink, sms)}`, exitCode: 0 };
+  return { output: `Wrote ${file}.\n\nNext steps:\n\n${nextSteps(file, origin, google, !!githubClientId, password, totp, emailLink, sms)}`, exitCode: 0 };
 }
 
 /** What to do after `init`, for the chosen sign-in methods: numbered steps with commands and snippets to copy. */
@@ -412,6 +427,7 @@ function nextSteps(
   file: string,
   origin: string,
   google: 'GoogleFedcm' | 'GoogleRedirect' | undefined,
+  github: boolean,
   password: boolean,
   totp = false,
   emailLink = false,
@@ -420,8 +436,8 @@ function nextSteps(
   const server = `http://localhost:${PORT}`;
   // Quoted when needed, so the command can be pasted as it is.
   const envFile = /[^\w./-]/.test(file) ? `'${file.replaceAll("'", `'\\''`)}'` : file;
-  const providers = [google, password && 'Password', totp && 'Totp', emailLink && 'EmailLink'].filter(Boolean);
-  const methodList = [google && 'google', password && 'password', totp && 'totp', emailLink && 'email-link'].filter(Boolean).join(' ');
+  const providers = [google, github && 'GitHub', password && 'Password', totp && 'Totp', emailLink && 'EmailLink'].filter(Boolean);
+  const methodList = [google && 'google', github && 'github', password && 'password', totp && 'totp', emailLink && 'email-link'].filter(Boolean).join(' ');
   // For development, Google wants http://localhost next to the origin with its port.
   const googleOrigins = new Set([origin, ...(new URL(origin).hostname === 'localhost' ? ['http://localhost'] : [])]);
   const steps = [
@@ -433,7 +449,7 @@ function nextSteps(
       `  ${DEV_WEBHOOK_RECEIVER_URL}`,
     ],
     totp &&
-      (google || password) && [
+      (google || github || password) && [
         'Signing in with the authenticator app alone is off until an admin lists it. Once the server runs:',
         '',
         `  npx @madauth/server set-methods ${methodList} --env-file ${envFile}`,
@@ -463,6 +479,11 @@ function nextSteps(
       '',
       `  Authorized JavaScript origins: ${[...googleOrigins].join(' and ')}`,
       ...(google === 'GoogleRedirect' ? [`  Authorized redirect URIs: ${origin}/auth/google/callback`] : []),
+    ],
+    github && [
+      'In your GitHub OAuth App (https://github.com/settings/developers), set:',
+      '',
+      `  Authorization callback URL: ${origin}/auth/github/callback`,
     ],
     [
       `Never commit ${file}: it holds the signing key and your secrets. Production needs an https app URL`,
@@ -542,7 +563,7 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
       const method = name as MethodId;
       if (policy !== undefined && (!hasSecondFactor(method) || !(SECOND_FACTOR_POLICIES as readonly string[]).includes(policy))) {
         return {
-          output: `"${arg}": google, password and email-link take a policy for the second factor: ${SECOND_FACTOR_POLICIES.join(', ')}.`,
+          output: `"${arg}": google, github, password and email-link take a policy for the second factor: ${SECOND_FACTOR_POLICIES.join(', ')}.`,
           exitCode: 1,
         };
       }

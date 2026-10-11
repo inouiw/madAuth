@@ -34,9 +34,9 @@ Code: `POST /auth/email-link/send` and `verify` in [`email-link.ts`](../packages
 
 ## A method signs in only users who have it
 
-A link never signs into an account that signs in with a password, Google or the authenticator app alone: such a user gets the "you already have an account" e-mail. Otherwise a link would turn every password account into a passwordless one, and the authenticator app a user set up would count for nothing when they are signed in by e-mail. The other way round, a password sign-up or a Google sign-in with a link user's address is refused the same way (`email.send_already_registered`, `403 other_method`), and "Forgot password?" tells them they have no password (`email.send_password_reset_no_password`).
+A link never signs into an account that signs in with a password, Google, GitHub or the authenticator app alone: such a user gets the "you already have an account" e-mail. Otherwise a link would turn every password account into a passwordless one, and the authenticator app a user set up would count for nothing when they are signed in by e-mail. The other way round, a password sign-up or a Google or GitHub sign-in with a link user's address is refused the same way (`email.send_already_registered`, `403 other_method`), and "Forgot password?" tells them they have no password (`email.send_password_reset_no_password`).
 
-Code: [`email-link.ts`](../packages/server/src/routes/email-link.ts), `resolveUser` in [`google.ts`](../packages/server/src/routes/google.ts).
+Code: [`email-link.ts`](../packages/server/src/routes/email-link.ts), `resolveProviderUser` in [`oauth.ts`](../packages/server/src/routes/oauth.ts).
 
 ## The second step
 

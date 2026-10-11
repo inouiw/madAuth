@@ -1,5 +1,6 @@
 // Authenticator app codes (TOTP, RFC 6238), how their secrets are kept, and recovery codes. See docs/totp-security.md.
-import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, randomInt } from 'node:crypto';
+import { createHmac, randomBytes, randomInt } from 'node:crypto';
+import { deriveKey } from './crypto.js';
 import { hashCode, safeEqual } from './password.js';
 
 /** How long one code is valid, as authenticator apps expect. */
@@ -16,9 +17,6 @@ const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 /** Lower-case base32 without 0, 1 and 8, so a code read from paper is not mistyped. */
 const RECOVERY_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 const RECOVERY_CODE_LENGTH = 10;
-const ENCRYPTION_VERSION = 'v1';
-const IV_BYTES = 12;
-const TAG_BYTES = 16;
 
 /** RFC 4648 base32 without padding, the form authenticator apps take a key in. */
 export function base32Encode(bytes: Uint8Array): string {
@@ -107,33 +105,11 @@ export function otpauthUri(options: { issuer: string; account: string; secret: U
  * A secret must be readable to check codes, so a leaked database alone must not give it away.
  */
 export function deriveTotpKey(signingKeyD: string): Buffer {
-  return Buffer.from(hkdfSync('sha256', Buffer.from(signingKeyD, 'base64url'), '', 'madauth totp secret', 32));
+  return deriveKey(signingKeyD, 'madauth totp secret');
 }
 
-/** Encrypts a secret for the store: `v1.<iv>.<ciphertext>.<tag>` in base64url, AES-256-GCM with a random IV. */
-export function encryptSecret(key: Buffer, secret: Uint8Array): string {
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const encrypted = Buffer.concat([cipher.update(secret), cipher.final()]);
-  const parts = [iv, encrypted, cipher.getAuthTag()].map((part) => part.toString('base64url'));
-  return [ENCRYPTION_VERSION, ...parts].join('.');
-}
-
-/** The secret from {@link encryptSecret}, or null if the value is malformed, tampered with, or from another key. */
-export function decryptSecret(key: Buffer, stored: string): Buffer | null {
-  const [version, iv, encrypted, tag, ...rest] = stored.split('.');
-  if (version !== ENCRYPTION_VERSION || !iv || !encrypted || !tag || rest.length) return null;
-  const ivBytes = Buffer.from(iv, 'base64url');
-  const tagBytes = Buffer.from(tag, 'base64url');
-  if (ivBytes.length !== IV_BYTES || tagBytes.length !== TAG_BYTES) return null;
-  try {
-    const decipher = createDecipheriv('aes-256-gcm', key, ivBytes);
-    decipher.setAuthTag(tagBytes);
-    return Buffer.concat([decipher.update(Buffer.from(encrypted, 'base64url')), decipher.final()]);
-  } catch {
-    return null;
-  }
-}
+/** The secrets at rest: see crypto.ts. */
+export { decrypt as decryptSecret, encrypt as encryptSecret } from './crypto.js';
 
 /** New recovery codes, e.g. `k7mxq-2bz4p`: ten characters of 32 each, in two groups. */
 export function generateRecoveryCodes(): string[] {

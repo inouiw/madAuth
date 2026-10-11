@@ -7,6 +7,8 @@ import { importSigningKeys, type SigningKeys } from './keys.js';
 import { deriveCodeKey, isValidEmail, normalizeEmail } from './password.js';
 import { emailRoutes } from './routes/email.js';
 import { emailLinkRoutes } from './routes/email-link.js';
+import { deriveTokenKey } from './github.js';
+import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
 import { body, error } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
@@ -43,7 +45,7 @@ import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type Webho
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
 
-export { REDIRECT_ERROR_PARAM, REDIRECT_FACTORS_PARAM, REDIRECT_NEXT_PARAM } from './routes/google.js';
+export { REDIRECT_ERROR_PARAM, REDIRECT_FACTORS_PARAM, REDIRECT_METHOD_PARAM, REDIRECT_NEXT_PARAM } from './routes/oauth.js';
 
 /** The answer of the operator's sign-up check. */
 export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | { ok: false; reason: 'rejected'; message: string };
@@ -120,6 +122,7 @@ export function createApp(config: MadauthConfig): Hono {
   const signsUp = (method: SignInMethod) => canSignUp(methods, method);
   const emailVerification = sendsVerificationEmails(config);
   const totpKeys: TotpKeys = { totpKey: deriveTotpKey(config.signingKey.d!), codeKey };
+  const tokenKey = deriveTokenKey(config.signingKey.d!);
 
   /**
    * Sets the cookies of a session: the session token for app backends, the renewal token for this server
@@ -343,6 +346,7 @@ export function createApp(config: MadauthConfig): Hono {
     const rules = on('password') ? await settings.passwordRules() : null;
     return c.json({
       google: on('google') ? { clientId: config.google!.clientId, codeFlow: !!config.google!.clientSecret, secondFactor: policyOf('google', current) } : null,
+      github: on('github') ? { secondFactor: policyOf('github', current) } : null,
       password: rules ? { ...rules, secondFactor: policyOf('password', current) } : null,
       // The app can be set up when it is in use at all; `signIn` says whether it signs in on its own.
       totp: authenticatorOn(configured, current) ? { signIn: on('totp'), signUp: on('totp') && emailVerification } : null,
@@ -357,6 +361,7 @@ export function createApp(config: MadauthConfig): Hono {
   if (configured('email-link') && ctx.webhook) emailLinkRoutes(app, ctx, users, ctx.webhook);
   if (configured('sms') && ctx.webhook) smsRoutes(app, ctx, users, ctx.webhook);
   if (config.google) googleRoutes(app, ctx, config.google);
+  if (config.github) githubRoutes(app, ctx, config.github, tokenKey);
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, users, ctx.webhook);
   totpRoutes(app, ctx, totpKeys);
 
@@ -397,8 +402,11 @@ export function createApp(config: MadauthConfig): Hono {
     }
     // Read before the deletion: the web library revokes the app's access to this Google account with it.
     const googleSub = await users.googleSub(user.id);
+    // GitHub's authorization goes once the user is gone, with the token kept from the last sign-in.
+    const githubAccount = config.github ? await users.githubAccount(user.id) : null;
     // The user with all their sign-in methods: the session proves who they are, whichever way they signed in.
-    await users.deleteById(user.id);
+    const deleted = await users.deleteById(user.id);
+    if (deleted && config.github) await revokeGrant(config.github, tokenKey, githubAccount);
     clearSession(c);
     await ctx.emit('user.deleted', { user });
     return googleSub ? c.json({ googleSub }) : c.body(null, 204);
@@ -497,7 +505,7 @@ export function createApp(config: MadauthConfig): Hono {
     if (next === null) {
       return invalid(
         `methods must list the sign-in methods that are on (${SIGN_IN_METHODS.join(', ')}; sms for SMS codes as a second factor), each as true, {} or ` +
-          '{ "secondFactor": "none" | "optional" | "required" } (google, password and email-link), e.g. ' +
+          '{ "secondFactor": "none" | "optional" | "required" } (google, github, password and email-link), e.g. ' +
           '{ "google": {}, "password": { "secondFactor": "optional" }, "sms": {} }. A method that is not listed is off.',
       );
     }
@@ -509,7 +517,7 @@ export function createApp(config: MadauthConfig): Hono {
       );
     }
     if (next && !anyOn(signsUp, next)) {
-      return invalid('At least one sign-in method that creates users must stay on: Google, e-mail & password, the e-mail link, or the authenticator app with sign-up by e-mail.');
+      return invalid('At least one sign-in method that creates users must stay on: Google, GitHub, e-mail & password, the e-mail link, or the authenticator app with sign-up by e-mail.');
     }
     // Two writes: if the second fails, the first is undone, so a failed request has changed nothing.
     const previousRules = rules && next ? await settings.passwordRules() : undefined;

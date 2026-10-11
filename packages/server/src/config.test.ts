@@ -80,6 +80,21 @@ describe('loadConfig', () => {
 
   const hook = { WEBHOOK_URL, WEBHOOK_SECRET, WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset' };
 
+  it('A14: GitHub sign-in takes the client ID and the secret of the OAuth App together, and counts as a sign-in method', async () => {
+    const github = { GITHUB_CLIENT_ID: 'Iv1.abc', GITHUB_CLIENT_SECRET: 'shh' };
+
+    const config = await loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined, ...github });
+
+    expect(config.github).toEqual({ clientId: 'Iv1.abc', clientSecret: 'shh' });
+    expect(config.google).toBeUndefined();
+    expect((await loadConfig({ ...env, ...github })).github).toEqual({ clientId: 'Iv1.abc', clientSecret: 'shh' });
+    expect((await loadConfig(env)).github).toBeUndefined();
+    await expect(loadConfig({ ...env, GITHUB_CLIENT_ID: 'Iv1.abc' })).rejects.toThrow(/GITHUB_CLIENT_ID needs GITHUB_CLIENT_SECRET/);
+    // A secret alone is ignored, like Google's: a secrets store may hold one for a server that has GitHub off.
+    expect((await loadConfig({ ...env, GITHUB_CLIENT_SECRET: 'shh' })).github).toBeUndefined();
+    await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined })).rejects.toThrow(/No sign-in method.*GITHUB_CLIENT_ID/s);
+  });
+
   it('A14: turns on e-mail & password sign-in with a webhook that sends the e-mails', async () => {
     const config = await loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined });
 

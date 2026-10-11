@@ -2,7 +2,7 @@
 
 How madAuth handles SMS codes as a second factor, for app developers and for whoever runs the server. Each section links to the code that implements it. The tests that check these rules mention this file, so update it when you change them.
 
-SMS codes are **only a second factor**: a signed-in user adds a phone number, and from then on the sign-in methods whose [policy](server.md#sign-in-methods) asks for a second factor (Google, password, the e-mail link) can ask for a code sent to it, next to the [authenticator app](totp-security.md). A phone never signs anyone in by itself, and never creates a user: SMS can be intercepted (SIM swapping, SS7) and a number changes hands, so it protects an account that already has a first factor and is not one. Where that is not enough, the operator leaves SMS codes off, and the app is the only second factor.
+SMS codes are **only a second factor**: a signed-in user adds a phone number, and from then on the sign-in methods whose [policy](server.md#sign-in-methods) asks for a second factor (Google, GitHub, password, the e-mail link) can ask for a code sent to it, next to the [authenticator app](totp-security.md). A phone never signs anyone in by itself, and never creates a user: SMS can be intercepted (SIM swapping, SS7) and a number changes hands, so it protects an account that already has a first factor and is not one. Where that is not enough, the operator leaves SMS codes off, and the app is the only second factor.
 
 ## Codes
 

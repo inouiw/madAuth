@@ -4,6 +4,7 @@
     "issuer": "",
     "allowedOrigins": "",
     "googleClientId": "",
+    "githubClientId": "",
     "secretsPath": "/madauth",
     "webhookUrl": "",
     "webhookEvents": "email.send_verification,email.send_password_reset,email.send_already_registered"

@@ -9,13 +9,14 @@
   </head>
   <body>
     <main>
-      <!-- A login screen built with the headless API (Madauth.password, Madauth.google, Madauth.totp, Madauth.emailLink). See src/custom.ts. -->
+      <!-- A login screen built with the headless API (Madauth.password, Madauth.google, Madauth.github, Madauth.totp, Madauth.emailLink). See src/custom.ts. -->
       <section id="login" class="card" hidden>
         <h1 id="title">Sign in</h1>
         <p id="message" hidden></p>
 
         <div data-view="signin">
           <div id="google-button"></div>
+          <div id="github-button"></div>
           <div class="divider">or</div>
           <form id="signin-form">
             <label>E-mail <input name="email" type="email" autocomplete="email" required /></label>
@@ -57,7 +58,7 @@
         </div>
 
         <div data-view="forgot" hidden>
-          <p id="google-hint" class="hint">Signed up with Google? There is no password to reset: use the Google button instead.</p>
+          <p id="provider-hint" class="hint">Signed up with Google or GitHub? There is no password to reset: use that button instead.</p>
           <form id="forgot-form">
             <label>E-mail <input name="email" type="email" autocomplete="email" required /></label>
             <button type="submit">Send reset e-mail</button>

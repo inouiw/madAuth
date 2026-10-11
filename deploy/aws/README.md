@@ -15,6 +15,7 @@ It deploys madAuth 0.3 or newer, which stores every user in the table, with or w
 - An AWS account, the AWS CLI signed in (`aws configure` or `aws sso login`), and Node.js 22.13 or newer.
 - Your app's origin, e.g. `https://example.com`, where `/auth/*` and `/.well-known/*` will be routed to madAuth (see step 4).
 - For Google sign-in: a [Google OAuth client](../../docs/server.md#google-cloud-console-setup).
+- For GitHub sign-in: a [GitHub OAuth App](../../docs/server.md#github-oauth-app-setup).
 - For e-mail & password: a webhook receiver that sends the e-mails, e.g. the [aws-ses-mailer](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer).
 
 ## 1. Get the template
@@ -37,7 +38,7 @@ npx cdk bootstrap
 
 ## 2. Store the secrets
 
-The script creates the signing key and the webhook secret, then asks for the Google client secret. You can leave that empty if you only use Google One Tap / FedCM. The values go straight into the Parameter Store, under `/madauth` by default:
+The script creates the signing key and the webhook secret, then asks for the Google client secret (leave it empty if you only use Google One Tap / FedCM) and the GitHub client secret (empty without GitHub sign-in; one without `githubClientId` is ignored). The values go straight into the Parameter Store, under `/madauth` by default:
 
 ```bash
 scripts/bootstrap-secrets.sh /madauth
@@ -54,8 +55,9 @@ Set your values in [`cdk.json`](cdk.json) under `context`:
 | `issuer` | `https://example.com` | Your app's origin (`MADAUTH_ISSUER`). Required. |
 | `allowedOrigins` | `https://example.com,https://admin.example.com` | Comma-separated. Default: the issuer |
 | `googleClientId` | `123….apps.googleusercontent.com` | Empty: no Google sign-in |
+| `githubClientId` | `Iv1.0123456789abcdef` | Empty: no GitHub sign-in. With one, step 2 needs the client secret |
 | `secretsPath` | `/madauth` | Where step 2 stored the secrets |
-| `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: Google sign-in only |
+| `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: Google and GitHub sign-in only |
 | `webhookEvents` | `email.send_verification,email.send_password_reset,email.send_already_registered` | What the receiver handles. This default turns on e-mail & password sign-in. |
 
 Then deploy:
@@ -77,7 +79,7 @@ madAuth's cookies must be first-party, so the browser should reach the server on
 - **CloudFront:** add the Function URL as an origin with two behaviors for these paths. Use the cache policy `CachingDisabled`, the origin request policy `AllViewerExceptHostHeader` and all HTTP methods. [`site/infra/lib/site-stack.ts`](../../site/infra/lib/site-stack.ts) does exactly this for madauth.com.
 - **Another reverse proxy** (nginx, Caddy, your framework's dev proxy): forward the two paths to the Function URL. Send the Function URL's own `Host` header, and pass the `Origin` and `Cookie` headers through.
 
-For Google's redirect flow, also add `https://example.com/auth/google/callback` as an authorized redirect URI of the Google client.
+For Google's redirect flow, also add `https://example.com/auth/google/callback` as an authorized redirect URI of the Google client. For GitHub sign-in, the OAuth App's authorization callback URL is `https://example.com/auth/github/callback`.
 
 ## Using the construct in your own CDK app
 
@@ -89,6 +91,7 @@ import { MadAuthServer } from '@madauth/deploy-aws';
 const madauth = new MadAuthServer(this, 'MadAuth', {
   issuer: 'https://example.com',
   googleClientId: '123.apps.googleusercontent.com',
+  githubClientId: 'Iv1.0123456789abcdef',
   secretsPath: '/madauth',
   webhook: { url: mailerUrl, events: ['email.send_verification', 'email.send_password_reset', 'email.send_already_registered', 'email.send_password_reset_no_password'] },
   reservedConcurrentExecutions: 10,
