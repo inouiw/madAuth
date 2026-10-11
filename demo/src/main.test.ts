@@ -30,6 +30,19 @@ let holdSettings: Promise<void> | undefined;
 let authenticator = false;
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
+// The API explorer: a row per method, opened to its parameters, the request and the response.
+const row = (id: string) => $<HTMLLIElement>(`.api-method[data-call="${id}"]`);
+const open = (id: string) => row(id).querySelector<HTMLButtonElement>('.api-row')!.click();
+const execute = (id: string) => row(id).querySelector<HTMLButtonElement>('.api-execute')!;
+const request = (id: string) => row(id).querySelector('.api-request')!.textContent;
+const response = (id: string) => row(id).querySelector('.api-response')!.textContent;
+const param = (id: string, name: string) => row(id).querySelector<HTMLInputElement>(`[data-param="${name}"]`)!;
+/** Sets a field as a user would: the page keeps the request box in step through the input event. */
+const type = (field: HTMLInputElement | HTMLTextAreaElement, value: string) => {
+  field.value = value;
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+};
+const changed = (field: HTMLElement) => field.dispatchEvent(new Event('change', { bubbles: true }));
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -180,9 +193,11 @@ describe('demo page', () => {
     expect($('#api').hidden).toBe(false);
     // The admin fields start with the signed-in user's own address, and an admin's checkboxes with the
     // server's settings; only then can they be sent back.
-    expect($<HTMLInputElement>('#claims-email').value).toBe('ada@example.com');
+    expect(param('getClaims', 'email').value).toBe('ada@example.com');
+    expect(param('setClaims', 'email').value).toBe('ada@example.com');
     expect($('#admin-note').hidden).toBe(true);
-    await expect.poll(() => $<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+    await expect.poll(() => execute('setSettings').disabled).toBe(false);
+    expect($('#settings-unloaded').hidden).toBe(true);
     expect($<HTMLInputElement>('#method-google').checked).toBe(true);
     expect($<HTMLInputElement>('#method-password').checked).toBe(false);
     expect($<HTMLSelectElement>('#policy-password').value).toBe('optional');
@@ -194,39 +209,55 @@ describe('demo page', () => {
     expect($('.authenticator .code-field').hidden).toBe(true);
     expect($('#amr').textContent).toBe('');
 
-    $<HTMLButtonElement>('[data-call="getSession"]').click();
-    await expect.poll(() => $('#output').hidden).toBe(false);
-    $<HTMLInputElement>('#claims-email').value = 'someone@example.com';
+    // A row opens to its request; executing it shows the response.
+    expect(row('getSession').querySelector<HTMLElement>('.api-detail')!.hidden).toBe(true);
+    open('getSession');
+    expect(row('getSession').querySelector<HTMLElement>('.api-detail')!.hidden).toBe(false);
+    expect(request('getSession')).toBe('GET /auth/session\n(no body)');
+    execute('getSession').click();
+    await expect.poll(() => response('getSession')).toContain('"isSuccess": true');
+    type(param('getClaims', 'email'), 'someone@example.com');
 
     $<HTMLButtonElement>('#sign-out').click();
 
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     expect($('#account').hidden).toBe(true);
     expect($('#api').hidden).toBe(true);
-    // Nothing of the previous user stays for the next one.
-    expect($<HTMLInputElement>('#claims-email').value).toBe('');
-    expect($('#output').hidden).toBe(true);
+    // Nothing of the previous user stays for the next one: the rows are closed, the fields and responses empty.
+    expect(param('getClaims', 'email').value).toBe('');
+    expect(row('getSession').querySelector<HTMLElement>('.api-detail')!.hidden).toBe(true);
+    expect(response('getSession')).toBe('');
+    expect($('#totp-output').hidden).toBe(true);
     expect($('#output').textContent).toBe('');
-    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(true);
+    expect(execute('setSettings').disabled).toBe(true);
     expect($<HTMLInputElement>('#method-google').checked).toBe(false);
   });
 
-  it('calls the session and admin API and shows each result', async () => {
+  it('calls the session and admin API from the explorer: the request follows the parameters, the response is shown', async () => {
     gis.callback!({ credential: 'token' });
     await expect.poll(() => $('#api').hidden).toBe(false);
-    await expect.poll(() => $<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+    await expect.poll(() => execute('setSettings').disabled).toBe(false);
 
-    $<HTMLButtonElement>('[data-call="getSettings"]').click();
-    await expect.poll(() => $('#output').textContent).toContain('Madauth.admin.getSettings()');
-    expect($('#output').hidden).toBe(false);
-    expect($('#output').textContent).toContain('"enabled": false');
+    open('getSettings');
+    expect(request('getSettings')).toBe('POST /auth/admin/settings/get\n{}');
+    execute('getSettings').click();
+    await expect.poll(() => response('getSettings')).toContain('"enabled": false');
     expect($<HTMLInputElement>('#method-google').checked).toBe(true);
     expect($<HTMLInputElement>('#method-password').checked).toBe(false);
 
+    // The controls of setSettings are its parameters: the request changes with them, before anything is sent.
+    open('setSettings');
+    expect(request('setSettings')).toContain('"password": false');
     $<HTMLInputElement>('#method-password').checked = true;
+    changed($('#method-password'));
     $<HTMLSelectElement>('#policy-password').value = 'required';
+    changed($('#policy-password'));
     $<HTMLInputElement>('#method-totp').checked = true;
-    $<HTMLButtonElement>('[data-call="setSettings"]').click();
+    changed($('#method-totp'));
+    expect(request('setSettings')).toBe(
+      `POST /auth/admin/settings/set\n${JSON.stringify({ methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true } }, null, 2)}`,
+    );
+    execute('setSettings').click();
     await expect.poll(() => settings.password.enabled).toBe(true);
     expect(settings.password.secondFactor).toBe('required');
     expect(settings.totp.enabled).toBe(true);
@@ -234,29 +265,34 @@ describe('demo page', () => {
     expect(JSON.parse(String(sent.body))).toEqual({
       methods: { google: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true },
     });
-    await expect.poll(() => $('#output').textContent).toContain('Madauth.admin.setSettings({ methods })');
-    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+    await expect.poll(() => response('setSettings')).toContain('"secondFactor": "required"');
+    expect(execute('setSettings').disabled).toBe(false);
 
-    $<HTMLButtonElement>('[data-call="sessionReady"]').click();
-    await expect.poll(() => $('#output').textContent).toBe('Madauth.sessionReady()\ntrue');
+    open('sessionReady');
+    expect(request('sessionReady')).toBe('No request of its own: waits for the session\n(no body)');
+    execute('sessionReady').click();
+    await expect.poll(() => response('sessionReady')).toBe('true');
 
-    $<HTMLTextAreaElement>('#claims-json').value = '{ "plan": "pro" }';
-    $<HTMLButtonElement>('[data-call="setClaims"]').click();
-    await expect.poll(() => $('#output').textContent).toContain('"plan": "pro"');
+    open('setClaims');
+    type(param('setClaims', 'claims'), '{ "plan": "pro" }');
+    expect(request('setClaims')).toBe(`POST /auth/admin/claims/set\n${JSON.stringify({ email: 'ada@example.com', claims: { plan: 'pro' } }, null, 2)}`);
+    execute('setClaims').click();
+    await expect.poll(() => response('setClaims')).toContain('"plan": "pro"');
     const [, init] = vi.mocked(fetch).mock.calls.at(-1) as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toEqual({ email: 'ada@example.com', claims: { plan: 'pro' } });
 
-    $<HTMLTextAreaElement>('#claims-json').value = 'not json';
-    $<HTMLButtonElement>('[data-call="setClaims"]').click();
-    await expect.poll(() => $('#output').textContent).toContain('must be JSON');
+    // Claims that are not JSON can't be sent: the request box says so, and Execute repeats it without a call.
+    type(param('setClaims', 'claims'), 'not json');
+    expect(request('setClaims')).toContain('must be JSON');
+    const calls = vi.mocked(fetch).mock.calls.length;
+    execute('setClaims').click();
+    await expect.poll(() => response('setClaims')).toContain('must be JSON');
+    expect(vi.mocked(fetch).mock.calls.length).toBe(calls);
 
-    $<HTMLButtonElement>('[data-call="getClaims"]').click();
-    await expect.poll(() => $('#output').textContent).toContain('Madauth.admin.getClaims(email)');
-    expect($('#output').textContent).toContain('"userId": "usr_1"');
-
-    $<HTMLButtonElement>('[data-call="getSession"]').click();
-    await expect.poll(() => $('#output').textContent).toContain('Madauth.getSession()');
-    expect($('#output').textContent).toContain('"isSuccess": true');
+    open('getClaims');
+    expect(request('getClaims')).toBe(`POST /auth/admin/claims/get\n${JSON.stringify({ email: 'ada@example.com' }, null, 2)}`);
+    execute('getClaims').click();
+    await expect.poll(() => response('getClaims')).toContain('"userId": "usr_1"');
   });
 
   it('shows the authenticator app as set up, and removes it with a code', async () => {
@@ -273,7 +309,10 @@ describe('demo page', () => {
     $<HTMLInputElement>('#totp-code').value = '000000';
     $<HTMLButtonElement>('[data-call="removeAuthenticator"]').click();
     await expect.poll(() => $('#output').textContent).toContain('code_invalid');
+    expect($('#totp-output').hidden).toBe(false);
     expect($('#totp-status').textContent).toBe('Set up, 10 recovery codes left.');
+    // Deleting the account then takes a code as well: the parameter appears.
+    expect($('[data-needs-authenticator]').hidden).toBe(false);
 
     $<HTMLInputElement>('#totp-code').value = '123 456';
     $<HTMLButtonElement>('[data-call="removeAuthenticator"]').click();
@@ -283,19 +322,21 @@ describe('demo page', () => {
     expect(JSON.parse(String(sent.body))).toEqual({ code: '123456' });
   });
 
-  it('deletes the account only after a confirmation, and shows the result', async () => {
+  it('deletes the account only after a confirmation', async () => {
+    // Without the app (removed above) no code is asked for.
+    expect($('[data-needs-authenticator]').hidden).toBe(true);
+    open('deleteAccount');
+    expect(request('deleteAccount')).toBe('POST /auth/account/delete\n(no body)');
     vi.mocked(confirm).mockReturnValueOnce(false);
-    $<HTMLButtonElement>('[data-call="deleteAccount"]').click();
-    await expect.poll(() => $('#output').textContent).toBe('Madauth.deleteAccount()\nCancelled.');
+    execute('deleteAccount').click();
+    await expect.poll(() => response('deleteAccount')).toBe('Cancelled.');
     expect($('#sign-in').hidden).toBe(true);
 
-    $<HTMLButtonElement>('[data-call="deleteAccount"]').click();
+    execute('deleteAccount').click();
 
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     expect($('#api').hidden).toBe(true);
     expect(sessionUser).toBeNull();
-    expect($('#output').textContent).toContain('Madauth.deleteAccount()');
-    expect($('#output').textContent).toContain('"isSuccess": true');
   });
 
   it('tells a user without the role admin why the admin calls fail, and loads no settings for them', async () => {
@@ -309,7 +350,10 @@ describe('demo page', () => {
     expect($('#admin-note').textContent).toContain('forbidden');
     // The sentence about madauth.com is only for that host.
     expect($('#admin-note [data-hosted]').hidden).toBe(true);
-    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(true);
+    expect(execute('setSettings').disabled).toBe(true);
+    open('setSettings');
+    expect($('#settings-unloaded').hidden).toBe(false);
+    expect(request('setSettings')).toContain('Call getSettings first.');
     const paths = vi.mocked(fetch).mock.calls.slice(requestsBefore).map(([url]) => new URL(String(url)).pathname);
     expect(paths).not.toContain('/auth/admin/settings/get');
 
@@ -320,17 +364,18 @@ describe('demo page', () => {
 
   it('leaves the boxes as the user set them when setSettings is refused', async () => {
     gis.callback!({ credential: 'token' });
-    await expect.poll(() => $<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+    await expect.poll(() => execute('setSettings').disabled).toBe(false);
 
+    open('setSettings');
     $<HTMLInputElement>('#method-google').checked = false;
     $<HTMLInputElement>('#method-password').checked = false;
     $<HTMLInputElement>('#method-totp').checked = false;
-    $<HTMLButtonElement>('[data-call="setSettings"]').click();
+    execute('setSettings').click();
 
-    await expect.poll(() => $('#output').textContent).toContain('invalid_settings');
+    await expect.poll(() => response('setSettings')).toContain('invalid_settings');
     expect($<HTMLInputElement>('#method-google').checked).toBe(false);
     expect($<HTMLInputElement>('#method-password').checked).toBe(false);
-    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(false);
+    expect(execute('setSettings').disabled).toBe(false);
 
     $<HTMLButtonElement>('#sign-out').click();
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
@@ -349,7 +394,7 @@ describe('demo page', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect($<HTMLInputElement>('#method-google').checked).toBe(false);
-    expect($<HTMLButtonElement>('[data-call="setSettings"]').disabled).toBe(true);
+    expect(execute('setSettings').disabled).toBe(true);
   });
 
   it('switches between light and dark theme when the theme button is clicked', () => {

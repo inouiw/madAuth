@@ -90,19 +90,48 @@
             <button type="button" data-call="newRecoveryCodes" hidden>Madauth.totp.newRecoveryCodes({ code })</button>
             <button type="button" data-call="removeAuthenticator" hidden>Madauth.totp.remove({ code })</button>
           </p>
+          <!-- What the last of these calls resolved to; a status region, so screen readers announce it. -->
+          <div id="totp-output" class="api-box" hidden>
+            <span class="caption">Response</span>
+            <pre id="output" role="status"></pre>
+          </div>
         </div>
         <button id="sign-out" type="button">Sign out</button>
       </section>
 
-      <!-- Everything else a signed-in user can call. Each result is shown below as it is. -->
+      <!--
+        The rest of the API a signed-in user can call, a method per row. An open row shows what the method
+        does, its parameters, the request it sends (kept up to date as the parameters change), an Execute
+        button and the response. src/main.ts adds the request, the button and the response to each row.
+      -->
       <section id="api" hidden>
-        <h2>Session</h2>
-        <p class="buttons">
-          <button type="button" data-call="getSession">Madauth.getSession()</button>
-          <button type="button" data-call="sessionReady">Madauth.sessionReady()</button>
-          <button type="button" data-call="deleteAccount">Madauth.deleteAccount()</button>
-        </p>
-        <h2>Admin</h2>
+        <h2>API</h2>
+        <p>Click a method to see its parameters, the request it sends and the response.</p>
+
+        <h3>Session</h3>
+        <ul class="api-list">
+          <li class="api-method" data-call="getSession" data-http="GET /auth/session">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.getSession()</button>
+            <div class="api-detail" hidden>
+              <p>The current session from the server, renewed on the way if it is about to expire. Fails with <code>no_session</code> when nobody is signed in.</p>
+            </div>
+          </li>
+          <li class="api-method" data-call="sessionReady" data-http="No request of its own: waits for the session">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.sessionReady()</button>
+            <div class="api-detail" hidden>
+              <p>Resolves with <code>true</code> once a fresh session cookie is there, e.g. before your first call to your own backend; <code>false</code> when nobody is signed in.</p>
+            </div>
+          </li>
+          <li class="api-method" data-call="deleteAccount" data-http="POST /auth/account/delete">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.deleteAccount()</button>
+            <div class="api-detail" hidden>
+              <p>Deletes the signed-in user with their sign-in methods and claims, for good; the page asks first. Once the authenticator app is set up, a current code from it is needed.</p>
+              <label data-needs-authenticator hidden>Code from the app, or a recovery code <input data-param="code" type="text" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" /></label>
+            </div>
+          </li>
+        </ul>
+
+        <h3>Admin</h3>
         <p>
           For users with the role <code>admin</code>, which is given on the server:
           <code>npx @madauth/server set-roles you@example.com admin</code>
@@ -117,48 +146,64 @@
           To try the admin API, <a href="https://github.com/inouiw/madAuth#getting-started">run the demo on your machine</a>
           and give yourself the role: <code>npm run cli -w packages/server -- set-roles you@example.com admin</code>
         </p>
-        <label>E-mail <input id="claims-email" type="email" autocomplete="off" spellcheck="false" /></label>
-        <label>Claims (JSON) <textarea id="claims-json" rows="2" spellcheck="false">{ "roles": ["admin"] }</textarea></label>
-        <p class="buttons">
-          <button type="button" data-call="getClaims">Madauth.admin.getClaims(email)</button>
-          <button type="button" data-call="setClaims">Madauth.admin.setClaims(email, claims)</button>
-        </p>
-        <!--
-          The controls show the server's settings once getSettings succeeded; only then can they be sent back.
-          The list says which methods are on; Google and password take a policy for the authenticator app.
-        -->
-        <table class="methods">
-          <tr>
-            <td><label><input id="method-google" type="checkbox" /> Google</label></td>
-            <td>
-              <label class="policy">
-                Authenticator app
-                <select id="policy-google"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
-              </label>
-            </td>
-          </tr>
-          <tr>
-            <td><label><input id="method-password" type="checkbox" /> E-mail &amp; password</label></td>
-            <td>
-              <label class="policy">
-                Authenticator app
-                <select id="policy-password"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
-              </label>
-            </td>
-          </tr>
-          <tr>
-            <td><label><input id="method-totp" type="checkbox" /> Authenticator app on its own</label></td>
-            <td></td>
-          </tr>
-        </table>
-        <p class="buttons">
-          <button type="button" data-call="getSettings">Madauth.admin.getSettings()</button>
-          <button type="button" data-call="setSettings" disabled>Madauth.admin.setSettings({ methods })</button>
-        </p>
+        <ul class="api-list">
+          <li class="api-method" data-call="getClaims" data-http="POST /auth/admin/claims/get">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.getClaims(email)</button>
+            <div class="api-detail" hidden>
+              <p>The claims of the user with this address.</p>
+              <label>E-mail <input data-param="email" type="email" autocomplete="off" spellcheck="false" /></label>
+            </div>
+          </li>
+          <li class="api-method" data-call="setClaims" data-http="POST /auth/admin/claims/set">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.setClaims(email, claims)</button>
+            <div class="api-detail" hidden>
+              <p>Replaces the claims of the user with this address. The user sees them at their next session check; your backends from their next session token.</p>
+              <label>E-mail <input data-param="email" type="email" autocomplete="off" spellcheck="false" /></label>
+              <label>Claims (JSON) <textarea data-param="claims" data-json rows="2" spellcheck="false">{ "roles": ["admin"] }</textarea></label>
+            </div>
+          </li>
+          <li class="api-method" data-call="getSettings" data-http="POST /auth/admin/settings/get">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.getSettings()</button>
+            <div class="api-detail" hidden>
+              <p>The sign-in methods that are on, each with its policy for the authenticator app. Fills the controls of <code>setSettings</code>.</p>
+            </div>
+          </li>
+          <li class="api-method" data-call="setSettings" data-http="POST /auth/admin/settings/set">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.setSettings({ methods })</button>
+            <div class="api-detail" hidden>
+              <p>Sends the list of the methods that are on, with the policy of Google and password for the authenticator app; a method that is not listed is off. It applies at once, for everyone.</p>
+              <!--
+                The controls show the server's settings once getSettings succeeded; only then can they be sent back.
+              -->
+              <p id="settings-unloaded" class="note">The controls are empty until <code>getSettings</code> has loaded the server's settings.</p>
+              <table class="methods">
+                <tr>
+                  <td><label><input id="method-google" type="checkbox" /> Google</label></td>
+                  <td>
+                    <label class="policy">
+                      Authenticator app
+                      <select id="policy-google"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
+                    </label>
+                  </td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-password" type="checkbox" /> E-mail &amp; password</label></td>
+                  <td>
+                    <label class="policy">
+                      Authenticator app
+                      <select id="policy-password"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
+                    </label>
+                  </td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-totp" type="checkbox" /> Authenticator app on its own</label></td>
+                  <td></td>
+                </tr>
+              </table>
+            </div>
+          </li>
+        </ul>
       </section>
-
-      <!-- A status region, so the result of a call is announced to screen readers. -->
-      <pre id="output" role="status" hidden></pre>
     </main>
     <a class="page-link" href="custom.html">Custom login screen example →</a>
     <script type="module" src="./src/main.ts"></script>
