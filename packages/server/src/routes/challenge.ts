@@ -106,7 +106,7 @@ export async function finishSignIn(
   amr: 'otp' | 'sms',
   via: SecondFactorVia,
 ): Promise<MadauthUser> {
-  const result = await ctx.startSession(c, toMadauthUser(user, challenge.profile), [...challenge.amr, amr], challenge.method, { sv: user.sessionVersion });
+  const result = await ctx.startSession(c, toMadauthUser(user, challenge.profile), [...challenge.amr, amr], { method: challenge.method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
   // For a sign-up with the app, the app is the method itself, not a second factor.
   await ctx.emit('user.signed_in', { user: result, method: challenge.method, ...(challenge.amr.length ? { secondFactor: via } : {}) });
   return result;

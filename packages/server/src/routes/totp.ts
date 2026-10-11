@@ -199,7 +199,8 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const { recoveryCodes, hashes } = newRecoveryCodes();
     await users.addRecoveryCodes(user.id, setup.setup, hashes);
     const patch = { secret: setup.secret, setupId: setup.setup, failedAttempts: 0, lockedUntil: 0, lastUsedStep: step };
-    const current = setup.replaces === undefined ? null : await users.totpAccount(user.id);
+    const replaced = setup.replaces === undefined ? null : await users.totpApp(user.id);
+    const current = replaced?.account ?? null;
     const written =
       setup.replaces === undefined
         ? !!(await users.linkAccount(user.id, { key: totpAccountKey(user.id), primary: signUp, ...patch }))
@@ -212,7 +213,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     await users.clearRecoveryCodes(user.id, { except: setup.setup });
     deleteCookie(c, SETUP_COOKIE, cookie);
     // A new or replaced second factor is told; the app a user signs in with is part of their sign-up (`user.signed_up`).
-    const secondFactor = current ? !(await users.signsIn(current)) : !signUp;
+    const secondFactor = replaced ? !replaced.signsIn : !signUp;
     if (secondFactor) await ctx.emit('user.second_factor_enabled', { user: toMadauthUser(user), method: 'totp' });
     if (!challenge) return c.json({ recoveryCodes });
     const result = await finishSignIn(c, ctx, user, challenge, 'otp', 'totp');
@@ -239,14 +240,15 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const wrong = () => error(c, 401, 'invalid_credentials', 'E-mail or code is wrong.');
     if (!isValidEmail(data.email)) return wrong();
     const user = await users.findByEmail(normalizeEmail(data.email));
-    const account = user ? await users.totpAccount(user.id) : null;
+    const app = user ? await users.totpApp(user.id) : null;
+    const account = app?.account;
     // An unknown address, one without an app, one nobody confirmed, or a wrong code: all the same answer. The
     // app signs in on its own only for a user who signed up with it; as a second factor it is a step of their
     // method, and never a way past it.
-    if (!user || !user.emailVerified || !account?.secret || !(await users.signsIn(account))) return wrong();
+    if (!user || !user.emailVerified || !app?.signsIn || !account?.secret) return wrong();
     const via = await checkCode(c, ctx, keys, user, account, data, wrong);
     if (via instanceof Response) return via;
-    const result = await ctx.startSession(c, toMadauthUser(user), ['otp'], 'totp', { sv: user.sessionVersion });
+    const result = await ctx.startSession(c, toMadauthUser(user), ['otp'], { method: 'totp', signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
     await ctx.emit('user.signed_in', { user: result, method: 'totp' });
     return c.json({ user: result });
   });
@@ -263,10 +265,11 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
       const alternative = smsOn ? ' Add a phone number for SMS codes first, or' : ' To stop using it,';
       return error(c, 403, 'required_by_policy', `Signing in with ${names.join(' and ')} requires a second factor, so the authenticator app can't be removed.${alternative} delete your account.`);
     }
-    const account = await users.totpAccount(user.id);
-    if (!account) return c.json({});
+    const app = await users.totpApp(user.id);
+    if (!app) return c.json({});
+    const { account } = app;
     // A user who signed up with the app has no other way in: without it, nobody could sign in as them.
-    if (await users.signsIn(account)) {
+    if (app.signsIn) {
       return error(c, 403, 'only_method', 'The authenticator app is the only way you sign in, so it can\'t be removed. Delete your account instead.');
     }
     // Removing the app takes a current code: a stolen session alone can't switch the protection off.
@@ -323,6 +326,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
         // password or an e-mail link an earlier, unconfirmed sign-up set (perhaps by someone else) goes with it.
         if (Date.now() - existing.lastMailAt < MAIL_INTERVAL_MS) return accepted(c);
         if (!existing.emailVerified) await users.dropUnprovenAccounts(existing.id);
+        await users.reopenSignUp(existing);
         await users.updateUser(existing.id, { name });
         return (await emails.sendLinkEmail({ ...existing, name }, 'verify', target, locale)) ? accepted(c) : unavailable(c);
       }

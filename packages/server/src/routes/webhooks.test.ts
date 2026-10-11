@@ -308,6 +308,51 @@ describe('user.signed_up', () => {
     expect(hook.types()).toEqual(['user.signed_in']);
   });
 
+  it('comes for a sign-up started before it existed and finished after, by its link or by Google', async () => {
+    // Schema version 6 left an unfinished sign-up with signedUpAt empty, which otherwise reads as complete.
+    const linked = passwordApp();
+    await signUp(linked.app);
+    const [user] = await linked.store.findMany('user', {});
+    await linked.store.update('user', { id: user.id }, { signedUpAt: null });
+    const { token } = linkAndCode(linked.hook.lastEmail());
+    linked.hook.calls.length = 0;
+    await post(linked.app, '/auth/email/verify', { token });
+    expect(linked.hook.types()).toEqual(['user.email_verified', 'user.signed_up', 'user.signed_in']);
+
+    const google = passwordApp();
+    await post(google.app, '/auth/password/signup', { email: 'ada@example.com', password: 'adas password!', redirectTo: REDIRECT_TO });
+    const [ada] = await google.store.findMany('user', {});
+    await google.store.update('user', { id: ada.id }, { signedUpAt: null });
+    google.hook.calls.length = 0;
+    const { nonce, cookie } = await getNonce(google.app);
+    await verify(google.app, await googleIdToken({ nonce }), cookie);
+    expect(google.hook.types()).toEqual(['user.signed_up', 'user.signed_in']);
+  });
+
+  it('a sign-up that lost the race for the user\'s one sign-in method sends no e-mail for it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 1_700_000_000_000 });
+    const { app, hook, store } = passwordApp();
+    await signUp(app);
+    const [user] = await store.findMany('user', {});
+    // Another sign-up won meanwhile: the user has a sign-in method the unproven ones don't drop.
+    await store.delete('account', { key: `password:${user.id}` });
+    await store.create('account', {
+      id: 'acc_won', userId: user.id, key: 'google:9009', secret: null, failedAttempts: 0, lockedUntil: 0, email: grace.email,
+      lastUsedStep: 0, setupId: null, phone: null, primaryUserId: user.id, createdAt: 1,
+    });
+    advance(61_000);
+    hook.calls.length = 0;
+
+    expect((await signUp(app)).status).toBe(202);
+
+    expect(hook.types()).toEqual(['user.signing_up']);
+    // The e-mail link the same way: no link for a method the user doesn't get.
+    hook.calls.length = 0;
+    expect((await post(app, '/auth/email-link/send', { email: grace.email, redirectTo: REDIRECT_TO })).status).toBe(202);
+    expect(hook.types()).toEqual(['user.signing_up']);
+    expect((await store.findMany('account', { userId: user.id })).map((a) => a.key)).toEqual(['google:9009']);
+  });
+
   it('waits for the second factor a policy requires, and comes when the policy no longer does', async () => {
     const { app, hook, store } = passwordApp();
     await setMethods(store, { password: { secondFactor: 'required' } });

@@ -47,8 +47,10 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
       if (Date.now() - existing.lastMailAt < MAIL_INTERVAL_MS) return accepted(c);
       // A password an earlier, unconfirmed sign-up set (perhaps by someone else) goes with it.
       if (!existing.emailVerified) await users.dropUnprovenAccounts(existing.id, 'email-link');
-      await users.linkAccount(existing.id, { key: emailLinkAccountKey(existing.id) });
-      return send(existing);
+      // Another sign-up gave the user a sign-in method meanwhile: theirs stands, and no link is sent for a
+      // method the user doesn't have. The answer is the same.
+      if (!(await users.linkAccount(existing.id, { key: emailLinkAccountKey(existing.id) }))) return accepted(c);
+      return send(await users.reopenSignUp(existing));
     }
     const user = await users.createUser({
       email,
@@ -64,8 +66,10 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
 
   app.post('/auth/email-link/verify', async (c) => {
     const consumed = await emails.consume(await body(c), 'signin');
-    const user = consumed.userId ? await users.findById(consumed.userId) : null;
-    if (!user || !(await users.emailLinkAccount(user.id))) return emails.invalidVerification(c, consumed);
+    const found = consumed.userId ? await users.findById(consumed.userId) : null;
+    if (!found || !(await users.emailLinkAccount(found.id))) return emails.invalidVerification(c, consumed);
+    // The first link finishes a sign-up: one from before `user.signed_up` existed gets it too.
+    const user = found.emailVerified ? found : await users.reopenSignUp(found);
     if (!user.emailVerified) {
       // The link proves access to the inbox, and nobody had proven the address before: a password an
       // unconfirmed sign-up set meanwhile (perhaps by someone else) goes, with its links and codes.

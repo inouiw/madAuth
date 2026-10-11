@@ -66,10 +66,16 @@ export interface AppContext {
   allowedUrl(value: unknown): URL | null;
   /**
    * Sets the session cookies for the user, as the routes resolved them from the store, and returns the user
-   * with `amr`. `method` is how they signed in: the user's first session sends `user.signed_up`, since a
-   * session starts only once every step the policy asks for is done.
+   * with `amr`. `signIn` is how they signed in and the stored user's `signedUpAt`: the user's first session
+   * sends `user.signed_up`, since a session starts only once every step the policy asks for is done.
    */
-  startSession(c: Context, user: MadauthUser, amr: string[], method: SignInMethod, extra?: { sv?: number }): Promise<MadauthUser>;
+  startSession(
+    c: Context,
+    user: MadauthUser,
+    amr: string[],
+    signIn: { method: SignInMethod; signedUpAt: number | null },
+    extra?: { sv?: number },
+  ): Promise<MadauthUser>;
   /**
    * Finishes a primary sign-in method that succeeded: the session, or the next step with a second factor
    * as the policy of `method` and what the user has set up demand. `amr` is how the user signed in so far;
@@ -219,13 +225,15 @@ export function createApp(config: MadauthConfig): Hono {
       url.hash = '';
       return url;
     },
-    async startSession(c, user, amr, method, extra) {
+    async startSession(c, user, amr, { method, signedUpAt }, extra) {
+      // Only a user whose first session this is gets the write, before the cookies: if it fails, nobody is
+      // signed in. The write decides, so two sign-ins at once send it once.
+      const firstSession = signedUpAt === 0 && (await users.markSignedUp(user.id));
       // A sign-in that was waiting for the authenticator app is over, whichever way this session came about.
       clearChallenge(c, secure);
       await issueSession(c, user, amr, extra);
       const result = { ...user, amr };
-      // The write decides, so two sign-ins at once send it once.
-      if (await users.markSignedUp(user.id)) await this.emit('user.signed_up', { user: result, method });
+      if (firstSession) await this.emit('user.signed_up', { user: result, method });
       return result;
     },
     async secondStep(c, user, amr, method, profile) {
@@ -254,7 +262,7 @@ export function createApp(config: MadauthConfig): Hono {
         await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, factors, ...(Object.keys(known).length ? { profile: known } : {}) });
         return { next, method, factors };
       }
-      const result = await this.startSession(c, toMadauthUser(user, profile), amr, method, { sv: user.sessionVersion });
+      const result = await this.startSession(c, toMadauthUser(user, profile), amr, { method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
       await this.emit('user.signed_in', { user: result, method });
       return { user: result };
     },
@@ -444,9 +452,11 @@ export function createApp(config: MadauthConfig): Hono {
     }
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
-    await users.updateUser(user.id, { claims: Object.keys(claims).length ? JSON.stringify(claims) : null });
+    // Stored as JSON, and sent with the user as stored: the webhook sees what the next session sees.
+    const stored = Object.keys(claims).length ? JSON.stringify(claims) : null;
+    await users.updateUser(user.id, { claims: stored });
     const email = user.emailNormalized;
-    await ctx.emit('user.claims_changed', { user: toMadauthUser({ ...user, claims: Object.keys(claims).length ? JSON.stringify(claims) : null }), claims, by: caller.email });
+    await ctx.emit('user.claims_changed', { user: toMadauthUser({ ...user, claims: stored }), claims, by: caller.email });
     return c.json({ email, userId: user.id, claims });
   });
 
@@ -526,8 +536,8 @@ export function createApp(config: MadauthConfig): Hono {
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
     // The app of a user who signed up with it is how they sign in, not a second factor: without it, they sign up with the app again.
-    const account = await users.totpAccount(user.id);
-    const secondFactor = !!account && !(await users.signsIn(account));
+    const app = await users.totpApp(user.id);
+    const secondFactor = !!app && !app.signsIn;
     const removed = await users.removeTotp(user.id);
     if (removed && secondFactor) await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'totp', by: caller.email });
     return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });

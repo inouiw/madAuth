@@ -106,7 +106,10 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
       if (!existing.emailVerified) await users.dropUnprovenAccounts(existing.id, 'password');
       const account = await users.passwordAccount(existing.id);
       if (account) await users.updateAccount(account.id, { secret: passwordHash, failedAttempts: 0, lockedUntil: 0 });
-      else await users.linkAccount(existing.id, { key: passwordAccountKey(existing.id), secret: passwordHash });
+      // Another sign-up gave the user a sign-in method meanwhile: theirs stands, and no e-mail goes out for a
+      // password that was never stored. The answer is the same.
+      else if (!(await users.linkAccount(existing.id, { key: passwordAccountKey(existing.id), secret: passwordHash }))) return accepted(c);
+      await users.reopenSignUp(existing);
       await users.updateUser(existing.id, { name });
       return (await emails.sendLinkEmail({ ...existing, name }, 'verify', target, locale)) ? accepted(c) : unavailable(c);
     }
@@ -161,7 +164,8 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     await users.updateUser(user.id, { emailVerified: true, sessionVersion, wrongCodes: 0 });
     // An unused confirmation link would otherwise still sign in.
     await users.clearVerifications(user.id);
-    const reset = { ...user, emailVerified: true, sessionVersion, wrongCodes: 0 };
+    // A reset can finish an unconfirmed sign-up: one from before `user.signed_up` existed gets it too.
+    const reset = { ...(user.emailVerified ? user : await users.reopenSignUp(user)), emailVerified: true, sessionVersion, wrongCodes: 0 };
     await ctx.emit('user.password_reset', { user: toMadauthUser(reset) });
     // The authenticator app, if the policy asks for it, is still needed: the inbox alone does not sign in.
     return signInAnswer(c, await ctx.secondStep(c, reset, ['pwd'], 'password'));

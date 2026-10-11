@@ -4,7 +4,7 @@ import type { Core } from './core.js';
 
 /**
  * SMS codes as a second factor, for custom login screens and account pages. The methods work whenever the
- * server has SMS codes on (`sms` in the sign-in methods, with a webhook that sends `sms.code`); no provider
+ * server has SMS codes on (`sms` in the sign-in methods, with a webhook that sends `sms.send_code`); no provider
  * is needed. A phone is never a sign-in method of its own: a signed-in user adds one, and from then on the
  * methods whose policy asks for a second factor can ask for a code sent to it, next to the authenticator app.
  */
@@ -45,7 +45,7 @@ export interface SmsApi {
 }
 
 const switchedOff = () =>
-  fail('flow_not_enabled', 'The madAuth server has SMS codes switched off: an admin lists sms with set-methods, and the webhook must send sms.code.');
+  fail('flow_not_enabled', 'The madAuth server has SMS codes switched off: an admin lists sms with set-methods, and the webhook must send sms.send_code.');
 
 export function createSmsApi(core: Core): SmsApi {
   /** Waits for initialize, checks that the server has SMS codes on, then calls it. With `session`, a 401 means that nobody is signed in. */

@@ -211,9 +211,14 @@ export class Users {
     return accounts.find((account) => isPrimary(account, accounts)) ?? null;
   }
 
-  /** Whether the account is how its user signs in, as opposed to a second factor. */
-  async signsIn(account: StoredAccount): Promise<boolean> {
-    return isPrimary(account, await this.accounts(account.userId));
+  /**
+   * The user's authenticator app, if they set one up, and whether it is how they sign in (they signed up with
+   * it) as opposed to a second factor. One read: the app and the user's other accounts together.
+   */
+  async totpApp(userId: string): Promise<{ account: StoredAccount; signsIn: boolean } | null> {
+    const accounts = await this.accounts(userId);
+    const account = accounts.find((a) => a.key === totpAccountKey(userId));
+    return account ? { account, signsIn: isPrimary(account, accounts) } : null;
   }
 
   /** Whether someone can sign in as the user: they have a sign-in method. */
@@ -240,6 +245,17 @@ export class Users {
    */
   async markSignedUp(userId: string): Promise<boolean> {
     return (await this.store.update('user', { id: userId, signedUpAt: 0 }, { signedUpAt: Date.now() })) === 1;
+  }
+
+  /**
+   * For a user whose sign-up is not complete (no confirmed address, or no sign-in method) and who is about to
+   * finish it or sign up again: one from before schema version 7 says nothing (`signedUpAt` empty, which
+   * counts as complete), so it is set to 0 and `user.signed_up` comes at their first session like for anyone.
+   */
+  async reopenSignUp<T extends StoredUser>(user: T): Promise<T> {
+    if (user.signedUpAt !== null && user.signedUpAt !== undefined) return user;
+    await this.store.update('user', { id: user.id, signedUpAt: null }, { signedUpAt: 0 });
+    return { ...user, signedUpAt: 0 };
   }
 
   /** The `sub` of the user's linked Google account, if they have one. */
