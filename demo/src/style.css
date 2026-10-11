@@ -201,6 +201,11 @@ code {
   margin: 0;
 }
 
+/* Running text: the account section lays its paragraphs out as grids, which would put each code on its own line. */
+#account p.info-text {
+  display: block;
+}
+
 .info-text strong {
   color: light-dark(#17181a, #f1f2f3);
 }
