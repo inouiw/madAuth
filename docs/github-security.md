@@ -54,4 +54,4 @@ A GitHub user gets the same madAuth session as every other user, with `amr: ["gi
 
 - Linking a GitHub account to a user who signs in another way, while signed in.
 - Remembering a device, so a second factor is not asked every time.
-- Expiring tokens: an OAuth App can be set to issue tokens that expire in eight hours, and madAuth does not refresh them. With that setting, the stored token may have expired when the user deletes their account, and the authorization stays at GitHub.
+- Expiring tokens: with **Expire user access tokens** on (GitHub's default for a new OAuth App, see the [setup](server.md#github-oauth-app-setup)), tokens expire in eight hours, and madAuth does not refresh them. The stored token has then usually expired when the user deletes their account, and the authorization stays at GitHub; signing in is not affected.

@@ -58,7 +58,7 @@ cd deploy/aws && npm ci && npm run build && cd ../../site/infra && npm ci
 
    Put its client ID into `cdk.json` as `googleClientId` and commit it; client IDs are public.
 
-   **Create a GitHub OAuth App** too ([GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers)), with the homepage URL `https://madauth.com` and the authorization callback URL `https://madauth.com/auth/github/callback`, and put its client ID into `cdk.json` as `githubClientId`. Without one, the demo has no GitHub button.
+   **Create a GitHub OAuth App** too ([GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers)), with the homepage URL `https://madauth.com`, the redirect URI `https://madauth.com/auth/github/callback` and **Expire user access tokens** unticked, and put its client ID into `cdk.json` as `githubClientId`. Without one, the demo has no GitHub button.
 
 4. **Store the secrets.** When the script asks for the Google client secret and the GitHub client secret, enter the new ones:
 

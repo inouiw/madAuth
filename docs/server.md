@@ -63,8 +63,9 @@ npx @madauth/server generate-key
 ## GitHub OAuth App setup
 
 1. Open [GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers) and register a **New OAuth App** (an OAuth App, not a GitHub App: madAuth only needs to know who signs in).
-2. Set the **Homepage URL** to your app and the **Authorization callback URL** to `<MADAUTH_ISSUER>/auth/github/callback`, e.g. `https://app.example.com/auth/github/callback`. An OAuth App has one callback URL, so development (`http://localhost:3000/auth/github/callback`) and production each need an OAuth App of their own.
-3. Generate a client secret and set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Both are needed: GitHub only has the server-side redirect flow, in which the server exchanges the code.
+2. Set the **Homepage URL** to your app and a **Redirect URI** of `<MADAUTH_ISSUER>/auth/github/callback`, e.g. `https://app.example.com/auth/github/callback` (an OAuth App takes up to ten, so one app can serve `http://localhost:3000/auth/github/callback` for development as well; a production app of its own keeps the secrets apart). Leave **Allow wildcard matching** and **Enable Device Flow** off.
+3. Untick **Expire user access tokens**, which GitHub ticks by default: madAuth keeps the token to revoke the app's authorization when a user deletes their account, and an expiring token (eight hours) could not do that any more.
+4. Generate a client secret and set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Both are needed: GitHub only has the server-side redirect flow, in which the server exchanges the code.
 
 Users are asked to grant the scope `user:email`, which lets madAuth read their e-mail addresses: it takes the primary one if GitHub has verified it, else another verified one, and refuses an account without one (`email_unverified`). The public address on the profile is not used. The access token is kept on the user's account, encrypted like the authenticator secrets, for one thing: revoking the OAuth App's authorization when the user deletes their account. See [GitHub security](github-security.md).
 
