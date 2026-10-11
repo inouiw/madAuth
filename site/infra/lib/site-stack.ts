@@ -103,6 +103,8 @@ export class SiteStack extends Stack {
       googleClientId: props.googleClientId || undefined,
       secretsPath: SECRETS_PATH,
       webhook: { url: mailerUrl.url, events: EMAIL_EVENTS },
+      // The demo shows every method: the authenticator app as an optional second factor, and on its own.
+      environment: { SIGN_IN_METHODS: 'google=optional password=optional totp' },
       // A public demo: cap what abuse can cost.
       reservedConcurrentExecutions: 5,
       serverPackageDir: join(repoRoot, 'packages/server'),

@@ -1,6 +1,6 @@
 import type { JWK, JWTVerifyGetKey } from 'jose';
 import { assertPrivateSigningJwk, generateSigningKey } from './keys.js';
-import type { MethodConfig } from './settings.js';
+import { SIGN_IN_METHODS, anyOn, canSignUp, isConfigured, parseMethodList, type MethodConfig, type MethodSettings, type SignInMethod } from './settings.js';
 import type { StoreAdapter } from './store/schema.js';
 import {
   DEV_WEBHOOK_RECEIVER_URL,
@@ -26,6 +26,11 @@ export interface MadauthConfig {
   cookieDomain?: string;
   /** The name authenticator apps show next to the account (TOTP_ISSUER). Default: the host of the app that asked for the setup. */
   totpIssuer?: string;
+  /**
+   * The sign-in methods the server runs until an admin sets them (SIGN_IN_METHODS, e.g. `google
+   * password=optional totp`). Default: the configured methods without a second factor.
+   */
+  methods?: MethodSettings;
   /** Google sign-in; off when GOOGLE_CLIENT_ID is not set. */
   google?: {
     /** OAuth web client ID (GOOGLE_CLIENT_ID). */
@@ -68,6 +73,7 @@ export const envVars = {
   DATABASE_URL: true,
   PASSWORD_MIN_LENGTH: false,
   TOTP_ISSUER: false,
+  SIGN_IN_METHODS: false,
   WEBHOOK_URL: false,
   WEBHOOK_SECRET: false,
   WEBHOOK_EVENTS: false,
@@ -211,7 +217,7 @@ export async function loadConfig(
     );
   }
 
-  return {
+  const config: MadauthConfig = {
     issuer,
     signingKey,
     allowedOrigins,
@@ -224,6 +230,33 @@ export async function loadConfig(
     password,
     webhook,
   };
+  const methods = read('SIGN_IN_METHODS');
+  if (methods) config.methods = startingMethods(methods, methodConfig(config));
+  return config;
+}
+
+/**
+ * SIGN_IN_METHODS: the methods the server runs until an admin sets them, in the form of `set-methods`
+ * (`google password=optional totp`, separated by spaces or commas). Every listed method must be configured,
+ * and one of them must create users.
+ */
+function startingMethods(value: string, config: MethodConfig): MethodSettings {
+  const parsed = parseMethodList(value.split(/[\s,]+/).filter(Boolean));
+  if ('error' in parsed) throw new ConfigError(`SIGN_IN_METHODS: ${parsed.error}`);
+  const needs: Record<SignInMethod, string> = {
+    google: 'GOOGLE_CLIENT_ID',
+    password: 'a webhook that sends email.verify and email.reset',
+    totp: 'nothing',
+  };
+  for (const method of SIGN_IN_METHODS) {
+    if (parsed.methods[method] && !isConfigured(config, method)) {
+      throw new ConfigError(`SIGN_IN_METHODS lists ${method}, but the server is not configured for it: it needs ${needs[method]}.`);
+    }
+  }
+  if (!anyOn((method) => canSignUp(config, method), parsed.methods)) {
+    throw new ConfigError('SIGN_IN_METHODS leaves no sign-in method on that creates users: list google, password, or totp with a webhook that sends email.verify.');
+  }
+  return parsed.methods;
 }
 
 /**

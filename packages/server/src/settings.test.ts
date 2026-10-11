@@ -19,8 +19,8 @@ const settingsApi = (app: App, cookie: string | undefined, action: 'get' | 'set'
 const config = async (app: App) => (await app.request('/auth/config')).json();
 
 /** An app with both methods whose user grace@example.com is an admin; returns her session. */
-async function withAdmin() {
-  const made = passwordApp();
+async function withAdmin(overrides: Parameters<typeof passwordApp>[0] = {}) {
+  const made = passwordApp(overrides);
   await signUpVerified(made.app, made.hook);
   await setClaims(made.store, 'grace@example.com', { roles: ['admin'] });
   const res = await post(made.app, '/auth/password/signin', grace);
@@ -184,6 +184,14 @@ describe('switching sign-in methods off and on', () => {
       totp: null,
       email: { verification: false },
     });
+  });
+
+  it('SIGN_IN_METHODS is what a never-set server runs; what an admin sets afterwards wins', async () => {
+    const { app, cookie } = await withAdmin({ methods: { google: { secondFactor: 'optional' }, password: { secondFactor: 'optional' }, totp: {} } });
+    expect(await config(app)).toMatchObject({ google: { secondFactor: 'optional' }, password: { secondFactor: 'optional' }, totp: { signIn: true, signUp: true } });
+
+    expect((await settingsApi(app, cookie, 'set', { methods: { google: {}, password: {} } })).status).toBe(200);
+    expect(await config(app)).toMatchObject({ google: { secondFactor: 'none' }, password: { secondFactor: 'none' }, totp: null });
   });
 
   it('keeps a method on that creates users: the app alone counts only with sign-up by e-mail', () => {

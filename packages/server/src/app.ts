@@ -94,7 +94,7 @@ export function createApp(config: MadauthConfig): Hono {
   const codeKey = deriveCodeKey(config.signingKey.d!);
   const users = new Users(config.store, codeKey);
   const methods = methodConfig(config);
-  const settings = new Settings(config.store, initialMethods(methods));
+  const settings = new Settings(config.store, config.methods ?? initialMethods(methods));
   const configured = (method: SignInMethod) => isConfigured(methods, method);
   const signsUp = (method: SignInMethod) => canSignUp(methods, method);
   const emailVerification = sendsVerificationEmails(config);

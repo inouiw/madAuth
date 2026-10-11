@@ -69,6 +69,25 @@ export function parseMethodSettings(input: unknown, options: { booleans?: boolea
   return settings;
 }
 
+/**
+ * Reads the list of methods in its command-line form, `google password=optional totp`: each word a method,
+ * Google and password with an optional policy after `=`. Resolves to the settings, or to what is wrong.
+ */
+export function parseMethodList(words: string[]): { methods: MethodSettings } | { error: string } {
+  const methods: MethodSettings = {};
+  for (const word of words) {
+    const [name, policy, ...more] = word.split('=');
+    if (!isSignInMethod(name) || more.length) {
+      return { error: `Unknown sign-in method "${word}". Methods: ${SIGN_IN_METHODS.join(', ')}, e.g. google password=required totp.` };
+    }
+    if (policy !== undefined && (name === 'totp' || !isPolicy(policy))) {
+      return { error: `"${word}": google and password take a policy for the authenticator app as a second factor: ${SECOND_FACTOR_POLICIES.join(', ')}.` };
+    }
+    methods[name] = name === 'totp' ? {} : { secondFactor: policy ?? 'none' };
+  }
+  return { methods };
+}
+
 /** Whether the server has what a method needs; only a configured method can be on. */
 export function isConfigured(config: MethodConfig, method: SignInMethod): boolean {
   if (method === 'google') return !!config.google;

@@ -6,17 +6,15 @@ import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
 import { claimsFromJson, parseClaims, parseRoles, type Claims } from './claims.js';
 import {
-  SECOND_FACTOR_POLICIES,
   SIGN_IN_METHODS,
   Settings,
   anyOn,
   canSignUp,
   initialMethods,
+  parseMethodList,
   isConfigured,
   isOn,
   policyOf,
-  type MethodSettings,
-  type SecondFactorPolicy,
   type SignInMethod,
 } from './settings.js';
 import { madauthSchema, type StoreAdapter } from './store/schema.js';
@@ -489,23 +487,11 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
   const forMethods = methodConfig(config);
   const configured = (method: SignInMethod) => isConfigured(forMethods, method);
   const signsUp = (method: SignInMethod) => canSignUp(forMethods, method);
-  const settings = new Settings(config.store, initialMethods(forMethods));
+  const settings = new Settings(config.store, config.methods ?? initialMethods(forMethods));
   if (command === 'set-methods') {
-    const next: MethodSettings = {};
-    for (const arg of args) {
-      const [name, policy, ...more] = arg.split('=');
-      if (!(SIGN_IN_METHODS as readonly string[]).includes(name) || more.length) {
-        return { output: `Unknown sign-in method "${arg}". Methods: ${SIGN_IN_METHODS.join(', ')}, e.g. set-methods google password=required totp.`, exitCode: 1 };
-      }
-      const method = name as SignInMethod;
-      if (policy !== undefined && (method === 'totp' || !(SECOND_FACTOR_POLICIES as readonly string[]).includes(policy))) {
-        return {
-          output: `"${arg}": google and password take a policy for the authenticator app as a second factor: ${SECOND_FACTOR_POLICIES.join(', ')}.`,
-          exitCode: 1,
-        };
-      }
-      next[method] = method === 'totp' ? {} : { secondFactor: (policy as SecondFactorPolicy | undefined) ?? 'none' };
-    }
+    const parsed = parseMethodList(args);
+    if ('error' in parsed) return { output: parsed.error, exitCode: 1 };
+    const next = parsed.methods;
     if (!anyOn(signsUp, next)) {
       const usable = SIGN_IN_METHODS.filter(signsUp);
       return {

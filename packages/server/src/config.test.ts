@@ -88,6 +88,16 @@ describe('loadConfig', () => {
     expect(config.webhook).toEqual({ url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) });
   });
 
+  it('SIGN_IN_METHODS sets what a never-set server runs, and must list configured methods, one of which creates users', async () => {
+    const config = await loadConfig({ ...env, ...hook, SIGN_IN_METHODS: 'google=optional password=required, totp' });
+    expect(config.methods).toEqual({ google: { secondFactor: 'optional' }, password: { secondFactor: 'required' }, totp: {} });
+    expect((await loadConfig({ ...env })).methods).toBeUndefined();
+    await expect(loadConfig({ ...env, SIGN_IN_METHODS: 'sms' })).rejects.toThrow(/SIGN_IN_METHODS: Unknown sign-in method "sms"/);
+    await expect(loadConfig({ ...env, SIGN_IN_METHODS: 'google=maybe' })).rejects.toThrow(/none, optional, required/);
+    await expect(loadConfig({ ...env, SIGN_IN_METHODS: 'password' })).rejects.toThrow(/lists password, but the server is not configured for it/);
+    await expect(loadConfig({ ...env, SIGN_IN_METHODS: 'totp' })).rejects.toThrow(/no sign-in method on that creates users/);
+  });
+
   it('A14: names what is missing or wrong for e-mail & password sign-in', async () => {
     const withDb = { ...env, DATABASE_URL: 'sqlite::memory:' };
     await expect(loadConfig({ ...withDb, ...hook, PASSWORD_MIN_LENGTH: '0' })).rejects.toThrow(/PASSWORD_MIN_LENGTH/);
