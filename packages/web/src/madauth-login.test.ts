@@ -120,14 +120,15 @@ describe('<madauth-login>', () => {
     await vi.waitFor(() => expect(onCancel).toHaveBeenCalledOnce());
   });
 
-  it('closes and fires madauth-cancel when the backdrop is clicked', async () => {
+  it('stays open when the backdrop is clicked', async () => {
     await login.open();
 
-    // Clicks on the backdrop are dispatched with the <dialog> itself as target.
+    // Clicks on the backdrop are dispatched with the <dialog> itself as target. A drag that starts in a
+    // field and ends outside the dialog is such a click too, so the backdrop must not close it.
     dialog().dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-    expect(dialog().open).toBe(false);
-    await vi.waitFor(() => expect(onCancel).toHaveBeenCalledOnce());
+    expect(dialog().open).toBe(true);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it('stays open when clicking inside the dialog', async () => {

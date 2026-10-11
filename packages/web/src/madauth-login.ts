@@ -381,11 +381,6 @@ export class MadauthLogin extends LitElement {
     this.dispatchEvent(new CustomEvent('madauth-error', { detail, bubbles: true, composed: true }));
   }
 
-  private onBackdropClick(e: MouseEvent): void {
-    // Clicks on the backdrop target the <dialog> itself; clicks inside hit its children.
-    if (e.target === this.dialog) this.dialog.close();
-  }
-
   private onMethodChosen(m: LoginMethod): void {
     if (!providerFor(m.id)) {
       this.error = null;
@@ -574,7 +569,7 @@ export class MadauthLogin extends LitElement {
   override render() {
     const s = this.strings;
     return html`
-      <dialog part="dialog" lang=${languageOf(currentLocale())} @close=${this.onDialogClose} @click=${this.onBackdropClick}>
+      <dialog part="dialog" lang=${languageOf(currentLocale())} @close=${this.onDialogClose}>
         <div class="panel">
           <header>
             <h2>${this.viewTitle}</h2>
@@ -1083,6 +1078,7 @@ export class MadauthLogin extends LitElement {
     }
 
     .panel {
+      position: relative;
       display: grid;
       gap: 20px;
       padding: 32px;
@@ -1107,11 +1103,8 @@ export class MadauthLogin extends LitElement {
     }
 
     header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      height: 28px;
+      /* Room for the close button, which sits in the panel's top right corner. */
+      padding-right: 32px;
     }
 
     h2 {
@@ -1140,12 +1133,13 @@ export class MadauthLogin extends LitElement {
     }
 
     .close {
-      flex-shrink: 0;
+      position: absolute;
+      top: 8px;
+      right: 8px;
       display: grid;
       place-items: center;
       width: 44px;
       height: 44px;
-      margin-right: -12px;
       padding: 0;
       border: none;
       border-radius: var(--_control-radius);

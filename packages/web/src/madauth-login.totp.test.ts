@@ -376,7 +376,7 @@ describe('Madauth.setUpAuthenticator', () => {
     expect($('[part="error"]')).toBeNull();
   });
 
-  it('D13: is cancelled by the link, the cross and the backdrop, and refuses when it can not open', async () => {
+  it('D13: is cancelled by the link and the cross, and refuses when it can not open', async () => {
     const server = fakeServer();
     server.policy.password = 'optional';
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
