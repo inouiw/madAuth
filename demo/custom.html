@@ -112,7 +112,44 @@
             <label>Code <input name="code" autocomplete="one-time-code" required /></label>
             <button type="submit">Continue</button>
           </form>
-          <p class="links"><button type="button" data-go="signin">Back to sign in</button></p>
+          <p class="links">
+            <!-- Only when the user has a phone as well (the error's factors). -->
+            <button type="button" id="use-sms" hidden>Send a code by SMS instead</button>
+            <button type="button" data-go="signin">Back to sign in</button>
+          </p>
+        </div>
+
+        <!-- The second step with a code by SMS (sms_required: Madauth.sms.send, then verify). -->
+        <div data-view="sms-code" hidden>
+          <p>Enter the code we sent to <strong id="sms-phone"></strong> to finish signing in.</p>
+          <form id="sms-code-form">
+            <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" required /></label>
+            <button type="submit">Continue</button>
+          </form>
+          <p class="links">
+            <button type="button" id="sms-resend">Send the code again</button>
+            <button type="button" id="use-app" hidden>Use the authenticator app instead</button>
+            <button type="button" data-go="signin">Back to sign in</button>
+          </p>
+        </div>
+
+        <!-- Adding a phone (Madauth.sms.setUp, then confirmSetup): for a sign-in that requires a second factor, and for the signed-in user. -->
+        <div data-view="sms-setup" hidden>
+          <p>Enter your mobile number with the country code, e.g. +41 79 123 45 67. We will send you a code to confirm it.</p>
+          <form id="sms-setup-form">
+            <label>Mobile number <input name="phone" type="tel" inputmode="tel" autocomplete="tel" required /></label>
+            <button type="submit">Send code</button>
+          </form>
+          <p class="links"><button type="button" id="sms-setup-cancel">Cancel</button></p>
+        </div>
+
+        <div data-view="sms-setup-code" hidden>
+          <p>Enter the code we sent to <strong id="sms-setup-phone"></strong>.</p>
+          <form id="sms-setup-code-form">
+            <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" required /></label>
+            <button type="submit">Confirm</button>
+          </form>
+          <p class="links"><button type="button" id="sms-setup-cancel-code">Cancel</button></p>
         </div>
 
         <!-- Setting the app up (Madauth.totp.startSetup and confirmSetup): for a sign-in that requires it, and for the signed-in user. -->
@@ -124,7 +161,11 @@
             <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" required /></label>
             <button type="submit">Turn on</button>
           </form>
-          <p class="links"><button type="button" id="totp-setup-cancel">Cancel</button></p>
+          <p class="links">
+            <!-- During a sign-in, when the server has SMS codes on: a phone instead of the app. -->
+            <button type="button" id="use-phone" hidden>Use your phone number instead</button>
+            <button type="button" id="totp-setup-cancel">Cancel</button>
+          </p>
         </div>
 
         <!-- The recovery codes, shown once. -->
@@ -143,6 +184,12 @@
         <p class="links">
           <button type="button" id="totp-setup" hidden>Set up the authenticator app</button>
           <button type="button" id="totp-remove" hidden>Remove the authenticator app</button>
+        </p>
+        <!-- The phone for SMS codes: Madauth.sms.status, the setup above, and remove with a code sent to it. -->
+        <p id="sms-status"></p>
+        <p class="links">
+          <button type="button" id="sms-setup" hidden>Add a phone number</button>
+          <button type="button" id="sms-remove" hidden>Remove the phone number</button>
         </p>
         <button id="sign-out" type="button">Sign out</button>
       </section>

@@ -23,6 +23,7 @@ function testUser(overrides: Row = {}): Row {
     name: null,
     sessionVersion: 0,
     lastMailAt: 0,
+    lastSmsAt: null,
     wrongCodes: 0,
     claims: null,
     createdAt: 1_700_000_000_000,
@@ -42,6 +43,7 @@ function testAccount(overrides: Row = {}): Row {
     email: null,
     lastUsedStep: 0,
     setupId: null,
+    phone: null,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };

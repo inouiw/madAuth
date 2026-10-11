@@ -514,7 +514,7 @@ describe('the second step after a password or Google', () => {
     expect(await first.json()).toMatchObject({ error: 'totp_required' });
     expect(cookies(first).madauth_session?.value ?? '').toBe('');
     const challenge = cookies(first).madauth_challenge;
-    expect(challenge.attrs).toMatchObject({ httponly: true, secure: true, samesite: 'Strict', path: '/auth/totp', 'max-age': '600' });
+    expect(challenge.attrs).toMatchObject({ httponly: true, secure: true, samesite: 'Strict', path: '/auth', 'max-age': '600' });
     expect(hook.types()).toEqual([]);
 
     const second = await post(app, '/auth/totp/verify', { code: codeFor(secret, 1) }, { Cookie: `madauth_challenge=${challenge.value}` });
@@ -644,7 +644,7 @@ describe('the second step after a password or Google', () => {
     const back = await app.request(`/auth/google/callback?code=c&state=${location.searchParams.get('state')}`, {
       headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` },
     });
-    expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=totp`);
+    expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=totp&madauth_factors=totp`);
     expect(cookies(back).madauth_session?.value ?? '').toBe('');
     expect(cookies(back).madauth_challenge.value).toBeTruthy();
 
@@ -915,6 +915,7 @@ describe('signing up with the app alone', () => {
       totp: { signIn: true, signUp: true },
       email: { verification: true },
       emailLink: null,
+      sms: false,
     });
     expect((await signUp(only)).status).toBe(202);
   });

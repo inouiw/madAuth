@@ -136,6 +136,7 @@ describe('switching sign-in methods off and on', () => {
         password: { configured: true, enabled: false, secondFactor: 'none' },
         totp: { configured: true, enabled: false },
         'email-link': { configured: true, enabled: false, secondFactor: 'none' },
+        sms: { configured: true, enabled: false },
       },
     });
     expect(await config(app)).toMatchObject({ google: { clientId: expect.any(String) }, password: null });
@@ -185,6 +186,7 @@ describe('switching sign-in methods off and on', () => {
       totp: null,
       email: { verification: false },
       emailLink: null,
+      sms: false,
     });
   });
 
@@ -204,10 +206,13 @@ describe('switching sign-in methods off and on', () => {
     expect((await settingsApi(app, undefined, 'get')).status).toBe(401);
     expect((await settingsApi(app, other, 'get')).status).toBe(403);
     expect((await settingsApi(app, other, 'set', { methods: { google: {} } })).status).toBe(403);
-    const bad = await settingsApi(app, cookie, 'set', { methods: { sms: true } });
+    const bad = await settingsApi(app, cookie, 'set', { methods: { fax: true } });
     expect(bad.status).toBe(400);
     expect(await bad.json()).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('secondFactor') });
     expect((await settingsApi(app, cookie, 'set', { methods: { totp: { secondFactor: 'required' } } })).status).toBe(400);
+    // SMS codes take no policy, and sign nobody in alone.
+    expect((await settingsApi(app, cookie, 'set', { methods: { google: {}, sms: { secondFactor: 'required' } } })).status).toBe(400);
+    expect(await (await settingsApi(app, cookie, 'set', { methods: { sms: {} } })).json()).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('At least one') });
     expect((await settingsApi(app, cookie, 'set', {})).status).toBe(400);
   });
 });

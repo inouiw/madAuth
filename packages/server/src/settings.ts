@@ -1,5 +1,5 @@
-// Settings that admins change while the server runs, kept in the store: which sign-in methods are on, and
-// which of them ask for a second factor. See "Sign-in methods" in docs/server.md.
+// Settings that admins change while the server runs, kept in the store: which sign-in methods are on, which
+// of them ask for a second factor, and whether SMS codes are one. See "Sign-in methods" in docs/server.md.
 import type { Row, StoreAdapter } from './store/schema.js';
 
 /**
@@ -9,6 +9,13 @@ import type { Row, StoreAdapter } from './store/schema.js';
  */
 export const SIGN_IN_METHODS = ['google', 'password', 'totp', 'email-link'] as const;
 export type SignInMethod = (typeof SIGN_IN_METHODS)[number];
+
+/**
+ * Every key of the methods setting: the primary methods, and `sms`, which signs nobody in by itself: SMS
+ * codes as a second factor of the methods whose policy asks for one, next to the authenticator app.
+ */
+export const METHODS = [...SIGN_IN_METHODS, 'sms'] as const;
+export type MethodId = (typeof METHODS)[number];
 
 /** The methods that can ask for a second factor (a code from the authenticator app) after they succeeded. */
 export const METHODS_WITH_SECOND_FACTOR = ['google', 'password', 'email-link'] as const;
@@ -27,7 +34,7 @@ export interface MethodSetting {
 }
 
 /** The sign-in methods that are on, each with its settings. A method that is not listed is off. */
-export type MethodSettings = Partial<Record<SignInMethod, MethodSetting>>;
+export type MethodSettings = Partial<Record<MethodId, MethodSetting>>;
 
 /** The id of the setting that holds {@link MethodSettings}. */
 export const METHODS_SETTING = 'methods';
@@ -40,9 +47,11 @@ export interface MethodConfig {
   emailVerification?: boolean;
   /** The webhook sends the sign-in e-mails of the e-mail link (`email.signin`). */
   emailLink?: boolean;
+  /** The webhook sends the SMS (`sms.code`). */
+  sms?: boolean;
 }
 
-const isSignInMethod = (value: string): value is SignInMethod => (SIGN_IN_METHODS as readonly string[]).includes(value);
+const isMethodId = (value: string): value is MethodId => (METHODS as readonly string[]).includes(value);
 /** Whether a method takes a `secondFactor` policy. */
 export const hasSecondFactor = (method: string): method is MethodWithSecondFactor =>
   (METHODS_WITH_SECOND_FACTOR as readonly string[]).includes(method);
@@ -50,7 +59,7 @@ const isPolicy = (value: unknown): value is SecondFactorPolicy => (SECOND_FACTOR
 
 /**
  * Checks a methods setting and returns it as {@link MethodSettings}, or null if `input` is not one: an
- * object keyed by sign-in method, each `{}` (on) or `{ secondFactor }` (the methods with a second factor). With
+ * object keyed by method id, each `{}` (on) or `{ secondFactor }` (the methods with a second factor). With
  * `booleans`, as the admin API takes it, `true` means `{}` and `false` means left out; what is stored
  * never has them, so a value stored by madAuth 0.3 (booleans with another meaning) is not mistaken for one.
  */
@@ -58,7 +67,7 @@ export function parseMethodSettings(input: unknown, options: { booleans?: boolea
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const settings: MethodSettings = {};
   for (const [method, value] of Object.entries(input)) {
-    if (!isSignInMethod(method)) return null;
+    if (!isMethodId(method)) return null;
     if (typeof value === 'boolean') {
       if (!options.booleans) return null;
       if (value) settings[method] = {};
@@ -76,10 +85,11 @@ export function parseMethodSettings(input: unknown, options: { booleans?: boolea
 }
 
 /** Whether the server has what a method needs; only a configured method can be on. */
-export function isConfigured(config: MethodConfig, method: SignInMethod): boolean {
+export function isConfigured(config: MethodConfig, method: MethodId): boolean {
   if (method === 'google') return !!config.google;
   if (method === 'password') return !!config.password;
   if (method === 'email-link') return !!config.emailLink;
+  if (method === 'sms') return !!config.sms;
   // The authenticator app needs nothing but the store, which every server has.
   return true;
 }
@@ -94,8 +104,9 @@ export function canSignUp(config: MethodConfig, method: SignInMethod): boolean {
 }
 
 /**
- * The methods a server runs until an admin sets them: the configured ones, without a second factor. The
- * authenticator app on its own only when nothing else can create users, i.e. on an authenticator-only server.
+ * The methods a server runs until an admin sets them: the configured ones, without a second factor, and SMS
+ * codes when the webhook sends them. The authenticator app on its own only when nothing else can create
+ * users, i.e. on an authenticator-only server.
  */
 export function initialMethods(config: MethodConfig): MethodSettings {
   const methods: MethodSettings = {};
@@ -103,6 +114,7 @@ export function initialMethods(config: MethodConfig): MethodSettings {
   if (config.password) methods.password = { secondFactor: 'none' };
   if (config.emailLink) methods['email-link'] = { secondFactor: 'none' };
   if (!config.google && !config.password && !config.emailLink && config.emailVerification) methods.totp = {};
+  if (config.sms) methods.sms = {};
   return methods;
 }
 
@@ -188,7 +200,7 @@ export class Settings {
 }
 
 /** Whether a method is on: configured on the server, and listed in the settings. */
-export function isOn(method: SignInMethod, configured: (method: SignInMethod) => boolean, methods: MethodSettings): boolean {
+export function isOn(method: MethodId, configured: (method: MethodId) => boolean, methods: MethodSettings): boolean {
   return configured(method) && methods[method] !== undefined;
 }
 
@@ -210,7 +222,7 @@ export function anyOn(signsUp: (method: SignInMethod) => boolean, methods: Metho
  * Whether the authenticator app is in use at all, so it can be set up: on its own, or as the second factor
  * of a method that is on.
  */
-export function authenticatorOn(configured: (method: SignInMethod) => boolean, methods: MethodSettings): boolean {
+export function authenticatorOn(configured: (method: MethodId) => boolean, methods: MethodSettings): boolean {
   if (isOn('totp', configured, methods)) return true;
   return METHODS_WITH_SECOND_FACTOR.some((method) => isOn(method, configured, methods) && policyOf(method, methods) !== 'none');
 }

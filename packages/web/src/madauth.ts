@@ -1,15 +1,16 @@
-import { EXPIRY_COOKIE, REDIRECT_NEXT_PARAM, SIGNIN_LINK_PARAM, VERIFY_LINK_PARAM } from './constants.js';
+import { EXPIRY_COOKIE, REDIRECT_FACTORS_PARAM, REDIRECT_NEXT_PARAM, SIGNIN_LINK_PARAM, VERIFY_LINK_PARAM } from './constants.js';
 import { takeHashParam } from './hash.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
-import type { AuthenticatorEnabledDetail, AuthenticatorFailedDetail } from './madauth-login.js';
+import type { AuthenticatorEnabledDetail, AuthenticatorFailedDetail, SmsEnabledDetail, SmsFailedDetail } from './madauth-login.js';
 import { isLoginMethodId, type LoginMethodId } from './methods.js';
-import type { DeletedAccount, PendingStep, ProviderContext, ServerConfig, SignInProvider } from './providers/provider.js';
-import { fail, ok, type MadauthError, type MadauthUser, type Result } from './result.js';
+import { pendingStepOf, type DeletedAccount, type PendingStep, type ProviderContext, type ServerConfig, type SignInProvider } from './providers/provider.js';
+import { fail, ok, type MadauthError, type MadauthUser, type Result, type SecondFactor } from './result.js';
 import type { Core } from './scopes/core.js';
 import { createAdminApi } from './scopes/admin.js';
 import { createEmailLinkApi } from './scopes/email-link.js';
 import { createGoogleApi } from './scopes/google.js';
 import { createPasswordApi } from './scopes/password.js';
+import { createSmsApi } from './scopes/sms.js';
 import { createTotpApi } from './scopes/totp.js';
 
 export interface MadauthOptions {
@@ -19,9 +20,9 @@ export interface MadauthOptions {
   providers: SignInProvider[];
   /**
    * `'dialog'` (default): madAuth's sign-in dialog, opened with `Madauth.signIn()`; it also opens by itself
-   * when the page was opened from a password reset link, or when a sign-in goes on with the authenticator app.
-   * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.totp` and
-   * `Madauth.emailLink`; the dialog never opens.
+   * when the page was opened from a password reset link, or when a sign-in goes on with a second step.
+   * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.totp`,
+   * `Madauth.emailLink` and `Madauth.sms`; the dialog never opens.
    */
   ui?: 'dialog' | 'custom';
   /**
@@ -66,7 +67,7 @@ let userKnown = false;
 const listeners = new Set<AuthStateListener>();
 /** A sign-in error that happened outside the dialog (e.g. the redirect flow), shown when it next opens. */
 let pendingError: MadauthError | undefined;
-/** A sign-in whose first step is done and that goes on with the authenticator app. */
+/** A sign-in whose first step is done and that goes on with a second step. */
 let pendingStep: PendingStep | undefined;
 /** The locale from `initialize` or `setLocale`; without one the page's or the browser's language counts. */
 let configuredLocale: string | undefined;
@@ -123,14 +124,12 @@ function logError<T extends object>(result: Result<T>): Result<T> {
   return result;
 }
 
-/** The step a `totp_required` or `totp_setup_required` error stands for, with the method whose sign-in it is. */
+/** The step a `totp_required`, `sms_required` or `totp_setup_required` error stands for, with the method whose sign-in it is. */
 function nextStepOf(error: MadauthError): PendingStep | undefined {
-  if (error.code !== 'totp_required' && error.code !== 'totp_setup_required') return undefined;
-  const method = isLoginMethodId(error.method) ? error.method : 'password';
-  return { step: error.code === 'totp_required' ? 'code' : 'setup', method };
+  return pendingStepOf(error, isLoginMethodId(error.method) ? error.method : 'password');
 }
 
-/** A sign-in outside the dialog goes on with the authenticator app: the dialog opens on that step. */
+/** A sign-in outside the dialog goes on with its second step: the dialog opens on that step. */
 function continueSignIn(pending: PendingStep): void {
   stepPending(pending);
   if (state?.ui === 'dialog') queueMicrotask(() => void Madauth.signIn());
@@ -213,10 +212,12 @@ async function handleSignInLink(ctx: ProviderContext, providers: Map<LoginMethod
   else ctx.signInFailed(res.error);
 }
 
-/** Back from the redirect flow with the first step done: the code from the authenticator app, or its setup, is next. */
+/** Back from the redirect flow with the first step done: a code (from the app, or by SMS) or the app's setup is next. */
 function handleNextStep(ctx: ProviderContext): void {
   const next = takeHashParam(REDIRECT_NEXT_PARAM);
-  if (next === 'totp' || next === 'totp-setup') ctx.signInContinues({ step: next === 'totp' ? 'code' : 'setup', method: 'google' });
+  const named = (takeHashParam(REDIRECT_FACTORS_PARAM) ?? '').split(',').filter((f): f is SecondFactor => f === 'totp' || f === 'sms');
+  if (next === 'totp' || next === 'sms') ctx.signInContinues({ step: next === 'totp' ? 'code' : 'sms', method: 'google', factors: named.length ? named : [next] });
+  else if (next === 'totp-setup') ctx.signInContinues({ step: 'setup', method: 'google' });
 }
 
 async function initialize(target: State, run: number): Promise<{ ready: Result; result: InitializeResult }> {
@@ -430,6 +431,40 @@ export const Madauth = {
   },
 
   /**
+   * Opens the dialog on the "Add your phone number" screen for the signed-in user: a field for the number,
+   * then one for the code sent to it. Resolves with the number as it is shown (masked) once it is confirmed.
+   * A user who has a number already is asked for a code sent to it first: the new number replaces it. Fails
+   * with `cancelled` when the dialog is closed before, `no_session` when nobody is signed in, and
+   * `flow_not_enabled` when the server has SMS codes switched off. With `ui: 'custom'` use
+   * `Madauth.sms.setUp()` and `confirmSetup()`.
+   */
+  async setUpSms(): Promise<Result<{ phone: string }>> {
+    const ready = await whenReady();
+    if (!ready.isSuccess) return ready;
+    if (state!.ui === 'custom') {
+      return fail('invalid_options', "Madauth.setUpSms() opens madAuth's dialog, but initialize was called with ui: 'custom'. Use Madauth.sms.setUp() and confirmSetup() instead.");
+    }
+    if (!state!.config?.sms) return fail('flow_not_enabled', 'The madAuth server has SMS codes switched off.');
+    if (!user) return fail('no_session', 'Nobody is signed in.');
+    const element = dialogElement();
+    return new Promise((resolve) => {
+      const finish = (result: Result<{ phone: string }>) => {
+        element.removeEventListener('madauth-sms-enabled', onEnabled);
+        element.removeEventListener('madauth-sms-failed', onFailed);
+        element.removeEventListener('madauth-cancel', onCancel);
+        resolve(result);
+      };
+      const onEnabled = (e: CustomEvent<SmsEnabledDetail>) => finish({ isSuccess: true, phone: e.detail.phone });
+      const onFailed = (e: CustomEvent<SmsFailedDetail>) => finish({ isSuccess: false, error: e.detail.error });
+      const onCancel = () => finish(fail('cancelled', 'The dialog was closed.'));
+      element.addEventListener('madauth-sms-enabled', onEnabled);
+      element.addEventListener('madauth-sms-failed', onFailed);
+      element.addEventListener('madauth-cancel', onCancel);
+      void element.openSmsSetup();
+    });
+  },
+
+  /**
    * Changes the language of the dialog and of the e-mails, e.g. when the user switches the language of
    * your app. An open dialog shows the new language at once. See {@link MadauthOptions.locale}.
    */
@@ -528,6 +563,9 @@ export const Madauth = {
 
   /** The passwordless e-mail link for custom login screens. Needs `new EmailLink()`. */
   emailLink: createEmailLinkApi(core),
+
+  /** SMS codes as a second factor: the second step, and adding or removing the phone. Needs no provider. */
+  sms: createSmsApi(core),
 
   /** Reading and setting claims and settings, for users with the role `admin`. */
   admin: createAdminApi(core),

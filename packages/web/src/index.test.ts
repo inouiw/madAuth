@@ -29,8 +29,10 @@ describe('@madauth/web', () => {
         'sessionReady',
         'setLocale',
         'setUpAuthenticator',
+        'setUpSms',
         'signIn',
         'signOut',
+        'sms',
         'totp',
       ].sort(),
     );
@@ -46,8 +48,10 @@ describe('@madauth/web', () => {
       ['confirmSetup', 'newRecoveryCodes', 'pendingStep', 'policy', 'remove', 'sendVerificationEmail', 'signIn', 'signUp', 'startSetup', 'status', 'verify', 'verifyEmail'].sort(),
     );
     expect(Object.keys(madauth.Madauth.emailLink).sort()).toEqual(['policy', 'send', 'verify']);
+    expect(Object.keys(madauth.Madauth.sms).sort()).toEqual(['available', 'confirmSetup', 'pendingStep', 'remove', 'send', 'setUp', 'status', 'verify']);
     expectTypeOf(madauth.Madauth.password).toEqualTypeOf<madauth.PasswordApi>();
     expectTypeOf(madauth.Madauth.emailLink).toEqualTypeOf<madauth.EmailLinkApi>();
+    expectTypeOf(madauth.Madauth.sms).toEqualTypeOf<madauth.SmsApi>();
     expectTypeOf(madauth.Madauth.google).toEqualTypeOf<madauth.GoogleApi>();
     expectTypeOf(madauth.Madauth.totp).toEqualTypeOf<madauth.TotpApi>();
   });

@@ -58,6 +58,11 @@ export function sendsSignInEmails(config: Pick<MadauthConfig, 'webhook'>): boole
   return !!config.webhook?.events.has('email.signin');
 }
 
+/** Whether the webhook sends the SMS (`sms.code`), so SMS codes can be a second factor. */
+export function sendsSms(config: Pick<MadauthConfig, 'webhook'>): boolean {
+  return !!config.webhook?.events.has('sms.code');
+}
+
 /** What decides which methods the server is configured for, see `isConfigured` and `initialMethods`. */
 export function methodConfig(config: MadauthConfig): MethodConfig {
   return {
@@ -65,6 +70,7 @@ export function methodConfig(config: MadauthConfig): MethodConfig {
     password: config.password,
     emailVerification: sendsVerificationEmails(config),
     emailLink: sendsSignInEmails(config),
+    sms: sendsSms(config),
   };
 }
 
@@ -348,6 +354,7 @@ function webhookFromEnv(url: string | undefined, secret: string | undefined, eve
         `E-mail & password sign-in is on when they include ${REQUIRED_EMAIL_TYPES.join(' and ')}, the passwordless ` +
         'e-mail link when they include email.signin. For a receiver that sends the e-mails:\n\n' +
         'WEBHOOK_EVENTS=email.verify,email.reset,email.signin,email.already_registered,email.no_password\n\n' +
+        'SMS codes as a second factor need a receiver that sends the SMS: add sms.code,sms.enabled,sms.disabled. ' +
         'For one that only wants to know who signed in:\n\nWEBHOOK_EVENTS=user.signed_in\n\n' +
         allTypes,
     );

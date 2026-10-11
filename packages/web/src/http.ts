@@ -1,4 +1,4 @@
-import { toErrorCode, type MadauthError } from './result.js';
+import { toErrorCode, type MadauthError, type SecondFactor } from './result.js';
 
 export type HttpResult<T> = { ok: true; data: T } | { ok: false; status: number; error: MadauthError };
 
@@ -25,7 +25,7 @@ export async function request<T>(serverUrl: string, path: string, init: RequestI
     };
   }
   const data = (await response.json().catch(() => undefined)) as
-    | (T & { error?: unknown; message?: unknown; method?: unknown; methods?: unknown })
+    | (T & { error?: unknown; message?: unknown; method?: unknown; methods?: unknown; factors?: unknown })
     | undefined;
   if (response.ok) {
     // E.g. an SPA fallback page answering for /auth/... because the server is not behind this URL.
@@ -45,5 +45,6 @@ export async function request<T>(serverUrl: string, path: string, init: RequestI
   // What some answers say besides the code: the method a sign-in goes on with, or how an address signs in.
   if (typeof data?.method === 'string') error.method = data.method;
   if (Array.isArray(data?.methods)) error.methods = data.methods.filter((m): m is string => typeof m === 'string');
+  if (Array.isArray(data?.factors)) error.factors = data.factors.filter((f): f is SecondFactor => f === 'totp' || f === 'sms');
   return { ok: false, status: response.status, error };
 }

@@ -73,7 +73,7 @@ describe('GoogleFedcm', () => {
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()], ui: 'custom' });
     await settle();
     expect(gis.id.prompt).toHaveBeenCalledOnce();
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'google' });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'google', factors: ['totp'] });
   });
 
   it('G4: a One Tap sign-in signs the user in without the app doing anything', async () => {

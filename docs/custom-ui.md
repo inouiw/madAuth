@@ -9,7 +9,7 @@ Madauth.initialize({ providers: [new GoogleFedcm(), new Password(), new Totp(), 
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 ```
 
-`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.signIn()` and `Madauth.setUpAuthenticator()` return an `invalid_options` error.
+`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.signIn()`, `Madauth.setUpAuthenticator()` and `Madauth.setUpSms()` return an `invalid_options` error.
 
 All methods resolve to a result object and never throw for expected failures:
 
@@ -86,7 +86,8 @@ Use these `autocomplete` values so browsers offer to save and fill passwords and
 | E-mail | `email` (or `username`) |
 | Password when signing in | `current-password` |
 | Password when signing up or resetting | `new-password` |
-| Code from the e-mail, or from the authenticator app | `one-time-code` |
+| Code from the e-mail, from the authenticator app, or from an SMS | `one-time-code` |
+| Phone number | `tel` |
 
 ## E-mail link: `Madauth.emailLink`
 
@@ -137,12 +138,12 @@ The methods work whenever the app is in use on the server: as the second factor 
 | `signUp({ email, name?, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `temporarily_unavailable`, `method_disabled` |
 | `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
 | `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `totp_setup_required` for a sign-up with the app |
-| `pendingStep` | `{ step: 'code' \| 'setup', method } \| null` | What a sign-in under way still needs, e.g. after the redirect flow or a link from an e-mail; `method` is the method whose sign-in it is (`google`, `password`, `totp` or `email-link`) |
+| `pendingStep` | `{ step: 'code' \| 'sms' \| 'setup', method, factors? } \| null` | What a sign-in under way still needs, e.g. after the redirect flow or a link from an e-mail; `method` is the method whose sign-in it is (`google`, `password`, `totp` or `email-link`), `factors` which second factors can finish it (`totp`, `sms`) |
 | `policy` | `{ signIn, signUp, secondFactorFor } \| null` | What the app does on this server: whether it signs in on its own, whether people can sign up with it, and which methods ask for it |
 
 ### The second step
 
-When the policy of Google, password or the e-mail link asks for the app, `password.signIn` (also `verifyEmail` and `confirmReset`), `emailLink.verify` and the Google button's `onResult` end with `totp_required` instead of a user: the first step was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. With `totp_setup_required` the user has no app yet and the policy requires one: run the setup below; `confirmSetup` then signs them in and returns `user` as well. A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
+When the policy of Google, password or the e-mail link asks for a second factor, `password.signIn` (also `verifyEmail` and `confirmReset`), `emailLink.verify` and the Google button's `onResult` end with `totp_required` instead of a user: the first step was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. The error's `factors` says what the user can finish with: with `sms` among them (they have a phone as well, see [SMS codes](#sms-codes-madauthsms)), offer "send a code by SMS instead". With `sms_required` the user has a phone and no app: the SMS step. With `totp_setup_required` the user has no factor yet and the policy requires one: run the setup below, or, when `Madauth.sms.available`, offer adding a phone instead; `confirmSetup` then signs them in and returns `user` as well. A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
 
 A sign-in that started outside your screen, i.e. the redirect flow (`#madauth_next=…`) or the link in a confirmation or sign-in e-mail, leaves its step in `pendingStep` after `initialize`: show the matching form.
 
@@ -174,6 +175,50 @@ confirmForm.onsubmit = async () => {
 ```
 
 `status()` says whether the signed-in user has the app; `remove` and `newRecoveryCodes` take a current code from it or a recovery code. `Madauth.deleteAccount({ code })` needs one as well once the app is set up.
+
+## SMS codes: `Madauth.sms`
+
+A second factor next to the app, never a sign-in on its own. The methods work whenever the server has SMS codes on (`sms` in the [sign-in methods](server.md#sign-in-methods), with a webhook that sends `sms.code`); otherwise they fail with `flow_not_enabled`, and `available` is false. No provider is needed.
+
+| Method | Result | Errors |
+| --- | --- | --- |
+| `setUp({ phone, code? })` | `{ phone }` (masked) | `invalid_phone`, `code_required` (a number exists: give a code sent to it), `code_invalid`, `too_soon`, `no_session`, `temporarily_unavailable` |
+| `confirmSetup({ code })` | `{ user? }` | `code_invalid`, `setup_expired`, `no_session` |
+| `send()` | `{ phone }` (masked) | `too_soon`, `no_phone`, `challenge_expired`, `no_session` |
+| `verify({ code })` | `{ user }` | `code_invalid`, `too_many_attempts`, `challenge_expired` |
+| `remove({ code })` | — | `code_invalid`, `no_phone`, `required_by_policy` (a policy requires a second factor and the user has no app), `no_session` |
+| `status()` | `{ enabled, phone }` | `no_session` |
+| `pendingStep` | like `Madauth.totp.pendingStep` | `step: 'sms'` when a code by SMS is next |
+| `available` | `boolean` | Whether the server has SMS codes on |
+
+### The second step
+
+After `sms_required` (or `totp_required` with `sms` in `factors`, when the user chooses the SMS), call `send()` once: the server sends the code and the result says where (masked), so you can show "we sent a code to +41 ••••••• 67". Then ask for the code and call `verify`; the user arrives through `onAuthStateChanged`. `send` again sends a new code, but only once a minute (`too_soon`: the previous code still works).
+
+```ts
+const result = await Madauth.password.signIn({ email, password });
+if (!result.isSuccess && result.error.code === 'sms_required') {
+  const sent = await Madauth.sms.send();
+  if (sent.isSuccess) showSmsCodeForm(sent.phone);
+}
+smsForm.onsubmit = async () => {
+  const done = await Madauth.sms.verify({ code: codeInput.value });
+  if (!done.isSuccess) showError(done.error);
+};
+```
+
+### Adding a phone
+
+While the user is signed in, or in the setup step of a sign-in (`totp_setup_required` with `Madauth.sms.available`), call `setUp({ phone })` with the number in international form: the server sends a code to it and returns the masked number. Ask for the code and call `confirmSetup({ code })` within ten minutes; it returns `user` when the setup finished a sign-in. A user who has a number already replaces it: `setUp` then fails with `code_required`, so call `send()` (a code to the current number), ask for it, and call `setUp({ phone, code })`. `remove({ code })` takes a code from `send()` as well. Use `autocomplete="tel"` for the number field.
+
+```ts
+const setup = await Madauth.sms.setUp({ phone: phoneInput.value });
+if (setup.isSuccess) showCodeForm(setup.phone);
+confirmForm.onsubmit = async () => {
+  const done = await Madauth.sms.confirmSetup({ code: codeInput.value });
+  if (done.isSuccess) showPhoneAdded();
+};
+```
 
 ### The app on its own
 
@@ -219,4 +264,4 @@ The locale is used for:
 
 ## Signing out and the session
 
-These work the same with or without the dialog: `Madauth.signOut()`, `Madauth.deleteAccount()` (with `{ code }` once the authenticator app is set up), `Madauth.getSession()`, `Madauth.sessionReady()`, `Madauth.currentUser` (with `amr`, how the session was authenticated), `Madauth.onAuthStateChanged(listener)` and, for admins, `Madauth.admin`. See the [README](../README.md#using-madauth-in-your-app).
+These work the same with or without the dialog: `Madauth.signOut()`, `Madauth.deleteAccount()` (with `{ code }` once the authenticator app is set up; a phone alone asks for none), `Madauth.getSession()`, `Madauth.sessionReady()`, `Madauth.currentUser` (with `amr`, how the session was authenticated), `Madauth.onAuthStateChanged(listener)` and, for admins, `Madauth.admin`. See the [README](../README.md#using-madauth-in-your-app).

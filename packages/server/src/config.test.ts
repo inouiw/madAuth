@@ -154,7 +154,7 @@ describe('loadConfig', () => {
   it('K6: the e-mail link is configured exactly when email.signin is among the events, and counts as a way to create users', async () => {
     const linkOnly = await loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, WEBHOOK_EVENTS: 'email.signin' });
     expect(linkOnly.password).toBeUndefined();
-    expect(methodConfig(linkOnly)).toEqual({ google: undefined, password: undefined, emailVerification: false, emailLink: true });
+    expect(methodConfig(linkOnly)).toEqual({ google: undefined, password: undefined, emailVerification: false, emailLink: true, sms: false });
     expect(methodConfig(await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.verify,email.reset' }))).toMatchObject({ emailLink: false });
   });
 

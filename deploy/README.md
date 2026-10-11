@@ -16,7 +16,7 @@ More templates (Azure, Docker with HTTPS) will be added next to `aws/`.
 - **Serve madAuth from your app's origin.** Route `/auth/*` and `/.well-known/*` of your app's domain to the
   server (a CloudFront behavior, a reverse proxy rule, …). Then madAuth's cookies are first-party, and
   `MADAUTH_ISSUER` is your app's origin, e.g. `https://example.com`.
-- **E-mail & password and the e-mail link need a webhook receiver** that sends the e-mails, e.g. the
+- **E-mail & password, the e-mail link and SMS codes need a webhook receiver** that sends the e-mails (and the SMS), e.g. the
   [aws-ses-mailer](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer).
 - **Limit requests per IP address** in front of the server (WAF, reverse proxy): madAuth's brute-force
   protection is per account. See [Password security](../docs/password-security.md).

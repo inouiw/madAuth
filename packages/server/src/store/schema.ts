@@ -46,7 +46,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 5,
+  version: 6,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -57,7 +57,10 @@ export const madauthSchema = {
         emailVerified: { type: 'boolean' },
         name: { type: 'string', nullable: true },
         sessionVersion: { type: 'number' },
+        /** When the last e-mail was sent to the user: at most one per minute. */
         lastMailAt: { type: 'number' },
+        /** When the last SMS was sent to the user: at most one per minute, counted apart from the e-mails (since version 6). */
+        lastSmsAt: { type: 'number', nullable: true },
         /** Wrong e-mail codes in a row, counted across e-mails (since version 2). */
         wrongCodes: { type: 'number' },
         /** What admins attached to the user, as JSON, e.g. `{"roles":["admin"]}` (since version 4). */
@@ -66,8 +69,9 @@ export const madauthSchema = {
       },
     },
     /**
-     * How a user signs in. `key` is `password:<userId>`, `google:<sub>` or `totp:<userId>` (the authenticator
-     * app, whose `secret` is encrypted).
+     * How a user signs in. `key` is `password:<userId>`, `google:<sub>`, `totp:<userId>` (the authenticator
+     * app, whose `secret` is encrypted), `email-link:<userId>` or `sms:<userId>` (the phone that gets the
+     * codes of the second factor).
      */
     account: {
       fields: {
@@ -86,6 +90,8 @@ export const madauthSchema = {
          * its codes always belong together. Empty for other accounts (since version 5).
          */
         setupId: { type: 'string', nullable: true },
+        /** The phone number of an `sms:` account, in E.164 form (`+41791234567`). Empty for other accounts (since version 6). */
+        phone: { type: 'string', nullable: true },
         createdAt: { type: 'number' },
       },
     },
@@ -101,7 +107,7 @@ export const madauthSchema = {
         createdAt: { type: 'number' },
       },
     },
-    /** A pending e-mail verification or password reset. `id` is the SHA-256 of the link token. */
+    /** A pending e-mail verification, password reset, sign-in link or SMS code. `id` is the SHA-256 of the link token. */
     verification: {
       fields: {
         id: { type: 'string', primaryKey: true },

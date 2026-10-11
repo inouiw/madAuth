@@ -66,6 +66,15 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
         createTablesSql(dialect, { version: 5, models: { recoveryCode: madauthSchema.models.recoveryCode } }),
       ].join('\n'),
   },
+  {
+    // SMS codes as a second factor: the phone number of an sms account, and when the last SMS went to a user.
+    version: 6,
+    sql: (dialect) =>
+      [
+        `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('phone')} ${columnTypes[dialect].string};`,
+        `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('lastSmsAt')} ${columnTypes[dialect].number};`,
+      ].join('\n'),
+  },
 ];
 
 /**

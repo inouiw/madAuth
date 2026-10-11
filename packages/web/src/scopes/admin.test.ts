@@ -64,6 +64,7 @@ describe('Madauth.admin', () => {
         password: { configured: true, enabled: true, secondFactor: 'none' },
         totp: { configured: true, enabled: false },
         'email-link': { configured: true, enabled: false, secondFactor: 'none' },
+        sms: { configured: true, enabled: false },
       },
     });
     // The list replaces what was on: password is left out, Google asks for the authenticator app, the app signs in alone.
