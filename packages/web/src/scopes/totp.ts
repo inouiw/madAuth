@@ -55,7 +55,7 @@ export interface TotpApi {
    */
   signIn(options: SignInWithTotpOptions): Promise<Result<{ user: MadauthUser }>>;
   /**
-   * Finishes a sign-in that `password.signIn`, `verifyEmail`, `confirmReset` or Google ended with
+   * Finishes a sign-in that `password.signIn`, `verifyEmail`, `confirmReset`, Google or GitHub ended with
    * `totp_required`: the code from the app, or a recovery code. Fails with `code_invalid`,
    * `too_many_attempts` or `challenge_expired` (more than ten minutes passed: sign in again).
    */

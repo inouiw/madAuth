@@ -4,6 +4,7 @@ import './index.js';
 import { Madauth } from './madauth.js';
 import type { MadauthLogin } from './madauth-login.js';
 import { GoogleFedcm } from './providers/google-fedcm.js';
+import { GoogleRedirect } from './providers/google-redirect.js';
 import { Password } from './providers/password.js';
 import type { SignInProvider } from './providers/provider.js';
 import { CODE, SERVER, fakeGis, fakeServer, grace, resetAll, settle } from './test-helpers.js';
@@ -120,7 +121,7 @@ describe('<madauth-login> with e-mail & password', () => {
     await submit('signin');
 
     expect($('[part="error"]')!.dataset.code).toBe('invalid_credentials');
-    expect($('[part="error"]')!.textContent).toContain('E-mail or password is wrong.');
+    expect($('[part="error"]')!.textContent).toContain('Email or password is wrong.');
     expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
   });
 
@@ -204,14 +205,14 @@ describe('<madauth-login> with e-mail & password', () => {
     await submit('signup');
 
     expect($('[part="error"]')!.dataset.code).toBe('temporarily_unavailable');
-    expect($('[part="error"]')!.textContent).toContain('E-mail & password sign-up is not available right now. Please try again later.');
+    expect($('[part="error"]')!.textContent).toContain('Email & password sign-up is not available right now. Please try again later.');
     expect($('h2')!.textContent).toBe('Create account');
 
     await click('[data-action="back"]');
     await click('[data-action="forgot"]');
     await fill({ email: 'grace@example.com' });
     await submit('forgot');
-    expect($('[part="error"]')!.textContent).toContain('Sending e-mails is not available right now.');
+    expect($('[part="error"]')!.textContent).toContain('Sending emails is not available right now.');
   });
 
   it('K8: shows the message of a refused sign-up', async () => {
@@ -309,7 +310,7 @@ describe('<madauth-login> with e-mail & password', () => {
 
     expect(server.mails).toEqual([{ purpose: 'verify', to: 'new@example.com', redirectTo: 'https://app.example.com/page' }]);
     expect($('h2')!.textContent).toBe('Check your inbox');
-    expect($('.notice[role="status"]')!.textContent).toContain('We sent the e-mail again.');
+    expect($('.notice[role="status"]')!.textContent).toContain('We sent the email again.');
 
     login().close();
     void openDialog();
@@ -350,13 +351,122 @@ describe('<madauth-login> with e-mail & password', () => {
     await settle();
     const autocomplete = (name: string) => $<HTMLInputElement>(`form input[name="${name}"]`)!.getAttribute('autocomplete');
 
-    expect([autocomplete('email'), autocomplete('password')]).toEqual(['email', 'current-password']);
+    // `username` on the address: password managers save and fill it together with the password.
+    expect([autocomplete('email'), autocomplete('password')]).toEqual(['username', 'current-password']);
     await click('[data-action="signup"]');
-    expect([autocomplete('name'), autocomplete('email'), autocomplete('password')]).toEqual(['name', 'email', 'new-password']);
+    expect([autocomplete('name'), autocomplete('email'), autocomplete('password')]).toEqual(['name', 'username', 'new-password']);
     await fill({ email: 'x@example.com', password: 'long enough' });
     await submit('signup');
     // The code from the e-mail: Safari and iOS fill it from Mail and Messages.
     expect(autocomplete('code')).toBe('one-time-code');
+  });
+
+  it('moves the focus into each new view, so it is not left behind on the page', async () => {
+    fakeServer();
+    void openDialog();
+    await settle();
+    const focused = () => login().shadowRoot!.activeElement;
+
+    await click('[data-action="signup"]');
+    expect(focused()).toBe($('form.signup input[name="email"]'));
+    await click('[data-action="back"]');
+    expect(focused()).toBe($('form.signin input[name="email"]'));
+    await click('[data-action="forgot"]');
+    expect(focused()).toBe($('form.forgot input[name="email"]'));
+    await fill({ email: 'grace@example.com' });
+    await submit('forgot');
+    expect($('h2')!.textContent).toBe('Check your inbox');
+    expect(focused()).toBe($('form.code input[name="code"]'));
+  });
+
+  it('D7: uses `email`, not `username`, on an address field without a password', async () => {
+    fakeServer();
+    void openDialog();
+    await settle();
+
+    await click('[data-action="forgot"]');
+    // On a `username` field the iCloud Passwords extension opens its panel, with nothing to fill.
+    expect($('form.forgot input[name="email"]')!.getAttribute('autocomplete')).toBe('email');
+  });
+
+  it('offers Google on the sign-up view too, since it signs up a new user as well', async () => {
+    const server = fakeServer();
+    server.codeFlow = true;
+    void openDialog([new GoogleRedirect(), new Password()]);
+    await settle();
+
+    await click('[data-action="signup"]');
+    expect($('h2')!.textContent).toBe('Create account');
+    expect($('.google-slot button')).not.toBeNull();
+    expect($('.divider')!.textContent).toBe('or');
+    // The address and the password first; the optional name last.
+    expect([...login().shadowRoot!.querySelectorAll('form.signup input')].map((input) => input.getAttribute('name'))).toEqual([
+      'email',
+      'password',
+      'name',
+    ]);
+  });
+
+  it('links between sign-in and sign-up with a question, of which only the action is underlined', async () => {
+    fakeServer();
+    void openDialog();
+    await settle();
+
+    expect($('[data-action="signup"]')!.textContent).toBe('No account? Create one');
+    expect($('[data-action="signup"] span')!.textContent).toBe('Create one');
+    await click('[data-action="signup"]');
+    expect($('[data-action="back"]')!.textContent).toBe('Already have an account? Sign in');
+    expect($('[data-action="back"] span')!.textContent).toBe('Sign in');
+  });
+
+  it('shows and hides the password with the eye button', async () => {
+    fakeServer();
+    void openDialog();
+    await settle();
+    const field = $<HTMLInputElement>('#password')!;
+    const eye = $<HTMLButtonElement>('form.signin .reveal')!;
+
+    expect(eye.getAttribute('aria-label')).toBe('Show password');
+    expect(eye.getAttribute('aria-controls')).toBe('password');
+    expect([field.type, eye.getAttribute('aria-pressed')]).toEqual(['password', 'false']);
+    await click('form.signin .reveal');
+    expect([field.type, eye.getAttribute('aria-pressed')]).toEqual(['text', 'true']);
+    await click('form.signin .reveal');
+    expect([field.type, eye.getAttribute('aria-pressed')]).toEqual(['password', 'false']);
+
+    await click('[data-action="signup"]');
+    expect($('form.signup .reveal')!.getAttribute('aria-controls')).toBe('new-password');
+  });
+
+  it('hides a shown password when the form is sent, and when the dialog closes', async () => {
+    fakeServer();
+    void openDialog();
+    await settle();
+    const field = () => $<HTMLInputElement>('#password')!;
+
+    await click('form.signin .reveal');
+    await fill({ email: 'grace@example.com', password: 'wrong password' });
+    await submit('signin');
+    // Sent as a password field, so password managers offer to save it.
+    expect([field().type, $('form.signin .reveal')!.getAttribute('aria-pressed')]).toEqual(['password', 'false']);
+
+    await click('form.signin .reveal');
+    $<HTMLButtonElement>('.close')!.click();
+    void Madauth.signIn();
+    await settle();
+    // The sign-in view's fields stay for the next opening; the password is not shown there.
+    expect([field().type, $('form.signin .reveal')!.getAttribute('aria-pressed')]).toEqual(['password', 'false']);
+  });
+
+  it('reads the rule for a new password out with the field', async () => {
+    fakeServer();
+    void openDialog();
+    await settle();
+    expect($('#password')!.hasAttribute('aria-describedby')).toBe(false);
+
+    await click('[data-action="signup"]');
+    expect($('#new-password')!.getAttribute('aria-describedby')).toBe('new-password-hint');
+    expect($('#new-password-hint')!.textContent).toBe('At least 8 characters.');
   });
 
   it('signIn({ email }) fills the e-mail field and focuses the password field', async () => {

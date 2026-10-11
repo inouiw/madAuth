@@ -65,8 +65,18 @@ export interface AppContext {
   isAllowedOrigin(origin: string | undefined): boolean;
   /** Parses an absolute URL whose origin is in ALLOWED_ORIGINS, without its hash; null otherwise. */
   allowedUrl(value: unknown): URL | null;
-  /** Sets the session cookies for the user, as the routes resolved them from the store; returns the user with `amr`. */
-  startSession(c: Context, user: MadauthUser, amr: string[], extra?: { sv?: number }): Promise<MadauthUser>;
+  /**
+   * Sets the session cookies for the user, as the routes resolved them from the store, and returns the user
+   * with `amr`. `signIn` is how they signed in and the stored user's `signedUpAt`: the user's first session
+   * sends `user.signed_up`, since a session starts only once every step the policy asks for is done.
+   */
+  startSession(
+    c: Context,
+    user: MadauthUser,
+    amr: string[],
+    signIn: { method: SignInMethod; signedUpAt: number | null },
+    extra?: { sv?: number },
+  ): Promise<MadauthUser>;
   /**
    * Finishes a primary sign-in method that succeeded: the session, or the next step with a second factor
    * as the policy of `method` and what the user has set up demand. `amr` is how the user signed in so far;
@@ -87,7 +97,7 @@ export interface AppContext {
   methods(c: Context): Promise<MethodSettings>;
   /** Whether a sign-in method is on: configured, and listed by an admin. */
   enabled(c: Context, method: MethodId): Promise<boolean>;
-  /** Asks the webhook whether someone may sign up (`signup.before`). Fails closed: without an answer, nobody signs up. */
+  /** Asks the webhook whether someone may sign up (`user.signing_up`). Fails closed: without an answer, nobody signs up. */
   checkSignup(data: { email: string; name?: string; locale?: string; method: SignInMethod }): Promise<SignupCheck>;
   /** Tells the webhook that something happened. Awaited (Lambda stops after the answer), but never fails. */
   emit(type: WebhookType, data: Record<string, unknown>): Promise<void>;
@@ -217,11 +227,16 @@ export function createApp(config: MadauthConfig): Hono {
       url.hash = '';
       return url;
     },
-    async startSession(c, user, amr, extra) {
+    async startSession(c, user, amr, { method, signedUpAt }, extra) {
+      // Only a user whose first session this is gets the write, before the cookies: if it fails, nobody is
+      // signed in. The write decides, so two sign-ins at once send it once.
+      const firstSession = signedUpAt === 0 && (await users.markSignedUp(user.id));
       // A sign-in that was waiting for the authenticator app is over, whichever way this session came about.
       clearChallenge(c, secure);
       await issueSession(c, user, amr, extra);
-      return { ...user, amr };
+      const result = { ...user, amr };
+      if (firstSession) await this.emit('user.signed_up', { user: result, method });
+      return result;
     },
     async secondStep(c, user, amr, method, profile) {
       const methods = await this.methods(c);
@@ -249,7 +264,7 @@ export function createApp(config: MadauthConfig): Hono {
         await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, factors, ...(Object.keys(known).length ? { profile: known } : {}) });
         return { next, method, factors };
       }
-      const result = await this.startSession(c, toMadauthUser(user, profile), amr, { sv: user.sessionVersion });
+      const result = await this.startSession(c, toMadauthUser(user, profile), amr, { method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
       await this.emit('user.signed_in', { user: result, method });
       return { user: result };
     },
@@ -271,10 +286,10 @@ export function createApp(config: MadauthConfig): Hono {
       return isOn(method, configured, await this.methods(c));
     },
     async checkSignup(data) {
-      if (!this.webhook?.wants('signup.before')) return { ok: true };
-      const check = await this.webhook.call('signup.before', data, WEBHOOK_TIMEOUT_MS);
+      if (!this.webhook?.wants('user.signing_up')) return { ok: true };
+      const check = await this.webhook.call('user.signing_up', data, WEBHOOK_TIMEOUT_MS);
       if (!check.ok) {
-        console.error(`[madauth] Webhook "signup.before" failed: ${check.reason}`);
+        console.error(`[madauth] Webhook "user.signing_up" failed: ${check.reason}`);
         return { ok: false, reason: 'unavailable' };
       }
       const answer = check.body as { allow?: unknown; message?: unknown } | undefined;
@@ -443,9 +458,11 @@ export function createApp(config: MadauthConfig): Hono {
     }
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
-    await users.updateUser(user.id, { claims: Object.keys(claims).length ? JSON.stringify(claims) : null });
+    // Stored as JSON, and sent with the user as stored: the webhook sees what the next session sees.
+    const stored = Object.keys(claims).length ? JSON.stringify(claims) : null;
+    await users.updateUser(user.id, { claims: stored });
     const email = user.emailNormalized;
-    await ctx.emit('user.claims_changed', { userId: user.id, email, claims, by: caller.email });
+    await ctx.emit('user.claims_changed', { user: toMadauthUser({ ...user, claims: stored }), claims, by: caller.email });
     return c.json({ email, userId: user.id, claims });
   });
 
@@ -524,8 +541,11 @@ export function createApp(config: MadauthConfig): Hono {
     if (!isValidEmail(data.email)) return invalidEmail(c);
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
+    // The app of a user who signed up with it is how they sign in, not a second factor: without it, they sign up with the app again.
+    const app = await users.totpApp(user.id);
+    const secondFactor = !!app && !app.signsIn;
     const removed = await users.removeTotp(user.id);
-    if (removed) await ctx.emit('totp.disabled', { user: toMadauthUser(user), by: caller.email });
+    if (removed && secondFactor) await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'totp', by: caller.email });
     return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
   });
 
@@ -538,7 +558,7 @@ export function createApp(config: MadauthConfig): Hono {
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
     const removed = await users.removeSms(user.id);
-    if (removed) await ctx.emit('sms.disabled', { user: toMadauthUser(user), by: caller.email });
+    if (removed) await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'sms', by: caller.email });
     return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
   });
 

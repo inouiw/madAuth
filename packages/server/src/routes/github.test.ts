@@ -15,11 +15,11 @@ import {
   githubCallback,
   passwordApp,
   post,
-  signInWithGithub,
+  signInWithGitHub,
   signUpVerified,
   signingKey,
-  startGithub,
-  stubGithub,
+  startGitHub,
+  stubGitHub,
   testApp,
 } from '../test/helpers.js';
 import { decryptSecret, deriveTokenKey } from '../totp.js';
@@ -36,7 +36,7 @@ const session = (app: ReturnType<typeof testApp>, res: Response) => app.request(
 
 describe('GitHub sign-in', () => {
   it('O1: redirects to GitHub with the client id, the callback, the e-mail scope, a state and an S256 PKCE challenge', async () => {
-    const { res, location, cookie } = await startGithub(githubApp(), `${APP_ORIGIN}/page?x=1#old`);
+    const { res, location, cookie } = await startGitHub(githubApp(), `${APP_ORIGIN}/page?x=1#old`);
 
     expect(res.status).toBe(302);
     expect(location.origin + location.pathname).toBe('https://github.com/login/oauth/authorize');
@@ -53,20 +53,20 @@ describe('GitHub sign-in', () => {
   });
 
   it('O1: refuses a return_to outside ALLOWED_ORIGINS, and has no routes without GITHUB_CLIENT_ID', async () => {
-    expect((await startGithub(githubApp(), 'https://evil.example/')).res.status).toBe(400);
-    expect((await startGithub(testApp())).res.status).toBe(404);
+    expect((await startGitHub(githubApp(), 'https://evil.example/')).res.status).toBe(400);
+    expect((await startGitHub(testApp())).res.status).toBe(404);
     expect((await (await testApp().request('/auth/config')).json()).github).toBeNull();
     expect((await (await githubApp().request('/auth/config')).json()).github).toEqual({ secondFactor: 'none' });
   });
 
   it('O2: the callback needs the state cookie and the state GitHub sends back, and reports a refusal at GitHub', async () => {
     const app = githubApp();
-    stubGithub();
+    stubGitHub();
 
     expect((await app.request('/auth/github/callback?code=c&state=s')).status).toBe(400);
-    const mismatch = await githubCallback(app, await startGithub(app), 'code=c&state=forged');
-    const cancelled = await githubCallback(app, await startGithub(app), 'error=access_denied');
-    const other = await githubCallback(app, await startGithub(app), 'error=application_suspended');
+    const mismatch = await githubCallback(app, await startGitHub(app), 'code=c&state=forged');
+    const cancelled = await githubCallback(app, await startGitHub(app), 'error=access_denied');
+    const other = await githubCallback(app, await startGitHub(app), 'error=application_suspended');
 
     expect(mismatch.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=verification_failed&madauth_method=github`);
     expect(cancelled.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=cancelled&madauth_method=github`);
@@ -78,8 +78,8 @@ describe('GitHub sign-in', () => {
 
   it('O3: exchanges the code as the app, with the PKCE verifier, and fails when GitHub issues no token', async () => {
     const app = githubApp();
-    const github = stubGithub();
-    const started = await startGithub(app);
+    const github = stubGitHub();
+    const started = await startGitHub(app);
 
     const res = await githubCallback(app, started);
 
@@ -101,37 +101,53 @@ describe('GitHub sign-in', () => {
 
     // GitHub answers a bad code with HTTP 200 and an error: no token, no sign-in.
     vi.unstubAllGlobals();
-    stubGithub({ token: null });
-    const failed = await signInWithGithub(app);
+    stubGitHub({ token: null });
+    const failed = await signInWithGitHub(app);
     expect(failed.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=verification_failed&madauth_method=github`);
     expect(cookies(failed).madauth_session).toBeUndefined();
   });
 
+  it("O3: a GitHub that can't be reached, or an API that answers with an error, fails the sign-in and stores nothing", async () => {
+    const { app, store } = passwordApp({ github: GITHUB });
+    stubGitHub({ fail: true });
+    const unreachable = await signInWithGitHub(app);
+    expect(unreachable.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=verification_failed&madauth_method=github`);
+
+    vi.unstubAllGlobals();
+    stubGitHub({ apiStatus: 401 });
+    const refused = await signInWithGitHub(app);
+    expect(refused.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=verification_failed&madauth_method=github`);
+    expect(cookies(refused).madauth_session).toBeUndefined();
+    expect(await store.findMany('user', {})).toEqual([]);
+  });
+
   it('O4: only an address GitHub has verified counts: the primary one, else another verified one, else nobody signs in', async () => {
     const { app, store } = passwordApp({ github: GITHUB });
-    stubGithub({ emails: [{ email: 'ada@example.com', primary: true, verified: false }] });
-    const unverified = await signInWithGithub(app);
+    stubGitHub({ emails: [{ email: 'ada@example.com', primary: true, verified: false }] });
+    const unverified = await signInWithGitHub(app);
     expect(unverified.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=email_unverified&madauth_method=github`);
     expect(await store.findMany('user', {})).toEqual([]);
 
     vi.unstubAllGlobals();
-    stubGithub({
+    stubGitHub({
       user: { email: 'typed-in@example.com' },
       emails: [
         { email: 'ada@example.com', primary: true, verified: false },
+        // GitHub's stand-in for a private address is verified, but delivers nothing: never taken.
+        { email: '7001+ada@users.noreply.github.com', primary: false, verified: true },
         { email: 'ada@work.example', primary: false, verified: true },
       ],
     });
-    const res = await signInWithGithub(app);
+    const res = await signInWithGitHub(app);
     expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page`);
     expect((await (await session(app, res)).json()).user.email).toBe('ada@work.example');
   });
 
   it('O5: the first sign-in creates the user, verified, with the name and picture from GitHub, the token kept encrypted, and tells the webhook', async () => {
     const { app, hook, store } = passwordApp({ github: GITHUB });
-    stubGithub();
+    stubGitHub();
 
-    const res = await signInWithGithub(app, `${APP_ORIGIN}/page?x=1`);
+    const res = await signInWithGitHub(app, `${APP_ORIGIN}/page?x=1`);
 
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page?x=1`);
@@ -148,29 +164,31 @@ describe('GitHub sign-in', () => {
       picture: 'https://avatars.githubusercontent.com/u/7001',
       amr: ['github'],
     });
-    expect(hook.types()).toEqual(['signup.before', 'user.created', 'user.signed_in']);
+    // The sign-up is complete with the first session, so user.signed_up comes with it.
+    expect(hook.types()).toEqual(['user.signing_up', 'user.signed_up', 'user.signed_in']);
     expect(hook.calls[0].data).toEqual({ email: 'ada@example.com', name: 'Ada Lovelace', method: 'github' });
-    expect(hook.calls[1].data).toEqual({ user: { id: user.id, email: 'ada@example.com', name: 'Ada Lovelace' }, method: 'github' });
-    expect(hook.calls[2].data).toEqual({ user: { id: user.id, email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://avatars.githubusercontent.com/u/7001' }, method: 'github' });
+    const signedIn = { user: { id: user.id, email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://avatars.githubusercontent.com/u/7001' }, method: 'github' };
+    expect(hook.calls[1].data).toEqual(signedIn);
+    expect(hook.calls[2].data).toEqual(signedIn);
   });
 
   it('O5: an account without a display name is named by its login', async () => {
     const app = githubApp();
-    stubGithub({ user: { name: null } });
+    stubGitHub({ user: { name: null } });
 
-    const res = await signInWithGithub(app);
+    const res = await signInWithGitHub(app);
 
     expect((await (await session(app, res)).json()).user).toMatchObject({ name: 'ada' });
   });
 
   it('O6: a returning GitHub account is known by its id, even when its address and name changed; the token is the latest', async () => {
     const { app, store } = passwordApp({ github: GITHUB });
-    stubGithub();
-    const first = (await (await session(app, await signInWithGithub(app))).json()).user;
+    stubGitHub();
+    const first = (await (await session(app, await signInWithGitHub(app))).json()).user;
 
     vi.unstubAllGlobals();
-    stubGithub({ token: 'gho_second', user: { login: 'ada-king', name: 'Ada King' }, emails: [{ email: 'ada@newmail.example', primary: true, verified: true }] });
-    const again = await signInWithGithub(app);
+    stubGitHub({ token: 'gho_second', user: { login: 'ada-king', name: 'Ada King' }, emails: [{ email: 'ada@newmail.example', primary: true, verified: true }] });
+    const again = await signInWithGitHub(app);
 
     // The same user; their own address and name stay, the account notes GitHub's new address.
     expect((await (await session(app, again)).json()).user).toMatchObject({ id: first.id, email: 'ada@example.com', name: 'Ada Lovelace' });
@@ -184,9 +202,9 @@ describe('GitHub sign-in', () => {
     const { app, hook, store } = passwordApp({ github: GITHUB });
     await signUpVerified(app, hook, 'Ada@Example.com');
     const [password] = await store.findMany('user', {});
-    stubGithub();
+    stubGitHub();
 
-    const refused = await signInWithGithub(app);
+    const refused = await signInWithGitHub(app);
 
     // Whoever controls the GitHub account must not get past her password (and authenticator app).
     expect(refused.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=other_method&madauth_method=github`);
@@ -201,47 +219,48 @@ describe('GitHub sign-in', () => {
     const [unconfirmed] = await store.findMany('user', {});
     expect(unconfirmed.emailVerified).toBe(false);
     hook.calls.length = 0;
-    stubGithub();
+    stubGitHub();
 
-    const res = await signInWithGithub(app);
+    const res = await signInWithGitHub(app);
 
     expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page`);
     expect((await (await session(app, res)).json()).user).toMatchObject({ id: unconfirmed.id, name: 'Ada', amr: ['github'] });
     expect(await store.findMany('user', {})).toHaveLength(1);
     expect(await store.findOne('user', { id: unconfirmed.id })).toMatchObject({ emailVerified: true });
     expect((await store.findMany('account', {})).map((a) => a.key)).toEqual(['github:7001']);
-    expect(hook.types()).toEqual(['user.signed_in']);
+    // The takeover finishes the sign-up: it is complete with this first session.
+    expect(hook.types()).toEqual(['user.signed_up', 'user.signed_in']);
   });
 
   it('O9: the sign-up check can refuse a GitHub sign-up, and GitHub sign-in works without a webhook', async () => {
     const { app, hook, store } = passwordApp({ github: GITHUB });
-    hook.respond = (call) => (call.type === 'signup.before' ? { allow: false, message: 'No' } : undefined);
-    stubGithub();
+    hook.respond = (call) => (call.type === 'user.signing_up' ? { allow: false, message: 'No' } : undefined);
+    stubGitHub();
 
-    const res = await signInWithGithub(app);
+    const res = await signInWithGitHub(app);
 
     expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=signup_rejected&madauth_method=github`);
     expect(cookies(res).madauth_session).toBeUndefined();
     expect(await store.findMany('user', {})).toEqual([]);
 
-    expect((await signInWithGithub(githubApp())).headers.get('location')).toBe(`${APP_ORIGIN}/page`);
+    expect((await signInWithGitHub(githubApp())).headers.get('location')).toBe(`${APP_ORIGIN}/page`);
   });
 
   it('O10: an admin switches GitHub off and on, and gives it a policy for the second factor', async () => {
     const { app, store } = passwordApp({ github: GITHUB });
-    stubGithub();
+    stubGitHub();
     const config = async () => (await (await app.request('/auth/config')).json()).github;
-    const started = await startGithub(app);
+    const started = await startGitHub(app);
 
     await setMethods(store, { google: { secondFactor: 'none' }, password: { secondFactor: 'none' } });
     expect(await config()).toBeNull();
-    expect((await startGithub(app)).res.status).toBe(403);
-    expect(await (await startGithub(app)).res.json()).toEqual({ error: 'method_disabled', message: 'GitHub sign-in is switched off.' });
+    expect((await startGitHub(app)).res.status).toBe(403);
+    expect(await (await startGitHub(app)).res.json()).toEqual({ error: 'method_disabled', message: 'GitHub sign-in is switched off.' });
     expect((await githubCallback(app, started)).status).toBe(403);
 
     await setMethods(store, { github: { secondFactor: 'required' }, password: { secondFactor: 'none' } });
     expect(await config()).toEqual({ secondFactor: 'required' });
-    const res = await signInWithGithub(app);
+    const res = await signInWithGitHub(app);
     // Nobody has an app yet: the sign-in goes on with its setup, and the session waits for it.
     expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=totp-setup&madauth_method=github`);
     expect(cookies(res).madauth_session?.value ?? '').toBe('');
@@ -250,8 +269,8 @@ describe('GitHub sign-in', () => {
 
   it('O11: a GitHub user can be deleted, and GitHub sign-in works next to Google, password and the e-mail link on one server', async () => {
     const { app, hook, store } = passwordApp({ github: GITHUB });
-    stubGithub();
-    const res = await signInWithGithub(app);
+    stubGitHub();
+    const res = await signInWithGitHub(app);
     await signUpVerified(app, hook);
     expect(await store.findMany('user', {})).toHaveLength(2);
 

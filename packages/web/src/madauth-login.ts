@@ -1,4 +1,4 @@
-import { LitElement, css, html, type TemplateResult } from 'lit';
+import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import {
   Madauth,
   currentLocale,
@@ -72,6 +72,31 @@ const closeIcon = html`
     <path d="m6 6 12 12" />
   </svg>
 `;
+
+/** The eye button in a password field shows one of the two, by its aria-pressed. */
+const eyeIcons = html`
+  <svg class="icon eye" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+  <svg class="icon eye-off" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M10.73 5.08a10.74 10.74 0 0 1 11.2 6.57 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-1.44 2.49" />
+    <path d="M14.08 14.16a3 3 0 0 1-4.24-4.24" />
+    <path d="M17.48 17.5a10.75 10.75 0 0 1-15.42-5.15 1 1 0 0 1 0-.7 10.75 10.75 0 0 1 4.45-5.14" />
+    <path d="m2 2 20 20" />
+  </svg>
+`;
+
+/** Shows or hides the password of an eye button's field (the button's previous sibling). */
+function setPasswordShown(button: Element, shown: boolean): void {
+  (button.previousElementSibling as HTMLInputElement).type = shown ? 'text' : 'password';
+  button.setAttribute('aria-pressed', String(shown));
+}
+
+/** Hides every shown password under `root`. */
+function hidePasswords(root: ParentNode): void {
+  for (const button of root.querySelectorAll('.reveal[aria-pressed="true"]')) setPasswordShown(button, false);
+}
 
 const chevronIcon = html`
   <svg class="icon chevron" viewBox="0 0 24 24" aria-hidden="true">
@@ -337,8 +362,17 @@ export class MadauthLogin extends LitElement {
     this.strings = stringsFor(currentLocale());
   }
 
-  override updated(): void {
+  override updated(changed: PropertyValues): void {
     this.syncButtons();
+    // The button that led here is gone with the old view, which would leave the focus on the page behind the
+    // dialog. A view that focuses a field of its own (e.g. the password after signIn({ email })) does so later.
+    if (changed.has('view') && changed.get('view') !== undefined && this.dialog.open) this.focusView();
+  }
+
+  /** Focuses the view's first field, or its heading when it has none, so keyboard and screen reader users are on it. */
+  private focusView(): void {
+    const field = this.renderRoot.querySelector<HTMLElement>('form input:not([hidden])');
+    (field ?? this.renderRoot.querySelector<HTMLElement>('h2'))?.focus();
   }
 
   /** Renders the providers' buttons into their slots while the sign-in view is shown, and removes them otherwise. */
@@ -359,6 +393,8 @@ export class MadauthLogin extends LitElement {
   }
 
   private onDialogClose(): void {
+    // The sign-in view's fields stay for the next opening: a shown password must not.
+    hidePasswords(this.renderRoot);
     for (const button of this.buttons.values()) button.remove();
     this.buttons.clear();
     // Closing the recovery codes counts as having seen them: the app is set up either way.
@@ -502,6 +538,8 @@ export class MadauthLogin extends LitElement {
 
   private fields(e: Event): Record<string, string> {
     e.preventDefault();
+    // Sent as a password field, so password managers offer to save it.
+    hidePasswords(e.target as HTMLFormElement);
     const data = new FormData(e.target as HTMLFormElement);
     return Object.fromEntries([...data.entries()].map(([k, v]) => [k, String(v)]));
   }
@@ -647,7 +685,9 @@ export class MadauthLogin extends LitElement {
     if (error.code === 'invalid_credentials' && error.method === 'totp') return s.totpInvalid;
     if (error.code === 'other_method' && error.methods?.length) {
       const names: Partial<Record<string, string>> = s.methodNames;
-      return s.otherMethod(error.methods.map((method) => names[method] ?? method).join(s.orList));
+      // The provider that was refused, when a provider's sign-in got the error.
+      const instead = error.method === 'google' || error.method === 'github' ? s.methodNames[error.method] : undefined;
+      return s.otherMethod(error.methods.map((method) => names[method] ?? method).join(s.orList), instead);
     }
     const texts: Partial<Record<MadauthErrorCode, string>> = s.errors;
     return texts[error.code] ?? s.errorFallback;
@@ -659,7 +699,7 @@ export class MadauthLogin extends LitElement {
       <dialog part="dialog" lang=${languageOf(currentLocale())} @close=${this.onDialogClose}>
         <div class="panel">
           <header>
-            <h2>${this.viewTitle}</h2>
+            <h2 tabindex="-1">${this.viewTitle}</h2>
             <button class="close" type="button" aria-label=${s.close} @click=${() => this.dialog.close()}>
               ${closeIcon}
             </button>
@@ -731,15 +771,21 @@ export class MadauthLogin extends LitElement {
     }
   }
 
-  private renderSignInView() {
-    // Once madAuth is ready, only the methods whose provider was passed to Madauth.initialize (and not left out
-    // because the server doesn't offer them) are listed, all at once. The authenticator app is listed only when
-    // it signs in on its own here.
-    const offered = this.usable
+  /**
+   * Once madAuth is ready, only the methods whose provider was passed to Madauth.initialize (and not left out
+   * because the server doesn't offer them) are listed, all at once. The authenticator app is listed only when
+   * it signs in on its own here.
+   */
+  private get offered(): LoginMethod[] {
+    return this.usable
       ? loginMethods.filter(
           (m) => providerFor(m.id) && (m.id !== 'totp' || this.totpAvailable) && (m.id !== 'email-link' || this.emailLinkAvailable),
         )
       : [];
+  }
+
+  private renderSignInView() {
+    const offered = this.offered;
     // The providers with a button of their own (Google, GitHub) come first, in the order of loginMethods.
     const branded = offered.filter((m) => !!providerFor(m.id)?.renderButton);
     const password = offered.find((m) => m.id === 'password');
@@ -771,11 +817,8 @@ export class MadauthLogin extends LitElement {
     const s = this.strings;
     return html`
       <form part="form" class="signin" @submit=${(e: Event) => this.onSignIn(e)}>
-        ${this.emailField('email')}
-        <div class="field">
-          <label for="password">${s.password}</label>
-          <input part="input" id="password" name="password" type="password" autocomplete="current-password" />
-        </div>
+        ${this.emailField({ withPassword: true })}
+        ${this.passwordField('password', s.password)}
         <button part="method" class="submit" type="submit" data-method=${m.id} ?disabled=${this.busy}>
           <span class="label">${s.signIn}</span>
         </button>
@@ -786,9 +829,7 @@ export class MadauthLogin extends LitElement {
               <button class="link" part="link" type="button" data-action="forgot" @click=${() => this.goTo('forgot')}>
                 ${s.forgotPassword}
               </button>
-              <button class="link" part="link" type="button" data-action="signup" @click=${() => this.startSignUp('password')}>
-                ${s.createAccount}
-              </button>
+              ${this.questionLink(s.noAccount, 'signup', () => this.startSignUp('password'))}
             </p>
           `
         : null}
@@ -804,30 +845,24 @@ export class MadauthLogin extends LitElement {
   private renderSignUp() {
     const s = this.strings;
     const withApp = this.primary === 'totp';
-    const minLength = Madauth.password.policy?.minLength;
+    // A provider (Google, GitHub) signs up a new user as well, so its button is offered here too: this form
+    // makes an account with a password (or the app) only.
+    const branded = this.offered.filter((m) => !!providerFor(m.id)?.renderButton);
     return html`
+      ${branded.length ? html`<div class="buttons">${branded.map((m) => this.renderButtonSlot(m))}</div><div class="divider">${s.or}</div>` : null}
       ${withApp ? html`<p class="hint">${s.totpSignUpHint}</p>` : null}
       <form part="form" class="signup" @submit=${this.onSignUp}>
+        ${this.emailField({ withPassword: !withApp })}
+        ${withApp ? null : this.passwordField('new-password', s.password)}
         <div class="field">
           <label for="name">${s.name} <span class="optional">${s.optional}</span></label>
           <input part="input" id="name" name="name" type="text" autocomplete="name" />
         </div>
-        ${this.emailField('email')}
-        ${withApp
-          ? null
-          : html`
-              <div class="field">
-                <label for="new-password">${s.password}</label>
-                <input part="input" id="new-password" name="password" type="password" autocomplete="new-password" @input=${this.onNewPassword} />
-                ${minLength ? html`<p class="hint">${s.minLength(minLength)}</p>` : null}
-                ${this.renderStrength()}
-              </div>
-            `}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
           <span class="label">${s.createAccount}</span>
         </button>
       </form>
-      ${this.backLink(s.haveAccount)}
+      <p class="links">${this.questionLink(s.haveAccount, 'back', () => this.goTo('signin'))}</p>
     `;
   }
 
@@ -876,7 +911,7 @@ export class MadauthLogin extends LitElement {
     const s = this.strings;
     return html`
       <form part="form" class="totp" @submit=${this.onTotpSignIn}>
-        ${this.emailField('email')}
+        ${this.emailField()}
         ${this.codeField()}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
           <span class="label">${s.signIn}</span>
@@ -885,7 +920,7 @@ export class MadauthLogin extends LitElement {
       <p class="links">
         ${this.toggleRecoveryLink()}
         ${Madauth.totp.policy?.signUp
-          ? html`<button class="link" part="link" type="button" data-action="signup" @click=${() => this.startSignUp('totp')}>${s.createAccount}</button>`
+          ? this.questionLink(s.noAccount, 'signup', () => this.startSignUp('totp'))
           : null}
         <button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${s.backToSignIn}</button>
       </p>
@@ -899,7 +934,7 @@ export class MadauthLogin extends LitElement {
     if (result) this.finish('totp', result);
   }
 
-  /** The second step after a password or Google sign-in. */
+  /** The second step after a password, Google, GitHub or e-mail link sign-in. */
   private renderTotpCode() {
     const s = this.strings;
     return html`
@@ -946,7 +981,6 @@ export class MadauthLogin extends LitElement {
     return html`
       <p class="lead">${this.setupForSignIn ? s.totpSetup.requiredLead : s.totpSetup.lead}</p>
       ${!this.setupForSignIn && asks ? html`<p class="hint">${s.totpSetup.effects.secondFactor(asks)}</p>` : null}
-      ${!this.setupForSignIn && policy?.signIn ? html`<p class="hint">${s.totpSetup.effects.standalone}</p>` : null}
       ${setup
         ? html`
             <svg part="qr" class="qr" viewBox=${qrViewBox(setup.qr.size)} role="img" aria-label=${s.totpSetup.qrLabel} shape-rendering="crispEdges">
@@ -1239,8 +1273,9 @@ export class MadauthLogin extends LitElement {
     const s = this.strings;
     return html`
       <p class="lead">${s.emailLink.lead}</p>
+      <p class="hint">${s.emailLink.codeHint}</p>
       <form part="form" class="email-link" @submit=${this.onEmailLink}>
-        ${this.emailField('email')}
+        ${this.emailField()}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
           <span class="label">${s.emailLink.send}</span>
         </button>
@@ -1270,7 +1305,7 @@ export class MadauthLogin extends LitElement {
       <p class="lead">${s.forgotLead}</p>
       ${providerNames.length ? html`<p class="hint">${s.forgotProviderHint(providerNames.join(s.orList))}</p>` : null}
       <form part="form" class="forgot" @submit=${this.onForgot}>
-        ${this.emailField('email')}
+        ${this.emailField()}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
           <span class="label">${s.sendEmail}</span>
         </button>
@@ -1303,18 +1338,12 @@ export class MadauthLogin extends LitElement {
 
   private renderReset() {
     const s = this.strings;
-    const minLength = Madauth.password.policy?.minLength;
     return html`
       <form part="form" class="reset" @submit=${this.onReset}>
         ${this.email
           ? html`<input type="email" name="username" autocomplete="username" .value=${this.email} hidden />`
           : null}
-        <div class="field">
-          <label for="new-password">${s.newPassword}</label>
-          <input part="input" id="new-password" name="password" type="password" autocomplete="new-password" @input=${this.onNewPassword} />
-          ${minLength ? html`<p class="hint">${s.minLength(minLength)}</p>` : null}
-          ${this.renderStrength()}
-        </div>
+        ${this.passwordField('new-password', s.newPassword)}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
           <span class="label">${s.setPassword}</span>
         </button>
@@ -1335,24 +1364,63 @@ export class MadauthLogin extends LitElement {
         <div class="bars" role="meter" aria-label=${s.label} aria-valuemin="0" aria-valuemax="4" aria-valuenow=${score} aria-valuetext=${text}>
           ${[1, 2, 3, 4].map((bar) => html`<span class=${bar <= Math.max(score, 1) ? 'on' : ''}></span>`)}
         </div>
-        <span class="level" aria-hidden="true">${text}</span>
+        <span class="level" id="new-password-strength" aria-hidden="true">${text}</span>
       </div>
     `;
   }
 
-  private emailField(id: string) {
+  private emailField({ withPassword = false } = {}) {
+    // Next to a password, `username`: password managers save and fill the address together with it. Without
+    // one, `email`: on a `username` field the iCloud Passwords extension for Chrome opens its panel, with
+    // nothing to fill there.
     return html`
       <div class="field">
-        <label for=${id}>${this.strings.email}</label>
-        <input part="input" id=${id} name="email" type="email" autocomplete="email" .value=${this.email} />
+        <label for="email">${this.strings.email}</label>
+        <input part="input" id="email" name="email" type="email" autocomplete=${withPassword ? 'username' : 'email'} .value=${this.email} />
       </div>
     `;
   }
 
-  private backLink(label = this.strings.backToSignIn) {
+  /**
+   * A password field with an eye button that shows what was typed. A new password (`new-password`) gets the
+   * policy's minimum length and the strength meter under it, both read out with the field.
+   */
+  private passwordField(id: 'password' | 'new-password', label: string) {
+    const isNew = id === 'new-password';
+    const minLength = isNew ? Madauth.password.policy?.minLength : undefined;
+    const describedBy = [minLength ? 'new-password-hint' : '', isNew && this.passwordScore !== null ? 'new-password-strength' : '']
+      .filter(Boolean)
+      .join(' ');
+    return html`
+      <div class="field">
+        <label for=${id}>${label}</label>
+        <div class="password">
+          <input part="input" id=${id} name="password" type="password" autocomplete=${isNew ? 'new-password' : 'current-password'}
+            aria-describedby=${describedBy || nothing} @input=${isNew ? this.onNewPassword : undefined} />
+          <button class="reveal" type="button" aria-label=${this.strings.showPassword} aria-pressed="false" aria-controls=${id}
+            @click=${this.togglePassword}>${eyeIcons}</button>
+        </div>
+        ${minLength ? html`<p class="hint" id="new-password-hint">${this.strings.minLength(minLength)}</p>` : null}
+        ${isNew ? this.renderStrength() : null}
+      </div>
+    `;
+  }
+
+  /** The eye button: shows or hides the password in the field before it. */
+  private togglePassword(e: Event): void {
+    const button = e.currentTarget as HTMLButtonElement;
+    setPasswordShown(button, button.getAttribute('aria-pressed') !== 'true');
+  }
+
+  /** A link that asks a question and names the action, e.g. "No account? Create one": only the action is underlined. */
+  private questionLink(text: { question: string; action: string }, action: string, onClick: () => void) {
+    return html`<button class="link question" part="link" type="button" data-action=${action} @click=${onClick}>${text.question} <span>${text.action}</span></button>`;
+  }
+
+  private backLink() {
     return html`
       <p class="links">
-        <button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${label}</button>
+        <button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${this.strings.backToSignIn}</button>
       </p>
     `;
   }
@@ -1455,6 +1523,11 @@ export class MadauthLogin extends LitElement {
       padding-right: 32px;
     }
 
+    /* Focused only to move the focus into a new view (see focusView), so it shows no ring. */
+    h2:focus {
+      outline: none;
+    }
+
     h2 {
       margin: 0;
       font-size: 1.375rem;
@@ -1474,10 +1547,11 @@ export class MadauthLogin extends LitElement {
       stroke-linejoin: round;
     }
 
+    /* Centered on the heading's line, with the icon at the panel's right padding. */
     .close {
       position: absolute;
-      top: 8px;
-      right: 8px;
+      top: 24px;
+      right: 20px;
       display: grid;
       place-items: center;
       width: 44px;
@@ -1580,6 +1654,43 @@ export class MadauthLogin extends LitElement {
     input:focus-visible {
       outline: 2px solid var(--_text);
       outline-offset: -1px;
+    }
+
+    /* A password field and its eye button, which sits inside the field on the right. */
+    .password {
+      position: relative;
+    }
+
+    .password input {
+      padding-right: var(--_control-height);
+    }
+
+    .reveal {
+      position: absolute;
+      top: 0;
+      right: 0;
+      display: grid;
+      place-items: center;
+      width: var(--_control-height);
+      height: var(--_control-height);
+      padding: 0;
+      border: none;
+      border-radius: var(--_control-radius);
+      color: var(--_muted);
+      background: none;
+    }
+
+    .reveal:hover {
+      color: var(--_text);
+    }
+
+    .reveal:focus-visible {
+      outline-offset: -4px;
+    }
+
+    .reveal[aria-pressed='true'] .eye,
+    .reveal:not([aria-pressed='true']) .eye-off {
+      display: none;
     }
 
     .submit {
@@ -1735,12 +1846,15 @@ export class MadauthLogin extends LitElement {
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
-      gap: 8px 16px;
+      /* 12px between wrapped rows: the links' tap targets reach 6px beyond their text (see .link). */
+      gap: 12px 16px;
       margin: -4px 0 0;
     }
 
+    /* The padding makes a 30px tap target; the negative margin keeps the layout as without it. */
     .link {
-      padding: 0;
+      margin: -6px 0;
+      padding: 6px 0;
       border: none;
       background: none;
       font-size: 0.8125rem;
@@ -1754,9 +1868,18 @@ export class MadauthLogin extends LitElement {
       color: var(--_text);
     }
 
+    /* "No account? Create one": only the action is underlined. */
+    .link.question {
+      text-decoration: none;
+    }
+
+    .link.question span {
+      text-decoration: underline;
+    }
+
     .error .link {
       display: block;
-      margin-top: 4px;
+      margin: -2px 0 -6px;
       color: inherit;
     }
 
@@ -1799,6 +1922,10 @@ export class MadauthLogin extends LitElement {
     @media (max-width: 480px) {
       :host {
         --_control-height: 48px;
+      }
+      .close {
+        top: 16px;
+        right: 12px;
       }
       .panel {
         padding: 24px;

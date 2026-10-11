@@ -52,8 +52,9 @@ export function emailRoutes(app: Hono, ctx: AppContext, users: Users, webhook: W
     if (!user.emailVerified) await users.dropUnprovenAccounts(user.id, method === 'password' ? 'password' : undefined);
     // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.
     await users.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
-    const verified = { ...user, emailVerified: true, wrongCodes: 0 };
-    await ctx.emit('email.verified', { user: toMadauthUser(verified), via });
+    // Confirming finishes a sign-up: one from before `user.signed_up` existed gets it too.
+    const verified = { ...(user.emailVerified ? user : await users.reopenSignUp(user)), emailVerified: true, wrongCodes: 0 };
+    await ctx.emit('user.email_verified', { user: toMadauthUser(verified), method, via });
     // A password user is signed in (or asked for their code); a sign-up with the authenticator app sets it up now.
     return signInAnswer(c, await ctx.secondStep(c, verified, method === 'password' ? ['pwd'] : [], method));
   });

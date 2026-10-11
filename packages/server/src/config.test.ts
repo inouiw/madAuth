@@ -78,7 +78,7 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined })).rejects.toThrow(/No sign-in method.*GOOGLE_CLIENT_ID.*WEBHOOK_URL/s);
   });
 
-  const hook = { WEBHOOK_URL, WEBHOOK_SECRET, WEBHOOK_EVENTS: 'email.verify,email.reset' };
+  const hook = { WEBHOOK_URL, WEBHOOK_SECRET, WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset' };
 
   it('A14: GitHub sign-in takes the client ID and the secret of the OAuth App together, and counts as a sign-in method', async () => {
     const github = { GITHUB_CLIENT_ID: 'Iv1.abc', GITHUB_CLIENT_SECRET: 'shh' };
@@ -89,8 +89,9 @@ describe('loadConfig', () => {
     expect(config.google).toBeUndefined();
     expect((await loadConfig({ ...env, ...github })).github).toEqual({ clientId: 'Iv1.abc', clientSecret: 'shh' });
     expect((await loadConfig(env)).github).toBeUndefined();
-    await expect(loadConfig({ ...env, GITHUB_CLIENT_ID: 'Iv1.abc' })).rejects.toThrow(/GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET go together.*GITHUB_CLIENT_SECRET is missing/);
-    await expect(loadConfig({ ...env, GITHUB_CLIENT_SECRET: 'shh' })).rejects.toThrow(/GITHUB_CLIENT_ID is missing/);
+    await expect(loadConfig({ ...env, GITHUB_CLIENT_ID: 'Iv1.abc' })).rejects.toThrow(/GITHUB_CLIENT_ID needs GITHUB_CLIENT_SECRET/);
+    // A secret alone is ignored, like Google's: a secrets store may hold one for a server that has GitHub off.
+    expect((await loadConfig({ ...env, GITHUB_CLIENT_SECRET: 'shh' })).github).toBeUndefined();
     await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined })).rejects.toThrow(/No sign-in method.*GITHUB_CLIENT_ID/s);
   });
 
@@ -99,7 +100,7 @@ describe('loadConfig', () => {
 
     expect(config.google).toBeUndefined();
     expect(config.password).toEqual({});
-    expect(config.webhook).toEqual({ url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.verify', 'email.reset']) });
+    expect(config.webhook).toEqual({ url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.send_verification', 'email.send_password_reset']) });
   });
 
   it('A14: names what is missing or wrong for e-mail & password sign-in', async () => {
@@ -137,9 +138,9 @@ describe('loadConfig', () => {
   });
 
   it('K6: WEBHOOK_EVENTS lists the types that are sent and rejects unknown ones', async () => {
-    const config = await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.verified, user.created' });
+    const config = await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'user.email_verified, user.signed_up' });
 
-    expect(config.webhook?.events).toEqual(new Set(['email.verified', 'user.created']));
+    expect(config.webhook?.events).toEqual(new Set(['user.email_verified', 'user.signed_up']));
     await expect(loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'user.renamed' })).rejects.toThrow(/unknown type user.renamed/);
   });
 
@@ -149,31 +150,51 @@ describe('loadConfig', () => {
     const error = await loadConfig(withDb).catch((e: Error) => e);
 
     expect(error).toBeInstanceOf(ConfigError);
-    expect((error as Error).message).toContain('\n\nWEBHOOK_EVENTS=email.verify,email.reset,email.signin,email.already_registered,email.no_password\n\n');
+    expect((error as Error).message).toContain('\n\nWEBHOOK_EVENTS=email.send_verification,email.send_password_reset,email.send_signin_link,email.send_already_registered,email.send_password_reset_no_password\n\n');
     await expect(loadConfig({ ...withDb, WEBHOOK_EVENTS: ' , ' })).rejects.toThrow(/WEBHOOK_EVENTS is not set/);
     // Without e-mail & password sign-in no e-mail type is needed, but the list still is.
     await expect(loadConfig({ ...env, WEBHOOK_URL, WEBHOOK_SECRET })).rejects.toThrow(/WEBHOOK_EVENTS is not set.*WEBHOOK_EVENTS=user.signed_in/s);
   });
 
-  it('K6: e-mail & password sign-in is on exactly when email.verify and email.reset are among the events', async () => {
-    expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.verify,user.created' })).password).toBeUndefined();
-    expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.reset,email.verify' })).password).toEqual({});
+  it('K6: e-mail & password sign-in is on exactly when email.send_verification and email.send_password_reset are among the events', async () => {
+    expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.send_verification,user.signed_up' })).password).toBeUndefined();
+    expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.send_password_reset,email.send_verification' })).password).toEqual({});
     // A receiver that only wants events, on a Google-only server.
     expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'user.signed_in' })).password).toBeUndefined();
     await expect(loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, WEBHOOK_EVENTS: 'user.signed_in' })).rejects.toThrow(/No sign-in method/);
   });
 
-  it('K6: the e-mail link is configured exactly when email.signin is among the events, and counts as a way to create users', async () => {
-    const linkOnly = await loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, WEBHOOK_EVENTS: 'email.signin' });
+  it('K6: the e-mail link is configured exactly when email.send_signin_link is among the events, and counts as a way to create users', async () => {
+    const linkOnly = await loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, WEBHOOK_EVENTS: 'email.send_signin_link' });
     expect(linkOnly.password).toBeUndefined();
     expect(methodConfig(linkOnly)).toEqual({ google: undefined, password: undefined, emailVerification: false, emailLink: true, sms: false });
-    expect(methodConfig(await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.verify,email.reset' }))).toMatchObject({ emailLink: false });
+    expect(methodConfig(await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset' }))).toMatchObject({ emailLink: false });
   });
 
   it('K6: names the new name of a type that was renamed', async () => {
-    await expect(loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.verify,password.reset' })).rejects.toThrow(
-      /unknown type password.reset. password.reset is now email.password_reset/,
+    await expect(loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.send_verification,password.reset' })).rejects.toThrow(
+      /unknown type password.reset. password.reset is now user.password_reset/,
     );
+    // The names of madAuth 0.5: each says what it is now, and user.created what replaces it.
+    const old = 'email.verify,email.reset,email.signin,email.already_registered,email.no_password,sms.code,signup.before,user.created,email.verified,email.password_reset,totp.enabled,totp.disabled,sms.enabled,sms.disabled,totp.recovery_code_used';
+    const message = String(await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: old }).catch((e: Error) => e.message));
+    for (const hint of [
+      'email.verify is now email.send_verification',
+      'email.reset is now email.send_password_reset',
+      'email.signin is now email.send_signin_link',
+      'email.already_registered is now email.send_already_registered',
+      'email.no_password is now email.send_password_reset_no_password',
+      'sms.code is now sms.send_code',
+      'signup.before is now user.signing_up',
+      'user.created is gone: user.signed_up tells when a user can sign in',
+      'email.verified is now user.email_verified',
+      'email.password_reset is now user.password_reset',
+      'totp.enabled is now user.second_factor_enabled (with method "totp")',
+      'sms.disabled is now user.second_factor_disabled (with method "sms")',
+      'totp.recovery_code_used is now user.recovery_code_used',
+    ]) {
+      expect(message).toContain(hint);
+    }
   });
 
   it('SESSION_RENEWAL_TTL is 30 days by default and never shorter than SESSION_TTL', async () => {

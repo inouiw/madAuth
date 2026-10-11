@@ -7,6 +7,6 @@
     "githubClientId": "",
     "secretsPath": "/madauth",
     "webhookUrl": "",
-    "webhookEvents": "email.verify,email.reset,email.already_registered"
+    "webhookEvents": "email.send_verification,email.send_password_reset,email.send_already_registered"
   }
 }

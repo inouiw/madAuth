@@ -17,7 +17,7 @@ Code: `sendLinkEmail` in [`packages/server/src/routes/emails.ts`](../packages/se
 Asking for a link always answers `202`, whether the address is new, has a link account, or signs in another way:
 
 - A new address is signed up on first use (see below) and gets the link.
-- An address that signs in another way, e.g. with a password or with Google, gets the `email.already_registered` e-mail instead, which says how it signs in. Nothing is revealed to the person who asked. This needs `email.already_registered` in `WEBHOOK_EVENTS`; without it no e-mail is sent, and the answer comes faster for such an address.
+- An address that signs in another way, e.g. with a password or with Google, gets the `email.send_already_registered` e-mail instead, which says how it signs in. Nothing is revealed to the person who asked. This needs `email.send_already_registered` in `WEBHOOK_EVENTS`; without it no e-mail is sent, and the answer comes faster for such an address.
 - A wrong code answers `code_invalid` for any address, a used or expired link `link_invalid`.
 
 Two things are still visible: `codes_locked` after ten wrong codes only happens for existing accounts, and when the operator's sign-up check refuses an address (`403 signup_rejected`), that address has no link account yet. The check only runs for addresses that are not link users, because it is a sign-up check, not a sign-in check: a user who signed up before is not asked again.
@@ -26,7 +26,7 @@ Code: `POST /auth/email-link/send` in [`packages/server/src/routes/email-link.ts
 
 ## Sign-up on first use
 
-An address nobody has is signed up by its first link: the user is created unconfirmed, with an account of the `email-link` method and no name, and `user.created` is sent. The operator's sign-up check (`signup.before`, `method: "email-link"`) runs before anything is stored and fails closed. The address counts as confirmed once the link or the code is used (`email.verified`); until then it looks like any unfinished sign-up, and another method can take it over: a sign-up with a password or with the authenticator app for the address, or a Google sign-in with it, drops the link account, so the link stops working (`link_invalid`) and the address signs in with the method that proved it.
+An address nobody has is signed up by its first link: the user is created unconfirmed, with an account of the `email-link` method and no name; `user.signed_up` is sent at the first session, once the link is used. The operator's sign-up check (`user.signing_up`, `method: "email-link"`) runs before anything is stored and fails closed. The address counts as confirmed once the link or the code is used (`user.email_verified`); until then it looks like any unfinished sign-up, and another method can take it over: a sign-up with a password or with the authenticator app for the address, or a Google sign-in with it, drops the link account, so the link stops working (`link_invalid`) and the address signs in with the method that proved it.
 
 A sign-up with a password that nobody confirmed is taken over the other way round, as with Google and the authenticator app: the first link drops the unproven password. Until the address is proven, the latest sign-up counts, as between two password sign-ups: a password sign-up after the link drops the link account again, and the link stops working. Whoever proves the address first, with the e-mail of their sign-up, is the one it ends up with.
 
@@ -34,7 +34,7 @@ Code: `POST /auth/email-link/send` and `verify` in [`email-link.ts`](../packages
 
 ## A method signs in only users who have it
 
-A link never signs into an account that signs in with a password, Google, GitHub or the authenticator app alone: such a user gets the "you already have an account" e-mail. Otherwise a link would turn every password account into a passwordless one, and the authenticator app a user set up would count for nothing when they are signed in by e-mail. The other way round, a password sign-up or a Google or GitHub sign-in with a link user's address is refused the same way (`email.already_registered`, `403 other_method`), and "Forgot password?" tells them they have no password (`email.no_password`).
+A link never signs into an account that signs in with a password, Google, GitHub or the authenticator app alone: such a user gets the "you already have an account" e-mail. Otherwise a link would turn every password account into a passwordless one, and the authenticator app a user set up would count for nothing when they are signed in by e-mail. The other way round, a password sign-up or a Google or GitHub sign-in with a link user's address is refused the same way (`email.send_already_registered`, `403 other_method`), and "Forgot password?" tells them they have no password (`email.send_password_reset_no_password`).
 
 Code: [`email-link.ts`](../packages/server/src/routes/email-link.ts), `resolveProviderUser` in [`oauth.ts`](../packages/server/src/routes/oauth.ts).
 
@@ -50,7 +50,7 @@ At most one e-mail per minute is sent to an account, whoever asks; a request wit
 
 ## Switching the method off
 
-While an admin has the method off, its routes answer `403 method_disabled` before a link or code is used up, so they keep working once the method is on again. The method is configured only when the webhook sends `email.signin`; without that type the routes are not there (404).
+While an admin has the method off, its routes answer `403 method_disabled` before a link or code is used up, so they keep working once the method is on again. The method is configured only when the webhook sends `email.send_signin_link`; without that type the routes are not there (404).
 
 Code: the middleware in [`email-link.ts`](../packages/server/src/routes/email-link.ts).
 

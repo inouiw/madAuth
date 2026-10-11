@@ -2,33 +2,34 @@
 // Calls are signed in the Standard Webhooks format (https://www.standardwebhooks.com/).
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
-/** Every `type` madAuth sends. */
+/**
+ * Every `type` madAuth sends: `email.send_*` and `sms.send_*` hand over a message to send, `user.signing_up`
+ * asks whether someone may sign up, and the other `user.*` types tell what happened.
+ */
 export const WEBHOOK_TYPES = [
-  'email.verify',
-  'email.reset',
-  'email.signin',
-  'email.already_registered',
-  'email.no_password',
-  'signup.before',
-  'user.created',
-  'email.verified',
-  'email.password_reset',
+  'email.send_verification',
+  'email.send_password_reset',
+  'email.send_signin_link',
+  'email.send_already_registered',
+  'email.send_password_reset_no_password',
+  'sms.send_code',
+  'user.signing_up',
+  'user.signed_up',
+  'user.email_verified',
+  'user.password_reset',
   'user.signed_in',
   'user.deleted',
   'user.claims_changed',
-  'totp.enabled',
-  'totp.disabled',
-  'totp.recovery_code_used',
-  'sms.code',
-  'sms.enabled',
-  'sms.disabled',
+  'user.second_factor_enabled',
+  'user.second_factor_disabled',
+  'user.recovery_code_used',
 ] as const;
 
 /** The calls that hand over an e-mail (as opposed to events and checks). */
-export const EMAIL_TYPES = ['email.verify', 'email.reset', 'email.signin', 'email.already_registered', 'email.no_password'] as const satisfies readonly WebhookType[];
+export const EMAIL_TYPES = ['email.send_verification', 'email.send_password_reset', 'email.send_signin_link', 'email.send_already_registered', 'email.send_password_reset_no_password'] as const satisfies readonly WebhookType[];
 
-/** The calls that hand over an SMS: `sms.code`, the code a user confirms their number or signs in with. */
-export const SMS_TYPES = ['sms.code'] as const satisfies readonly WebhookType[];
+/** The calls that hand over an SMS: `sms.send_code`, the code a user confirms their number or signs in with. */
+export const SMS_TYPES = ['sms.send_code'] as const satisfies readonly WebhookType[];
 
 export type WebhookType = (typeof WEBHOOK_TYPES)[number];
 
@@ -43,7 +44,7 @@ export function localeOf(value: unknown): string | undefined {
 }
 
 /** The e-mails that e-mail & password sign-in can't work without: WEBHOOK_EVENTS must contain them. */
-export const REQUIRED_EMAIL_TYPES = ['email.verify', 'email.reset'] as const satisfies readonly WebhookType[];
+export const REQUIRED_EMAIL_TYPES = ['email.send_verification', 'email.send_password_reset'] as const satisfies readonly WebhookType[];
 
 const SECRET_PREFIX = 'whsec_';
 /** Where the webhook receiver for development is, which prints the e-mails instead of sending them. */

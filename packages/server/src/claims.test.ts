@@ -3,7 +3,6 @@ import { createLocalJWKSet } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseClaims, parseRoles } from './claims.js';
 import { importSigningKeys } from './keys.js';
-import { Users } from './users.js';
 import {
   APP_ORIGIN,
   ISSUER,
@@ -20,6 +19,7 @@ import {
   signingKey,
   testApp,
   verify,
+  linkGoogleAsBefore,
 } from './test/helpers.js';
 import { createSessionVerifier } from './verify.js';
 
@@ -105,7 +105,7 @@ describe('claims in the session', () => {
     await setClaims(store, 'ada@example.com', { roles: ['admin'] });
     // Her Google account, linked in the store: a sign-in alone never joins a user who signs in another way.
     const [user] = await store.findMany('user', {});
-    await new Users(store).linkAccount(user.id as string, { key: 'google:1001', email: 'ada@example.com' });
+    await linkGoogleAsBefore(store, user.id as string, '1001', 'ada@example.com');
     const { nonce, cookie } = await getNonce(app);
 
     const res = await verify(app, await googleIdToken({ nonce, email: 'Ada@Example.com' }), cookie);
@@ -170,9 +170,11 @@ describe('the admin API for claims', () => {
     expect(set.status).toBe(200);
     const expected = { email: 'ada@example.com', userId: expect.stringMatching(/^usr_/), claims: { plan: 'pro', roles: ['admin', 'editor'] } };
     expect(await set.json()).toEqual(expected);
+    // The user as in every other event, with the claims as they are now.
+    const claims = { plan: 'pro', roles: ['admin', 'editor'] };
     expect(hook.calls.at(-1)).toEqual({
       type: 'user.claims_changed',
-      data: { ...expected, by: 'grace@example.com' },
+      data: { user: { id: expected.userId, email: 'Ada@Example.com', name: 'Grace Hopper', claims }, claims, by: 'grace@example.com' },
     });
 
     const get = await admin(app, cookie, 'get', { email: 'ADA@example.com' });

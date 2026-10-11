@@ -59,39 +59,39 @@ describe('webhook client', () => {
       return new Response('{"allow":false}', { status: 200 });
     }) as typeof fetch);
 
-    const result = await client.call('signup.before', { email: 'a@example.com' }, 1000);
+    const result = await client.call('user.signing_up', { email: 'a@example.com' }, 1000);
 
     expect(result).toEqual({ ok: true, body: { allow: false } });
-    expect(JSON.parse(received!.body)).toEqual({ type: 'signup.before', data: { email: 'a@example.com' } });
+    expect(JSON.parse(received!.body)).toEqual({ type: 'user.signing_up', data: { email: 'a@example.com' } });
     expect(verifyWebhook(settings.secret, received!.headers, received!.body)).toBe(true);
   });
 
   it('reports error statuses, network errors and timeouts', async () => {
     const answer = (status: number) => (async () => new Response('', { status })) as typeof fetch;
-    expect(await createWebhookClient(settings, answer(500)).call('email.verify', {}, 1000)).toEqual({ ok: false, reason: 'HTTP 500' });
+    expect(await createWebhookClient(settings, answer(500)).call('email.send_verification', {}, 1000)).toEqual({ ok: false, reason: 'HTTP 500' });
 
     const offline = (async () => {
       throw new TypeError('fetch failed');
     }) as typeof fetch;
-    expect(await createWebhookClient(settings, offline).call('email.verify', {}, 1000)).toEqual({ ok: false, reason: 'fetch failed' });
+    expect(await createWebhookClient(settings, offline).call('email.send_verification', {}, 1000)).toEqual({ ok: false, reason: 'fetch failed' });
 
     const slow = ((_url: string, init: RequestInit) =>
       new Promise((_resolve, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason)))) as typeof fetch;
-    expect(await createWebhookClient(settings, slow).call('email.verify', {}, 20)).toEqual({ ok: false, reason: 'no answer within 20 ms' });
+    expect(await createWebhookClient(settings, slow).call('email.send_verification', {}, 20)).toEqual({ ok: false, reason: 'no answer within 20 ms' });
   });
 
   it('K6: sends only the selected types, e-mails included', async () => {
     const sent: string[] = [];
-    const client = createWebhookClient({ ...settings, events: new Set(['email.verify', 'email.verified']) }, (async (_url: string, init: RequestInit) => {
+    const client = createWebhookClient({ ...settings, events: new Set(['email.send_verification', 'user.email_verified']) }, (async (_url: string, init: RequestInit) => {
       sent.push(JSON.parse(String(init.body)).type);
       return new Response(null, { status: 204 });
     }) as typeof fetch);
 
-    for (const type of ['email.verify', 'email.reset', 'email.already_registered', 'email.verified', 'user.created', 'signup.before'] as const) {
+    for (const type of ['email.send_verification', 'email.send_password_reset', 'email.send_already_registered', 'user.email_verified', 'user.signed_up', 'user.signing_up'] as const) {
       await client.call(type, {}, 1000);
     }
 
-    expect(sent).toEqual(['email.verify', 'email.verified']);
-    expect(client.wants('email.reset')).toBe(false);
+    expect(sent).toEqual(['email.send_verification', 'user.email_verified']);
+    expect(client.wants('email.send_password_reset')).toBe(false);
   });
 });

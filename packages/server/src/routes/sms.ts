@@ -68,9 +68,9 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
   const sendCode = async (c: Context, user: StoredUser, phone: string, purpose: SmsPurpose, locale: string | undefined): Promise<boolean> => {
     const { code } = await users.issueVerification(user.id, 'sms', SMS_TTL_MS);
     const data = { to: phone, code, purpose, expiresAt: Date.now() + SMS_TTL_MS, site: originHost(ctx, c), locale, user: { id: user.id, name: user.name ?? undefined } };
-    const result = await webhook.call('sms.code', data, WEBHOOK_TIMEOUT_MS);
+    const result = await webhook.call('sms.send_code', data, WEBHOOK_TIMEOUT_MS);
     if (!result.ok) {
-      console.error(`[madauth] Webhook "sms.code" for user ${user.id} failed: ${result.reason}`);
+      console.error(`[madauth] Webhook "sms.send_code" for user ${user.id} failed: ${result.reason}`);
       return false;
     }
     // Only now: after a failure the user can try again right away.
@@ -168,7 +168,7 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
       : !!(await users.linkAccount(user.id, { key: smsAccountKey(user.id), phone: setup.phone }));
     deleteCookie(c, SETUP_COOKIE, cookie);
     if (!written) return error(c, 400, 'setup_expired', 'Your phone number was changed elsewhere meanwhile. Please start again.');
-    await ctx.emit('sms.enabled', { user: toMadauthUser(user), phone: setup.phone });
+    await ctx.emit('user.second_factor_enabled', { user: toMadauthUser(user), method: 'sms', phone: setup.phone });
     if (!challenge) return c.json({});
     return c.json({ user: await finishSignIn(c, ctx, user, challenge, 'sms', 'sms') });
   });
@@ -224,7 +224,7 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
     const wrong = await checkCode(c, user, account, await body(c));
     if (wrong) return wrong;
     await users.removeSms(user.id);
-    await ctx.emit('sms.disabled', { user: toMadauthUser(user) });
+    await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'sms' });
     return c.json({});
   });
 

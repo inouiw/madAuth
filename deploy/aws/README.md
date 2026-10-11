@@ -38,7 +38,7 @@ npx cdk bootstrap
 
 ## 2. Store the secrets
 
-The script creates the signing key and the webhook secret, then asks for the Google client secret (leave it empty if you only use Google One Tap / FedCM) and the GitHub client secret (empty without GitHub sign-in). The values go straight into the Parameter Store, under `/madauth` by default:
+The script creates the signing key and the webhook secret, then asks for the Google client secret (leave it empty if you only use Google One Tap / FedCM) and the GitHub client secret (empty without GitHub sign-in; one without `githubClientId` is ignored). The values go straight into the Parameter Store, under `/madauth` by default:
 
 ```bash
 scripts/bootstrap-secrets.sh /madauth
@@ -58,7 +58,7 @@ Set your values in [`cdk.json`](cdk.json) under `context`:
 | `githubClientId` | `Iv1.0123456789abcdef` | Empty: no GitHub sign-in. With one, step 2 needs the client secret |
 | `secretsPath` | `/madauth` | Where step 2 stored the secrets |
 | `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: Google and GitHub sign-in only |
-| `webhookEvents` | `email.verify,email.reset,email.already_registered` | What the receiver handles. This default turns on e-mail & password sign-in. |
+| `webhookEvents` | `email.send_verification,email.send_password_reset,email.send_already_registered` | What the receiver handles. This default turns on e-mail & password sign-in. |
 
 Then deploy:
 
@@ -93,7 +93,7 @@ const madauth = new MadAuthServer(this, 'MadAuth', {
   googleClientId: '123.apps.googleusercontent.com',
   githubClientId: 'Iv1.0123456789abcdef',
   secretsPath: '/madauth',
-  webhook: { url: mailerUrl, events: ['email.verify', 'email.reset', 'email.already_registered', 'email.no_password'] },
+  webhook: { url: mailerUrl, events: ['email.send_verification', 'email.send_password_reset', 'email.send_already_registered', 'email.send_password_reset_no_password'] },
   reservedConcurrentExecutions: 10,
 });
 // madauth.functionUrl, madauth.function, madauth.table

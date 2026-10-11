@@ -25,9 +25,9 @@ export type LinkPurpose = Exclude<VerificationPurpose, 'sms'>;
 
 /** How long each kind of link lives, how it reaches the app, and which e-mail carries it. */
 const LINKS: Record<LinkPurpose, { ttl: number; param: string; type: WebhookType }> = {
-  verify: { ttl: VERIFY_TTL_MS, param: VERIFY_LINK_PARAM, type: 'email.verify' },
-  reset: { ttl: RESET_TTL_MS, param: RESET_LINK_PARAM, type: 'email.reset' },
-  signin: { ttl: SIGNIN_TTL_MS, param: SIGNIN_LINK_PARAM, type: 'email.signin' },
+  verify: { ttl: VERIFY_TTL_MS, param: VERIFY_LINK_PARAM, type: 'email.send_verification' },
+  reset: { ttl: RESET_TTL_MS, param: RESET_LINK_PARAM, type: 'email.send_password_reset' },
+  signin: { ttl: SIGNIN_TTL_MS, param: SIGNIN_LINK_PARAM, type: 'email.send_signin_link' },
 };
 
 /** What a link or code resolved to: the user, or why not. */
@@ -43,11 +43,11 @@ export interface Emails {
   sendLinkEmail(user: StoredUser, purpose: LinkPurpose, target: URL, locale?: string): Promise<boolean>;
   /**
    * Tells the owner of an address about the account it has and how it signs in: after a sign-up with it
-   * (`email.already_registered`) or a "forgot password" for a user without a password (`email.no_password`).
+   * (`email.send_already_registered`) or a "forgot password" for a user without a password (`email.send_password_reset_no_password`).
    * Both are optional for the receiver: without the type in its list nothing is sent, and the answer is
    * the same. Resolves to false if the webhook did not take the e-mail over.
    */
-  sendAccountEmail(user: StoredUser, type: 'email.already_registered' | 'email.no_password', target: URL, locale?: string): Promise<boolean>;
+  sendAccountEmail(user: StoredUser, type: 'email.send_already_registered' | 'email.send_password_reset_no_password', target: URL, locale?: string): Promise<boolean>;
   /** Resolves the user from `{ token }` (an e-mail link) or `{ email, code }`; null if invalid, expired or used. */
   consume(data: Body, purpose: LinkPurpose): Promise<Consumed>;
   /** The answer when a link or code did not resolve to a user. */

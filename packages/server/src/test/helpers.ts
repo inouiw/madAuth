@@ -133,7 +133,7 @@ export interface WebhookCall {
 /**
  * A webhook receiver for tests: checks each call's signature, records it and answers 2xx. Set `fail` to
  * answer with an error status or to fail like an unreachable or slow receiver; `respond` to answer
- * with a body (e.g. for signup.before).
+ * with a body (e.g. for user.signing_up).
  */
 export function recordingWebhook() {
   const calls: WebhookCall[] = [];
@@ -243,6 +243,8 @@ export interface GitHubStub {
   emails?: { email: string; primary: boolean; verified: boolean }[];
   /** The status GitHub answers the grant's revocation with. */
   revokeStatus?: number;
+  /** The status api.github.com answers with instead of the account (e.g. 401 for a bad token). */
+  apiStatus?: number;
   /** Makes every call to GitHub fail like a network error. */
   fail?: boolean;
 }
@@ -254,7 +256,7 @@ export const GITHUB_EMAILS = [{ email: 'ada@example.com', primary: true, verifie
  * Stands in for github.com and api.github.com by stubbing `fetch` (undo with `vi.unstubAllGlobals()`):
  * records every call and answers as GitHub would. Webhooks are unaffected: they use `webhookFetch`.
  */
-export function stubGithub(stub: GitHubStub = {}) {
+export function stubGitHub(stub: GitHubStub = {}) {
   const calls: { url: string; init: RequestInit }[] = [];
   const fetchMock = vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
     const url = String(input);
@@ -265,6 +267,7 @@ export function stubGithub(stub: GitHubStub = {}) {
         ? Response.json({ error: 'bad_verification_code', error_description: 'The code passed is incorrect or expired.' })
         : Response.json({ access_token: stub.token ?? 'gho_test', scope: 'user:email', token_type: 'bearer' });
     }
+    if (stub.apiStatus && url.startsWith('https://api.github.com/user')) return Response.json({ message: 'Bad credentials' }, { status: stub.apiStatus });
     if (url === 'https://api.github.com/user') return Response.json({ ...GITHUB_USER, ...stub.user });
     if (url === 'https://api.github.com/user/emails') return Response.json(stub.emails ?? GITHUB_EMAILS);
     if (url.startsWith('https://api.github.com/applications/') && init.method === 'DELETE') return new Response(null, { status: stub.revokeStatus ?? 204 });
@@ -281,7 +284,7 @@ export function stubGithub(stub: GitHubStub = {}) {
 }
 
 /** Starts the GitHub redirect flow as the browser would; returns where GitHub would send the user and the state cookie. */
-export async function startGithub(app: App, returnTo = `${APP_ORIGIN}/page`) {
+export async function startGitHub(app: App, returnTo = `${APP_ORIGIN}/page`) {
   const res = await app.request(`/auth/github/start?return_to=${encodeURIComponent(returnTo)}`);
   const location = new URL(res.headers.get('location') ?? 'about:blank');
   return { res, location, state: location.searchParams.get('state') ?? '', cookie: `madauth_oauth=${cookies(res).madauth_oauth?.value}` };
@@ -293,6 +296,16 @@ export function githubCallback(app: App, started: { state: string; cookie: strin
 }
 
 /** Signs in through the GitHub flow (the stand-in must be in place) and returns the callback's redirect, with its cookies. */
-export async function signInWithGithub(app: App, returnTo?: string): Promise<Response> {
-  return githubCallback(app, await startGithub(app, returnTo));
+export async function signInWithGitHub(app: App, returnTo?: string): Promise<Response> {
+  return githubCallback(app, await startGitHub(app, returnTo));
+}
+
+/**
+ * Links a Google account to a user who has a password, as madAuth before 0.4 did: such records don't say which
+ * account is the sign-in method, so both are. A user can't get a second sign-in method any more.
+ */
+export async function linkGoogleAsBefore(store: StoreAdapter, userId: string, sub: string, email: string): Promise<void> {
+  const account = await new Users(store).linkAccount(userId, { key: `google:${sub}`, email, primary: false });
+  // Records from then say neither whether they sign in nor whether they are a second factor.
+  await store.update('account', { id: account!.id }, { secondFactor: null });
 }

@@ -6,6 +6,8 @@ const TOKEN_ENDPOINT = 'https://github.com/login/oauth/access_token';
 const API = 'https://api.github.com';
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'madauth';
+/** GitHub's stand-in for a private address: listed as verified, but nothing sent to it arrives. */
+const NOREPLY_DOMAIN = '@users.noreply.github.com';
 /** How long one call to GitHub may take; a sign-in makes three. */
 const TIMEOUT_MS = 10_000;
 
@@ -69,8 +71,9 @@ export async function exchangeGitHubCode(
 
 /**
  * The account behind an access token: `GET /user` for the id, name and picture, and `GET /user/emails`
- * (scope `user:email`) for an address GitHub has verified. The public address on the profile is not used:
- * it can be any address the user typed in.
+ * (scope `user:email`) for an address GitHub has verified: the primary one, else another verified one, but
+ * never the `noreply` stand-in GitHub lists for users who keep their address private. The public address on
+ * the profile is not used: it can be any address the user typed in.
  */
 export async function fetchGitHubAccount(token: string): Promise<GitHubAccountResult> {
   const failed = (reason: string): GitHubAccountResult => ({ ok: false, error: 'verification_failed', reason });
@@ -91,7 +94,7 @@ export async function fetchGitHubAccount(token: string): Promise<GitHubAccountRe
   const id = typeof user.id === 'number' ? String(user.id) : typeof user.id === 'string' ? user.id : '';
   if (!id || typeof user.login !== 'string') return failed('GET /user did not return an account');
   if (!Array.isArray(emails)) return failed('GET /user/emails did not return a list');
-  const verified = emails.filter((e) => typeof e.email === 'string' && e.email && e.verified === true);
+  const verified = emails.filter((e) => typeof e.email === 'string' && e.email && e.verified === true && !e.email.endsWith(NOREPLY_DOMAIN));
   const address = verified.find((e) => e.primary === true) ?? verified[0];
   if (!address) return { ok: false, error: 'email_unverified', reason: 'the GitHub account has no verified e-mail address' };
   const account: GitHubAccount = {

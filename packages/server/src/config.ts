@@ -43,7 +43,7 @@ export interface MadauthConfig {
   /** Where the users, their accounts, claims and the settings are kept (DATABASE_URL or the `store` option). */
   store: StoreAdapter;
   /**
-   * E-mail & password sign-in; off unless the webhook sends the e-mails (`email.verify` and `email.reset`).
+   * E-mail & password sign-in; off unless the webhook sends the e-mails (`email.send_verification` and `email.send_password_reset`).
    * Its rules for new passwords are a setting, see `Settings.passwordRules`.
    */
   password?: Record<string, never>;
@@ -55,19 +55,19 @@ export interface MadauthConfig {
   webhookFetch?: typeof fetch;
 }
 
-/** Whether the webhook sends the e-mails that confirm an address (`email.verify`), so people can sign up with one. */
+/** Whether the webhook sends the e-mails that confirm an address (`email.send_verification`), so people can sign up with one. */
 export function sendsVerificationEmails(config: Pick<MadauthConfig, 'webhook'>): boolean {
-  return !!config.webhook?.events.has('email.verify');
+  return !!config.webhook?.events.has('email.send_verification');
 }
 
-/** Whether the webhook sends the sign-in e-mails of the e-mail link (`email.signin`), so the method can be on. */
+/** Whether the webhook sends the sign-in e-mails of the e-mail link (`email.send_signin_link`), so the method can be on. */
 export function sendsSignInEmails(config: Pick<MadauthConfig, 'webhook'>): boolean {
-  return !!config.webhook?.events.has('email.signin');
+  return !!config.webhook?.events.has('email.send_signin_link');
 }
 
-/** Whether the webhook sends the SMS (`sms.code`), so SMS codes can be a second factor. */
+/** Whether the webhook sends the SMS (`sms.send_code`), so SMS codes can be a second factor. */
 export function sendsSms(config: Pick<MadauthConfig, 'webhook'>): boolean {
-  return !!config.webhook?.events.has('sms.code');
+  return !!config.webhook?.events.has('sms.send_code');
 }
 
 /** What decides which methods the server is configured for, see `isConfigured` and `initialMethods`. */
@@ -204,12 +204,13 @@ export async function loadConfig(
   if (clientId && !clientId.endsWith('.apps.googleusercontent.com')) {
     throw new ConfigError(`GOOGLE_CLIENT_ID must end with ".apps.googleusercontent.com" but is "${clientId}".`);
   }
-  // GitHub has no browser-only flow: the server exchanges the code itself, which takes the secret.
+  // GitHub has no browser-only flow: the server exchanges the code itself, which takes the secret. A secret
+  // without the ID is ignored, like Google's: a secrets store may hold one for a server that has GitHub off.
   const githubClientId = read('GITHUB_CLIENT_ID');
   const githubClientSecret = read('GITHUB_CLIENT_SECRET');
-  if (!!githubClientId !== !!githubClientSecret) {
+  if (githubClientId && !githubClientSecret) {
     throw new ConfigError(
-      `GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET go together: set both from your OAuth App at https://github.com/settings/developers, or neither. ${githubClientId ? 'GITHUB_CLIENT_SECRET' : 'GITHUB_CLIENT_ID'} is missing.`,
+      'GITHUB_CLIENT_ID needs GITHUB_CLIENT_SECRET: GitHub only has the redirect flow, in which the server exchanges the code. Set both from your OAuth App at https://github.com/settings/developers.',
     );
   }
 
@@ -219,16 +220,16 @@ export async function loadConfig(
   const sendsEmails = !!webhook && REQUIRED_EMAIL_TYPES.every((type) => webhook.events.has(type));
   const password = sendsEmails ? {} : undefined;
   // Sign-up with the authenticator app only needs the address confirmed; the e-mail link needs its own e-mail.
-  const emailVerification = !!webhook && webhook.events.has('email.verify');
-  const emailLink = !!webhook && webhook.events.has('email.signin');
+  const emailVerification = !!webhook && webhook.events.has('email.send_verification');
+  const emailLink = !!webhook && webhook.events.has('email.send_signin_link');
 
   if (!clientId && !githubClientId && !password && !emailVerification && !emailLink) {
     throw new ConfigError(
       'No sign-in method is configured. Set GOOGLE_CLIENT_ID for Google sign-in, GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET for GitHub sign-in, and/or a webhook that sends ' +
-        'the e-mails: e-mail & password sign-in needs email.verify and email.reset, the passwordless e-mail link ' +
-        `needs email.signin, sign-up with the authenticator app needs email.verify. For development, run the ` +
+        'the e-mails: e-mail & password sign-in needs email.send_verification and email.send_password_reset, the passwordless e-mail link ' +
+        `needs email.send_signin_link, sign-up with the authenticator app needs email.send_verification. For development, run the ` +
         `receiver at ${DEV_WEBHOOK_RECEIVER_URL} and set WEBHOOK_URL=http://localhost:8790/webhook and ` +
-        `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.signin,email.already_registered,email.no_password. See docs/server.md.`,
+        `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.send_signin_link,email.send_already_registered,email.send_password_reset_no_password. See docs/server.md.`,
     );
   }
   const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
@@ -321,8 +322,30 @@ async function dynamoDbStore(tableName: string): Promise<StoreAdapter> {
   return createDynamoDbAdapter({ tableName });
 }
 
-/** Types of madAuth 0.2 and their names now, so an old WEBHOOK_EVENTS gets a helpful error. */
-const RENAMED_TYPES: Record<string, string> = { 'password.reset': 'email.password_reset', 'roles.changed': 'user.claims_changed' };
+/** Types of older madAuth versions and what they are now, so an old WEBHOOK_EVENTS gets a helpful error. */
+const RENAMED_TYPES: Record<string, string> = {
+  'password.reset': 'user.password_reset',
+  'roles.changed': 'user.claims_changed',
+  'email.verify': 'email.send_verification',
+  'email.reset': 'email.send_password_reset',
+  'email.signin': 'email.send_signin_link',
+  'email.already_registered': 'email.send_already_registered',
+  'email.no_password': 'email.send_password_reset_no_password',
+  'sms.code': 'sms.send_code',
+  'signup.before': 'user.signing_up',
+  'email.verified': 'user.email_verified',
+  'email.password_reset': 'user.password_reset',
+  'totp.enabled': 'user.second_factor_enabled (with method "totp")',
+  'totp.disabled': 'user.second_factor_disabled (with method "totp")',
+  'sms.enabled': 'user.second_factor_enabled (with method "sms")',
+  'sms.disabled': 'user.second_factor_disabled (with method "sms")',
+  'totp.recovery_code_used': 'user.recovery_code_used',
+};
+
+/** Types that are gone, and what to use instead. */
+const REMOVED_TYPES: Record<string, string> = {
+  'user.created': 'user.created is gone: user.signed_up tells when a user can sign in (an unconfirmed sign-up is no user yet)',
+};
 
 /** Hosts that may be called over plain http, e.g. a receiver on the developer's machine. */
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'];
@@ -353,23 +376,23 @@ function webhookFromEnv(url: string | undefined, secret: string | undefined, eve
     throw new ConfigError(`WEBHOOK_SECRET ${problem}. Generate one with: npx @madauth/server generate-webhook-secret`);
   }
   // Nothing is sent that the receiver did not ask for: a type it does not know could make it answer with an
-  // error, and an unanswered signup.before refuses every sign-up.
+  // error, and an unanswered user.signing_up refuses every sign-up.
   const selected = new Set((events ?? '').split(',').map((e) => e.trim()).filter(Boolean));
   const allTypes = `All types: ${WEBHOOK_TYPES.join(', ')}. See "Webhooks" in docs/server.md.`;
   if (!selected.size) {
     throw new ConfigError(
       'WEBHOOK_EVENTS is not set. List the types your webhook receiver handles; only these are sent. ' +
         `E-mail & password sign-in is on when they include ${REQUIRED_EMAIL_TYPES.join(' and ')}, the passwordless ` +
-        'e-mail link when they include email.signin. For a receiver that sends the e-mails:\n\n' +
-        'WEBHOOK_EVENTS=email.verify,email.reset,email.signin,email.already_registered,email.no_password\n\n' +
-        'SMS codes as a second factor need a receiver that sends the SMS: add sms.code,sms.enabled,sms.disabled. ' +
+        'e-mail link when they include email.send_signin_link. For a receiver that sends the e-mails:\n\n' +
+        'WEBHOOK_EVENTS=email.send_verification,email.send_password_reset,email.send_signin_link,email.send_already_registered,email.send_password_reset_no_password\n\n' +
+        'SMS codes as a second factor need a receiver that sends the SMS: add sms.send_code,user.second_factor_enabled,user.second_factor_disabled. ' +
         'For one that only wants to know who signed in:\n\nWEBHOOK_EVENTS=user.signed_in\n\n' +
         allTypes,
     );
   }
   const unknown = [...selected].filter((e) => !(WEBHOOK_TYPES as readonly string[]).includes(e));
   if (unknown.length) {
-    const renamed = unknown.filter((e) => e in RENAMED_TYPES).map((e) => `${e} is now ${RENAMED_TYPES[e]}`);
+    const renamed = unknown.flatMap((e) => (e in RENAMED_TYPES ? [`${e} is now ${RENAMED_TYPES[e]}`] : e in REMOVED_TYPES ? [REMOVED_TYPES[e]] : []));
     throw new ConfigError(
       `WEBHOOK_EVENTS: unknown type ${unknown.join(', ')}. ${renamed.length ? `${renamed.join('; ')}. ` : ''}` +
         `Known types: ${WEBHOOK_TYPES.join(', ')}.`,

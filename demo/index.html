@@ -19,31 +19,33 @@
     <main>
       <!--
         Two ways to sign in with Google: in the browser (One Tap / FedCM) or through the server (the redirect
-        flow). The links switch between them; the info button explains the difference. See src/main.ts.
+        flow). The links switch between them, the hint says what they affect, and the info button explains the
+        difference. See src/main.ts.
       -->
       <div class="google-flow">
         <span class="caption">
-          Google sign-in
+          Google sign-in flow
           <button type="button" class="info" aria-label="About the two Google sign-in flows" aria-expanded="false" aria-controls="flow-info">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5M12 7.5v.01" /></svg>
           </button>
         </span>
         <nav id="flow" aria-label="Google sign-in flow">
-          <a href="?google=fedcm" data-flow="fedcm">One Tap / FedCM</a>
-          <a href="?google=redirect" data-flow="redirect">Server-side redirect</a>
+          <a href="?google=fedcm" data-flow="fedcm">In the browser <small>One Tap / FedCM</small></a>
+          <a href="?google=redirect" data-flow="redirect">Through the server <small>Redirect</small></a>
         </nav>
+        <p class="hint">Sets how the Google button in the sign-in dialog works.</p>
         <div id="flow-info" class="info-text" hidden>
           <p>
             Both sign the user in with their Google account; they differ in where Google is talked to. The current
             one is what the dialog's Google button uses.
           </p>
           <p class="flow-description" data-flow="fedcm">
-            <strong>One Tap / FedCM</strong>, <code>new GoogleFedcm()</code>: the browser shows “Continue as …” (One
+            <strong>In the browser</strong>, One Tap / FedCM, <code>new GoogleFedcm()</code>: the browser shows “Continue as …” (One
             Tap) and hands madAuth Google's ID token, which the madAuth server verifies. No redirect, and the page
             keeps its state.
           </p>
           <p class="flow-description" data-flow="redirect">
-            <strong>Server-side redirect</strong>, <code>new GoogleRedirect()</code>: the browser is redirected to
+            <strong>Through the server</strong>, the redirect flow, <code>new GoogleRedirect()</code>: the browser is redirected to
             Google and back, and the madAuth server exchanges the code for the token. Works where One Tap doesn't
             (e.g. some in-app browsers) and needs <code>GOOGLE_CLIENT_SECRET</code> on the server.
           </p>

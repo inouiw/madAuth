@@ -18,19 +18,21 @@ export const en = {
   methods: {
     google: { label: 'Continue with Google', description: 'Use your Google account' },
     github: { label: 'Continue with GitHub', description: 'Use your GitHub account' },
-    password: { label: 'E-mail & password', description: 'Sign in with your e-mail address and password' },
+    password: { label: 'Email & password', description: 'Sign in with your email address and password' },
     totp: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
-    'email-link': { label: 'E-mail link', description: 'Passwordless sign-in by e-mail' },
+    'email-link': { label: 'Email link', description: 'Passwordless sign-in by email' },
   } satisfies Record<LoginMethodId, { label: string; description: string }>,
 
   // Fields
-  email: 'E-mail',
+  email: 'Email',
   password: 'Password',
   newPassword: 'New password',
   name: 'Name',
   optional: '(optional)',
   code: 'Code',
   minLength: (characters: number) => `At least ${characters} characters.`,
+  /** The eye button in a password field; it is a toggle, so the label stays the same while it is pressed. */
+  showPassword: 'Show password',
   /** The strength meter under a new password: zxcvbn's score 0 to 4, and a score below what the server needs. */
   strength: {
     label: 'Password strength',
@@ -40,39 +42,44 @@ export const en = {
 
   // Buttons and links
   forgotPassword: 'Forgot password?',
-  /** Link on the sign-in form, and heading and button of the form it leads to. */
+  /** Heading and button of the form for a new account. */
   createAccount: 'Create account',
-  haveAccount: 'Already have an account? Sign in',
+  /** Links between the sign-in and the sign-up form: a question, and the action, which alone is underlined. */
+  noAccount: { question: 'No account?', action: 'Create one' },
+  haveAccount: { question: 'Already have an account?', action: 'Sign in' },
   backToSignIn: 'Back to sign in',
-  sendEmail: 'Send e-mail',
-  sendEmailAgain: 'Send the e-mail again',
+  sendEmail: 'Send email',
+  sendEmailAgain: 'Send the email again',
   continue: 'Continue',
   setPassword: 'Set password',
 
   // Headings and texts of the other views
   resetPassword: 'Reset password',
-  forgotLead: 'Enter your e-mail address. We will send you a link and a code to choose a new password.',
+  forgotLead: 'Enter your email address. We will send you a link and a code to choose a new password.',
   /** Under that lead when a provider (Google, GitHub) is one of the methods: its users have no password to reset. `names` is e.g. "Google or GitHub". */
   forgotProviderHint: (names: string) => `Signed up with ${names}? There is no password to reset: use that button instead.`,
   checkInbox: 'Check your inbox',
   /** The e-mail address is shown between the two parts. */
   inboxLead: {
-    before: 'We sent an e-mail to ',
-    after: '. Open the link in it, or enter the 6-digit code from the e-mail.',
+    before: 'We sent an email to ',
+    after: '. Open the link in it, or enter the 6-digit code from the email.',
   },
-  emailSentAgain: 'We sent the e-mail again.',
+  emailSentAgain: 'We sent the email again.',
   chooseNewPassword: 'Choose a new password',
 
   // The e-mail link
   emailLink: {
-    heading: 'Sign in with an e-mail link',
-    lead: 'Enter your e-mail address. We will send you a link that signs you in, and a code.',
+    heading: 'Sign in with an email link',
+    /** An unknown address is signed up on first use, so a new user learns that the link makes the account. */
+    lead: 'We’ll email you a link to sign in. New here? The link creates your account.',
+    /** Under the lead: what the code in the e-mail is for. */
+    codeHint: 'The email also has a code, for when you open it on another device.',
     send: 'Send link',
   },
   /** The check-inbox lead after asking for a sign-in link; the e-mail address is shown between the two parts. */
   signInInboxLead: {
-    before: 'We sent an e-mail to ',
-    after: '. Open the link in it to sign in, or enter the 6-digit code from the e-mail.',
+    before: 'We sent an email to ',
+    after: '. Open the link in it to sign in, or enter the 6-digit code from the email.',
   },
 
   // The authenticator app
@@ -85,10 +92,10 @@ export const en = {
   useApp: 'Use the authenticator app instead',
   totpHint: 'Enter the 6-digit code from your authenticator app.',
   /** `invalid_credentials` on the authenticator app's own sign-in form. */
-  totpInvalid: 'E-mail or code is wrong. To sign in with an authenticator app, set it up first while signed in another way.',
+  totpInvalid: 'Email or code is wrong. To sign in with an authenticator app, set it up first while signed in another way.',
   /** On the "Create account" form of a sign-up with the app alone. */
-  totpSignUpHint: 'You will set up your authenticator app after confirming your e-mail address.',
-  /** The second step after a password or Google sign-in. */
+  totpSignUpHint: 'You will set up your authenticator app after confirming your email address.',
+  /** The second step after a password, Google, GitHub or e-mail link sign-in. */
   totpCode: {
     heading: 'Enter your code',
     lead: 'Enter the code from your authenticator app to finish signing in.',
@@ -108,7 +115,6 @@ export const en = {
     /** What the app will do, from the server's policy, so the user knows what they turn on. */
     effects: {
       secondFactor: (methods: string) => `From then on, signing in with ${methods} also asks for a code from the app.`,
-      standalone: 'You can then sign in with your e-mail address and a code from the app.',
     },
   },
   totpCodes: {
@@ -147,8 +153,8 @@ export const en = {
     effect: (methods: string) => `From then on, signing in with ${methods} can also ask for a code sent to your phone.`,
   },
   /** `other_method` with the methods the server named, e.g. "a password", and the provider that was refused, if known. */
-  otherMethod: (how: string, instead?: string) => `This e-mail address signs in with ${how}. Use that instead${instead ? ` of ${instead}` : ''}.`,
-  methodNames: { google: 'Google', github: 'GitHub', password: 'a password', totp: 'an authenticator app', 'email-link': 'an e-mail link' },
+  otherMethod: (how: string, instead?: string) => `This email address signs in with ${how}. Use that instead${instead ? ` of ${instead}` : ''}.`,
+  methodNames: { google: 'Google', github: 'GitHub', password: 'a password', totp: 'an authenticator app', 'email-link': 'an email link' },
   and: ' and ',
   /** Between alternatives in a sentence. */
   orList: ' or ',
@@ -157,14 +163,14 @@ export const en = {
   errors: {
     network: 'Could not reach the sign-in service. Please check your connection and try again.',
     verification_failed: 'The sign-in could not be verified. Please try again.',
-    email_unverified: 'The e-mail address of this account is not verified.',
+    email_unverified: 'The email address of this account is not verified.',
     cancelled: 'The sign-in was cancelled.',
     not_initialized: 'Sign-in is not set up on this page.',
-    invalid_credentials: 'E-mail or password is wrong.',
-    invalid_email: 'Please enter a valid e-mail address.',
-    link_invalid: 'This link is invalid or has expired. Please ask for a new e-mail.',
+    invalid_credentials: 'Email or password is wrong.',
+    invalid_email: 'Please enter a valid email address.',
+    link_invalid: 'This link is invalid or has expired. Please ask for a new email.',
     code_invalid: 'The code is wrong or has expired.',
-    codes_locked: 'Too many wrong codes. Please ask for a new e-mail and use the link in it.',
+    codes_locked: 'Too many wrong codes. Please ask for a new email and use the link in it.',
     method_disabled: 'This way of signing in is switched off at the moment.',
     no_session: 'You are not signed in. Please sign in first.',
     setup_expired: 'The setup took too long. Please start again.',
@@ -173,7 +179,7 @@ export const en = {
     code_required: 'Please enter a code from your authenticator app.',
     no_authenticator: 'No authenticator app is set up.',
     only_method: 'The authenticator app is the only way you sign in, so it can’t be removed.',
-    other_method: 'This e-mail address signs in another way. Use that instead.',
+    other_method: 'This email address signs in another way. Use that instead.',
     invalid_phone: 'Please enter a valid mobile number with the country code, e.g. +41 79 123 45 67.',
     no_phone: 'No phone number is set up.',
     too_soon: 'We sent a code less than a minute ago. Enter that one, or wait a minute for a new one.',
@@ -181,10 +187,10 @@ export const en = {
   /** For every other error code. */
   errorFallback: 'Sign-in is not available right now.',
   /** `email_unverified` after signing in with a password. */
-  confirmEmailFirst: 'Please confirm your e-mail address first: open the link in the e-mail we sent you.',
+  confirmEmailFirst: 'Please confirm your email address first: open the link in the email we sent you.',
   /** `temporarily_unavailable` when creating an account, and when asking for an e-mail. */
-  signUpUnavailable: 'E-mail & password sign-up is not available right now. Please try again later.',
-  emailsUnavailable: 'Sending e-mails is not available right now. Please try again later.',
+  signUpUnavailable: 'Email & password sign-up is not available right now. Please try again later.',
+  emailsUnavailable: 'Sending emails is not available right now. Please try again later.',
   smsUnavailable: 'Sending SMS is not available right now. Please try again later.',
   /**
    * `weak_password` and `too_many_attempts` come with a message from the server that is written for the
@@ -198,11 +204,11 @@ export const en = {
   redirectErrors: {
     cancelled: (name: string) => `The ${name} sign-in was cancelled.`,
     verification_failed: (name: string) => `The ${name} sign-in could not be verified. Please try again.`,
-    email_unverified: (name: string) => `Your ${name} account’s e-mail address is not verified.`,
+    email_unverified: (name: string) => `Your ${name} account’s email address is not verified.`,
     signup_rejected: (name: string) => `Signing up with this ${name} account is not possible.`,
     method_disabled: (name: string) => `${name} sign-in is switched off at the moment.`,
     temporarily_unavailable: (name: string) => `${name} sign-in is not available right now. Please try again later.`,
-    other_method: (name: string) => `This e-mail address signs in another way. Use that instead of ${name}.`,
+    other_method: (name: string) => `This email address signs in another way. Use that instead of ${name}.`,
   } satisfies Partial<Record<MadauthErrorCode, (name: string) => string>>,
   redirectFailed: (name: string, code: string) => `${name} sign-in failed (${code}).`,
 };
@@ -229,6 +235,7 @@ export const de: Strings = {
   optional: '(optional)',
   code: 'Bestätigungscode',
   minLength: (characters) => `Mindestens ${characters} Zeichen.`,
+  showPassword: 'Passwort anzeigen',
   strength: {
     label: 'Passwortstärke',
     levels: ['Sehr schwach', 'Schwach', 'Mittel', 'Gut', 'Stark'],
@@ -237,7 +244,8 @@ export const de: Strings = {
 
   forgotPassword: 'Passwort vergessen?',
   createAccount: 'Konto erstellen',
-  haveAccount: 'Sie haben bereits ein Konto? Anmelden',
+  noAccount: { question: 'Noch kein Konto?', action: 'Konto erstellen' },
+  haveAccount: { question: 'Sie haben bereits ein Konto?', action: 'Anmelden' },
   backToSignIn: 'Zurück zur Anmeldung',
   sendEmail: 'E-Mail senden',
   sendEmailAgain: 'E-Mail erneut senden',
@@ -247,7 +255,7 @@ export const de: Strings = {
   resetPassword: 'Passwort zurücksetzen',
   forgotLead:
     'Geben Sie Ihre E-Mail-Adresse ein. Wir senden Ihnen einen Link und einen Bestätigungscode, mit denen Sie ein neues Passwort wählen können.',
-  forgotProviderHint: (names) => `Mit ${names} registriert? Es gibt kein Passwort zum Zurücksetzen: Verwenden Sie stattdessen diesen Button.`,
+  forgotProviderHint: (names) => `Mit ${names} registriert? Es gibt kein Passwort zum Zurücksetzen: Verwenden Sie stattdessen den entsprechenden Button.`,
   checkInbox: 'Posteingang prüfen',
   inboxLead: {
     before: 'Wir haben eine E-Mail an ',
@@ -258,7 +266,8 @@ export const de: Strings = {
 
   emailLink: {
     heading: 'Mit E-Mail-Link anmelden',
-    lead: 'Geben Sie Ihre E-Mail-Adresse ein. Wir senden Ihnen einen Link, der Sie anmeldet, und einen Bestätigungscode.',
+    lead: 'Wir senden Ihnen einen Link zum Anmelden per E-Mail. Neu hier? Der Link erstellt Ihr Konto.',
+    codeHint: 'Die E-Mail enthält auch einen Bestätigungscode, falls Sie sie auf einem anderen Gerät öffnen.',
     send: 'Link senden',
   },
   signInInboxLead: {
@@ -292,7 +301,6 @@ export const de: Strings = {
     startAgain: 'Neu beginnen',
     effects: {
       secondFactor: (methods) => `Die Anmeldung mit ${methods} fragt dann zusätzlich nach einem Code aus der App.`,
-      standalone: 'Sie können sich dann mit Ihrer E-Mail-Adresse und einem Code aus der App anmelden.',
     },
   },
   totpCodes: {

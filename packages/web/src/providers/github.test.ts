@@ -188,7 +188,7 @@ describe('GitHub', () => {
     expect(lightButton.style.color).not.toBe(darkButton.style.color);
   });
 
-  it('B8: back from the redirect with the first step done, the dialog goes on with the code as a GitHub sign-in', async () => {
+  it('B7: back from the redirect with the first step done, the dialog goes on with the code as a GitHub sign-in', async () => {
     const server = fakeServer();
     server.github = true;
     server.policy.github = 'optional';
@@ -211,7 +211,7 @@ describe('GitHub', () => {
     expect(detail).toEqual({ method: 'github', user: ada });
   });
 
-  it('B8: a custom screen learns whose sign-in goes on; without a method in the hash (a server before 0.5) it is Google’s', async () => {
+  it('B7: a custom screen learns whose sign-in goes on; without a method in the hash (a server before 0.5) it is Google’s', async () => {
     const server = fakeServer();
     server.github = true;
     server.codeFlow = true;
@@ -228,7 +228,7 @@ describe('GitHub', () => {
     expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'google' });
   });
 
-  it('B9: GitHub takes a policy for the second factor, and its users are told they have no password to reset', async () => {
+  it('B8: GitHub takes a policy for the second factor, and its users are told they have no password to reset', async () => {
     const server = fakeServer();
     server.github = true;
     server.codeFlow = true;

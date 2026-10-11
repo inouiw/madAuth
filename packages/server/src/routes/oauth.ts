@@ -8,7 +8,7 @@ import type { AppContext } from '../app.js';
 import { normalizeEmail } from '../password.js';
 import type { SignInMethod } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
-import { toMadauthUser, type StoredUser } from '../users.js';
+import type { StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
 import type { Factor, NextStep } from './challenge.js';
 
@@ -174,7 +174,7 @@ export async function resolveProviderUser(
   for (let attempt = 0; attempt < 2; attempt++) {
     const existing = await users.findByEmail(emailNormalized);
     if (existing) {
-      if (existing.emailVerified && (await users.hasAccounts(existing.id))) {
+      if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) {
         const methods = await users.signInMethods(existing.id, await ctx.settings.methods());
         const how = methods.map((method) => METHOD_NAMES[method]).join(' or ');
         return {
@@ -186,15 +186,17 @@ export async function resolveProviderUser(
       }
       // The provider verified the address, and nobody has proven this user yet (an unconfirmed sign-up, whose
       // password or e-mail link goes) or nobody can sign in as them: the provider's account takes the user over.
-      await users.verifyByProvider(existing);
-      if (!(await users.linkAccount(existing.id, { key, email: profile.email, secret: profile.secret }))) {
+      // Its sign-up ends with this sign-in: one from before `user.signed_up` existed gets it too.
+      const taken = await users.reopenSignUp(existing);
+      await users.verifyByProvider(taken);
+      if (!(await users.linkAccount(taken.id, { key, email: profile.email, secret: profile.secret }))) {
         // The account appeared meanwhile; it belongs to whoever has it now.
         const linked = await users.findAccountByKey(key);
         const owner = linked && (await users.findById(linked.userId));
         if (!owner) return { ok: false, error: 'temporarily_unavailable', message: 'Please try again.' };
         return signedIn(owner);
       }
-      return signedIn(existing);
+      return signedIn({ ...taken, emailVerified: true });
     }
     if (attempt === 0) {
       const check = await ctx.checkSignup({ email: profile.email, name: profile.name, locale, method: provider.method });
@@ -211,10 +213,7 @@ export async function resolveProviderUser(
       emailVerified: true,
       account: { key, email: profile.email, secret: profile.secret },
     });
-    if (user) {
-      await ctx.emit('user.created', { user: toMadauthUser(user), method: provider.method });
-      return signedIn(user);
-    }
+    if (user) return signedIn(user);
   }
   return { ok: false, error: 'temporarily_unavailable', message: 'Please try again.' };
 }

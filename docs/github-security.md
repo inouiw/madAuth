@@ -14,15 +14,15 @@ Code: `startOAuth`, `takeOAuthState` and `redirectBack` in [`packages/server/src
 
 ## Only a verified address
 
-The address that identifies the user comes from `GET /user/emails` (scope `user:email`): the primary address if GitHub has verified it, else another verified one. The address on the public profile is never used: anyone can type any address there. A GitHub account without a verified address is refused (`email_unverified`). A returning account is known by GitHub's numeric user id, not by its login (which can change) or its address (which may too): the address noted on the account follows, the user's own stays.
+The address that identifies the user comes from `GET /user/emails` (scope `user:email`): the primary address if GitHub has verified it, else another verified one, never GitHub's `noreply` stand-in address (`<id>+<login>@users.noreply.github.com`, which is verified but delivers nothing). The address on the public profile is never used: anyone can type any address there. A GitHub account without a verified address is refused (`email_unverified`). A returning account is known by GitHub's numeric user id, not by its login (which can change) or its address (which may too): the address noted on the account follows, the user's own stays.
 
 Code: `fetchGitHubAccount` in [`packages/server/src/github.ts`](../packages/server/src/github.ts).
 
 ## A method signs in only users who have it
 
-A GitHub sign-in never joins a user who signs in another way: an address that has a password, a Google account, an e-mail link account or the authenticator app alone is refused with `403 other_method` (the page shows how it signs in), since whoever controls the GitHub account must not get past them. The one exception is a sign-up nobody finished (a password that was never confirmed, an e-mail link never used): GitHub proved the address, so that user is taken over and the unproven method goes. The other way round, a password sign-up or an e-mail link for a GitHub user's address gets `email.already_registered`, and "Forgot password?" gets `email.no_password`, both naming `github` among the user's `methods`.
+A GitHub sign-in never joins a user who signs in another way: an address that has a password, a Google account, an e-mail link account or the authenticator app alone is refused: the callback sends the user back with `madauth_error=other_method`, and the page says the address signs in another way. Whoever controls the GitHub account must not get past them. The one exception is a sign-up nobody finished (a password that was never confirmed, an e-mail link never used): GitHub proved the address, so that user is taken over and the unproven method goes. The other way round, a password sign-up or an e-mail link for a GitHub user's address gets `email.send_already_registered`, and "Forgot password?" gets `email.send_password_reset_no_password`, both naming `github` among the user's `methods`.
 
-The operator's sign-up check (`signup.before`, `method: "github"`) runs before a new user is created and fails closed.
+The operator's sign-up check (`user.signing_up`, `method: "github"`) runs before a new user is created and fails closed; `user.signed_up` comes with the user's first session.
 
 Code: `resolveProviderUser` in [`routes/oauth.ts`](../packages/server/src/routes/oauth.ts).
 

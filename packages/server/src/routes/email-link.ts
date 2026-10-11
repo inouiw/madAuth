@@ -34,8 +34,8 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
     if (existing && (await users.emailLinkAccount(existing.id))) return send(existing);
     // A method signs in only users who have it: an address that signs in another way is told so instead
     // (if the receiver sends that e-mail).
-    if (existing?.emailVerified && (await users.hasAccounts(existing.id))) {
-      return (await emails.sendAccountEmail(existing, 'email.already_registered', target, locale)) ? accepted(c) : unavailable(c);
+    if (existing?.emailVerified && (await users.hasSignInMethod(existing.id))) {
+      return (await emails.sendAccountEmail(existing, 'email.send_already_registered', target, locale)) ? accepted(c) : unavailable(c);
     }
 
     // A new address, or a sign-up nobody finished: the first link signs the user up. The operator's check
@@ -47,8 +47,10 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
       if (Date.now() - existing.lastMailAt < MAIL_INTERVAL_MS) return accepted(c);
       // A password an earlier, unconfirmed sign-up set (perhaps by someone else) goes with it.
       if (!existing.emailVerified) await users.dropUnprovenAccounts(existing.id, 'email-link');
-      await users.linkAccount(existing.id, { key: emailLinkAccountKey(existing.id) });
-      return send(existing);
+      // Another sign-up gave the user a sign-in method meanwhile: theirs stands, and no link is sent for a
+      // method the user doesn't have. The answer is the same.
+      if (!(await users.linkAccount(existing.id, { key: emailLinkAccountKey(existing.id) }))) return accepted(c);
+      return send(await users.reopenSignUp(existing));
     }
     const user = await users.createUser({
       email,
@@ -59,19 +61,20 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
     });
     // Created by another request meanwhile: the same answer, and the next request finds the user.
     if (!user) return accepted(c);
-    await ctx.emit('user.created', { user: toMadauthUser(user), method: 'email-link' });
     return send(user);
   });
 
   app.post('/auth/email-link/verify', async (c) => {
     const consumed = await emails.consume(await body(c), 'signin');
-    const user = consumed.userId ? await users.findById(consumed.userId) : null;
-    if (!user || !(await users.emailLinkAccount(user.id))) return emails.invalidVerification(c, consumed);
+    const found = consumed.userId ? await users.findById(consumed.userId) : null;
+    if (!found || !(await users.emailLinkAccount(found.id))) return emails.invalidVerification(c, consumed);
+    // The first link finishes a sign-up: one from before `user.signed_up` existed gets it too.
+    const user = found.emailVerified ? found : await users.reopenSignUp(found);
     if (!user.emailVerified) {
       // The link proves access to the inbox, and nobody had proven the address before: a password an
       // unconfirmed sign-up set meanwhile (perhaps by someone else) goes, with its links and codes.
       await users.verifyByProvider(user, 'email-link');
-      await ctx.emit('email.verified', { user: toMadauthUser({ ...user, emailVerified: true }), via: consumed.via });
+      await ctx.emit('user.email_verified', { user: toMadauthUser({ ...user, emailVerified: true }), method: 'email-link', via: consumed.via });
     } else {
       // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.
       await users.updateUser(user.id, { wrongCodes: 0 });

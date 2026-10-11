@@ -18,7 +18,7 @@ function container(): HTMLElement {
 }
 
 describe('Madauth.github.renderButton', () => {
-  it('B10: renders a button that starts the redirect, for a custom screen', async () => {
+  it('B9: renders a button that starts the redirect, for a custom screen', async () => {
     fakeServer().github = true;
     const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
     void Madauth.initialize({ serverUrl: SERVER, providers: [new GitHub()], ui: 'custom' });
@@ -36,7 +36,7 @@ describe('Madauth.github.renderButton', () => {
     expect(el.childElementCount).toBe(0);
   });
 
-  it('B10: labels the button in the configured language until it is removed', async () => {
+  it('B9: labels the button in the configured language until it is removed', async () => {
     fakeServer().github = true;
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GitHub()], locale: 'de-CH', ui: 'custom' });
     const el = container();
@@ -54,7 +54,7 @@ describe('Madauth.github.renderButton', () => {
     expect(button.textContent).toBe('Continue with GitHub');
   });
 
-  it('B10: fails without a GitHub provider, when the server has no GitHub sign-in, or before initialize', async () => {
+  it('B9: fails without a GitHub provider, when the server has no GitHub sign-in, or before initialize', async () => {
     fakeServer();
 
     expect(Madauth.github.renderButton(container())).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });

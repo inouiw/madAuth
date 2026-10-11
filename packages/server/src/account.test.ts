@@ -1,7 +1,6 @@
 // Deleting the account: POST /auth/account/delete. See "HTTP API" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { APP_ORIGIN, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, REDIRECT_TO, cookies, linkAndCode, passwordApp, post, signIn, signInWithGithub, signUpVerified, stubGithub, type testApp } from './test/helpers.js';
-import { Users } from './users.js';
+import { APP_ORIGIN, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, REDIRECT_TO, cookies, linkAndCode, linkGoogleAsBefore, passwordApp, post, signIn, signInWithGitHub, signUpVerified, stubGitHub, type testApp } from './test/helpers.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -66,7 +65,7 @@ describe('deleting the account', () => {
     await signUpVerified(app, hook, 'Ada@Example.com');
     const [{ id: userId }] = await store.findMany('user', {});
     // Ada has both methods (a Google account linked in the store, as a sign-in alone never joins a user).
-    await new Users(store).linkAccount(userId as string, { key: 'google:1001', email: 'ada@example.com' });
+    await linkGoogleAsBefore(store, userId as string, '1001', 'ada@example.com');
     const google = await signIn(app);
     expect(await store.findMany('account', {})).toHaveLength(2);
 
@@ -112,8 +111,8 @@ describe('deleting the account', () => {
 
   it("O12: a GitHub user's deletion revokes the OAuth App's authorization at GitHub, with the token of the last sign-in", async () => {
     const { app, hook, store } = passwordApp({ github: { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET } });
-    const github = stubGithub({ token: 'gho_latest' });
-    const session = cookies(await signInWithGithub(app)).madauth_session.value;
+    const github = stubGitHub({ token: 'gho_latest' });
+    const session = cookies(await signInWithGitHub(app)).madauth_session.value;
 
     const res = await deleteAccount(app, session);
 
@@ -128,12 +127,27 @@ describe('deleting the account', () => {
     expect((await app.request('/auth/session', { headers: { Cookie: `madauth_session=${session}` } })).status).toBe(401);
   });
 
+  it("O13: a token that can't be read any more (the signing key changed) is logged, and the deletion goes ahead", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { app, store } = passwordApp({ github: { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET } });
+    const github = stubGitHub();
+    const session = cookies(await signInWithGitHub(app)).madauth_session.value;
+    const [account] = await store.findMany('account', {});
+    await store.update('account', { id: account.id }, { secret: 'v1.not.a.token' });
+
+    expect((await deleteAccount(app, session)).status).toBe(204);
+
+    expect(github.revocations()).toHaveLength(0);
+    expect(await store.findMany('user', {})).toEqual([]);
+    expect(error).toHaveBeenLastCalledWith(expect.stringContaining("can't be read"));
+  });
+
   it("O13: the deletion goes ahead when GitHub refuses the revocation or can't be reached, and the log says so", async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const github = { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET };
     const refusing = passwordApp({ github });
-    stubGithub({ revokeStatus: 422 });
-    const first = cookies(await signInWithGithub(refusing.app)).madauth_session.value;
+    stubGitHub({ revokeStatus: 422 });
+    const first = cookies(await signInWithGitHub(refusing.app)).madauth_session.value;
     expect((await deleteAccount(refusing.app, first)).status).toBe(204);
     expect(await refusing.store.findMany('user', {})).toEqual([]);
     expect(error).toHaveBeenLastCalledWith(expect.stringContaining('did not revoke'));
@@ -141,8 +155,8 @@ describe('deleting the account', () => {
 
     vi.unstubAllGlobals();
     const unreachable = passwordApp({ github });
-    const failing = stubGithub({});
-    const second = cookies(await signInWithGithub(unreachable.app)).madauth_session.value;
+    const failing = stubGitHub({});
+    const second = cookies(await signInWithGitHub(unreachable.app)).madauth_session.value;
     failing.calls.length = 0;
     vi.unstubAllGlobals();
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
