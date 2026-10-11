@@ -1,4 +1,4 @@
-import { EMAIL_EVENTS, MadAuthServer, lambdaBundling } from '@madauth/deploy-aws';
+import { EMAIL_LINK_EVENTS, MadAuthServer, lambdaBundling } from '@madauth/deploy-aws';
 import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as budgets from 'aws-cdk-lib/aws-budgets';
 import type * as acm from 'aws-cdk-lib/aws-certificatemanager';
@@ -105,7 +105,7 @@ export class SiteStack extends Stack {
       googleClientId: props.googleClientId || undefined,
       githubClientId: props.githubClientId || undefined,
       secretsPath: SECRETS_PATH,
-      webhook: { url: mailerUrl.url, events: EMAIL_EVENTS },
+      webhook: { url: mailerUrl.url, events: EMAIL_LINK_EVENTS },
       // A public demo: cap what abuse can cost.
       reservedConcurrentExecutions: 5,
       serverPackageDir: join(repoRoot, 'packages/server'),

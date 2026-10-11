@@ -276,6 +276,19 @@ describe('demo page', () => {
     expect($<HTMLInputElement>('#method-google').checked).toBe(true);
     expect($<HTMLInputElement>('#method-password').checked).toBe(false);
 
+    // GitHub switched off is a valid setting: no note. Not configured, the admin is told what it needs.
+    settings.github = { configured: true, enabled: false, secondFactor: 'none' };
+    execute('getSettings').click();
+    await expect.poll(() => $<HTMLInputElement>('#method-github').checked).toBe(false);
+    expect($('#github-note').hidden).toBe(true);
+    settings.github = { configured: false, enabled: false, secondFactor: 'none' };
+    execute('getSettings').click();
+    await expect.poll(() => $('#github-note').hidden).toBe(false);
+    expect($<HTMLInputElement>('#method-github').disabled).toBe(true);
+    settings.github = { configured: true, enabled: true, secondFactor: 'none' };
+    execute('getSettings').click();
+    await expect.poll(() => $('#github-note').hidden).toBe(true);
+
     // The controls of setSettings are its parameters: the request changes with them, before anything is sent.
     open('setSettings');
     expect(request('setSettings')).toContain('"password": false');

@@ -46,16 +46,27 @@ const google = flow === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();
 const { hostname } = location;
 $('[data-hosted]').hidden = !(hostname === 'madauth.com' || hostname.endsWith('.madauth.com'));
 
+// A method switched off is a valid setting and gets no note; one the server lacks the configuration for
+// does. Visitors can only tell that for the redirect flow (Google on, without a client secret); an admin's
+// settings tell it for every method.
+const configGaps = { visitor: false, admin: { google: false, github: false } };
+function showNotes(): void {
+  $('#flow-note').hidden = !(flow === 'redirect' && (configGaps.visitor || configGaps.admin.google));
+  $('#github-note').hidden = !configGaps.admin.github;
+}
+
 // No serverUrl: Vite proxies /auth to the madAuth server, so it is on this page's origin. GitHub is left out
-// when the server has no OAuth App for it, the authenticator app when the server has it switched off (no
+// when the server has no OAuth App for it or an admin has it off, the authenticator app when the server has it switched off (no
 // policy asks for it, and it signs in nobody alone), and the e-mail link when the server's webhook doesn't
 // send its e-mails or an admin has it off.
-void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new Totp(), new EmailLink()] }).then((result) => {
-  // The server offers the redirect flow only with a client secret (and Google switched on); otherwise
-  // initialize left GoogleRedirect out and the dialog has no Google button.
-  if (flow === 'redirect' && result.leftOut.includes('google')) $('#flow-note').hidden = false;
-  // GitHub sign-in needs GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET on the server; without them, no GitHub button.
-  if (result.leftOut.includes('github')) $('#github-note').hidden = false;
+void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new Totp(), new EmailLink()] }).then(async (result) => {
+  // GoogleRedirect is left out when Google is off or has no client secret; GET /auth/config tells which.
+  if (flow !== 'redirect' || !result.leftOut.includes('google')) return;
+  const config = await fetch(new URL('/auth/config', location.href).href)
+    .then((res) => (res.ok ? (res.json() as Promise<{ google?: { codeFlow: boolean } | null }>) : undefined))
+    .catch(() => undefined);
+  configGaps.visitor = !!config?.google && !config.google.codeFlow;
+  showNotes();
 });
 Madauth.onAuthStateChanged(handleAuthStateChanged);
 
@@ -250,14 +261,17 @@ let settingsLoaded = false;
  */
 function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSettings>> | null>(result: T): T {
   const methods: Settings['methods'] | undefined = result?.isSuccess ? result.methods : undefined;
+  // A method the server doesn't list (an older server) counts as not configured.
   for (const method of ['google', 'github', 'password', 'totp', 'email-link', 'sms'] as const) {
-    methodBox(method).checked = methods?.[method].enabled ?? false;
-    methodBox(method).disabled = !methods?.[method].configured;
+    methodBox(method).checked = methods?.[method]?.enabled ?? false;
+    methodBox(method).disabled = !methods?.[method]?.configured;
   }
   for (const method of ['google', 'github', 'password', 'email-link'] as const) {
-    policySelect(method).value = methods?.[method].secondFactor ?? 'none';
-    policySelect(method).disabled = !methods?.[method].configured;
+    policySelect(method).value = methods?.[method]?.secondFactor ?? 'none';
+    policySelect(method).disabled = !methods?.[method]?.configured;
   }
+  configGaps.admin = { google: !!methods && !methods.google?.configured, github: !!methods && !methods.github?.configured };
+  showNotes();
   settingsLoaded = !!methods;
   $('#settings-unloaded').hidden = settingsLoaded;
   executeButton('setSettings').disabled = !settingsLoaded;

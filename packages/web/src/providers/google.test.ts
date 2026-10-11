@@ -92,20 +92,18 @@ describe('GoogleFedcm', () => {
     expect(Madauth.currentUser).toEqual(ada);
   });
 
-  it('logs a failed One Tap sign-in and shows it when the dialog opens', async () => {
+  it('logs a failed One Tap sign-in and opens the dialog with it', async () => {
     const server = fakeServer();
     const gis = fakeGis();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
     await settle();
-    server.verifyError = 'verification_failed';
+    server.verifyError = 'other_method';
 
     gis.signIn();
     await settle();
-    expect(errorLog).toHaveBeenCalledWith('[madauth]', 'verification_failed', 'rejected in test');
-
-    void Madauth.signIn();
-    await settle();
-    expect(shadow('.error')?.getAttribute('data-code')).toBe('verification_failed');
+    expect(errorLog).toHaveBeenCalledWith('[madauth]', 'other_method', 'rejected in test');
+    expect(shadow<HTMLDialogElement>('dialog')?.open).toBe(true);
+    expect(shadow('.error')?.getAttribute('data-code')).toBe('other_method');
   });
 
   it('G5 / W3: the dialog always offers the FedCM button, even while One Tap is held back', async () => {
@@ -290,7 +288,7 @@ describe('GoogleRedirect', () => {
     expect(shadow('.notice')).toBeNull();
   });
 
-  it('D3: reports a failed redirect sign-in, tidies the URL and shows it in the dialog', async () => {
+  it('D3: reports a failed redirect sign-in, tidies the URL and opens the dialog with it', async () => {
     fakeServer().codeFlow = true;
     history.replaceState(null, '', '/page?x=1#madauth_error=verification_failed');
 
@@ -298,9 +296,33 @@ describe('GoogleRedirect', () => {
 
     expect(result).toMatchObject({ isSuccess: false, error: { code: 'verification_failed' } });
     expect(location.href).toBe('https://app.example.com/page?x=1');
-    // madAuth stays usable: the dialog opens and shows the error.
-    void Madauth.signIn();
+    // madAuth stays usable: the dialog the user left opens by itself and shows the error.
     await settle();
+    expect(shadow<HTMLDialogElement>('dialog')?.open).toBe(true);
+    expect(shadow('.error')?.getAttribute('data-code')).toBe('verification_failed');
+  });
+
+  it('D3: leaves the dialog closed after a failed redirect sign-in with ui: custom', async () => {
+    fakeServer().codeFlow = true;
+    history.replaceState(null, '', '/page#madauth_error=verification_failed');
+    const signIn = vi.spyOn(Madauth, 'signIn');
+
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()], ui: 'custom' });
+    await settle();
+
+    expect(signIn).not.toHaveBeenCalled();
+  });
+
+  it('D3: opened from a reset link as well, the dialog opens once, on the reset form, with the error', async () => {
+    fakeServer().codeFlow = true;
+    history.replaceState(null, '', '/page#madauth_reset=reset-token&madauth_error=verification_failed');
+    const signIn = vi.spyOn(Madauth, 'signIn');
+
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect(), new Password()] });
+    await settle();
+
+    expect(signIn).toHaveBeenCalledOnce();
+    expect(shadow('form.reset')).not.toBeNull();
     expect(shadow('.error')?.getAttribute('data-code')).toBe('verification_failed');
   });
 
