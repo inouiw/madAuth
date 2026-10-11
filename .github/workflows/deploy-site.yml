@@ -45,7 +45,7 @@ jobs:
         working-directory: deploy/aws
       - run: npm ci
         working-directory: site/infra
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: eu-central-1
