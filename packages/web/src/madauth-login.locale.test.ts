@@ -137,7 +137,7 @@ describe('<madauth-login> in German', () => {
     expect(text('label[for="password"]')).toBe('Passwort');
     expect(text('form.signin .submit')).toBe('Anmelden');
     expect(text('[data-action="forgot"]')).toBe('Passwort vergessen?');
-    expect(text('[data-action="signup"]')).toBe('Konto erstellen');
+    expect(text('[data-action="signup"]')).toBe('Noch kein Konto? Konto erstellen');
     expect(text('.others h3')).toBe('Weitere Anmeldemöglichkeiten');
     expect([...login().shadowRoot!.querySelectorAll('.row .label')].map((label) => label.textContent)).toEqual([
       'Authentifizierungs-App',
@@ -447,7 +447,7 @@ describe('Madauth.setLocale', () => {
     await submit('signup');
     await click('[data-action="resend"]');
     expect(text('h2')).toBe('Check your inbox');
-    expect(text('.notice[role="status"]')).toBe('We sent the e-mail again.');
+    expect(text('.notice[role="status"]')).toBe('We sent the email again.');
 
     Madauth.setLocale('de');
     await login().updateComplete;
@@ -470,7 +470,7 @@ describe('Madauth.setLocale', () => {
     Madauth.setLocale('en-GB');
     await login().updateComplete;
 
-    expect(text('[part="error"]')).toBe('E-mail or password is wrong.');
+    expect(text('[part="error"]')).toBe('Email or password is wrong.');
     expect($<HTMLInputElement>('form input[name="email"]')!.value).toBe('grace@example.com');
     expect($<HTMLInputElement>('form input[name="password"]')!.value).toBe('typed since');
   });
