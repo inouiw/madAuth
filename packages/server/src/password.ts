@@ -73,12 +73,12 @@ export interface PasswordProblem {
  * Returns why a new password breaks the rules an admin set (see `PasswordRules`), or null. `userInputs` are
  * the user's e-mail address, name and the like: a password made of them is easy to guess.
  */
-export function checkPasswordPolicy(password: unknown, rules: PasswordRules, userInputs: string[] = []): PasswordProblem | null {
+export async function checkPasswordPolicy(password: unknown, rules: PasswordRules, userInputs: string[] = []): Promise<PasswordProblem | null> {
   if (typeof password !== 'string') return { message: 'password is missing' };
   const length = [...password].length;
   if (length > MAX_PASSWORD_LENGTH) return { message: `The password must have at most ${MAX_PASSWORD_LENGTH} characters.` };
   if (length < rules.minLength) return { message: `The password must have at least ${rules.minLength} characters.`, minLength: rules.minLength };
-  if (rules.minScore > 0 && passwordScore(password, userInputs) < rules.minScore) {
+  if (rules.minScore > 0 && (await passwordScore(password, userInputs)) < rules.minScore) {
     return {
       message: 'This password is too easy to guess. Add another word or two, or choose less common ones.',
       minScore: rules.minScore,

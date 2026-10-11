@@ -584,7 +584,7 @@ async function createUser(email: string | undefined, io: CliIo, env: Env) {
   if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
   const store = await loadStore(env);
   const password = await io.askSecret(`Password for ${email}: `);
-  const problem = checkPasswordPolicy(password, await new Settings(store).passwordRules(), [email]);
+  const problem = await checkPasswordPolicy(password, await new Settings(store).passwordRules(), [email]);
   if (problem) return { output: problem.message, exitCode: 1 };
   const users = new Users(store);
   const passwordHash = await hashPassword(password);

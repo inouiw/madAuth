@@ -471,10 +471,19 @@ export function createApp(config: MadauthConfig): Hono {
     if (next && !anyOn(signsUp, next)) {
       return invalid('At least one sign-in method that creates users must stay on: Google, e-mail & password, or the authenticator app with sign-up by e-mail.');
     }
-    // The whole list is replaced.
-    if (next) await settings.changeMethods(() => next, caller.email);
-    const methods = next ?? (await settings.methods());
+    // Two writes: if the second fails, the first is undone, so a failed request has changed nothing.
+    const previousRules = rules && next ? await settings.passwordRules() : undefined;
     const password = rules ? await settings.setPasswordRules(rules, caller.email) : await settings.passwordRules();
+    if (next) {
+      try {
+        // The whole list is replaced.
+        await settings.changeMethods(() => next, caller.email);
+      } catch (e) {
+        if (previousRules) await settings.setPasswordRules(previousRules, caller.email).catch(() => {});
+        throw e;
+      }
+    }
+    const methods = next ?? (await settings.methods());
     return c.json(settingsAnswer(methods, password));
   });
 

@@ -33,7 +33,7 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
    */
   const refused = async (c: Context, password: unknown, userInputs: (string | null | undefined)[]) => {
     const words = userInputs.filter((word): word is string => !!word);
-    const problem = checkPasswordPolicy(password, await ctx.settings.passwordRules(), words);
+    const problem = await checkPasswordPolicy(password, await ctx.settings.passwordRules(), words);
     return problem ? weakPassword(c, problem) : null;
   };
   const emails = createEmails(ctx, users, webhook);
@@ -143,12 +143,9 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
 
   app.post('/auth/password/reset', async (c) => {
     const data = await body(c);
-    // Checked first, so a weak password doesn't use up the link. The user's words: those of the link's
-    // account (only its holder learns anything from the answer), or the address typed with the code.
-    const linkUserId = typeof data.token === 'string' && data.token ? await users.peekLinkToken(data.token, 'reset') : null;
-    const linkUser = linkUserId ? await users.findById(linkUserId) : null;
-    const typedEmail = isValidEmail(data.email) ? data.email.trim() : null;
-    const weak = await refused(c, data.password, linkUser ? [linkUser.email, linkUser.name] : [typedEmail]);
+    // Checked first, so a weak password doesn't use up the link. The user's words are only what the page knows
+    // too (the address typed with the code), so the strength meter and this check agree.
+    const weak = await refused(c, data.password, [isValidEmail(data.email) ? data.email.trim() : null]);
     if (weak) return weak;
     const consumed = await emails.consume(data, 'reset');
     const user = consumed.userId ? await users.findById(consumed.userId) : null;

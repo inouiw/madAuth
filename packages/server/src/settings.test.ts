@@ -256,4 +256,18 @@ describe('password rules', () => {
     // The methods were not changed either.
     expect(await config(app)).toMatchObject({ password: { minLength: 8 } });
   });
+
+  it('a failed write of the methods undoes the password rules, so a failed request changes nothing', async () => {
+    const { app, cookie } = await withAdmin();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(Settings.prototype, 'changeMethods').mockRejectedValueOnce(new Error('throttled'));
+
+    const res = await settingsApi(app, cookie, 'set', { methods: { google: {} }, password: { minLength: 12 } });
+
+    expect(res.status).toBe(500);
+    expect(await (await settingsApi(app, cookie, 'get')).json()).toMatchObject({
+      password: { minLength: 8, minScore: 2 },
+      methods: { password: { enabled: true } },
+    });
+  });
 });
