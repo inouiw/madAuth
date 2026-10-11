@@ -644,7 +644,7 @@ describe('the second step after a password or Google', () => {
     const back = await app.request(`/auth/google/callback?code=c&state=${location.searchParams.get('state')}`, {
       headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` },
     });
-    expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=totp&madauth_factors=totp`);
+    expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=totp&madauth_factors=totp&madauth_method=google`);
     expect(cookies(back).madauth_session?.value ?? '').toBe('');
     expect(cookies(back).madauth_challenge.value).toBeTruthy();
 
@@ -911,6 +911,7 @@ describe('signing up with the app alone', () => {
     const only = testApp({ ...config, webhookFetch: hook.fetch });
     expect(await (await only.request('/auth/config')).json()).toEqual({
       google: null,
+      github: null,
       password: null,
       totp: { signIn: true, signUp: true },
       email: { verification: true },

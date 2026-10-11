@@ -218,7 +218,7 @@ describe('code (redirect) flow', () => {
     const res = await app.request('/auth/google/callback?code=abc&state=wrong', { headers: { Cookie: cookie } });
 
     expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page?x=1#madauth_error=verification_failed`);
+    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page?x=1#madauth_error=verification_failed&madauth_method=google`);
     expect(cookies(res).madauth_session).toBeUndefined();
   });
 
@@ -252,7 +252,7 @@ describe('code (redirect) flow', () => {
       headers: { Cookie: cookie },
     });
 
-    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page?x=1#madauth_error=verification_failed`);
+    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page?x=1#madauth_error=verification_failed&madauth_method=google`);
     expect(cookies(res).madauth_session).toBeUndefined();
   });
 
@@ -261,7 +261,7 @@ describe('code (redirect) flow', () => {
 
     const res = await app.request('/auth/google/callback?error=access_denied', { headers: { Cookie: cookie } });
 
-    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page?x=1#madauth_error=cancelled`);
+    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page?x=1#madauth_error=cancelled&madauth_method=google`);
   });
 
   it('R6: is disabled without GOOGLE_CLIENT_SECRET', async () => {
@@ -271,6 +271,7 @@ describe('code (redirect) flow', () => {
     expect((await app.request('/auth/google/callback')).status).toBe(404);
     expect(await (await app.request('/auth/config')).json()).toEqual({
       google: { clientId: CLIENT_ID, codeFlow: false, secondFactor: 'none' },
+      github: null,
       password: null,
       totp: null,
       email: { verification: false },
@@ -377,6 +378,7 @@ describe('public endpoints', () => {
 
     expect(await res.json()).toEqual({
       google: { clientId: CLIENT_ID, codeFlow: true, secondFactor: 'none' },
+      github: null,
       password: null,
       totp: null,
       email: { verification: false },

@@ -26,9 +26,9 @@ export interface StoredUser {
 export interface StoredAccount {
   id: string;
   userId: string;
-  /** `password:<userId>`, `google:<sub>`, `totp:<userId>`, `email-link:<userId>` or `sms:<userId>`. */
+  /** `password:<userId>`, `google:<sub>`, `github:<id>`, `totp:<userId>`, `email-link:<userId>` or `sms:<userId>`. */
   key: string;
-  /** The password hash, or the encrypted secret of the authenticator app. Empty for Google. */
+  /** The password hash, the encrypted secret of the authenticator app, or GitHub's encrypted access token. Empty for Google. */
   secret: string | null;
   failedAttempts: number;
   lockedUntil: number;
@@ -85,6 +85,11 @@ export function passwordAccountKey(userId: string): string {
 
 export function googleAccountKey(sub: string): string {
   return `google:${sub}`;
+}
+
+/** `id` is GitHub's numeric user id: unlike the login, it never changes. */
+export function githubAccountKey(id: string): string {
+  return `github:${id}`;
 }
 
 export function totpAccountKey(userId: string): string {
@@ -188,6 +193,12 @@ export class Users {
     const accounts = await this.store.findMany('account', { userId });
     const key = accounts.map((account) => String(account.key)).find((k) => k.startsWith('google:'));
     return key ? key.slice('google:'.length) : null;
+  }
+
+  /** The user's GitHub account, if linked: its key holds GitHub's user id, its secret the encrypted access token of the last sign-in. */
+  async githubAccount(userId: string): Promise<StoredAccount | null> {
+    const accounts = (await this.store.findMany('account', { userId })) as unknown as StoredAccount[];
+    return accounts.find((account) => account.key.startsWith('github:')) ?? null;
   }
 
   async findAccountByKey(key: string): Promise<StoredAccount | null> {

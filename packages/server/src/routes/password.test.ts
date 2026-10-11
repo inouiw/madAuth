@@ -451,6 +451,7 @@ describe('configuration', () => {
 
     expect(await (await app.request('/auth/config')).json()).toEqual({
       google: null,
+      github: null,
       password: { minLength: 8, minScore: 2, secondFactor: 'none' },
       totp: null,
       email: { verification: true },

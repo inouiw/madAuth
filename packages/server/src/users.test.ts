@@ -88,7 +88,7 @@ describe('Google users', () => {
     const back = await app.request(`/auth/google/callback?code=c&state=${location.searchParams.get('state')}`, {
       headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` },
     });
-    expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=other_method`);
+    expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=other_method&madauth_method=google`);
     expect(cookies(back).madauth_session).toBeUndefined();
   });
 
@@ -219,7 +219,7 @@ describe('Google users', () => {
       headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` },
     });
 
-    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=signup_rejected`);
+    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=signup_rejected&madauth_method=google`);
     expect(cookies(res).madauth_session).toBeUndefined();
     expect(await store.findMany('user', {})).toEqual([]);
   });

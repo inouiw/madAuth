@@ -252,7 +252,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     // A phone for SMS codes satisfies the policy as well: with one, the app may go.
     const smsOn = isOn('sms', ctx.configured, methods);
     if (required.length && !(smsOn && (await users.smsAccount(user.id)))) {
-      const names = required.map((method) => ({ google: 'Google', password: 'e-mail & password', 'email-link': 'the e-mail link' })[method]);
+      const names = required.map((method) => ({ google: 'Google', github: 'GitHub', password: 'e-mail & password', 'email-link': 'the e-mail link' })[method]);
       const alternative = smsOn ? ' Add a phone number for SMS codes first, or' : ' To stop using it,';
       return error(c, 403, 'required_by_policy', `Signing in with ${names.join(' and ')} requires a second factor, so the authenticator app can't be removed.${alternative} delete your account.`);
     }

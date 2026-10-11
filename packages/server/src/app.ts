@@ -43,7 +43,7 @@ import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type Webho
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
 
-export { REDIRECT_ERROR_PARAM, REDIRECT_FACTORS_PARAM, REDIRECT_NEXT_PARAM } from './routes/google.js';
+export { REDIRECT_ERROR_PARAM, REDIRECT_FACTORS_PARAM, REDIRECT_METHOD_PARAM, REDIRECT_NEXT_PARAM } from './routes/oauth.js';
 
 /** The answer of the operator's sign-up check. */
 export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | { ok: false; reason: 'rejected'; message: string };
@@ -328,6 +328,7 @@ export function createApp(config: MadauthConfig): Hono {
     const rules = on('password') ? await settings.passwordRules() : null;
     return c.json({
       google: on('google') ? { clientId: config.google!.clientId, codeFlow: !!config.google!.clientSecret, secondFactor: policyOf('google', current) } : null,
+      github: on('github') ? { secondFactor: policyOf('github', current) } : null,
       password: rules ? { ...rules, secondFactor: policyOf('password', current) } : null,
       // The app can be set up when it is in use at all; `signIn` says whether it signs in on its own.
       totp: authenticatorOn(configured, current) ? { signIn: on('totp'), signUp: on('totp') && emailVerification } : null,
@@ -480,7 +481,7 @@ export function createApp(config: MadauthConfig): Hono {
     if (next === null) {
       return invalid(
         `methods must list the sign-in methods that are on (${SIGN_IN_METHODS.join(', ')}; sms for SMS codes as a second factor), each as true, {} or ` +
-          '{ "secondFactor": "none" | "optional" | "required" } (google, password and email-link), e.g. ' +
+          '{ "secondFactor": "none" | "optional" | "required" } (google, github, password and email-link), e.g. ' +
           '{ "google": {}, "password": { "secondFactor": "optional" }, "sms": {} }. A method that is not listed is off.',
       );
     }
@@ -492,7 +493,7 @@ export function createApp(config: MadauthConfig): Hono {
       );
     }
     if (next && !anyOn(signsUp, next)) {
-      return invalid('At least one sign-in method that creates users must stay on: Google, e-mail & password, the e-mail link, or the authenticator app with sign-up by e-mail.');
+      return invalid('At least one sign-in method that creates users must stay on: Google, GitHub, e-mail & password, the e-mail link, or the authenticator app with sign-up by e-mail.');
     }
     // Two writes: if the second fails, the first is undone, so a failed request has changed nothing.
     const previousRules = rules && next ? await settings.passwordRules() : undefined;

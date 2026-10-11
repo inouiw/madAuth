@@ -69,6 +69,7 @@ describe('deployment entry points', () => {
     expect(config).toMatchObject({ statusCode: 200 });
     expect(JSON.parse((config as { body: string }).body)).toEqual({
       google: { clientId: CLIENT_ID, codeFlow: false, secondFactor: 'none' },
+      github: null,
       password: { minLength: 8, minScore: 2, secondFactor: 'none' },
       totp: null,
       email: { verification: true },

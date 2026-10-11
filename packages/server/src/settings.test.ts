@@ -134,6 +134,7 @@ describe('switching sign-in methods off and on', () => {
       password: { minLength: 8, minScore: 2 },
       methods: {
         google: { configured: true, enabled: true, secondFactor: 'none' },
+        github: { configured: false, enabled: false, secondFactor: 'none' },
         password: { configured: true, enabled: false, secondFactor: 'none' },
         totp: { configured: true, enabled: false },
         'email-link': { configured: true, enabled: false, secondFactor: 'none' },
@@ -183,6 +184,7 @@ describe('switching sign-in methods off and on', () => {
     await settingsApi(googleOnly.app, undefined, 'get');
     expect(await config(googleOnly.app)).toEqual({
       google: { clientId: expect.any(String), codeFlow: true, secondFactor: 'none' },
+      github: null,
       password: null,
       totp: null,
       email: { verification: false },
