@@ -32,7 +32,6 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `WEBHOOK_URL` | for e-mail & password | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
 | `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.verify` and `email.reset`, e.g. `email.verify,email.reset,email.already_registered,email.no_password`. |
-| `PASSWORD_MIN_LENGTH` | no | Minimum password length. Default `8`. |
 | `TOTP_ISSUER` | no | The name authenticator apps show next to the account, e.g. `My App`. Default: the host of the app that asked for the setup, e.g. `app.example.com`. See [Authenticator app](#authenticator-app). |
 | `SESSION_TTL` | no | Lifetime of a session token in seconds: how long your backends accept it. Default `28800` (8 hours). The web library renews it when needed, see [Sessions](#sessions). |
 | `SESSION_RENEWAL_TTL` | no | How long a user stays signed in without opening your app, in seconds: a session can be renewed this long after its last renewal. Default `2592000` (30 days). Not less than `SESSION_TTL`. |
@@ -348,6 +347,26 @@ const result = await Madauth.admin.getSettings();
 
 On the command line, `set-methods google password=required totp` switches on the listed methods, with the policy after `=` (`none` without one), and off the others; `get-methods` prints them.
 
+## Password rules
+
+The rules for new passwords, at sign-up, reset and `create-user`, are a setting too, so admins change them while the server runs and the ready-made bundles need no code for them:
+
+| Rule | Default | |
+| --- | --- | --- |
+| `minLength` | `8` | The fewest characters, from 1 to 128. A password has at most 256. |
+| `minScore` | `2` | How hard to guess it must be, 0 to 4, as [zxcvbn-ts](https://zxcvbn-ts.github.io/zxcvbn/) rates it: `0` checks the length only, `2` refuses common passwords and simple patterns, `3` asks for noticeably stronger ones. |
+
+The rating knows about 49,000 common passwords, keyboard patterns (`qwertz`), repeats and sequences, dates, l33t (`P@ssw0rd`) and passwords close to these, and counts the user's e-mail address and name as easy to guess. It runs inside madAuth: the password goes nowhere. `password1234` and `summer2024` score 1, `Sommer2024!` 3, `correct horse battery` 4. There are no rules like "one digit and one symbol", see [Password security](password-security.md#password-rules).
+
+```ts
+// What is left out takes its default.
+await Madauth.admin.setSettings({ password: { minLength: 10, minScore: 3 } });
+const result = await Madauth.admin.getSettings();
+// { isSuccess: true, methods: { … }, password: { minLength: 10, minScore: 3 } }
+```
+
+On the command line: `set-password-rules min-length=10 min-score=3` (it needs only `DATABASE_URL`) and `get-password-rules`. The web library gets the rules with the configuration, as `Madauth.password.policy`, for the hint under the field. The dialog shows a strength meter under a new password, rated with the same zxcvbn-ts options, so it says before sending whether the server will accept the password; it loads zxcvbn-ts (about 220 kB compressed) only when the user starts typing one. A password that breaks them is answered `400 weak_password`, with `minLength` (too short) or `minScore` (too easy to guess) next to the English `message`, so the dialog can say it in the user's language. The rules apply to new passwords only: existing ones keep working.
+
 ## Authenticator app
 
 The authenticator app (TOTP, RFC 6238: Google Authenticator, 1Password, Microsoft Authenticator and the like) needs no configuration beyond the store; `TOTP_ISSUER` only sets the name the app shows next to the account. What it does is the [sign-in policy](#sign-in-methods) above.
@@ -540,7 +559,7 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 
 | Method & path | Description |
 | --- | --- |
-| `GET /auth/config` | Public settings for the web library: `{ google: { clientId, codeFlow, secondFactor } \| null, password: { minLength, secondFactor } \| null, totp: { signIn, signUp } \| null, email: { verification } }`. A method is `null` when it is not configured or [switched off](#sign-in-methods); `totp` is `null` when the app is neither a second factor of a method that is on nor a method itself (`signIn`). |
+| `GET /auth/config` | Public settings for the web library: `{ google: { clientId, codeFlow, secondFactor } \| null, password: { minLength, minScore, secondFactor } \| null, totp: { signIn, signUp } \| null, email: { verification } }`. A method is `null` when it is not configured or [switched off](#sign-in-methods); `totp` is `null` when the app is neither a second factor of a method that is on nor a method itself (`signIn`). |
 | `POST /auth/google/nonce` | Starts a FedCM / One Tap sign-in: returns `{ nonce }` and sets a 5-minute nonce cookie |
 | `POST /auth/google/verify` | `{ credential, locale? }` (Google ID token) → `{ user }` and the session cookie, or the [second step](#the-second-step); 403 `signup_rejected` (a first sign-in the sign-up check refused), 403 `other_method` (the address signs in another way; `methods` says how), 503 `temporarily_unavailable` |
 | `GET /auth/google/start?return_to=` | Starts the redirect flow (needs `GOOGLE_CLIENT_SECRET`) |
@@ -548,7 +567,7 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/password/signin` | `{ email, password }` → `{ user }` and the session cookie, or the second step; 401 `invalid_credentials`, 403 `email_unverified`, 429 `too_many_attempts` |
 | `POST /auth/password/signup` | `{ email, password, name?, redirectTo, locale? }` → 202, and the confirmation e-mail; 400 `invalid_email` or `weak_password`, 403 `signup_rejected`, 503 `temporarily_unavailable` |
 | `POST /auth/password/send-reset` | `{ email, redirectTo, locale? }` → 202, and the reset e-mail if the address has a password (`email.no_password` if its user has none); 503 `temporarily_unavailable` |
-| `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie, or the second step; ends all older sessions; 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
+| `POST /auth/password/reset` | `{ password, token }` or `{ password, email, code }` → `{ user }` and the session cookie, or the second step; ends all older sessions; 400 `weak_password`, `link_invalid` or `code_invalid`, 429 `codes_locked` |
 | `POST /auth/email/send-verification` | `{ email, redirectTo, locale? }` → 202, and the confirmation e-mail again, for a sign-up with a password or with the authenticator app; 503 `temporarily_unavailable` |
 | `POST /auth/email/verify` | `{ token }` or `{ email, code }` → `{ user }` and the session cookie, or the second step (a sign-up with the app: `totp_setup_required`); 400 `link_invalid` or `code_invalid`, 429 `codes_locked` |
 | `POST /auth/totp/setup` | `{}`, signed in or in the second step → `{ secret, uri }` (base32, and the `otpauth://` URI for the QR code) and a 10-minute setup cookie; a user who has an app sends `{ code }` or `{ recoveryCode }` from it, since the new one replaces it (401 `code_required`, `code_invalid`); the approval holds for ten minutes in the setup cookie, so a setup started again needs no second code; 401 `no_session` |
@@ -563,8 +582,8 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/logout` | Clears the cookies of the session |
 | `POST /auth/admin/claims/get` | `{ email }` → `{ email, userId, claims }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`, 404 `user_not_found`. See [Claims](#claims). |
 | `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims` |
-| `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, secondFactor }, password: { … }, totp: { configured, enabled } } }`, for admins. See [Sign-in methods](#sign-in-methods). |
-| `POST /auth/admin/settings/set` | `{ methods: { google?: {}, password?: { secondFactor }, totp?: {} } }` (the list of the methods that are on; `true` for `{}`) → the same; 400 `invalid_settings`, also when no method that creates users would stay on |
+| `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, secondFactor }, password: { … }, totp: { configured, enabled } }, password: { minLength, minScore } }`, for admins. See [Sign-in methods](#sign-in-methods) and [Password rules](#password-rules). |
+| `POST /auth/admin/settings/set` | `{ methods?: { google?: {}, password?: { secondFactor }, totp?: {} }, password?: { minLength?, minScore? } }`, one or both (`methods` is the list of the methods that are on, `true` for `{}`; what `password` leaves out takes its default) → the same; 400 `invalid_settings`, also when no method that creates users would stay on, and then nothing is changed |
 | `POST /auth/admin/totp/remove` | `{ email }` → `{ email, userId, enabled: false }`: removes the user's authenticator app and recovery codes, for admins. See [Authenticator app](#authenticator-app). |
 | `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`. See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |

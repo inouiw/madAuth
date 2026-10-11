@@ -333,6 +333,32 @@ describe('errors with a message from the server', () => {
     expect(text('[part="error"]')).toBe('Dieses Passwort ist nicht zulässig. Bitte wählen Sie ein anderes.');
   });
 
+  it('weak_password: German explains a password that is too easy to guess', async () => {
+    fakeServer();
+    await openDialog({ locale: 'de' });
+    await click('[data-action="signup"]');
+
+    fill({ email: 'new@example.com', password: 'password123' });
+    await submit('signup');
+
+    expect(text('[part="error"]')).toBe(
+      'Dieses Passwort ist zu leicht zu erraten. Fügen Sie ein, zwei Wörter hinzu oder wählen Sie weniger gebräuchliche.',
+    );
+  });
+
+  it('the strength meter speaks German', async () => {
+    fakeServer();
+    await openDialog({ locale: 'de' });
+    await click('[data-action="signup"]');
+
+    const input = $<HTMLInputElement>('input[name="password"]')!;
+    input.value = 'password1234';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    await vi.waitFor(() => expect(text('[part="strength"]')).toBe('Schwach: zu leicht zu erraten'));
+    expect($('[role="meter"]')!.getAttribute('aria-label')).toBe('Passwortstärke');
+  });
+
   it('weak_password: German explains a short password on the reset form too', async () => {
     fakeServer();
     history.replaceState(null, '', `/page#madauth_reset=${RESET_TOKEN}`);
@@ -357,6 +383,10 @@ describe('errors with a message from the server', () => {
     fill({ email: 'new@example.com', password: 'x'.repeat(257) });
     await submit('signup');
     expect(text('[part="error"]')).toBe('The password must have at most 256 characters.');
+
+    fill({ email: 'new@example.com', password: 'password123' });
+    await submit('signup');
+    expect(text('[part="error"]')).toBe('This password is too easy to guess. Add another word or two, or choose less common ones.');
   });
 
   it('too_many_attempts: German shows its own text without the seconds, English the server’s message', async () => {

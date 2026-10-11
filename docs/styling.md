@@ -64,6 +64,7 @@ Use `::part()` to style an element directly.
 | `link` | The text buttons: "Forgot password?", "Create account", "Back to sign in", "Send the e-mail again", "Use a recovery code instead", "Cancel", "Start again". |
 | `qr` | The QR code of the authenticator app's key: an inline SVG whose modules are drawn in its text color, black on a white background. Keep it dark on light; not every authenticator app reads an inverted code. |
 | `codes` | The list of recovery codes, shown once after the setup. |
+| `strength` | The strength meter under a new password (create account, new password): four bars and a word. It has `data-score` (0 to 4), and `data-too-easy` while the password is below the server's `minScore`. |
 
 ```css
 madauth-login::part(dialog) {

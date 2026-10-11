@@ -243,7 +243,7 @@ describe('password reset', () => {
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
     const { link, token } = linkAndCode(hook.lastEmail());
     expect(link.startsWith(`${REDIRECT_TO}#madauth_reset=`)).toBe(true);
-    const res = await post(app, '/auth/password/reset', { token, password: 'new password!' });
+    const res = await post(app, '/auth/password/reset', { token, password: 'new teapot sky!' });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ user: { email: grace.email } });
@@ -252,7 +252,7 @@ describe('password reset', () => {
     expect((await session(oldSession)).status).toBe(401);
     expect((await session(newSession)).status).toBe(200);
     expect((await signIn(app)).status).toBe(401);
-    expect((await signIn(app, { password: 'new password!' })).status).toBe(200);
+    expect((await signIn(app, { password: 'new teapot sky!' })).status).toBe(200);
     expect(await (await post(app, '/auth/password/reset', { token, password: 'other password' })).json()).toMatchObject({
       error: 'link_invalid',
     });
@@ -265,10 +265,10 @@ describe('password reset', () => {
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
     const { code } = linkAndCode(hook.lastEmail());
 
-    const res = await post(app, '/auth/password/reset', { email: grace.email, code, password: 'new password!' });
+    const res = await post(app, '/auth/password/reset', { email: grace.email, code, password: 'new teapot sky!' });
 
     expect(res.status).toBe(200);
-    expect((await signIn(app, { password: 'new password!' })).status).toBe(200);
+    expect((await signIn(app, { password: 'new teapot sky!' })).status).toBe(200);
   });
 
   it('a reset ends an unused confirmation link', async () => {
@@ -279,7 +279,7 @@ describe('password reset', () => {
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
     const { token } = linkAndCode(hook.lastEmail());
 
-    expect((await post(app, '/auth/password/reset', { token, password: 'new password!' })).status).toBe(200);
+    expect((await post(app, '/auth/password/reset', { token, password: 'new teapot sky!' })).status).toBe(200);
 
     const res = await post(app, '/auth/email/verify', { token: verifyToken });
     expect(await res.json()).toMatchObject({ error: 'link_invalid' });
@@ -306,7 +306,7 @@ describe('password reset', () => {
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
     const reset = linkAndCode(hook.lastEmail());
     advance(VERIFY_TTL_MS + 60_000 + RESET_TTL_MS + 60_000);
-    expect(await (await post(app, '/auth/password/reset', { email: grace.email, code: reset.code, password: 'new password!' })).json()).toMatchObject({
+    expect(await (await post(app, '/auth/password/reset', { email: grace.email, code: reset.code, password: 'new teapot sky!' })).json()).toMatchObject({
       error: 'code_invalid',
     });
   });
@@ -345,12 +345,12 @@ describe('password reset', () => {
     const wrong = code === '000000' ? '111111' : '000000';
 
     for (let i = 0; i < 5; i++) {
-      const res = await post(app, '/auth/password/reset', { email: grace.email, code: wrong, password: 'new password!' });
+      const res = await post(app, '/auth/password/reset', { email: grace.email, code: wrong, password: 'new teapot sky!' });
       expect(await res.json()).toMatchObject({ error: 'code_invalid' });
     }
 
-    expect((await post(app, '/auth/password/reset', { email: grace.email, code, password: 'new password!' })).status).toBe(400);
-    expect((await post(app, '/auth/password/reset', { token, password: 'new password!' })).status).toBe(400);
+    expect((await post(app, '/auth/password/reset', { email: grace.email, code, password: 'new teapot sky!' })).status).toBe(400);
+    expect((await post(app, '/auth/password/reset', { token, password: 'new teapot sky!' })).status).toBe(400);
   });
 
   it('wrong codes are counted across e-mails: after 10 the codes stop working, the links do not', async () => {
@@ -361,7 +361,7 @@ describe('password reset', () => {
       await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
       return linkAndCode(hook.lastEmail());
     };
-    const tryCode = (code: string) => post(app, '/auth/password/reset', { email: grace.email, code, password: 'new password!' });
+    const tryCode = (code: string) => post(app, '/auth/password/reset', { email: grace.email, code, password: 'new teapot sky!' });
 
     // Two e-mails with five guesses each.
     const answers: unknown[] = [];
@@ -379,7 +379,7 @@ describe('password reset', () => {
     expect(await locked.json()).toEqual({ error: 'codes_locked', message: expect.stringContaining('use the link') });
 
     // The link of that e-mail still works, and using it lets codes work again.
-    expect((await post(app, '/auth/password/reset', { token: third.token, password: 'new password!' })).status).toBe(200);
+    expect((await post(app, '/auth/password/reset', { token: third.token, password: 'new teapot sky!' })).status).toBe(200);
     const fourth = await newResetMail();
     expect((await tryCode(fourth.code)).status).toBe(200);
   });
@@ -432,9 +432,9 @@ describe('password reset', () => {
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
     const second = linkAndCode(hook.lastEmail());
 
-    expect((await post(app, '/auth/password/reset', { token: first.token, password: 'new password!' })).status).toBe(400);
-    expect((await post(app, '/auth/password/reset', { email: grace.email, code: first.code, password: 'new password!' })).status).toBe(400);
-    expect((await post(app, '/auth/password/reset', { token: second.token, password: 'new password!' })).status).toBe(200);
+    expect((await post(app, '/auth/password/reset', { token: first.token, password: 'new teapot sky!' })).status).toBe(400);
+    expect((await post(app, '/auth/password/reset', { email: grace.email, code: first.code, password: 'new teapot sky!' })).status).toBe(400);
+    expect((await post(app, '/auth/password/reset', { token: second.token, password: 'new teapot sky!' })).status).toBe(200);
   });
 });
 
@@ -451,7 +451,7 @@ describe('configuration', () => {
 
     expect(await (await app.request('/auth/config')).json()).toEqual({
       google: null,
-      password: { minLength: 8, secondFactor: 'none' },
+      password: { minLength: 8, minScore: 2, secondFactor: 'none' },
       totp: null,
       email: { verification: true },
     });

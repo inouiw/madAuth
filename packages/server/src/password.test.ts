@@ -44,15 +44,38 @@ describe('password hashing', () => {
 });
 
 describe('password policy', () => {
-  it('P3: checks only the length, between the minimum and 256 characters', () => {
-    expect(checkPasswordPolicy('1234567', 8)).toMatch(/at least 8/);
-    expect(checkPasswordPolicy('12345678', 8)).toBeNull();
-    expect(checkPasswordPolicy('x'.repeat(256), 8)).toBeNull();
-    expect(checkPasswordPolicy('x'.repeat(257), 8)).toMatch(/at most 256/);
-    expect(checkPasswordPolicy('  spaced  ', 8)).toBeNull();
+  const length = (minLength: number) => ({ minLength, minScore: 0 as const });
+
+  it('P3: checks the length, between the minimum and 256 characters', () => {
+    expect(checkPasswordPolicy('1234567', length(8))).toEqual({ message: 'The password must have at least 8 characters.', minLength: 8 });
+    expect(checkPasswordPolicy('12345678', length(8))).toBeNull();
+    expect(checkPasswordPolicy('x'.repeat(256), length(8))).toBeNull();
+    expect(checkPasswordPolicy('x'.repeat(257), length(8))).toEqual({ message: 'The password must have at most 256 characters.' });
+    expect(checkPasswordPolicy('  spaced  ', length(8))).toBeNull();
     // Counted in characters, not UTF-16 units: four emoji are four characters.
-    expect(checkPasswordPolicy('🔑🔑🔑🔑', 5)).toMatch(/at least 5/);
-    expect(checkPasswordPolicy(undefined, 8)).toBe('password is missing');
+    expect(checkPasswordPolicy('🔑🔑🔑🔑', length(5))).toMatchObject({ minLength: 5 });
+    expect(checkPasswordPolicy(undefined, length(8))).toEqual({ message: 'password is missing' });
+  });
+
+  it('refuses a password that is too easy to guess, after the length', () => {
+    const rules = { minLength: 8, minScore: 2 as const };
+    const weak = { message: expect.stringMatching(/too easy to guess/), minScore: 2 };
+
+    for (const common of ['password', '12345678', 'Password1!', 'qwertzuiop', 'summer2024']) {
+      expect(checkPasswordPolicy(common, rules)).toEqual(weak);
+    }
+    expect(checkPasswordPolicy('correct horse battery', rules)).toBeNull();
+    expect(checkPasswordPolicy('Kaffee-Tasse-Berg', rules)).toBeNull();
+    expect(checkPasswordPolicy('short', rules)).toMatchObject({ minLength: 8 });
+    // 0 checks the length only.
+    expect(checkPasswordPolicy('password', { minLength: 8, minScore: 0 })).toBeNull();
+  });
+
+  it('counts the user’s address and name as easy to guess', () => {
+    const rules = { minLength: 8, minScore: 2 as const };
+
+    expect(checkPasswordPolicy('Grace Hopper 1', rules)).toBeNull();
+    expect(checkPasswordPolicy('Grace Hopper 1', rules, ['grace@example.com', 'Grace Hopper'])).toMatchObject({ minScore: 2 });
   });
 });
 

@@ -21,9 +21,15 @@ madAuth keeps all of this in one tested place. A [store adapter](server.md#custo
 
 ## Password rules
 
-As [NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html) recommends, only the length is checked: at least `PASSWORD_MIN_LENGTH` characters (default 8) and at most 256. There are no rules like "one digit and one symbol". Spaces and any Unicode characters are allowed, and leading and trailing spaces are kept.
+As [NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html) recommends, a new password is checked for its length and against passwords that are easy to guess, not for the kinds of characters in it:
 
-Code: `checkPasswordPolicy` in [`password.ts`](../packages/server/src/password.ts).
+- **Length:** at least `minLength` characters (default 8) and at most 256, counted in characters, not bytes.
+- **Easy to guess:** [zxcvbn-ts](https://zxcvbn-ts.github.io/zxcvbn/) rates the password from 0 to 4, and it needs at least `minScore` (default 2). The rating knows about 49,000 common passwords, keyboard patterns, repeats, dates, l33t and passwords close to these, and counts the user's e-mail address and name as easy to guess. This replaces a list of forbidden passwords you'd have to keep up to date.
+- **No rules like "one digit and one symbol":** they make users pick `Password1!`, which zxcvbn rates 0.
+
+Spaces and any Unicode characters are allowed, and leading and trailing spaces are kept. Admins set both rules while the server runs, see [Password rules](server.md#password-rules); they apply to sign-up, reset and `create-user`, and only to new passwords. The rating runs inside madAuth, so the password is never sent anywhere. A reset checks the new password before the link or code is used, so a refused password doesn't use them up.
+
+Code: `checkPasswordPolicy` in [`password.ts`](../packages/server/src/password.ts) and [`strength.ts`](../packages/server/src/strength.ts).
 
 ## E-mail addresses
 

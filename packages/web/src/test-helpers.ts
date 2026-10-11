@@ -48,6 +48,8 @@ export interface FakeServer {
   emailsDown: boolean;
   /** The sign-up check (signup.before) refuses with this message. */
   rejectSignUp: string | undefined;
+  /** The rules for new passwords, as an admin set them. */
+  passwordRules: { minLength: number; minScore: number };
   /** Sign-in is locked after too many failed attempts: it answers 429. */
   locked: boolean;
   /** E-mails "sent": what for, to whom and the link's page. */
@@ -94,6 +96,7 @@ export function fakeServer(): FakeServer {
     mails: [],
     emailsDown: false,
     rejectSignUp: undefined,
+    passwordRules: { minLength: 8, minScore: 2 },
     locked: false,
     user: null,
     verifyError: undefined,
@@ -142,10 +145,15 @@ export function fakeServer(): FakeServer {
     return true;
   };
   const isAdmin = () => !!(server.user?.claims?.roles as string[] | undefined)?.includes('admin');
-  /** Why the server refuses a password, like its length-only policy. */
-  const weakPassword = (password = ''): string | undefined => {
-    if (password.length < 8) return 'The password must have at least 8 characters.';
-    if (password.length > 256) return 'The password must have at most 256 characters.';
+  /** The server's answer to a password that breaks its rules; a few common ones stand for "too easy to guess". */
+  const weakPassword = (password = ''): Response | undefined => {
+    const { minLength, minScore } = server.passwordRules;
+    const weak = (message: string, details: object = {}) => json({ error: 'weak_password', message, ...details }, 400);
+    if (password.length > 256) return weak('The password must have at most 256 characters.');
+    if (password.length < minLength) return weak(`The password must have at least ${minLength} characters.`, { minLength });
+    if (minScore > 0 && ['password1', 'password123', '12345678', 'qwertzuiop'].includes(password)) {
+      return weak('This password is too easy to guess. Add another word or two, or choose less common ones.', { minScore });
+    }
     return undefined;
   };
   const fetchMock = vi.fn(async (input: string | URL, init: RequestInit = {}) => {
@@ -167,7 +175,7 @@ export function fakeServer(): FakeServer {
       case 'GET /auth/config':
         return json({
           google: server.google && server.methods.google ? { clientId: CLIENT_ID, codeFlow: server.codeFlow, secondFactor: server.policy.google } : null,
-          password: server.password && server.methods.password ? { minLength: 8, secondFactor: server.policy.password } : null,
+          password: server.password && server.methods.password ? { ...server.passwordRules, secondFactor: server.policy.password } : null,
           totp: totpOn() ? { signIn: server.methods.totp, signUp: server.methods.totp && server.password } : null,
           email: { verification: server.password },
         });
@@ -182,7 +190,7 @@ export function fakeServer(): FakeServer {
         if (server.rejectSignUp) return json({ error: 'signup_rejected', message: server.rejectSignUp }, 403);
         if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
         if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
-        if (weakPassword(body.password)) return json({ error: 'weak_password', message: weakPassword(body.password) }, 400);
+        if (weakPassword(body.password)) return weakPassword(body.password)!;
         if (server.accounts.get(email)?.verified) {
           server.mails.push({ purpose: 'registered', to: email, redirectTo: body.redirectTo });
         } else {
@@ -225,7 +233,7 @@ export function fakeServer(): FakeServer {
         return afterPrimary(target, 'password');
       }
       case 'POST /auth/password/reset': {
-        if (weakPassword(body.password)) return json({ error: 'weak_password', message: weakPassword(body.password) }, 400);
+        if (weakPassword(body.password)) return weakPassword(body.password)!;
         const target = body.token === RESET_TOKEN ? (lastMailTo('reset') ?? grace.email) : body.code === CODE ? email : undefined;
         const account = target && server.accounts.get(target);
         if (!account) {
@@ -345,6 +353,10 @@ export function fakeServer(): FakeServer {
         if (!server.user) return json({ error: 'no_session' }, 401);
         if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
         if (url.pathname.endsWith('/set')) {
+          const { password } = body as { password?: { minLength?: number; minScore?: number } };
+          if (password) server.passwordRules = { minLength: password.minLength ?? 8, minScore: password.minScore ?? 2 };
+        }
+        if (url.pathname.endsWith('/set') && (body as { methods?: unknown }).methods !== undefined) {
           const methods = (body as { methods?: Record<string, unknown> }).methods;
           if (!methods || typeof methods !== 'object') return json({ error: 'invalid_settings', message: 'invalid' }, 400);
           const on = (value: unknown) => value === true || (!!value && typeof value === 'object');
@@ -354,6 +366,7 @@ export function fakeServer(): FakeServer {
           server.policy = { google: policyOf(methods.google), password: policyOf(methods.password) };
         }
         return json({
+          password: server.passwordRules,
           methods: {
             google: { configured: server.google, enabled: server.google && server.methods.google, secondFactor: server.policy.google },
             password: { configured: server.password, enabled: server.password && server.methods.password, secondFactor: server.policy.password },

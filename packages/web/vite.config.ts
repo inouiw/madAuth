@@ -8,8 +8,9 @@ export default defineConfig({
       fileName: 'index',
     },
     rollupOptions: {
-      // Let the consuming app dedupe lit instead of bundling a second copy; uqr is a dependency like it.
-      external: [/^lit/, 'uqr'],
+      // Let the consuming app dedupe lit instead of bundling a second copy; uqr and zxcvbn-ts are dependencies
+      // like it. zxcvbn-ts is imported dynamically, so the app's bundler puts it in a chunk of its own.
+      external: [/^lit/, 'uqr', /^@zxcvbn-ts\//],
     },
   },
 });

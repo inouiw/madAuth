@@ -60,6 +60,10 @@ export interface MadauthError {
   method?: string;
   /** With `other_method`: how the address signs in instead, e.g. `['password']`. */
   methods?: string[];
+  /** With `weak_password` for a password that is too short: the fewest characters it may have. */
+  minLength?: number;
+  /** With `weak_password` for a password that is too easy to guess: the strength score it needs (0 to 4). */
+  minScore?: number;
 }
 
 /** What every madAuth method resolves to. Expected failures are returned, never thrown. */

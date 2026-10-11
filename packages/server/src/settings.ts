@@ -1,5 +1,6 @@
-// Settings that admins change while the server runs, kept in the store: which sign-in methods are on, and
-// which of them ask for a second factor. See "Sign-in methods" in docs/server.md.
+// Settings that admins change while the server runs, kept in the store: which sign-in methods are on, which
+// of them ask for a second factor, and the rules for new passwords. See "Sign-in methods" and "Password
+// rules" in docs/server.md.
 import type { Row, StoreAdapter } from './store/schema.js';
 
 /**
@@ -30,6 +31,43 @@ export type MethodSettings = Partial<Record<SignInMethod, MethodSetting>>;
 
 /** The id of the setting that holds {@link MethodSettings}. */
 export const METHODS_SETTING = 'methods';
+
+/** The id of the setting that holds {@link PasswordRules}. */
+export const PASSWORD_SETTING = 'password';
+
+/** The rules for new passwords, at sign-up, reset and `create-user`. */
+export interface PasswordRules {
+  /** The fewest characters a password may have, from 1 to {@link MAX_MIN_LENGTH}. */
+  minLength: number;
+  /**
+   * How hard to guess it must be, as zxcvbn rates it (see `passwordScore`): 0 (anything) to 4. 2 refuses
+   * common passwords and simple patterns; 3 asks for noticeably stronger ones.
+   */
+  minScore: PasswordScore;
+}
+
+export type PasswordScore = 0 | 1 | 2 | 3 | 4;
+
+/** The rules until an admin sets them. */
+export const DEFAULT_PASSWORD_RULES: PasswordRules = { minLength: 8, minScore: 2 };
+
+/** The highest minimum length an admin can set; a password has at most 256 characters. */
+export const MAX_MIN_LENGTH = 128;
+
+export const isPasswordScore = (value: unknown): value is PasswordScore => Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 4;
+
+/**
+ * Checks password rules and returns them as {@link PasswordRules}, or null if `input` is not: an object with
+ * `minLength` and `minScore`, each optional (then its default), nothing else.
+ */
+export function parsePasswordRules(input: unknown): PasswordRules | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const { minLength = DEFAULT_PASSWORD_RULES.minLength, minScore = DEFAULT_PASSWORD_RULES.minScore, ...rest } = input as Record<string, unknown>;
+  if (Object.keys(rest).length) return null;
+  if (!Number.isInteger(minLength) || (minLength as number) < 1 || (minLength as number) > MAX_MIN_LENGTH) return null;
+  if (!isPasswordScore(minScore)) return null;
+  return { minLength: minLength as number, minScore };
+}
 
 /** What decides whether the server has what a method needs. `MadauthConfig` has these fields. */
 export interface MethodConfig {
@@ -104,6 +142,7 @@ const MAX_TRIES = 3;
 /** Settings on top of the StoreAdapter, each one a JSON value under its id. */
 export class Settings {
   private warned = false;
+  private warnedRules = false;
 
   /** `initial` is what counts until the methods are set, see {@link initialMethods}. */
   constructor(
@@ -164,6 +203,25 @@ export class Settings {
     updatedBy: string | null,
   ): Promise<MethodSettings | null> {
     return this.change<MethodSettings>(METHODS_SETTING, (current) => apply(this.current(current)), updatedBy);
+  }
+
+  /** The rules for new passwords; the defaults until an admin set them. */
+  async passwordRules(): Promise<PasswordRules> {
+    const stored = await this.get(PASSWORD_SETTING);
+    if (stored === undefined) return DEFAULT_PASSWORD_RULES;
+    const parsed = parsePasswordRules(stored);
+    if (parsed) return parsed;
+    if (!this.warnedRules) {
+      this.warnedRules = true;
+      console.warn('[madauth] The stored password rules are not in the form this version expects. Set them again with set-password-rules; until then the defaults count.');
+    }
+    return DEFAULT_PASSWORD_RULES;
+  }
+
+  /** Replaces the rules for new passwords. */
+  async setPasswordRules(rules: PasswordRules, updatedBy: string | null): Promise<PasswordRules> {
+    await this.set(PASSWORD_SETTING, rules, updatedBy);
+    return rules;
   }
 
   /** The stored methods, or the initial ones if nothing (usable) is stored. */

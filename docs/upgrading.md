@@ -1,5 +1,11 @@
 # Upgrading
 
+## After 0.4.0-beta.1
+
+- **Password rules are a setting.** `PASSWORD_MIN_LENGTH` is gone, and a server that still has it refuses to start, so a stricter minimum is never lowered without notice. Remove it and set the minimum with `npx @madauth/server set-password-rules min-length=<n>` (needs only `DATABASE_URL`) or `Madauth.admin.setSettings({ password: { minLength } })`. See [Password rules](server.md#password-rules).
+- **Easy-to-guess passwords are refused.** New passwords (sign-up, reset, `create-user`) also need a zxcvbn strength score of at least 2 by default, which refuses common passwords like `password1234`. Existing passwords keep working. To check the length only, as before, run `set-password-rules min-score=0`.
+- `GET /auth/config`, `Madauth.password.policy` and the admin settings have `minScore` next to `minLength`, and a `weak_password` error has `minLength` or `minScore`. `Madauth.admin.setSettings` takes `methods`, `password` or both.
+
 ## To 0.4
 
 0.4 adds the authenticator app (TOTP), as a second factor for Google and password and as a method of its own, and a sign-in policy. What changes for you:

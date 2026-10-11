@@ -38,7 +38,7 @@ export interface MadAuthServerProps {
    * is on when the events include the e-mails; default: {@link EMAIL_EVENTS}. Without a webhook, Google only.
    */
   readonly webhook?: { readonly url: string; readonly events?: readonly string[] };
-  /** More environment variables, e.g. `SESSION_TTL` or `PASSWORD_MIN_LENGTH` (see docs/server.md). */
+  /** More environment variables, e.g. `SESSION_TTL` or `TOTP_ISSUER` (see docs/server.md). */
   readonly environment?: Record<string, string>;
   /** Default: 512. madAuth needs at least 256 MB for password hashing; more memory is also more CPU. */
   readonly memorySize?: number;

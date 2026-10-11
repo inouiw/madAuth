@@ -15,8 +15,18 @@ export interface MethodSetting {
   secondFactor?: SecondFactorPolicy;
 }
 
+/**
+ * The rules for new passwords: the fewest characters (1 to 128, default 8), and how hard to guess a password
+ * must be as zxcvbn rates it, 0 (anything) to 4 (default 2: no common passwords or simple patterns).
+ */
+export interface PasswordRules {
+  minLength: number;
+  minScore: number;
+}
+
 export interface Settings {
   methods: { google: MethodSetting; password: MethodSetting; totp: MethodSetting };
+  password: PasswordRules;
 }
 
 /** The list of methods to switch on: `true` or `{}` for on, with a policy for Google and password. A method left out is off. */
@@ -47,11 +57,12 @@ export interface AdminApi {
   /** Which sign-in methods the server is configured for, which are on, and their policies. Fails with `forbidden`. */
   getSettings(): Promise<Result<Settings>>;
   /**
-   * Sets which sign-in methods are on, at once and for every instance of the server: the given list
-   * replaces the old one, so a method left out is switched off. Fails with `forbidden`, or
-   * `invalid_settings` (e.g. when every method would go off).
+   * Sets which sign-in methods are on and the rules for new passwords, at once and for every instance of
+   * the server. Pass either or both. `methods` replaces the old list, so a method left out is switched off;
+   * in `password`, what is left out takes its default. Fails with `forbidden`, or `invalid_settings` (e.g.
+   * when every method would go off).
    */
-  setSettings(settings: { methods: MethodsToSet }): Promise<Result<Settings>>;
+  setSettings(settings: { methods?: MethodsToSet; password?: Partial<PasswordRules> }): Promise<Result<Settings>>;
   /**
    * Removes a user's authenticator app and recovery codes: the last resort when both are lost. With a
    * `required` policy the user sets it up again at the next sign-in. Fails with `forbidden`,
@@ -68,13 +79,13 @@ export function createAdminApi(core: Core): AdminApi {
     return res.ok ? { isSuccess: true, ...pick(res.data) } : { isSuccess: false, error: res.error };
   }
   const claims = (data: { userId: string; claims: Claims }) => ({ userId: data.userId, claims: data.claims });
-  const settings = (data: Settings) => ({ methods: data.methods });
+  const settings = (data: Settings) => ({ methods: data.methods, password: data.password });
 
   return {
     getClaims: (email) => call('claims/get', { email }, claims),
     setClaims: (email, value) => call('claims/set', { email, claims: value }, claims),
     getSettings: () => call('settings/get', {}, settings),
-    setSettings: (value) => call('settings/set', { methods: value.methods }, settings),
+    setSettings: (value) => call('settings/set', { methods: value.methods, password: value.password }, settings),
     removeAuthenticator: (email) => call('totp/remove', { email }, (data: { userId: string }) => ({ userId: data.userId })),
   };
 }
