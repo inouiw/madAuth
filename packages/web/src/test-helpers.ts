@@ -379,8 +379,10 @@ export function fakeServer(): FakeServer {
           server.authenticators.delete(own);
         }
         if (own) server.accounts.delete(own);
+        // Like the real server: the Google account's sub, if the user has one (ada's id is `google:<sub>`).
+        const googleSub = server.user.id.startsWith('google:') ? server.user.id.slice('google:'.length) : undefined;
         server.user = null;
-        return new Response(null, { status: 204 });
+        return googleSub ? json({ googleSub }) : new Response(null, { status: 204 });
       }
     }
     return json({ error: 'not_found' }, 404);
@@ -397,6 +399,7 @@ export function fakeGis(): { id: Mocked<GoogleAccountsId>; signIn(credential?: s
     renderButton: vi.fn(),
     disableAutoSelect: vi.fn(),
     cancel: vi.fn(),
+    revoke: vi.fn(),
   };
   window.google = { accounts: { id } };
   return {

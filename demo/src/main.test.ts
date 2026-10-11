@@ -127,6 +127,7 @@ window.google = {
       renderButton: () => gis.buttons++,
       disableAutoSelect: () => {},
       cancel: () => {},
+      revoke: () => {},
     },
   },
 };

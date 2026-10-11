@@ -352,11 +352,13 @@ export function createApp(config: MadauthConfig): Hono {
       const via = await checkCode(c, ctx, totpKeys, stored, authenticator, data);
       if (via instanceof Response) return via;
     }
+    // Read before the deletion: the web library revokes the app's access to this Google account with it.
+    const googleSub = await users.googleSub(user.id);
     // The user with all their sign-in methods: the session proves who they are, whichever way they signed in.
     await users.deleteById(user.id);
     clearSession(c);
     await ctx.emit('user.deleted', { user });
-    return c.body(null, 204);
+    return googleSub ? c.json({ googleSub }) : c.body(null, 204);
   });
 
   // --- Admin: claims, settings and the authenticator app ---

@@ -23,6 +23,8 @@ export interface GoogleAccountsId {
   ): void;
   disableAutoSelect(): void;
   cancel(): void;
+  /** Revokes the grant the user gave the app; `hint` is their Google e-mail address or account id. */
+  revoke(hint: string, callback?: (response: { successful: boolean; error?: string }) => void): void;
 }
 
 declare global {

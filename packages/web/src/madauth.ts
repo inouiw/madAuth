@@ -3,7 +3,7 @@ import { takeHashParam } from './hash.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
 import type { AuthenticatorEnabledDetail, AuthenticatorFailedDetail } from './madauth-login.js';
 import type { LoginMethodId } from './methods.js';
-import type { PendingStep, ProviderContext, ServerConfig, SignInProvider } from './providers/provider.js';
+import type { DeletedAccount, PendingStep, ProviderContext, ServerConfig, SignInProvider } from './providers/provider.js';
 import { fail, ok, type MadauthError, type MadauthUser, type Result } from './result.js';
 import type { Core } from './scopes/core.js';
 import { createAdminApi } from './scopes/admin.js';
@@ -440,14 +440,19 @@ export const Madauth = {
    * sign-in methods, whichever way they signed in. Delete the user's data in your own backend first, while
    * they are still signed in. Once the user has an authenticator app, a current code from it (or a recovery
    * code) is needed: without one it fails with `code_required`, with a wrong one with `code_invalid`.
-   * Fails with `no_session` when nobody is signed in.
+   * Fails with `no_session` when nobody is signed in. With `GoogleFedcm`, the app's access to the user's
+   * Google account is revoked as well, so Google no longer lists it among their connected apps.
    */
   async deleteAccount(options?: DeleteAccountOptions): Promise<Result> {
     const ready = await whenReady();
     if (!ready.isSuccess) return ready;
-    const res = await request(state!.serverUrl, '/auth/account/delete', { method: 'POST', body: options ? { ...options } : undefined });
+    const res = await request<DeletedAccount | undefined>(state!.serverUrl, '/auth/account/delete', { method: 'POST', body: options ? { ...options } : undefined });
     if (!res.ok && !(res.status === 401 && res.error.code === 'no_session')) return { isSuccess: false, error: res.error };
-    for (const provider of state!.providers.values()) provider.onSignedOut?.();
+    for (const provider of state!.providers.values()) {
+      provider.onSignedOut?.();
+      // A 204 has no body: the user had no Google account.
+      if (res.ok) provider.onAccountDeleted?.(res.data ?? {});
+    }
     setUser(null);
     return res.ok ? ok() : fail('no_session', 'Nobody is signed in.');
   },
