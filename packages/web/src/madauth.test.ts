@@ -207,7 +207,7 @@ describe('Madauth.deleteAccount', () => {
     expect(Madauth.currentUser).toBeNull();
     expect(listener).toHaveBeenLastCalledWith(null);
     expect(provider.onSignedOut).toHaveBeenCalledOnce();
-    expect(provider.onAccountDeleted).toHaveBeenCalledExactlyOnceWith(ada);
+    expect(provider.onAccountDeleted).toHaveBeenCalledExactlyOnceWith({ googleSub: '1001' });
   });
 
   it('reports no_session when nobody is signed in, and keeps the user when the server can not be reached', async () => {

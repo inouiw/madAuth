@@ -368,7 +368,7 @@ The secrets are stored encrypted with a key derived from `MADAUTH_SIGNING_KEY`: 
 
 - The user is deleted with all their sign-in methods (the password, the Google account, the authenticator app with its recovery codes), their claims, and their pending confirmation and reset links. The session proves who they are, whichever way they signed in.
 - Once the user has an authenticator app, and while the app is on (a policy asks for it, or it signs in on its own), the request needs a current code from it or a recovery code (`Madauth.deleteAccount({ code })`; `401 code_required` without one): like removing the app, so a stolen session can't destroy the account.
-- With `GoogleFedcm`, the web library also revokes the app's access to the user's Google account (`google.accounts.id.revoke`): the app leaves their connected apps at Google, and the Google button says "Sign in with Google" again instead of "Continue as …".
+- If the user had a Google account, the answer is `200 { googleSub }` (otherwise `204`). With `GoogleFedcm`, the web library revokes the app's access to that Google account by its id (`google.accounts.id.revoke`): the app leaves their connected apps at Google, and the Google button says "Sign in with Google" again instead of "Continue as …". A user without a Google account is never sent to Google.
 - The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`, with the user as the session held them.
 
 Delete the user's data in your own backend first, while the user is still signed in. Sessions on other devices end when the app next checks them; your own backends accept them until they expire (see [Password security](password-security.md#sessions)).
@@ -566,7 +566,7 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, secondFactor }, password: { … }, totp: { configured, enabled } } }`, for admins. See [Sign-in methods](#sign-in-methods). |
 | `POST /auth/admin/settings/set` | `{ methods: { google?: {}, password?: { secondFactor }, totp?: {} } }` (the list of the methods that are on; `true` for `{}`) → the same; 400 `invalid_settings`, also when no method that creates users would stay on |
 | `POST /auth/admin/totp/remove` | `{ email }` → `{ email, userId, enabled: false }`: removes the user's authenticator app and recovery codes, for admins. See [Authenticator app](#authenticator-app). |
-| `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`. See [Deleting an account](#deleting-an-account). |
+| `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`. See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
 | `GET /health` | `ok` |
 

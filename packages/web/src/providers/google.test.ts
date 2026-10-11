@@ -216,8 +216,20 @@ describe('GoogleFedcm', () => {
 
     expect(await Madauth.deleteAccount()).toEqual({ isSuccess: true });
 
-    expect(gis.id.revoke).toHaveBeenCalledExactlyOnceWith(ada.email);
+    // By the Google account id, which stays when the user's Google address changes.
+    expect(gis.id.revoke).toHaveBeenCalledExactlyOnceWith('1001');
     expect(gis.id.disableAutoSelect).toHaveBeenCalledOnce();
+  });
+
+  it('G9: deleting an account without a Google account sends nothing to Google', async () => {
+    const server = fakeServer();
+    server.user = { id: 'usr_grace', email: 'grace@example.com', name: 'Grace Hopper' };
+    const gis = fakeGis();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+
+    expect(await Madauth.deleteAccount()).toEqual({ isSuccess: true });
+
+    expect(gis.id.revoke).not.toHaveBeenCalled();
   });
 
   it('G8: revokes nothing when the account was not deleted', async () => {

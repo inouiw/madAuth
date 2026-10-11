@@ -74,5 +74,11 @@ export interface SignInProvider {
   onSignedIn?(): void;
   onSignedOut?(): void;
   /** The signed-in user deleted their account (called after {@link onSignedOut}). */
-  onAccountDeleted?(user: MadauthUser): void;
+  onAccountDeleted?(account: DeletedAccount): void;
+}
+
+/** What the server reports about an account it deleted. */
+export interface DeletedAccount {
+  /** The `sub` of the Google account that was linked to the user, if any. */
+  googleSub?: string;
 }

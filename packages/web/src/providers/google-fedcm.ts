@@ -1,6 +1,6 @@
 import { loadGis, type GoogleAccountsId } from '../gis.js';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
-import type { ButtonOptions, ProviderContext, SignInProvider } from './provider.js';
+import type { ButtonOptions, DeletedAccount, ProviderContext, SignInProvider } from './provider.js';
 
 export interface GoogleFedcmOptions {
   /** Show Google One Tap on page load when nobody is signed in. Default `true`. */
@@ -65,9 +65,11 @@ export class GoogleFedcm implements SignInProvider {
     this.#gis?.disableAutoSelect();
   }
 
-  onAccountDeleted(user: MadauthUser): void {
+  onAccountDeleted({ googleSub }: DeletedAccount): void {
     // Removes the app from the user's connected apps at Google, and the button no longer says "Continue as …".
-    if (user.email) this.#gis?.revoke(user.email);
+    // By the account id, not the address: Google's address may have changed since the user signed up, and a
+    // user without a Google account is never sent to Google.
+    if (googleSub) this.#gis?.revoke(googleSub);
   }
 
   /** Gets a fresh nonce from the server and (re)initializes GIS with it. */

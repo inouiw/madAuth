@@ -68,7 +68,11 @@ describe('deleting the account', () => {
     const google = await signIn(app);
     expect(await store.findMany('account', {})).toHaveLength(2);
 
-    expect((await deleteAccount(app, google)).status).toBe(204);
+    const res = await deleteAccount(app, google);
+
+    // The web library revokes the app's access to the Google account with the sub.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ googleSub: '1001' });
 
     expect(await store.findMany('user', {})).toEqual([]);
     expect(await store.findMany('account', {})).toEqual([]);
@@ -81,7 +85,8 @@ describe('deleting the account', () => {
 
     const res = await deleteAccount(app, session);
 
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ googleSub: '1001' });
     expect(cookies(res).madauth_session).toMatchObject({ value: '' });
     expect(await store.findMany('user', {})).toEqual([]);
     expect(hook.calls.at(-1)).toMatchObject({ type: 'user.deleted', data: { user: { email: 'ada@example.com' } } });

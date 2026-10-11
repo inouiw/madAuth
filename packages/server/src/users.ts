@@ -150,6 +150,13 @@ export class Users {
     return SIGN_IN_METHODS.filter((method) => keys.includes(method) && (method !== 'totp' || methods.totp !== undefined));
   }
 
+  /** The `sub` of the user's linked Google account, if they have one. */
+  async googleSub(userId: string): Promise<string | null> {
+    const accounts = await this.store.findMany('account', { userId });
+    const key = accounts.map((account) => String(account.key)).find((k) => k.startsWith('google:'));
+    return key ? key.slice('google:'.length) : null;
+  }
+
   async findAccountByKey(key: string): Promise<StoredAccount | null> {
     return (await this.store.findOne('account', { key })) as StoredAccount | null;
   }

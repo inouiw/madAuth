@@ -13,7 +13,7 @@ export { GoogleFedcm, type GoogleFedcmOptions } from './providers/google-fedcm.j
 export { GoogleRedirect } from './providers/google-redirect.js';
 export { Password } from './providers/password.js';
 export { Totp } from './providers/totp.js';
-export type { PendingStep, SecondFactorPolicy, SignInProvider } from './providers/provider.js';
+export type { DeletedAccount, PendingStep, SecondFactorPolicy, SignInProvider } from './providers/provider.js';
 export type {
   ConfirmResetOptions,
   PasswordApi,
