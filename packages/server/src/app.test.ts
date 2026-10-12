@@ -10,6 +10,7 @@ import {
   googleIdToken,
   signIn,
   signInResponse,
+  tamperedToken,
   testApp,
   verify,
 } from './test/helpers.js';
@@ -313,13 +314,12 @@ describe('session', () => {
     const app = testApp();
     const session = await signIn(app);
     const get = (cookie?: string) => app.request('/auth/session', { headers: cookie ? { Cookie: cookie } : {} });
-    const tampered = session.slice(0, -2) + (session.endsWith('A') ? 'BB' : 'AA');
 
     const ok = await get(`madauth_session=${session}`);
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ user: { ...ada, amr: ['google'] } });
     expect((await get()).status).toBe(401);
-    expect((await get(`madauth_session=${tampered}`)).status).toBe(401);
+    expect((await get(`madauth_session=${tamperedToken(session)}`)).status).toBe(401);
   });
 
   it('X3: does not accept other madAuth tokens (e.g. the nonce cookie) as a session', async () => {
