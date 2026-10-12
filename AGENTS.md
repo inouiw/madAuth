@@ -46,12 +46,12 @@ The webhook receivers (the dev receiver that prints e-mails and SMS codes, and t
   - **Control the depth with the effort level — always at least `medium`.** Default to `/code-review medium --comment`. Use `high` (up to `max`) only when broad coverage matters more than noise. Do not use `low` — it misses too much for reviews that gate merging.
 - **After implementing a change, run the stack locally and check that it works without errors.** Exercise the changed flows in the browser — watch the server log and the browser console, don't just check that the processes start.
   - `.claude/launch.json` has the configs `server` (port 8787), `demo` (3000), `site` (3001) and `webhooks` (8790: the dev receiver from a checkout of `inouiw/madAuth-webhooks` next to this repo, which prints each e-mail and SMS with its link and code).
-  - A worktree has no `packages/server/.env` (it is git-ignored): create it from `.env.example`, with a key from `npm run -s cli -w packages/server -- generate-key` and a secret from `generate-webhook-secret`.
-  - The dev receiver only prints links and codes for the webhook types it knows. When you add a webhook type, update the receivers in `madAuth-webhooks` too, or test with a receiver that logs every body.
+  - A worktree has no `packages/server/.env` (it is git-ignored): create it from `.env.example`, with a key from `npm run -s cli -w packages/server -- generate-key` and a secret from `generate-webhook-secret`. The dev receiver needs the same `WEBHOOK_SECRET` in its own `.env`, or every hand-over fails with 401.
+  - The dev receiver only prints links and codes for the webhook types it knows. When you add a webhook type, list it in `WEBHOOK_EVENTS` (your `.env` and `.env.example`) — madAuth only sends the listed types — and update the receivers in `madAuth-webhooks` too, or test with a receiver that logs every body.
   - **Google and GitHub sign-in are tested through the user's Chrome browser (the claude-in-chrome tools)**: they need the provider's own pages, which the preview browser does not open, and the user enters their Google or GitHub credentials themselves — never enter credentials on the user's behalf.
   - **Stop the dev servers when you are done testing**, so the ports are free for the next agent session.
   - **If a port is already in use, do not kill the occupying process on your own** — it may belong to another still-running agent session. Ask the user first.
-- **Check for missing AWS permissions.** Locally, code runs with your own AWS credentials, which are broader than the deployed roles — a call that works locally can still fail with `AccessDenied` when deployed. For every new or changed AWS call, verify that the corresponding IAM statement exists in the CDK stack (`deploy/aws`, or the site's infrastructure under `site/`).
+- **Check for missing AWS permissions.** Locally, code runs with your own AWS credentials, which are broader than the deployed roles — a call that works locally can still fail with `AccessDenied` when deployed. For every new or changed AWS call, verify that the corresponding IAM statement exists in the CDK stack (`deploy/aws`, or the site's stack in `site/infra`).
 
 ### Coding guidelines
 
@@ -61,7 +61,7 @@ The webhook receivers (the dev receiver that prints e-mails and SMS codes, and t
 
 ### Testing
 
-Run the checks of every workspace you change before considering a task done: `npm run typecheck -w <workspace>` and `npm test -w <workspace>` (`packages/server`, `packages/web`, `demo`). Also run `npm run build` when the change affects the build or the published packages.
+Before considering a task done, run what CI runs at the repo root: `npm run typecheck`, `npm test` and `npm run build`. `deploy/aws` and `site/infra` are separate npm projects outside the workspaces: after changing one, run `npm ci && npm run typecheck && npm run build` and `npx cdk synth` in it (see `.github/workflows/infra.yml` for the context values).
 
 ### Documentation
 
