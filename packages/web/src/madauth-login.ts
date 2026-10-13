@@ -131,25 +131,25 @@ const infoIcon = html`
   </svg>
 `;
 
-const keyIcon = html`
-  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" />
-    <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />
-  </svg>
-`;
-
-const fingerprintIcon = html`
-  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4" />
-    <path d="M14 13.12c0 2.38 0 6.38-1 8.88" />
-    <path d="M17.29 21.02c.12-.6.43-2.3.5-3.02" />
-    <path d="M2 12a10 10 0 0 1 18-6" />
-    <path d="M2 16h.01" />
-    <path d="M21.8 16c.2-2 .131-5.354 0-6" />
-    <path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2" />
-    <path d="M8.65 22c.21-.66.45-1.32.57-2" />
-    <path d="M9 6.8a6 6 0 0 1 9 5.2v2" />
-  </svg>
+/** A passkey's icons: a key and a fingerprint, side by side. */
+const passkeyIcons = html`
+  <span class="icons">
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" />
+      <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />
+    </svg>
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4" />
+      <path d="M14 13.12c0 2.38 0 6.38-1 8.88" />
+      <path d="M17.29 21.02c.12-.6.43-2.3.5-3.02" />
+      <path d="M2 12a10 10 0 0 1 18-6" />
+      <path d="M2 16h.01" />
+      <path d="M21.8 16c.2-2 .131-5.354 0-6" />
+      <path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2" />
+      <path d="M8.65 22c.21-.66.45-1.32.57-2" />
+      <path d="M9 6.8a6 6 0 0 1 9 5.2v2" />
+    </svg>
+  </span>
 `;
 
 /** The scopes that render a provider's button (Google, GitHub), by method: the dialog stays on the public API. */
@@ -177,7 +177,7 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </svg>
   `,
-  passkey: keyIcon,
+  passkey: passkeyIcons,
 };
 
 /**
@@ -998,7 +998,7 @@ export class MadauthLogin extends LitElement {
     return html`
       <button part="method" class="passkey" type="button" title=${this.strings.methods.passkey.description} data-method=${m.id}
         @click=${() => this.onMethodChosen(m)}>
-        <span class="icons">${keyIcon}${fingerprintIcon}</span>
+        ${passkeyIcons}
         <span class="label">${this.strings.signInWithPasskey}</span>
       </button>
     `;
@@ -2144,9 +2144,15 @@ export class MadauthLogin extends LitElement {
       background: var(--_hover);
     }
 
-    .passkey .icons {
+    .icons {
       display: flex;
+      flex-shrink: 0;
       gap: 4px;
+    }
+
+    /* In a list with a passkey's two icons, every other row's icon takes as much room (a second icon and the gap: 18px + 4px), so the labels line up. */
+    ul:has(.icons) :is(.row, .method) > .icon:not(.chevron) {
+      margin-inline-end: 22px;
     }
 
     .divider {

@@ -104,6 +104,7 @@ main {
 
 #sign-in:focus-visible,
 #sign-out:focus-visible,
+#manage-methods:focus-visible,
 #theme-toggle:focus-visible,
 #flow a:focus-visible,
 .info:focus-visible {
@@ -522,6 +523,32 @@ pre {
   border: 1px solid light-dark(#d0d2d6, #3d4045);
   border-radius: 6px;
   background: light-dark(#f5f5f4, #101113);
+}
+
+/* The way into the dialog's list of the user's sign-in methods: its name, and the call below it. */
+#manage-methods {
+  display: grid;
+  gap: 2px;
+  width: min(360px, 100%);
+  padding: 10px 14px;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  border: 1px solid light-dark(#d0d2d6, #3d4045);
+  border-radius: 8px;
+  background: light-dark(#fff, #232428);
+  cursor: pointer;
+}
+
+#manage-methods:hover {
+  background: light-dark(#f3f4f5, #2c2d32);
+}
+
+#manage-methods code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: light-dark(#5c6066, #a6a9af);
 }
 
 /* The authenticator app in the account section. */

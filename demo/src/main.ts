@@ -231,14 +231,15 @@ const accountCalls: Record<string, () => Promise<unknown>> = {
   },
 };
 
-for (const button of document.querySelectorAll<HTMLButtonElement>('.authenticator button[data-call]')) {
+for (const button of document.querySelectorAll<HTMLButtonElement>('#account button[data-call]')) {
   button.addEventListener('click', async () => {
     // A result for a user who signed out meanwhile (it may hold recovery codes) is dropped.
     const user = Madauth.currentUser?.id;
     button.disabled = true;
     try {
       const result = await accountCalls[button.dataset.call!]();
-      if (Madauth.currentUser?.id === user) showOutput(button.textContent, result);
+      // Labelled with the call: the code of a button that has a name of its own too.
+      if (Madauth.currentUser?.id === user) showOutput((button.querySelector('code') ?? button).textContent, result);
     } finally {
       button.disabled = false;
     }

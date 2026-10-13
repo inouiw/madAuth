@@ -89,6 +89,10 @@ vi.stubGlobal(
         return json({});
       case 'GET /auth/session':
         return sessionUser ? json({ user: sessionUser }) : json({ error: 'no_session' }, 401);
+      case 'GET /auth/methods':
+        return sessionUser
+          ? json({ methods: [{ id: 'acc_google', method: 'google', signIn: true, removable: false, createdAt: 1, email: sessionUser.email }] })
+          : json({ error: 'no_session' }, 401);
       case 'GET /auth/totp/status':
         return sessionUser ? json({ enabled: authenticator, recoveryCodesLeft: authenticator ? 10 : 0 }) : json({ error: 'no_session' }, 401);
       case 'POST /auth/totp/remove':
@@ -385,6 +389,22 @@ describe('demo page', () => {
     expect(request('deleteAccount')).toBe('Madauth.deleteAccount()\n(no arguments)');
     const [, sent] = [...vi.mocked(fetch).mock.calls].reverse().find(([url]: [unknown, RequestInit?]) => String(url).endsWith('/auth/totp/remove')) as [string, RequestInit];
     expect(JSON.parse(String(sent.body))).toEqual({ code: '123456' });
+  });
+
+  it('opens the dialog on the sign-in methods from the button below the claims, and shows what it resolved to', async () => {
+    const button = $<HTMLButtonElement>('#manage-methods');
+    // Between the claims and the authenticator app.
+    expect(button.compareDocumentPosition($('.claims')) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(button.compareDocumentPosition($('.authenticator')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(button.textContent.replace(/\s+/g, ' ').trim()).toBe('Manage Sign-In Methods Madauth.manageSignInMethods()');
+
+    button.click();
+    const dialog = () => document.querySelector('madauth-login')?.shadowRoot;
+    await expect.poll(() => dialog()?.querySelector('h2')?.textContent).toBe('Sign-in methods');
+    await expect.poll(() => dialog()!.querySelector('[data-action="done"]')).not.toBeNull();
+    dialog()!.querySelector<HTMLButtonElement>('[data-action="done"]')!.click();
+    await expect.poll(() => $('#output').textContent).toBe('Madauth.manageSignInMethods()\n{\n  "isSuccess": true\n}');
+    expect($('#methods-status').textContent).toBe('Google');
   });
 
   it('deletes the account only after a confirmation, and shows the result below the sign-in button', async () => {

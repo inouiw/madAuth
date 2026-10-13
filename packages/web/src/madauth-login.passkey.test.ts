@@ -186,6 +186,9 @@ describe('<madauth-login> and passkeys', () => {
     expect(text('h2')).toBe('Sign-in methods');
     expect($$('.method').map((li) => li.dataset.method)).toEqual(['password', 'passkey']);
     expect(text('.method[data-method="passkey"] .label')).toBe('Laptop');
+    // The key and the fingerprint, as on the sign-in view's button.
+    expect($$('.method[data-method="passkey"] .icons svg')).toHaveLength(2);
+    expect($$('[data-add="passkey"] .icons svg')).toHaveLength(2);
     // A password is there already: it is not offered.
     expect($('[data-add="password"]')).toBeNull();
 

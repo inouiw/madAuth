@@ -88,6 +88,11 @@
         </div>
         <!-- How this session was authenticated (Madauth.currentUser.amr), e.g. pwd and otp, or email for the e-mail link. -->
         <p class="amr">Signed in with <code id="amr"></code></p>
+        <!-- The dialog on the user's sign-in methods: Madauth.manageSignInMethods() lists them and adds or removes one. -->
+        <button id="manage-methods" type="button" data-call="manageSignInMethods">
+          Manage Sign-In Methods
+          <code>Madauth.manageSignInMethods()</code>
+        </button>
         <!-- The authenticator app: Madauth.setUpAuthenticator() opens the dialog with the QR code; the other calls take a code. -->
         <div class="authenticator">
           <span class="caption">Authenticator app</span>
@@ -116,12 +121,11 @@
             <button type="button" data-call="removeSms" hidden>Madauth.sms.remove({ code })</button>
           </p>
         </div>
-        <!-- The user's sign-in methods: Madauth.manageSignInMethods() lists them and adds or removes one; Madauth.setUpPasskey() adds a passkey. -->
+        <!-- The user's sign-in methods (Madauth.methods.list()); Madauth.setUpPasskey() adds a passkey. -->
         <div class="authenticator methods-box">
           <span class="caption">Sign-in methods</span>
           <p id="methods-status"></p>
           <p class="buttons">
-            <button type="button" data-call="manageSignInMethods">Madauth.manageSignInMethods()</button>
             <button type="button" data-call="setUpPasskey" hidden>Madauth.setUpPasskey()</button>
           </p>
         </div>
