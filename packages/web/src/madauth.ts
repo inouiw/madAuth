@@ -10,7 +10,6 @@ import {
 } from './constants.js';
 import { takeHashParam } from './hash.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
-import type { AuthenticatorEnabledDetail, AuthenticatorFailedDetail, PasskeyAddedDetail, SmsEnabledDetail, SmsFailedDetail } from './madauth-login.js';
 import { isLoginMethodId, type LoginMethodId } from './methods.js';
 import { FACTOR_STEPS, pendingStepOf, type DeletedAccount, type PendingStep, type ProviderContext, type ServerConfig, type SignInProvider } from './providers/provider.js';
 import { fail, isSecondFactor, ok, toErrorCode, type MadauthError, type MadauthUser, type Result } from './result.js';
@@ -383,6 +382,37 @@ function dialogElement() {
   return dialog;
 }
 
+/** Fails unless madAuth is ready and shows its own dialog; `instead` names the calls for `ui: 'custom'`. */
+async function dialogReady(call: string, instead = ''): Promise<Result> {
+  const ready = await whenReady();
+  if (!ready.isSuccess) return ready;
+  if (state!.ui === 'custom') {
+    return fail('invalid_options', `Madauth.${call}() opens madAuth's dialog, but initialize was called with ui: 'custom'.${instead && ` Use ${instead} instead.`}`);
+  }
+  return ok();
+}
+
+/** The dialog's events that end a flow, each with the result it resolves to. */
+type FlowEvents<T> = { [K in keyof HTMLElementEventMap]?: (event: HTMLElementEventMap[K]) => T };
+
+/**
+ * Opens the dialog with `open` and resolves with the result of the first of `events` it fires, or with
+ * `closed` when it is closed (`madauth-cancel`).
+ */
+function dialogFlow<T>(open: (element: HTMLElementTagNameMap['madauth-login']) => Promise<void>, events: FlowEvents<T>, closed: T): Promise<T> {
+  const element = dialogElement();
+  return new Promise((resolve) => {
+    const all: [string, (event: never) => T][] = [...Object.entries(events), ['madauth-cancel', () => closed]];
+    const listeners = all.map(([name, toResult]) => [name, (event: Event) => finish(toResult(event as never))] as const);
+    const finish = (result: T) => {
+      for (const [name, listener] of listeners) element.removeEventListener(name, listener);
+      resolve(result);
+    };
+    for (const [name, listener] of listeners) element.addEventListener(name, listener);
+    void open(element);
+  });
+}
+
 /**
  * The madAuth client. Call {@link Madauth.initialize} once (no need to await it); every other method
  * waits for it. Methods resolve to a {@link Result} and never throw for expected failures.
@@ -423,24 +453,13 @@ export const Madauth = {
    * `email` fills the e-mail field, so the user only has to type the password.
    */
   async signIn(options: SignInOptions = {}): Promise<Result<{ user: MadauthUser }>> {
-    const ready = await whenReady();
+    const ready = await dialogReady('signIn');
     if (!ready.isSuccess) return ready;
-    if (state!.ui === 'custom') {
-      return fail('invalid_options', "Madauth.signIn() opens madAuth's dialog, but initialize was called with ui: 'custom'.");
-    }
-    const element = dialogElement();
-    return new Promise((resolve) => {
-      const finish = (result: Result<{ user: MadauthUser }>) => {
-        element.removeEventListener('madauth-signed-in', onSignedIn);
-        element.removeEventListener('madauth-cancel', onCancel);
-        resolve(result);
-      };
-      const onSignedIn = (e: CustomEvent<{ user: MadauthUser }>) => finish({ isSuccess: true, user: e.detail.user });
-      const onCancel = () => finish(fail('cancelled', 'The sign-in dialog was closed.'));
-      element.addEventListener('madauth-signed-in', onSignedIn);
-      element.addEventListener('madauth-cancel', onCancel);
-      void element.open(options);
-    });
+    return dialogFlow<Result<{ user: MadauthUser }>>(
+      (element) => element.open(options),
+      { 'madauth-signed-in': (e) => ({ isSuccess: true, user: e.detail.user }) },
+      fail('cancelled', 'The sign-in dialog was closed.'),
+    );
   },
 
   /**
@@ -452,35 +471,21 @@ export const Madauth = {
    * is needed). With `ui: 'custom'` use `Madauth.totp.startSetup()` and `confirmSetup()`.
    */
   async setUpAuthenticator(): Promise<Result<{ recoveryCodes: string[] }>> {
-    const ready = await whenReady();
+    const ready = await dialogReady('setUpAuthenticator', 'Madauth.totp.startSetup() and confirmSetup()');
     if (!ready.isSuccess) return ready;
-    if (state!.ui === 'custom') {
-      return fail(
-        'invalid_options',
-        "Madauth.setUpAuthenticator() opens madAuth's dialog, but initialize was called with ui: 'custom'. Use Madauth.totp.startSetup() and confirmSetup() instead.",
-      );
-    }
     if (!state!.config?.totp) {
       return fail('flow_not_enabled', 'The madAuth server has the authenticator app switched off: no sign-in method is set to ask for it, and it does not sign in on its own.');
     }
     if (!user) return fail('no_session', 'Nobody is signed in.');
-    const element = dialogElement();
-    return new Promise((resolve) => {
-      const finish = (result: Result<{ recoveryCodes: string[] }>) => {
-        element.removeEventListener('madauth-authenticator-enabled', onEnabled);
-        element.removeEventListener('madauth-authenticator-failed', onFailed);
-        element.removeEventListener('madauth-cancel', onCancel);
-        resolve(result);
-      };
-      const onEnabled = (e: CustomEvent<AuthenticatorEnabledDetail>) => finish({ isSuccess: true, recoveryCodes: e.detail.recoveryCodes });
-      // The setup can't go on (e.g. the session ended meanwhile): the dialog shows why, and the caller learns it too.
-      const onFailed = (e: CustomEvent<AuthenticatorFailedDetail>) => finish({ isSuccess: false, error: e.detail.error });
-      const onCancel = () => finish(fail('cancelled', 'The dialog was closed.'));
-      element.addEventListener('madauth-authenticator-enabled', onEnabled);
-      element.addEventListener('madauth-authenticator-failed', onFailed);
-      element.addEventListener('madauth-cancel', onCancel);
-      void element.openAuthenticatorSetup();
-    });
+    return dialogFlow<Result<{ recoveryCodes: string[] }>>(
+      (element) => element.openAuthenticatorSetup(),
+      {
+        'madauth-authenticator-enabled': (e) => ({ isSuccess: true, recoveryCodes: e.detail.recoveryCodes }),
+        // The setup can't go on (e.g. the session ended meanwhile): the dialog shows why, and the caller learns it too.
+        'madauth-authenticator-failed': (e) => ({ isSuccess: false, error: e.detail.error }),
+      },
+      fail('cancelled', 'The dialog was closed.'),
+    );
   },
 
   /**
@@ -492,29 +497,18 @@ export const Madauth = {
    * `Madauth.sms.setUp()` and `confirmSetup()`.
    */
   async setUpSms(): Promise<Result<{ phone: string }>> {
-    const ready = await whenReady();
+    const ready = await dialogReady('setUpSms', 'Madauth.sms.setUp() and confirmSetup()');
     if (!ready.isSuccess) return ready;
-    if (state!.ui === 'custom') {
-      return fail('invalid_options', "Madauth.setUpSms() opens madAuth's dialog, but initialize was called with ui: 'custom'. Use Madauth.sms.setUp() and confirmSetup() instead.");
-    }
     if (!state!.config?.sms) return fail('flow_not_enabled', 'The madAuth server has SMS codes switched off.');
     if (!user) return fail('no_session', 'Nobody is signed in.');
-    const element = dialogElement();
-    return new Promise((resolve) => {
-      const finish = (result: Result<{ phone: string }>) => {
-        element.removeEventListener('madauth-sms-enabled', onEnabled);
-        element.removeEventListener('madauth-sms-failed', onFailed);
-        element.removeEventListener('madauth-cancel', onCancel);
-        resolve(result);
-      };
-      const onEnabled = (e: CustomEvent<SmsEnabledDetail>) => finish({ isSuccess: true, phone: e.detail.phone });
-      const onFailed = (e: CustomEvent<SmsFailedDetail>) => finish({ isSuccess: false, error: e.detail.error });
-      const onCancel = () => finish(fail('cancelled', 'The dialog was closed.'));
-      element.addEventListener('madauth-sms-enabled', onEnabled);
-      element.addEventListener('madauth-sms-failed', onFailed);
-      element.addEventListener('madauth-cancel', onCancel);
-      void element.openSmsSetup();
-    });
+    return dialogFlow<Result<{ phone: string }>>(
+      (element) => element.openSmsSetup(),
+      {
+        'madauth-sms-enabled': (e) => ({ isSuccess: true, phone: e.detail.phone }),
+        'madauth-sms-failed': (e) => ({ isSuccess: false, error: e.detail.error }),
+      },
+      fail('cancelled', 'The dialog was closed.'),
+    );
   },
 
   /**
@@ -525,26 +519,15 @@ export const Madauth = {
    * passkeys switched off or the browser has none. With `ui: 'custom'` use `Madauth.passkey.add()`.
    */
   async setUpPasskey(): Promise<Result<{ passkey: PasskeyInfo }>> {
-    const ready = await whenReady();
+    const ready = await dialogReady('setUpPasskey', 'Madauth.passkey.add()');
     if (!ready.isSuccess) return ready;
-    if (state!.ui === 'custom') {
-      return fail('invalid_options', "Madauth.setUpPasskey() opens madAuth's dialog, but initialize was called with ui: 'custom'. Use Madauth.passkey.add() instead.");
-    }
     if (!Madauth.passkey.available) return fail('flow_not_enabled', 'The madAuth server has passkeys switched off, or this browser has none.');
     if (!user) return fail('no_session', 'Nobody is signed in.');
-    const element = dialogElement();
-    return new Promise((resolve) => {
-      const finish = (result: Result<{ passkey: PasskeyInfo }>) => {
-        element.removeEventListener('madauth-passkey-added', onAdded);
-        element.removeEventListener('madauth-cancel', onCancel);
-        resolve(result);
-      };
-      const onAdded = (e: CustomEvent<PasskeyAddedDetail>) => finish({ isSuccess: true, passkey: e.detail.passkey });
-      const onCancel = () => finish(fail('cancelled', 'The dialog was closed.'));
-      element.addEventListener('madauth-passkey-added', onAdded);
-      element.addEventListener('madauth-cancel', onCancel);
-      void element.openPasskeySetup();
-    });
+    return dialogFlow<Result<{ passkey: PasskeyInfo }>>(
+      (element) => element.openPasskeySetup(),
+      { 'madauth-passkey-added': (e) => ({ isSuccess: true, passkey: e.detail.passkey }) },
+      fail('cancelled', 'The dialog was closed.'),
+    );
   },
 
   /**
@@ -555,21 +538,10 @@ export const Madauth = {
    * signed in. With `ui: 'custom'` use `Madauth.methods` and the methods' own calls.
    */
   async manageSignInMethods(): Promise<Result> {
-    const ready = await whenReady();
+    const ready = await dialogReady('manageSignInMethods', 'Madauth.methods');
     if (!ready.isSuccess) return ready;
-    if (state!.ui === 'custom') {
-      return fail('invalid_options', "Madauth.manageSignInMethods() opens madAuth's dialog, but initialize was called with ui: 'custom'. Use Madauth.methods instead.");
-    }
     if (!user) return fail('no_session', 'Nobody is signed in.');
-    const element = dialogElement();
-    return new Promise((resolve) => {
-      const onClose = () => {
-        element.removeEventListener('madauth-cancel', onClose);
-        resolve(ok());
-      };
-      element.addEventListener('madauth-cancel', onClose);
-      void element.openMethods();
-    });
+    return dialogFlow<Result>((element) => element.openMethods(), {}, ok());
   },
 
   /**

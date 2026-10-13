@@ -246,9 +246,29 @@ describe('<madauth-login> and passkeys', () => {
       const explicit = browser.credentials.get.mock.calls.findIndex(([request]) => request.mediation !== 'conditional');
       expect(explicit).toBeGreaterThan(-1);
       expect(conditional()[1].aborted).toBe(true);
+      // No autofill request starts while the button's runs.
+      expect(browser.credentials.get.mock.calls.slice(0, explicit)).toHaveLength(2);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('DP11: an autofill that fails is not asked again until the view changes', async () => {
+    const server = passkeyServer();
+    stubWebAuthn({ conditional: true });
+    await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
+    // The server switched passkeys off since initialize: the autofill's request fails.
+    server.passkey = { signIn: false, secondFactor: 'none' };
+    void Madauth.signIn();
+    await settle();
+    await settle();
+    const asked = () => server.requests.filter((r) => r.path === '/auth/passkey/signin/options').length;
+
+    expect(asked()).toBe(1);
+    expect($('.error')!.dataset.code).toBe('method_disabled');
+    await click('[data-action="forgot"]');
+    await click('[data-action="back"]');
+    expect(asked()).toBe(2);
   });
 
   it('DP9: a setup step that only a passkey can finish, in a browser without passkeys, says so', async () => {

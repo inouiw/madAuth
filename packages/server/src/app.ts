@@ -12,7 +12,8 @@ import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
 import { body, error } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
-import { clearChallenge, setChallenge, type Factor, type NextStep } from './routes/challenge.js';
+import { clearChallenge, setChallenge, type NextStep } from './routes/challenge.js';
+import { appOriginOf } from './routes/oauth.js';
 import { smsRoutes } from './routes/sms.js';
 import { checkCode, totpRoutes, type TotpKeys } from './routes/totp.js';
 import {
@@ -34,6 +35,7 @@ import {
   type MethodId,
   type MethodSettings,
   type PasswordRules,
+  type SecondFactor,
   type SignInMethod,
 } from './settings.js';
 import { methodRoutes } from './routes/methods.js';
@@ -41,7 +43,7 @@ import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { deriveTotpKey } from './totp.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
-import { Users, toMadauthUser, type StoredUser } from './users.js';
+import { Users, factorsAmong, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
 /** How long madAuth waits for an event call; events never make a request fail. */
@@ -57,7 +59,7 @@ export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | 
  * (the challenge cookie is set; `factors` is what the user can finish with); or nothing, because the method
  * is switched off.
  */
-export type SignInStep = { user: MadauthUser } | { next: NextStep; method: SignInMethod; factors: Factor[] } | { disabled: true };
+export type SignInStep = { user: MadauthUser } | { next: NextStep; method: SignInMethod; factors: SecondFactor[] } | { disabled: true };
 
 /** What the route modules share. */
 export interface AppContext {
@@ -83,18 +85,10 @@ export interface AppContext {
   /**
    * Finishes a primary sign-in method that succeeded: the session, or the next step with a second factor
    * as the policy of `method` and what the user has set up demand. `amr` is how the user signed in so far;
-   * `profile` is what the method knows beyond the record (e.g. Google's picture). `appOrigin` is the app
-   * the sign-in comes back to, for a request without an Origin (the redirect flows' callbacks): a passkey
-   * counts as a factor only when it answers there. Emits `user.signed_in`.
+   * `profile` is what the method knows beyond the record (e.g. Google's picture). A passkey counts as a
+   * factor only when it answers on the app the sign-in is for (see `appOriginOf`). Emits `user.signed_in`.
    */
-  secondStep(
-    c: Context,
-    user: StoredUser,
-    amr: string[],
-    method: SignInMethod,
-    profile?: { name?: string; picture?: string },
-    appOrigin?: string,
-  ): Promise<SignInStep>;
+  secondStep(c: Context, user: StoredUser, amr: string[], method: SignInMethod, profile?: { name?: string; picture?: string }): Promise<SignInStep>;
   /** The user of the request's session, or null if there is none or it has ended; renews it on the way like GET /auth/session. */
   currentUser(c: Context): Promise<MadauthUser | null>;
   /**
@@ -256,12 +250,12 @@ export function createApp(config: MadauthConfig): Hono {
       if (firstSession) await this.emit('user.signed_up', { user: result, method });
       return result;
     },
-    async secondStep(c, user, amr, method, profile, appOrigin) {
+    async secondStep(c, user, amr, method, profile) {
       const methods = await this.methods(c);
       if (!signsIn(method, configured, methods)) return { disabled: true };
       let next: NextStep | null = null;
       // The factors the user can finish with; for a setup, those the user can set up.
-      let factors: Factor[] = [];
+      let factors: SecondFactor[] = [];
       if (method === 'totp') {
         // The app itself is the method of a sign-up with it: it is set up now, or asked for if it exists already.
         const app = await users.totpAccount(user.id);
@@ -274,7 +268,7 @@ export function createApp(config: MadauthConfig): Hono {
           // passkey sign-in. They come in the order of SECOND_FACTORS: the client offers a switch to the others.
           const on = factorsOn(configured, methods, method);
           // A passkey answers only on the domain it was made for: one of another app's is no factor here.
-          const has = await users.secondFactors(user.id, on, usableOn(passkeyDomain(config, appOrigin ?? c.req.header('origin'))));
+          const has = factorsAmong(await users.accounts(user.id), on, usableOn(passkeyDomain(config, appOriginOf(c))));
           next = has[0] ?? (policy === 'required' ? 'totp-setup' : null);
           factors = has.length ? has : on;
         }

@@ -4,6 +4,7 @@
 import type { Context } from 'hono';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
+import { signInPredicate } from '../settings.js';
 import type { CodeResult, StoredUser, Users, VerificationPurpose } from '../users.js';
 import { WEBHOOK_TIMEOUT_MS, type WebhookClient, type WebhookType } from '../webhooks.js';
 import { error, type Body } from './helpers.js';
@@ -81,7 +82,7 @@ export function createEmails(ctx: AppContext, users: Users, webhook: WebhookClie
 
     async sendAccountEmail(user, type, target, locale) {
       if (!webhook.wants(type)) return true;
-      const methods = await users.signInMethods(user.id, await ctx.settings.methods());
+      const methods = await users.signInMethods(user.id, signInPredicate(ctx.configured, await ctx.settings.methods()));
       return sendEmail(user, type, { link: target.href, site: target.host, locale, methods });
     },
 

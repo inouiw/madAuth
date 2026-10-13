@@ -6,11 +6,11 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { base64url } from 'jose';
 import type { AppContext } from '../app.js';
 import { normalizeEmail } from '../password.js';
-import type { SignInMethod } from '../settings.js';
+import { signInPredicate, type SecondFactor, type SignInMethod } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
 import { toMadauthUser, type StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
-import type { Factor, NextStep } from './challenge.js';
+import type { NextStep } from './challenge.js';
 import { recentSignIn } from './helpers.js';
 
 /** Hash parameter that carries a sign-in error back to the app after the redirect flow. */
@@ -54,9 +54,17 @@ export async function pkceChallenge(verifier: string): Promise<string> {
 /**
  * Starts a redirect sign-in: a fresh state, nonce and verifier, signed into the cookie that comes back on
  * the provider's redirect to the callback under `cookiePath`. `returnTo` is the app page to send the user
- * back to; the request's `locale` query is kept for the sign-up check.
+ * back to; the request's `locale` query is kept for the sign-up check. With `link=1` in the query, the
+ * flow adds the provider to the methods of the signed-in user, who must have signed in recently: otherwise
+ * the error to send the browser back with (`no_session`, `reauth_required`).
  */
-export async function startOAuth(c: Context, ctx: AppContext, cookiePath: string, returnTo: URL, link?: string): Promise<OAuthState> {
+export async function startOAuth(c: Context, ctx: AppContext, cookiePath: string, returnTo: URL): Promise<OAuthState | { error: string }> {
+  let link: string | undefined;
+  if (c.req.query('link') === '1') {
+    const user = await recentSignIn(c, ctx);
+    if (typeof user === 'string') return { error: user };
+    link = user.id;
+  }
   const oauth: OAuthState = {
     state: randomString(),
     nonce: randomString(),
@@ -85,6 +93,8 @@ export async function takeOAuthState(c: Context, ctx: AppContext, cookiePath: st
   const oauth = await readToken<OAuthState & Record<string, unknown>>(await ctx.keys, ctx.config.issuer, OAUTH_TYP, getCookie(c, OAUTH_COOKIE));
   if (!oauth) return null;
   deleteCookie(c, OAUTH_COOKIE, { path: cookiePath, secure: ctx.secure });
+  // The callback has no Origin: the app it returns to is the one the sign-in is for.
+  if (URL.canParse(oauth.returnTo)) appOrigins.set(c.req.raw, new URL(oauth.returnTo).origin);
   return {
     state: oauth.state,
     nonce: oauth.nonce,
@@ -95,14 +105,14 @@ export async function takeOAuthState(c: Context, ctx: AppContext, cookiePath: st
   };
 }
 
+const appOrigins = new WeakMap<Request, string>();
+
 /**
- * For `/start` with `link=1`: the id of the signed-in user who adds the provider, if they signed in recently;
- * otherwise the error to send back (`no_session`, `reauth_required`). Null without `link`: a sign-in.
+ * The app a request comes from: its Origin, or, for a redirect flow's callback (which has none), the app the
+ * flow returns to. Undefined when neither is known.
  */
-export async function linkingUser(c: Context, ctx: AppContext): Promise<{ link: string } | { error: string } | null> {
-  if (c.req.query('link') !== '1') return null;
-  const user = await recentSignIn(c, ctx);
-  return typeof user === 'string' ? { error: user } : { link: user.id };
+export function appOriginOf(c: Context): string | undefined {
+  return c.req.header('origin') ?? appOrigins.get(c.req.raw);
 }
 
 /**
@@ -110,11 +120,10 @@ export async function linkingUser(c: Context, ctx: AppContext): Promise<{ link: 
  * set), with the error, or with the second step the sign-in goes on with and which second factors can
  * finish it (the challenge cookie is set). `method` names the sign-in in the hash in the last two cases.
  */
-export function redirectBack(c: Context, returnTo: string, method: SignInMethod): (error?: string, next?: NextStep, factors?: Factor[], linked?: boolean) => Response {
-  return (error, next, factors = [], linked = false) => {
+export function redirectBack(c: Context, returnTo: string, method: SignInMethod): (error?: string, next?: NextStep, factors?: SecondFactor[]) => Response {
+  return (error, next, factors = []) => {
     const url = new URL(returnTo);
     if (error) url.hash = `${REDIRECT_ERROR_PARAM}=${error}&${REDIRECT_METHOD_PARAM}=${method}`;
-    if (linked) url.hash = `${REDIRECT_LINKED_PARAM}=${method}`;
     // The step, and which second factors can finish it, so the page can offer the switch.
     if (next) url.hash = `${REDIRECT_NEXT_PARAM}=${next}${factors.length ? `&${REDIRECT_FACTORS_PARAM}=${factors.join(',')}` : ''}&${REDIRECT_METHOD_PARAM}=${method}`;
     return c.redirect(url.href, 302);
@@ -194,7 +203,7 @@ export async function resolveProviderUser(
     const existing = await users.findByEmail(emailNormalized);
     if (existing) {
       if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) {
-        const methods = await users.signInMethods(existing.id, await ctx.settings.methods());
+        const methods = await users.signInMethods(existing.id, signInPredicate(ctx.configured, await ctx.settings.methods()));
         const how = methods.map((method) => METHOD_NAMES[method]).join(' or ');
         return {
           ok: false,
@@ -237,29 +246,45 @@ export async function resolveProviderUser(
   return { ok: false, error: 'temporarily_unavailable', message: 'Please try again.' };
 }
 
-export type LinkResult = { ok: true } | { ok: false; error: 'account_taken' | 'no_session'; message: string };
+export type LinkResult = { ok: true } | { ok: false; error: 'account_taken'; message: string };
 
 /**
- * Adds a verified provider account to the methods of `userId`, who signed in recently: from then on it signs
+ * Adds a verified provider account to the methods of `user`, who signed in recently: from then on it signs
  * them in too, whatever address it has. An account that belongs to another user stays theirs. Emits
  * `user.method_added`.
  */
-export async function linkProviderAccount(ctx: AppContext, provider: OAuthProvider, userId: string, profile: ProviderProfile): Promise<LinkResult> {
+export async function linkProviderAccount(ctx: AppContext, provider: OAuthProvider, user: StoredUser, profile: ProviderProfile): Promise<LinkResult> {
   const { users } = ctx;
-  const user = await users.findById(userId);
-  if (!user) return { ok: false, error: 'no_session', message: 'Please sign in first.' };
   const taken: LinkResult = { ok: false, error: 'account_taken', message: `This ${provider.name} account signs in another user. Use another one.` };
   const existing = await users.findAccountByKey(profile.key);
+  if (existing?.userId === user.id) {
+    await users.updateAccount(existing.id, { email: profile.email, ...(profile.secret ? { secret: profile.secret } : {}) });
+    return { ok: true };
+  }
   if (existing) {
+    if (await users.findById(existing.userId)) return taken;
     // Left behind by a deletion that did not finish: it would hold the key forever.
-    if (!(await users.findById(existing.userId))) await users.deleteAccount(existing.id);
-    else if (existing.userId !== user.id) return taken;
-    else {
-      await users.updateAccount(existing.id, { email: profile.email, ...(profile.secret ? { secret: profile.secret } : {}) });
-      return { ok: true };
-    }
+    await users.deleteAccount(existing.id);
   }
   if (!(await users.linkAccount(user.id, { key: profile.key, email: profile.email, secret: profile.secret, primary: false }))) return taken;
   await ctx.emit('user.method_added', { user: toMadauthUser(user), method: provider.method, email: profile.email });
   return { ok: true };
+}
+
+/**
+ * Finishes a redirect flow that `startOAuth` began with `link=1`: adds the provider's account to the user who
+ * started it, if they are still signed in at this browser (the session cookie comes along on the redirect),
+ * and sends the browser back with `madauth_linked` or the error. Null for a flow that signs in.
+ */
+export async function finishLink(c: Context, ctx: AppContext, provider: OAuthProvider, oauth: OAuthState, profile: ProviderProfile): Promise<Response | null> {
+  if (!oauth.link) return null;
+  const back = redirectBack(c, oauth.returnTo, provider.method);
+  const session = await ctx.currentUser(c);
+  const user = session?.id === oauth.link ? await ctx.users.findById(session.id) : null;
+  if (!user) return back('no_session');
+  const linked = await linkProviderAccount(ctx, provider, user, profile);
+  if (!linked.ok) return back(linked.error);
+  const url = new URL(oauth.returnTo);
+  url.hash = `${REDIRECT_LINKED_PARAM}=${provider.method}`;
+  return c.redirect(url.href, 302);
 }

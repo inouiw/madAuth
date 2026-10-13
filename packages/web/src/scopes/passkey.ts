@@ -2,7 +2,7 @@ import { Passkey } from '../providers/passkey.js';
 import type { PendingStep, SecondFactorPolicy } from '../providers/provider.js';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
 import { ceremony, conditionalSupported, creationOptions, requestOptions, signalUnknown, webauthnSupported } from '../webauthn.js';
-import type { Core } from './core.js';
+import { serverCalls, type Core } from './core.js';
 import { signedIn } from './email.js';
 
 /** A passkey of the signed-in user. */
@@ -65,26 +65,18 @@ const switchedOff = () => fail('flow_not_enabled', 'The madAuth server has passk
 const notRegistered = () => fail('flow_not_enabled', 'Pass new Passkey() to Madauth.initialize to sign in with a passkey alone.');
 
 export function createPasskeyApi(core: Core): PasskeyApi {
-  async function call<T extends object>(path: string, body: Record<string, unknown> = {}, init: { session?: boolean; method?: 'GET' | 'POST' } = {}): Promise<Result<T>> {
-    const ready = await core.whenReady();
-    if (!ready.isSuccess) return ready;
-    if (!core.config()?.passkey) return switchedOff();
-    const res = await core.request<T>(path, { method: init.method ?? 'POST', body });
-    if (res.ok) return ok(res.data);
-    if (init.session && res.status === 401 && res.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
-    return { isSuccess: false, error: res.error };
-  }
+  const call = serverCalls(core, { isOn: (config) => !!config?.passkey, switchedOff });
 
   /** Asks the server for the options of an assertion, runs the browser's dialog, and sends the answer to `verifyPath`. */
   async function assert<T extends object>(optionsPath: string, verifyPath: string, init: PasskeySignInOptions = {}): Promise<Result<T>> {
-    const options = await call<PublicKeyCredentialRequestOptionsJSON>(optionsPath);
+    const options = await call<PublicKeyCredentialRequestOptionsJSON>(optionsPath, { body: {} });
     if (!options.isSuccess) return options;
     const { isSuccess: _, ...json } = options;
     const answer = await ceremony(() =>
       navigator.credentials.get({ publicKey: requestOptions(json), ...(init.conditional ? { mediation: 'conditional' as CredentialMediationRequirement } : {}), signal: init.signal }),
     );
     if (!answer.isSuccess) return answer;
-    const result = await call<T>(verifyPath, { response: answer.credential });
+    const result = await call<T>(verifyPath, { body: { response: answer.credential } });
     // The device offered a passkey the server no longer has: its password manager can forget it.
     if (!result.isSuccess && result.error.code === 'passkey_unknown') signalUnknown(json.rpId, (answer.credential as { id: string }).id);
     return result;
@@ -104,19 +96,19 @@ export function createPasskeyApi(core: Core): PasskeyApi {
     },
 
     async add(options = {}) {
-      const json = await call<PublicKeyCredentialCreationOptionsJSON>('/auth/passkey/register/options', {}, { session: true });
+      const json = await call<PublicKeyCredentialCreationOptionsJSON>('/auth/passkey/register/options', { body: {}, session: true });
       if (!json.isSuccess) return json;
       const { isSuccess: _, ...creation } = json;
       const answer = await ceremony(() => navigator.credentials.create({ publicKey: creationOptions(creation) }));
       if (!answer.isSuccess) return answer;
-      const result = await call<{ passkey: PasskeyInfo; user?: MadauthUser }>('/auth/passkey/register/verify', { response: answer.credential, name: options.name }, { session: true });
+      const result = await call<{ passkey: PasskeyInfo; user?: MadauthUser }>('/auth/passkey/register/verify', { body: { response: answer.credential, name: options.name }, session: true });
       if (!result.isSuccess) return result;
       if (result.user) core.signedIn(result.user);
       return ok(result.user ? { passkey: result.passkey, user: result.user } : { passkey: result.passkey });
     },
 
     async rename({ id, name }) {
-      const result = await call<{ passkey: PasskeyInfo }>('/auth/passkey/rename', { id, name }, { session: true });
+      const result = await call<{ passkey: PasskeyInfo }>('/auth/passkey/rename', { body: { id, name }, session: true });
       return result.isSuccess ? ok({ passkey: result.passkey }) : result;
     },
 

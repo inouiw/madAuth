@@ -1,6 +1,6 @@
 import type { LoginMethodId } from '../methods.js';
-import { fail, ok, type Result } from '../result.js';
-import type { Core } from './core.js';
+import { ok, type Result } from '../result.js';
+import { serverCalls, type Core } from './core.js';
 
 /** A sign-in method of the signed-in user, as `Madauth.methods.list` returns it. */
 export interface SignInMethodInfo {
@@ -39,22 +39,15 @@ export interface MethodsApi {
 }
 
 export function createMethodsApi(core: Core): MethodsApi {
-  async function call<T extends object>(path: string, init: { method: 'GET' | 'POST'; body?: Record<string, unknown> }): Promise<Result<T>> {
-    const ready = await core.whenReady();
-    if (!ready.isSuccess) return ready;
-    const res = await core.request<T>(path, init);
-    if (res.ok) return ok(res.data);
-    if (res.status === 401 && res.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
-    return { isSuccess: false, error: res.error };
-  }
+  const call = serverCalls(core);
 
   return {
     async list() {
-      const result = await call<{ methods: SignInMethodInfo[] }>('/auth/methods', { method: 'GET' });
+      const result = await call<{ methods: SignInMethodInfo[] }>('/auth/methods', { method: 'GET', session: true });
       return result.isSuccess ? ok({ methods: result.methods }) : result;
     },
     async remove(id) {
-      const result = await call('/auth/methods/remove', { method: 'POST', body: { id } });
+      const result = await call('/auth/methods/remove', { body: { id }, session: true });
       return result.isSuccess ? ok() : result;
     },
   };

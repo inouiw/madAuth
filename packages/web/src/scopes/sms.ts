@@ -1,6 +1,6 @@
 import type { PendingStep } from '../providers/provider.js';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
-import type { Core } from './core.js';
+import { serverCalls, type Core } from './core.js';
 
 /**
  * SMS codes as a second factor, for custom login screens and account pages. The methods work whenever the
@@ -48,19 +48,7 @@ const switchedOff = () =>
   fail('flow_not_enabled', 'The madAuth server has SMS codes switched off: an admin lists sms with set-methods, and the webhook must send sms.send_code.');
 
 export function createSmsApi(core: Core): SmsApi {
-  /** Waits for initialize, checks that the server has SMS codes on, then calls it. With `session`, a 401 means that nobody is signed in. */
-  async function call<T extends object>(
-    path: string,
-    init: { method?: 'GET' | 'POST'; body?: Record<string, unknown>; session?: boolean } = {},
-  ): Promise<Result<T>> {
-    const ready = await core.whenReady();
-    if (!ready.isSuccess) return ready;
-    if (!core.config()?.sms) return switchedOff();
-    const res = await core.request<T>(path, { method: init.method ?? 'POST', body: init.body });
-    if (res.ok) return ok(res.data);
-    if (init.session && res.status === 401 && res.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
-    return { isSuccess: false, error: res.error };
-  }
+  const call = serverCalls(core, { isOn: (config) => !!config?.sms, switchedOff });
 
   return {
     async setUp({ phone, code }) {

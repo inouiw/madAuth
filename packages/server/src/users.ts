@@ -2,7 +2,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { claimsFromJson } from './claims.js';
 import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
-import { SIGN_IN_METHODS, type MethodSettings, type SecondFactor, type SignInMethod } from './settings.js';
+import { ALWAYS_SIGN_IN, SIGN_IN_METHODS, type SecondFactor, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 import type { MadauthUser } from './user.js';
 
@@ -150,7 +150,7 @@ export function passkeyAccountKey(credentialId: string): string {
 export const methodOf = (account: Pick<StoredAccount, 'key'>): string => String(account.key).split(':')[0];
 
 /** The methods whose accounts a sign-up makes; the authenticator app makes one only for a sign-up with it. */
-const ALWAYS_PRIMARY = ['password', 'google', 'github', 'email-link'];
+const isAlwaysPrimary = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method);
 
 /**
  * Whether an account is the one its user signed up with; `accounts` are all of the user's. Records since
@@ -161,8 +161,8 @@ export function isPrimary(account: StoredAccount, accounts: StoredAccount[]): bo
   if (account.primaryUserId) return true;
   if (account.secondFactor === true) return false;
   const method = methodOf(account);
-  if (method !== 'totp') return ALWAYS_PRIMARY.includes(method);
-  return !accounts.some((other) => ALWAYS_PRIMARY.includes(methodOf(other)));
+  if (method !== 'totp') return isAlwaysPrimary(method);
+  return !accounts.some((other) => isAlwaysPrimary(methodOf(other)));
 }
 
 /**
@@ -262,14 +262,12 @@ export class Users {
     return this.findAccountByKey(smsAccountKey(userId));
   }
 
-  /** The user's accounts: their sign-in methods and their second factors. */
-  private async accounts(userId: string): Promise<StoredAccount[]> {
+  /**
+   * The user's accounts: their sign-in methods and their second factors. Read once, for the checks that take
+   * them ({@link factorsAmong}, {@link lastWayIn}).
+   */
+  async accounts(userId: string): Promise<StoredAccount[]> {
     return (await this.store.findMany('account', { userId })) as unknown as StoredAccount[];
-  }
-
-  /** All of the user's accounts, read once, for the checks that take them ({@link factorsAmong}, {@link lastWayIn}). */
-  async allAccounts(userId: string): Promise<StoredAccount[]> {
-    return this.accounts(userId);
   }
 
   /** Puts back an account that was removed: a removal that turned out to leave the user without a way in. */
@@ -289,14 +287,6 @@ export class Users {
   }
 
   /**
-   * Which of the second factors in `on` the user has, in their order: a passkey, the authenticator app, a
-   * phone. `passkeyUsable` leaves out the passkeys that can't answer here (another domain's). One read.
-   */
-  async secondFactors(userId: string, on: readonly SecondFactor[], passkeyUsable?: (account: StoredAccount) => boolean): Promise<SecondFactor[]> {
-    return on.length ? factorsAmong(await this.accounts(userId), on, passkeyUsable) : [];
-  }
-
-  /**
    * Notes that a passkey of the user answered the ceremony with this challenge, so the same answer counts
    * once: resolves to false if it was noted before (the create decides between two requests). Only accepted
    * answers are noted, so nobody fills the store without a passkey; the user's notes of ceremonies that have
@@ -304,11 +294,14 @@ export class Users {
    */
   async useCeremony(userId: string, challenge: string, expiresAt: number): Promise<boolean> {
     const now = Date.now();
-    for (const old of await this.store.findMany('verification', { userId, purpose: 'passkey' })) {
-      if (Number(old.expiresAt) <= now) await this.store.delete('verification', { id: old.id });
-    }
     const id = `passkey:${createHash('sha256').update(challenge).digest('base64url')}`;
-    return this.store.create('verification', { id, userId, purpose: 'passkey', codeHash: '', attempts: 0, expiresAt });
+    // The create alone decides a replay, so the expired notes go alongside it.
+    const expired = (await this.store.findMany('verification', { userId, purpose: 'passkey' })).filter((old) => Number(old.expiresAt) <= now);
+    const [created] = await Promise.all([
+      this.store.create('verification', { id, userId, purpose: 'passkey', codeHash: '', attempts: 0, expiresAt }),
+      ...expired.map((old) => this.store.delete('verification', { id: old.id })),
+    ]);
+    return created;
   }
 
   /** Removes all of the user's passkeys. Resolves to how many there were. */
@@ -337,27 +330,12 @@ export class Users {
   }
 
   /**
-   * How the user signs in, e.g. `['google', 'passkey']`: the methods they have that sign in on their own as
-   * `methods` allows (`allowAsSignInMethod`); empty while nobody can. `without` leaves accounts out, to see
-   * whether the user could still sign in without them.
+   * How the user signs in, e.g. `['google', 'passkey']`: the methods they have that sign in on their own now
+   * (`signsIn`: on, configured, and allowed as a sign-in method); empty while nobody can.
    */
-  async signInMethods(userId: string, methods: MethodSettings, without?: (account: StoredAccount) => boolean): Promise<SignInMethod[]> {
-    const has = (await this.accounts(userId)).filter((account) => !without?.(account)).map(methodOf);
-    return SIGN_IN_METHODS.filter((m) => has.includes(m) && methods[m]?.allowAsSignInMethod === true);
-  }
-
-  /**
-   * Whether the accounts `without` picks are the user's last way in: the user signs in now with a method that
-   * `signsIn` (on, configured, and allowed as a sign-in method), and wouldn't without them. A user who can't
-   * sign in now anyway (an admin switched their methods off) is not locked out by it. One read.
-   */
-  async isLastWayIn(userId: string, signsIn: (method: string) => boolean, without: (account: StoredAccount) => boolean): Promise<boolean> {
-    return lastWayIn(await this.accounts(userId), signsIn, without);
-  }
-
-  /** The user's accounts of the sign-in methods, for the list of their methods: everything but the phone. */
-  async methodAccounts(userId: string): Promise<StoredAccount[]> {
-    return (await this.accounts(userId)).filter((account) => methodOf(account) !== 'sms');
+  async signInMethods(userId: string, signsIn: (method: string) => boolean): Promise<SignInMethod[]> {
+    const has = (await this.accounts(userId)).map(methodOf);
+    return SIGN_IN_METHODS.filter((m) => has.includes(m) && signsIn(m));
   }
 
   /**
@@ -485,7 +463,7 @@ export class Users {
    * it is `primary` and the user signed up with another account already.
    */
   async linkAccount(userId: string, account: NewAccount): Promise<StoredAccount | null> {
-    const primary = account.primary ?? ALWAYS_PRIMARY.includes(methodOf(account));
+    const primary = account.primary ?? isAlwaysPrimary(methodOf(account));
     const record: StoredAccount = {
       id: newId('acc'),
       userId,
@@ -618,9 +596,8 @@ export class Users {
   /** Deletes the user's pending verifications and password resets; their links and codes stop working. */
   async clearVerifications(userId: string): Promise<void> {
     // The notes of accepted passkey answers stay: without them, such an answer could be used again.
-    for (const record of await this.store.findMany('verification', { userId })) {
-      if (record.purpose !== 'passkey') await this.store.delete('verification', { id: record.id });
-    }
+    const records = await this.store.findMany('verification', { userId });
+    await Promise.all(records.filter((record) => record.purpose !== 'passkey').map((record) => this.store.delete('verification', { id: record.id })));
   }
 
   /**

@@ -4,7 +4,7 @@ import type { MadauthConfig } from '../config.js';
 import { exchangeGitHubCode, fetchGitHubAccount, revokeGitHubGrant } from '../github.js';
 import { decrypt, encrypt } from '../crypto.js';
 import { githubAccountKey, type StoredAccount } from '../users.js';
-import { linkingUser, linkProviderAccount, pkceChallenge, redirectBack, resolveProviderUser, startOAuth, takeOAuthState, type OAuthProvider } from './oauth.js';
+import { finishLink, pkceChallenge, redirectBack, resolveProviderUser, startOAuth, takeOAuthState, type OAuthProvider } from './oauth.js';
 
 const GITHUB_AUTH_ENDPOINT = 'https://github.com/login/oauth/authorize';
 
@@ -28,10 +28,9 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig, t
     if (!returnUrl) return c.text('return_to must be an absolute URL whose origin is in ALLOWED_ORIGINS', 400);
     // The browser is on its way from the app: a method that is off sends it back there, with the error.
     if (!(await ctx.enabled(c, 'github'))) return redirectBack(c, returnUrl.href, 'github')('method_disabled');
-    // `link=1`: the signed-in user adds GitHub to their methods.
-    const linking = await linkingUser(c, ctx);
-    if (linking && 'error' in linking) return redirectBack(c, returnUrl.href, 'github')(linking.error);
-    const oauth = await startOAuth(c, ctx, COOKIE_PATH, returnUrl, linking?.link);
+    // With `link=1`, the signed-in user adds GitHub to their methods.
+    const oauth = await startOAuth(c, ctx, COOKIE_PATH, returnUrl);
+    if ('error' in oauth) return redirectBack(c, returnUrl.href, 'github')(oauth.error);
 
     const url = new URL(GITHUB_AUTH_ENDPOINT);
     url.search = new URLSearchParams({
@@ -63,15 +62,11 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig, t
     const { account } = result;
     const profile = { key: githubAccountKey(account.id), email: account.email, name: account.name, secret: encrypt(tokenKey, Buffer.from(token)) };
 
-    if (oauth.link) {
-      // Still the user who started it: the session cookie comes along on the redirect.
-      if ((await ctx.currentUser(c))?.id !== oauth.link) return back('no_session');
-      const linked = await linkProviderAccount(ctx, GITHUB, oauth.link, profile);
-      return linked.ok ? back(undefined, undefined, [], true) : back(linked.error);
-    }
+    const linked = await finishLink(c, ctx, GITHUB, oauth, profile);
+    if (linked) return linked;
     const resolved = await resolveProviderUser(ctx, GITHUB, profile, oauth.locale);
     if (!resolved.ok) return back(resolved.error);
-    const step = await ctx.secondStep(c, resolved.user, ['github'], 'github', { name: account.name, picture: account.picture }, new URL(oauth.returnTo).origin);
+    const step = await ctx.secondStep(c, resolved.user, ['github'], 'github', { name: account.name, picture: account.picture });
     if ('disabled' in step) return back('method_disabled');
     // The app continues with the second step (a code, or the app's setup); the challenge cookie is set.
     if ('next' in step) return back(undefined, step.next, step.factors);

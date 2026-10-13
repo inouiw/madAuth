@@ -40,29 +40,25 @@ export const noSession = (c: Context): Response => error(c, 401, 'no_session', '
  */
 export const RECENT_SIGN_IN_MS = 10 * 60 * 1000;
 
-/**
- * The signed-in user, if they signed in within RECENT_SIGN_IN_MS (renewals don't count); otherwise the answer
- * to send: `no_session`, or `reauth_required` (sign in again, then try again).
- */
+/** The signed-in user as stored, and whether they signed in within RECENT_SIGN_IN_MS (renewals don't count); null without a session. */
+export async function signedInUser(c: Context, ctx: AppContext): Promise<{ user: StoredUser; recent: boolean } | null> {
+  const session = await ctx.currentUser(c);
+  if (!session) return null;
+  const [user, signedInAt] = await Promise.all([ctx.users.findById(session.id), ctx.signedInAt(c)]);
+  return user ? { user, recent: signedInAt !== null && Date.now() - signedInAt <= RECENT_SIGN_IN_MS } : null;
+}
+
+/** The signed-in user if they signed in recently, else why not: for the routes that change how a user signs in. */
+export async function recentSignIn(c: Context, ctx: AppContext): Promise<StoredUser | 'no_session' | 'reauth_required'> {
+  const signedIn = await signedInUser(c, ctx);
+  return !signedIn ? 'no_session' : signedIn.recent ? signedIn.user : 'reauth_required';
+}
+
+/** {@link recentSignIn} with the answer to send when not. */
 export async function recentUser(c: Context, ctx: AppContext): Promise<StoredUser | Response> {
   const result = await recentSignIn(c, ctx);
   if (result === 'no_session') return noSession(c);
-  if (result === 'reauth_required') return reauthRequired(c);
-  return result;
-}
-
-/** {@link recentUser} as a result: the user, or why not. */
-export async function recentSignIn(c: Context, ctx: AppContext): Promise<StoredUser | 'no_session' | 'reauth_required'> {
-  const session = await ctx.currentUser(c);
-  const user = session ? await ctx.users.findById(session.id) : null;
-  if (!user) return 'no_session';
-  return (await signedInRecently(c, ctx)) ? user : 'reauth_required';
-}
-
-/** Whether the request's session comes from a sign-in within RECENT_SIGN_IN_MS (renewals don't count). */
-export async function signedInRecently(c: Context, ctx: AppContext): Promise<boolean> {
-  const signedInAt = await ctx.signedInAt(c);
-  return signedInAt !== null && Date.now() - signedInAt <= RECENT_SIGN_IN_MS;
+  return result === 'reauth_required' ? reauthRequired(c) : result;
 }
 
 /** The answer when a change to how the user signs in needs a recent sign-in. */

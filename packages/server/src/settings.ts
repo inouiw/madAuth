@@ -26,12 +26,16 @@ export type MethodId = (typeof METHODS)[number];
 export const SECOND_FACTORS = ['passkey', 'totp', 'sms'] as const;
 export type SecondFactor = (typeof SECOND_FACTORS)[number];
 
-/** The methods that can ask for a second factor after they succeeded. */
-export const METHODS_WITH_SECOND_FACTOR = ['google', 'github', 'password', 'email-link', 'passkey'] as const;
-export type MethodWithSecondFactor = (typeof METHODS_WITH_SECOND_FACTOR)[number];
+/** The methods that always sign in when they are on: they are nothing else, and a sign-up makes their account. */
+export const ALWAYS_SIGN_IN = ['google', 'github', 'password', 'email-link'] as const;
+const isAlwaysSignIn = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method);
 
-/** The methods that always sign in when they are on: they are nothing else. */
-const ALWAYS_SIGN_IN: readonly MethodId[] = ['google', 'github', 'password', 'email-link'];
+/**
+ * The methods that can ask for a second factor after they succeeded: those that always sign in, and passkeys.
+ * They are also the methods a user removes without a code (the app and the phone take one).
+ */
+export const METHODS_WITH_SECOND_FACTOR = [...ALWAYS_SIGN_IN, 'passkey'] as const;
+export type MethodWithSecondFactor = (typeof METHODS_WITH_SECOND_FACTOR)[number];
 
 /**
  * Whether a method asks for a second factor: never, when the user has set one up (`optional`), or always,
@@ -96,7 +100,7 @@ export function parsePasswordRules(input: unknown): PasswordRules | null {
 
 export const isMethodId = (value: string): value is MethodId => (METHODS as readonly string[]).includes(value);
 /** Whether a method takes a `secondFactor` policy other than `none`. */
-export const hasSecondFactor = (method: string): method is MethodWithSecondFactor =>
+const hasSecondFactor = (method: string): method is MethodWithSecondFactor =>
   (METHODS_WITH_SECOND_FACTOR as readonly string[]).includes(method);
 const isPolicy = (value: unknown): value is SecondFactorPolicy => (SECOND_FACTOR_POLICIES as readonly unknown[]).includes(value);
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -343,6 +347,12 @@ export function signsIn(method: MethodId, configured: (method: MethodId) => bool
   return isOn(method, configured, methods) && methods[method]!.allowAsSignInMethod;
 }
 
+/** {@link signsIn} for any method id, as the account checks take it: an id that is no method never signs in. */
+export const signInPredicate =
+  (configured: (method: MethodId) => boolean, methods: MethodSettings) =>
+  (method: string): boolean =>
+    isMethodId(method) && signsIn(method, configured, methods);
+
 /** The second-factor policy of a method, `none` unless set. */
 export function policyOf(method: MethodId, methods: MethodSettings): SecondFactorPolicy {
   return methods[method]?.secondFactor ?? 'none';
@@ -379,7 +389,7 @@ export function checkMethodSettings(
   for (const method of METHODS) {
     const setting = methods[method];
     if (!setting) continue;
-    if (ALWAYS_SIGN_IN.includes(method) && !setting.allowAsSignInMethod) {
+    if (isAlwaysSignIn(method) && !setting.allowAsSignInMethod) {
       return `"${method}" always signs in: set its allowAsSignInMethod to true, or leave it out to switch it off.`;
     }
     if (method === 'sms' && setting.allowAsSignInMethod) return '"sms" is only a second factor: set its allowAsSignInMethod to false.';

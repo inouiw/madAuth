@@ -15,11 +15,11 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
 import { isWithin, type MadauthConfig } from '../config.js';
-import { isOn, signsIn } from '../settings.js';
+import { isOn } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import { passkeyAccountKey, toMadauthUser, type StoredAccount, type StoredUser } from '../users.js';
-import { finishSignIn, methodOff, methodStillOn, pendingSetup, readChallenge, type ChallengeClaims } from './challenge.js';
-import { body, error, nameOf, noSession, originHost, recentUser, signInAnswer, type Body } from './helpers.js';
+import { finishSignIn, pendingFactor, whoSetsUp } from './challenge.js';
+import { body, error, nameOf, noSession, originHost, signInAnswer, type Body } from './helpers.js';
 
 /** The routes, and where the ceremony cookie is sent. */
 const ROUTE_PATH = '/auth/passkey';
@@ -168,25 +168,42 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
     }
   };
 
-  /** Notes a passkey's use: its counter, and when. */
-  const used = (account: StoredAccount, counter: number) => users.updateAccount(account.id, { signCount: counter, lastUsedAt: Date.now() });
+  /**
+   * Checks the browser's answer in `data` against the passkey it names and notes the answer as used. `owner`
+   * is whose passkey may answer (null: not one of them, then `refused` is the answer). Resolves to the user,
+   * and the write that notes the passkey's use (its counter, and when), which nothing else waits for.
+   */
+  const acceptAssertion = async (
+    c: Context,
+    ceremony: CeremonyClaims & { exp: number },
+    data: Body,
+    owner: (account: StoredAccount) => Promise<StoredUser | null>,
+    refused: () => Response,
+  ): Promise<{ user: StoredUser; used: Promise<boolean> } | Response> => {
+    if (!isCredential(data.response)) return failed(c);
+    const response = data.response as unknown as AuthenticationResponseJSON;
+    const account = await users.passkeyByCredential(response.id);
+    const user = account ? await owner(account) : null;
+    if (!account || !user) return refused();
+    // The authenticator names the user it made the passkey for: it must be the passkey's.
+    const handle = response.response.userHandle;
+    if (handle && Buffer.from(handle, 'base64url').toString() !== user.id) return failed(c);
+    const counter = await verifyAssertion(response, ceremony, account);
+    if (counter === null || !(await users.useCeremony(user.id, ceremony.challenge, ceremony.exp * 1000))) return failed(c);
+    return { user, used: users.updateAccount(account.id, { signCount: counter, lastUsedAt: Date.now() }) };
+  };
+
+  /** The passkeys as the browser's options name them. */
+  const descriptors = (passkeys: StoredAccount[]) =>
+    passkeys.flatMap((p) => (p.credentialId ? [{ id: p.credentialId, transports: splitTransports(p.transports) }] : []));
 
   // --- Adding a passkey ---
 
   /**
    * Who adds a passkey: the user whose sign-in waits for a second factor's setup (a `required` policy), or
-   * the signed-in user if they signed in recently; else the answer to send.
+   * the signed-in user if they signed in recently (a passkey is a way in of its own); else the answer to send.
    */
-  const whoAdds = async (c: Context): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | Response> => {
-    const pending = await pendingSetup(c, ctx, 'passkey');
-    if (pending) {
-      // A sign-up with the app has no first factor yet: it sets the app up, so a passkey is never added for it.
-      if (!pending.challenge.amr.length) return noSession(c);
-      return (await methodStillOn(c, ctx, pending.challenge)) ? pending : methodOff(c);
-    }
-    const user = await recentUser(c, ctx);
-    return user instanceof Response ? user : { user, challenge: null };
-  };
+  const whoAdds = (c: Context) => whoSetsUp(c, ctx, 'passkey', async () => true);
 
   app.post(`${ROUTE_PATH}/register/options`, async (c) => {
     const who = await whoAdds(c);
@@ -204,7 +221,7 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
       userID: new TextEncoder().encode(user.id),
       attestationType: 'none',
       // The browser refuses an authenticator that has a passkey of this user already.
-      excludeCredentials: existing.flatMap((p) => (p.credentialId ? [{ id: p.credentialId, transports: splitTransports(p.transports) }] : [])),
+      excludeCredentials: descriptors(existing),
       // A discoverable passkey (it signs in without the address first), and always with a PIN or biometrics.
       authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
       supportedAlgorithmIDs: SUPPORTED_ALGORITHMS,
@@ -254,8 +271,13 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
 
   // --- Signing in with a passkey alone ---
 
+  // Both routes: passkeys don't sign in on their own here.
+  app.use(`${ROUTE_PATH}/signin/*`, async (c, next) => {
+    if (!(await ctx.enabled(c, 'passkey'))) return error(c, 403, 'method_disabled', 'Signing in with a passkey is switched off.');
+    await next();
+  });
+
   app.post(`${ROUTE_PATH}/signin/options`, async (c) => {
-    if (!signsIn('passkey', ctx.configured, await ctx.methods(c))) return error(c, 403, 'method_disabled', 'Signing in with a passkey is switched off.');
     const domain = rpIdOf(c);
     if (!domain) return wrongDomain(c);
     // No list of passkeys: the browser offers the user's own (discoverable), so no address is asked for.
@@ -264,40 +286,20 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
   });
 
   app.post(`${ROUTE_PATH}/signin/verify`, async (c) => {
-    if (!signsIn('passkey', ctx.configured, await ctx.methods(c))) return error(c, 403, 'method_disabled', 'Signing in with a passkey is switched off.');
     const ceremony = await finish(c, 'signin');
     if (!ceremony) return expired(c);
-    const data: Body = await body(c);
-    if (!isCredential(data.response)) return failed(c);
-    const response = data.response as unknown as AuthenticationResponseJSON;
-    const account = await users.passkeyByCredential(response.id);
-    const user = account ? await users.findById(account.userId) : null;
     // A passkey the user removed (or whose user is gone) is still offered by their device: say so, so they can delete it there.
-    if (!account || !user) return error(c, 401, 'passkey_unknown', 'This passkey is not registered (any more). Sign in another way, and remove it from your device.');
-    // The authenticator names the user it made the passkey for: it must be the passkey's.
-    const handle = response.response.userHandle;
-    if (handle && Buffer.from(handle, 'base64url').toString() !== user.id) return failed(c);
-    const counter = await verifyAssertion(response, ceremony, account);
-    if (counter === null || !(await users.useCeremony(user.id, ceremony.challenge, ceremony.exp * 1000))) return failed(c);
-    await used(account, counter);
-    return signInAnswer(c, await ctx.secondStep(c, user, ['passkey'], 'passkey'));
+    const unknown = () => error(c, 401, 'passkey_unknown', 'This passkey is not registered (any more). Sign in another way, and remove it from your device.');
+    const accepted = await acceptAssertion(c, ceremony, await body(c), (account) => users.findById(account.userId), unknown);
+    if (accepted instanceof Response) return accepted;
+    const [step] = await Promise.all([ctx.secondStep(c, accepted.user, ['passkey'], 'passkey'), accepted.used]);
+    return signInAnswer(c, step);
   });
 
   // --- The second step of a sign-in ---
 
-  /** The sign-in that waits for a passkey, with its user; else the answer to send. */
-  const waiting = async (c: Context): Promise<{ challenge: ChallengeClaims; user: StoredUser } | Response> => {
-    const challenge = await readChallenge(c, ctx, 'passkey');
-    const sessionEnded = () => error(c, 401, 'challenge_expired', 'The sign-in has expired. Please sign in again.');
-    if (!challenge) return sessionEnded();
-    if (!(await methodStillOn(c, ctx, challenge))) return methodOff(c);
-    const user = await users.findById(challenge.sub);
-    // The user is gone, or a password reset ended their sessions meanwhile.
-    return user && user.sessionVersion === challenge.sv ? { challenge, user } : sessionEnded();
-  };
-
   app.post(`${ROUTE_PATH}/verify/options`, async (c) => {
-    const pending = await waiting(c);
+    const pending = await pendingFactor(c, ctx, 'passkey');
     if (pending instanceof Response) return pending;
     const domain = rpIdOf(c);
     if (!domain) return wrongDomain(c);
@@ -308,27 +310,22 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
     const options = await generateAuthenticationOptions({
       rpID: domain.rpId,
       userVerification: 'required',
-      allowCredentials: passkeys.flatMap((p) => (p.credentialId ? [{ id: p.credentialId, transports: splitTransports(p.transports) }] : [])),
+      allowCredentials: descriptors(passkeys),
     });
     return begin(c, { purpose: 'verify', challenge: options.challenge, ...domain, sub: pending.user.id }, options);
   });
 
   app.post(`${ROUTE_PATH}/verify`, async (c) => {
-    const pending = await waiting(c);
+    const pending = await pendingFactor(c, ctx, 'passkey');
     if (pending instanceof Response) return pending;
     const { challenge, user } = pending;
     const ceremony = await finish(c, 'verify', user.id);
     if (!ceremony) return expired(c);
-    const data = await body(c);
-    if (!isCredential(data.response)) return failed(c);
-    const response = data.response as unknown as AuthenticationResponseJSON;
-    const account = await users.passkeyByCredential(response.id);
     // Only a passkey of this user finishes their sign-in.
-    if (!account || account.userId !== user.id) return failed(c);
-    const counter = await verifyAssertion(response, ceremony, account);
-    if (counter === null || !(await users.useCeremony(user.id, ceremony.challenge, ceremony.exp * 1000))) return failed(c);
-    await used(account, counter);
-    return c.json({ user: await finishSignIn(c, ctx, user, challenge, 'passkey', 'passkey') });
+    const accepted = await acceptAssertion(c, ceremony, await body(c), async (account) => (account.userId === user.id ? user : null), () => failed(c));
+    if (accepted instanceof Response) return accepted;
+    const [result] = await Promise.all([finishSignIn(c, ctx, user, challenge, 'passkey', 'passkey'), accepted.used]);
+    return c.json({ user: result });
   });
 
   // --- The signed-in user's passkeys ---
