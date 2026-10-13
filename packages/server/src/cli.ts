@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 import { parseArgs, parseEnv } from 'node:util';
-import { loadConfig, loadStore, methodConfig } from './config.js';
+import { loadStore, methodConfig, readConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
 import { claimsFromJson, parseClaims, parseRoles, type Claims } from './claims.js';
@@ -14,6 +14,8 @@ import {
   canSignUp,
   checkMethodSettings,
   initialMethods,
+  legacyAppProblem,
+  METHODS_SETTING,
   isConfigured,
   isPasswordScore,
   isOn,
@@ -418,7 +420,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
 
   // The server's own checks, on the file as it will be read, so that it is ready to use. The database is
   // not opened here: a placeholder stands in for DATABASE_URL.
-  await loadConfig({ ...parseEnv(content), DATABASE_URL: undefined }, { store: {} as StoreAdapter });
+  await readConfig({ ...parseEnv(content), DATABASE_URL: undefined }, { store: {} as StoreAdapter });
 
   // Always a new file, readable by its owner only: it holds secrets, and an overwritten file would keep its mode.
   if (options.force) rmSync(file, { force: true });
@@ -554,7 +556,7 @@ async function claims(
 
 async function methods(command: 'set-methods' | 'get-methods', args: string[], env: Env) {
   // The whole configuration: only a method the server is configured for can be on, and one must stay on.
-  const config = await loadConfig(env);
+  const config = await readConfig(env);
   const forMethods = methodConfig(config);
   const configured = (method: MethodId) => isConfigured(forMethods, method);
   const signsUp = (method: SignInMethod) => canSignUp(forMethods, method);
@@ -586,7 +588,9 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
   };
   const on = METHODS.filter((method) => isOn(method, configured, current)).map(describe);
   const off = METHODS.filter((method) => configured(method) && !isOn(method, configured, current));
-  return { output: `Switched on: ${on.join(', ')}.${off.length ? ` Switched off: ${off.join(', ')}.` : ''}`, exitCode: 0 };
+  // A list from before 0.6 that the server refuses to start with: say why, and what to run.
+  const problem = legacyAppProblem(await settings.get(METHODS_SETTING));
+  return { output: `Switched on: ${on.join(', ')}.${off.length ? ` Switched off: ${off.join(', ')}.` : ''}${problem ? `\n\n${problem}` : ''}`, exitCode: 0 };
 }
 
 /** The password rules in words. */

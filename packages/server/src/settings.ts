@@ -121,8 +121,11 @@ export function parseMethodSettings(input: unknown): MethodSettings | null {
 /**
  * A methods setting as madAuth before 0.6 stored it: `{}` for a method that is on, `{ secondFactor }` for
  * Google, GitHub, password and the e-mail link. Then the authenticator app was a second factor whenever a
- * policy asked for one, listed or not, and listing it let it sign in on its own; SMS was only ever a second
- * factor. Returns the same as {@link MethodSettings}, or null if `input` is not in that form.
+ * policy asked for one, listed or not; SMS was only ever a second factor. Listing the app let it sign in on
+ * its own, but only for the users who signed up with it, which 0.6 can't say: the app signs in everyone who
+ * has one, or nobody. A listed app is read as a second factor only, which weakens no account, and the server
+ * doesn't start until an admin chooses (see {@link legacyAppProblem}). Returns the same as
+ * {@link MethodSettings}, or null if `input` is not in that form.
  */
 export function parseLegacyMethodSettings(input: unknown): MethodSettings | null {
   if (!isObject(input)) return null;
@@ -132,11 +135,34 @@ export function parseLegacyMethodSettings(input: unknown): MethodSettings | null
     if (!legacy.includes(method) || !isObject(value)) return null;
     const { secondFactor = 'none', ...rest } = value;
     if (Object.keys(rest).length || !isPolicy(secondFactor) || (secondFactor !== 'none' && !hasSecondFactor(method))) return null;
-    settings[method as MethodId] = { allowAsSignInMethod: method !== 'sms', secondFactor };
+    settings[method as MethodId] = { allowAsSignInMethod: method !== 'sms' && method !== 'totp', secondFactor };
   }
   const asks = Object.values(settings).some((setting) => setting.secondFactor !== 'none');
   if (asks && !settings.totp) settings.totp = { allowAsSignInMethod: false, secondFactor: 'none' };
   return settings;
+}
+
+/**
+ * Why a stored methods setting can't be used as it is, as a message for the operator; null if it can. A list
+ * that madAuth before 0.6 stored with the authenticator app on its own (`totp`) has no meaning in 0.6 (see
+ * {@link parseLegacyMethodSettings}): the message names the two `set-methods` commands to choose from.
+ */
+export function legacyAppProblem(stored: unknown): string | null {
+  if (stored === undefined || parseMethodSettings(stored) || !isObject(stored) || !('totp' in stored)) return null;
+  const legacy = parseLegacyMethodSettings(stored);
+  if (!legacy) return null;
+  const listed = Object.keys(stored).map((method) => {
+    const policy = legacy[method as MethodId]!.secondFactor;
+    return policy === 'none' ? method : `${method}=${policy}`;
+  });
+  const command = (totp: string) => `set-methods ${listed.map((arg) => (arg === 'totp' ? totp : arg)).join(' ')}`;
+  return (
+    'The sign-in methods were saved by madAuth before 0.6 and let the authenticator app sign in on its own (totp). ' +
+    'Then it did so only for the users who signed up with it; now it does for everyone who has one, also for those who set it up ' +
+    'as a second factor, or for nobody. Choose, then start the server again: ' +
+    `"${command('totp=second-factor')}" keeps the app a second factor (users who signed up with it alone can't sign in until you allow it), ` +
+    `"${command('totp')}" lets everyone who has the app sign in with it alone. See docs/upgrading.md.`
+  );
 }
 
 /** What decides whether the server has what a method needs. `MadauthConfig` has these fields. */
@@ -197,6 +223,7 @@ const MAX_TRIES = 3;
 export class Settings {
   private warned = false;
   private warnedRules = false;
+  private warnedLegacy = false;
 
   /** `initial` is what counts until the methods are set, see {@link initialMethods}. */
   constructor(
@@ -280,11 +307,17 @@ export class Settings {
 
   /**
    * The stored methods, or the initial ones if nothing (usable) is stored. A value stored by madAuth before
-   * 0.6 is read as it was meant (see {@link parseLegacyMethodSettings}), so an upgrade keeps every policy.
+   * 0.6 keeps its meaning (see {@link parseLegacyMethodSettings}), but for the app on its own, which counts as
+   * a second factor only: a server doesn't start with such a list, see `loadConfig`.
    */
   private current(stored: unknown): MethodSettings {
     if (stored === undefined) return this.initial;
     const parsed = parseMethodSettings(stored) ?? parseLegacyMethodSettings(stored);
+    if (parsed && !this.warnedLegacy && legacyAppProblem(stored)) {
+      // loadConfig refuses such a list; an app made without it gets the safe reading, and the operator is told.
+      this.warnedLegacy = true;
+      console.warn(`[madauth] ${legacyAppProblem(stored)} Until then the app is a second factor only.`);
+    }
     if (parsed) return parsed;
     if (!this.warned) {
       this.warned = true;

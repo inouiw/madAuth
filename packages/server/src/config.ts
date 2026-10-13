@@ -1,6 +1,6 @@
 import type { JWK, JWTVerifyGetKey } from 'jose';
 import { assertPrivateSigningJwk, generateSigningKey } from './keys.js';
-import type { MethodConfig } from './settings.js';
+import { METHODS_SETTING, Settings, legacyAppProblem, type MethodConfig } from './settings.js';
 import type { StoreAdapter } from './store/schema.js';
 import {
   DEV_WEBHOOK_RECEIVER_URL,
@@ -155,10 +155,20 @@ function readEnv(env: Record<string, string | undefined>, name: keyof typeof env
 }
 
 /**
- * Reads and validates the madAuth configuration from environment variables.
- * Throws a {@link ConfigError} naming the variable that is missing or invalid.
+ * Reads and validates the madAuth configuration from environment variables, and checks that the settings in
+ * the store can be used as they are. Throws a {@link ConfigError} naming the variable that is missing or
+ * invalid, or the setting an admin has to set again.
  */
-export async function loadConfig(
+export async function loadConfig(env: Record<string, string | undefined>, overrides: ConfigOverrides = {}): Promise<MadauthConfig> {
+  const config = await readConfig(env, overrides);
+  // A setting whose meaning changed is not guessed at: the admin chooses (the command line reads the configuration with readConfig).
+  const problem = legacyAppProblem(await new Settings(config.store).get(METHODS_SETTING));
+  if (problem) throw new ConfigError(problem);
+  return config;
+}
+
+/** {@link loadConfig} without the check of the stored settings: for the command line, which sets them. */
+export async function readConfig(
   env: Record<string, string | undefined>,
   overrides: ConfigOverrides = {},
 ): Promise<MadauthConfig> {

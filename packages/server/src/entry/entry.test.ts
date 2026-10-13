@@ -6,6 +6,7 @@ import type { LambdaContext, LambdaEvent } from 'hono/aws-lambda';
 import { importJWK, SignJWT } from 'jose';
 import { describe, expect, it, vi } from 'vitest';
 import { runCli } from '../cli.js';
+import { loadConfig } from '../config.js';
 import type { StoreAdapter } from '../store/schema.js';
 import { createTablesSql } from '../store/sql.js';
 import { createSqliteAdapter } from '../store/sqlite.js';
@@ -290,6 +291,37 @@ describe('deployment entry points', () => {
     }
     expect(await runCli(['get-password-rules'], io(''), env)).toEqual({ exitCode: 0, output: rules(8, 3) });
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('a server refuses to start with the methods madAuth before 0.6 saved with the app on its own; get-methods names the choice, set-methods makes it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
+    const env = {
+      MADAUTH_ISSUER: 'https://auth.example.com',
+      MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
+      ALLOWED_ORIGINS: APP_ORIGIN,
+      GOOGLE_CLIENT_ID: CLIENT_ID,
+      WEBHOOK_URL,
+      WEBHOOK_SECRET,
+      WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset',
+      DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}`,
+    };
+    const io = { ask: async () => '', askSecret: async () => '' };
+    try {
+      const store = createSqliteAdapter(join(dir, 'madauth.db'));
+      await store.create('setting', { id: 'methods', value: '{"google":{},"password":{"secondFactor":"required"},"totp":{}}', updatedAt: 1, updatedBy: null });
+      await expect(loadConfig(env)).rejects.toThrow(/before 0\.6/);
+
+      const shown = await runCli(['get-methods'], io, env);
+      expect(shown.exitCode).toBe(0);
+      expect(shown.output).toContain('totp (second factor only)');
+      expect(shown.output).toContain('"set-methods google password=required totp=second-factor"');
+
+      expect(await runCli(['set-methods', 'google', 'password=required', 'totp=second-factor'], io, env)).toMatchObject({ exitCode: 0 });
+      expect((await runCli(['get-methods'], io, env)).output).not.toContain('before 0.6');
+      expect((await loadConfig(env)).issuer).toBe('https://auth.example.com');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('set-methods switches sign-in methods off and on without a running server, but never all off', async () => {

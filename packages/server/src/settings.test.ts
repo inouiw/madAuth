@@ -10,6 +10,7 @@ import {
   initialMethods,
   isConfigured,
   isOn,
+  legacyAppProblem,
   parseLegacyMethodSettings,
   parseMethodSettings,
   parsePasswordRules,
@@ -79,15 +80,20 @@ describe('parseMethodSettings', () => {
     }
   });
 
-  it('reads what madAuth before 0.6 stored, as it was meant: the app is a second factor wherever a policy asks for one', () => {
+  it('reads what madAuth before 0.6 stored, as it was meant: the app is a second factor wherever a policy asks for one, and never more', () => {
     expect(parseLegacyMethodSettings({ google: {}, password: { secondFactor: 'required' }, sms: {} })).toEqual({
       google: signIn(),
       password: signIn('required'),
       sms: factorOnly,
       totp: factorOnly,
     });
-    // Listed, the app signed in on its own.
-    expect(parseLegacyMethodSettings({ google: {}, totp: {} })).toEqual({ google: signIn(), totp: signIn() });
+    // Listed, the app signed in on its own for the users who signed up with it, which has no meaning now: it
+    // counts as a second factor only, and the server names the choice (and doesn't start, see loadConfig).
+    expect(parseLegacyMethodSettings({ google: {}, totp: {} })).toEqual({ google: signIn(), totp: factorOnly });
+    expect(legacyAppProblem({ google: {}, password: { secondFactor: 'required' }, totp: {} })).toContain('"set-methods google password=required totp=second-factor"');
+    expect(legacyAppProblem({ google: {}, password: { secondFactor: 'required' } })).toBeNull();
+    expect(legacyAppProblem({ totp: signIn() })).toBeNull();
+    expect(legacyAppProblem(undefined)).toBeNull();
     for (const bad of [{ google: true }, { totp: { secondFactor: 'required' } }, { passkey: {} }, { google: signIn() }]) {
       expect(parseLegacyMethodSettings(bad)).toBeNull();
     }
@@ -149,6 +155,18 @@ describe('Settings', () => {
       updatedBy: 'grace@example.com',
     });
     expect(await settings.methods()).toEqual({ password: signIn('required') });
+  });
+
+  it('a list from before 0.6 with the app on its own makes the app a second factor only, and is warned about once', async () => {
+    const { store } = passwordApp();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await store.create('setting', { id: 'methods', value: '{"password":{"secondFactor":"optional"},"totp":{}}', updatedAt: 1, updatedBy: null });
+    const settings = new Settings(store);
+
+    expect(await settings.methods()).toEqual({ password: signIn('optional'), totp: factorOnly });
+    expect(await settings.methods()).toEqual({ password: signIn('optional'), totp: factorOnly });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0][0])).toContain('second factor only');
   });
 
   it('a value stored by madAuth before 0.6 keeps its meaning after the upgrade', async () => {
