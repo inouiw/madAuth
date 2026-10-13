@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 import { createApp } from '../app.js';
 import type { MadauthConfig } from '../config.js';
 import { generateSigningKey } from '../keys.js';
+import { METHODS_SETTING, Settings, parseLegacyMethodSettings, parseMethodSettings, type MethodId, type SecondFactorPolicy } from '../settings.js';
 import type { StoreAdapter } from '../store/schema.js';
 import { createSqliteAdapter } from '../store/sqlite.js';
 import { Users } from '../users.js';
@@ -318,4 +319,19 @@ export async function linkGoogleAsBefore(store: StoreAdapter, userId: string, su
   const account = await new Users(store).linkAccount(userId, { key: `google:${sub}`, email, primary: false });
   // Records from then say neither whether they sign in nor whether they are a second factor.
   await store.update('account', { id: account!.id }, { secondFactor: null });
+}
+
+/** Methods as tests set them: in full, or as madAuth before 0.6 had them (`{}` or `{ secondFactor }`). */
+export type TestMethods = Partial<Record<MethodId, { allowAsSignInMethod?: boolean; secondFactor?: SecondFactorPolicy }>>;
+
+/**
+ * Stores which methods are on. Without `allowAsSignInMethod` anywhere, the methods are read the way an
+ * upgrade reads what madAuth before 0.6 stored: the authenticator app is a second factor wherever a policy
+ * asks for one, and listed it signs in on its own.
+ */
+export async function setMethods(store: StoreAdapter, methods: TestMethods): Promise<void> {
+  const full = Object.values(methods).some((setting) => setting && 'allowAsSignInMethod' in setting);
+  const parsed = full ? parseMethodSettings(methods) : parseLegacyMethodSettings(methods);
+  if (!parsed) throw new Error(`Not a methods setting: ${JSON.stringify(methods)}`);
+  await new Settings(store).set(METHODS_SETTING, parsed, null);
 }

@@ -1,8 +1,8 @@
 // Everything madAuth stores, written once on top of the StoreAdapter. Routes never call the adapter directly.
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { claimsFromJson } from './claims.js';
 import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
-import { SIGN_IN_METHODS, type MethodSettings, type SignInMethod } from './settings.js';
+import { SIGN_IN_METHODS, type MethodSettings, type SecondFactor, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 import type { MadauthUser } from './user.js';
 
@@ -31,9 +31,12 @@ export interface StoredUser {
 export interface StoredAccount {
   id: string;
   userId: string;
-  /** `password:<userId>`, `google:<sub>`, `github:<id>`, `totp:<userId>`, `email-link:<userId>` or `sms:<userId>`. */
+  /** `password:<userId>`, `google:<sub>`, `github:<id>`, `totp:<userId>`, `email-link:<userId>`, `sms:<userId>` or `passkey:<hash>`. */
   key: string;
-  /** The password hash, the encrypted secret of the authenticator app, or GitHub's encrypted access token. Empty for Google. */
+  /**
+   * The password hash, the encrypted secret of the authenticator app, GitHub's encrypted access token, or a
+   * passkey's public key (COSE, base64url). Empty for Google.
+   */
   secret: string | null;
   failedAttempts: number;
   lockedUntil: number;
@@ -46,15 +49,26 @@ export interface StoredAccount {
   /** The phone number of an sms account (E.164). Empty for other accounts, and in records from before schema version 6. */
   phone: string | null;
   /**
-   * The user's id when the account is how they sign in (their one primary method), null for a second factor.
-   * Null in records from before schema version 7 as well: see {@link isPrimary}.
+   * The user's id on the account they signed up with, null on the accounts they added since and on SMS. Unique,
+   * so of two sign-ups for one address that race, one wins. Null in records from before schema version 7 as
+   * well: see {@link isPrimary}.
    */
   primaryUserId: string | null;
   /**
-   * True for a second factor (an authenticator app that is a step of the user's sign-in method, or SMS codes),
-   * false for a sign-in method. Null in records from before schema version 7: see {@link isPrimary}.
+   * True for an account that was only a second factor when it was made (SMS codes, an authenticator app set up
+   * as the step of another method), false for the others. Null in records from before schema version 7.
    */
   secondFactor: boolean | null;
+  /** A passkey's name. Empty for other accounts, and in records from before schema version 8. */
+  name: string | null;
+  /** A passkey's credential id (base64url). Empty for other accounts. */
+  credentialId: string | null;
+  /** A passkey's signature counter at its last use. */
+  signCount: number | null;
+  /** A passkey's transports, comma-separated (`internal,hybrid`), as the browser reported them. */
+  transports: string | null;
+  /** When a passkey last signed in, or 0. */
+  lastUsedAt: number | null;
   createdAt: number;
 }
 
@@ -69,9 +83,10 @@ interface StoredVerification {
 
 /**
  * What a link and code are for: confirming an address, resetting the password, signing in (the e-mail link),
- * or an SMS code (no link is sent for it).
+ * or an SMS code (no link is sent for it). `passkey` notes an answer of a passkey that was accepted, so it
+ * counts once (see {@link Users.useCeremony}).
  */
-export type VerificationPurpose = 'verify' | 'reset' | 'signin' | 'sms';
+export type VerificationPurpose = 'verify' | 'reset' | 'signin' | 'sms' | 'passkey';
 
 /** The methods an unconfirmed sign-up can set an account for before the address is proven, see {@link Users.dropUnprovenAccounts}. */
 export type UnprovenMethod = 'password' | 'email-link';
@@ -121,17 +136,24 @@ export function smsAccountKey(userId: string): string {
   return `sms:${userId}`;
 }
 
-/** The method of an account: the start of its key, e.g. `password` or `sms`. */
-const methodOf = (account: Pick<StoredAccount, 'key'>): string => String(account.key).split(':')[0];
+/**
+ * The account of a passkey. The credential id can be up to 1023 bytes, more than a key column of every
+ * database holds, so the key has its SHA-256 instead; the id itself is in `credentialId`.
+ */
+export function passkeyAccountKey(credentialId: string): string {
+  return `passkey:${createHash('sha256').update(credentialId).digest('base64url')}`;
+}
 
-/** The methods whose accounts are always a sign-in method; the authenticator app is one only for a user who signed up with it. */
+/** The method of an account: the start of its key, e.g. `password` or `sms`. */
+export const methodOf = (account: Pick<StoredAccount, 'key'>): string => String(account.key).split(':')[0];
+
+/** The methods whose accounts a sign-up makes; the authenticator app makes one only for a sign-up with it. */
 const ALWAYS_PRIMARY = ['password', 'google', 'github', 'email-link'];
 
 /**
- * Whether an account is how its user signs in, as opposed to a second factor; `accounts` are all of the
- * user's. Records since schema version 7 say so. Older ones don't: password, Google and the e-mail link
- * always are, SMS never is, and the authenticator app is when the user has none of the others (they signed
- * up with it). Only those records are guessed, so a second factor never becomes a way in, whatever goes.
+ * Whether an account is the one its user signed up with; `accounts` are all of the user's. Records since
+ * schema version 7 say so. Older ones don't: password, Google and the e-mail link always are, SMS never is,
+ * and the authenticator app is when the user has none of the others (they signed up with it).
  */
 export function isPrimary(account: StoredAccount, accounts: StoredAccount[]): boolean {
   if (account.primaryUserId) return true;
@@ -166,9 +188,12 @@ export interface NewAccount {
   setupId?: string;
   /** For SMS codes: the phone number (E.164). */
   phone?: string;
+  /** For a passkey: its name, credential id, signature counter and transports. */
+  passkey?: { name: string; credentialId: string; signCount: number; transports: string | null };
   /**
-   * Whether the account is how the user signs in. By default it is for a password, Google and the e-mail
-   * link; the authenticator app is one only for a sign-up with it, SMS never.
+   * Whether the account is the one the user signs up with. By default it is for a password, Google, GitHub
+   * and the e-mail link; the authenticator app is one only for a sign-up with it, SMS and passkeys never. An
+   * account a signed-in user adds is not.
    */
   primary?: boolean;
 }
@@ -217,37 +242,92 @@ export class Users {
     return (await this.store.findMany('account', { userId })) as unknown as StoredAccount[];
   }
 
-  /** The account the user signs in with (they have one at most), or null; a sign-up with the authenticator app has none until it is set up. */
-  async primaryAccount(userId: string): Promise<StoredAccount | null> {
+  /** The user's passkeys, oldest first. */
+  async passkeys(userId: string): Promise<StoredAccount[]> {
     const accounts = await this.accounts(userId);
-    return accounts.find((account) => isPrimary(account, accounts)) ?? null;
+    return accounts.filter((account) => account.key.startsWith('passkey:')).sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  /** The passkey with this credential id, if it is stored. */
+  async passkeyByCredential(credentialId: string): Promise<StoredAccount | null> {
+    return this.findAccountByKey(passkeyAccountKey(credentialId));
+  }
+
+  /** Which of the second factors in `on` the user has, in their order: a passkey, the authenticator app, a phone. One read. */
+  async secondFactors(userId: string, on: readonly SecondFactor[]): Promise<SecondFactor[]> {
+    if (!on.length) return [];
+    const accounts = await this.accounts(userId);
+    const has: Record<SecondFactor, boolean> = {
+      passkey: accounts.some((account) => account.key.startsWith('passkey:')),
+      totp: accounts.some((account) => account.key === totpAccountKey(userId)),
+      sms: accounts.some((account) => account.key === smsAccountKey(userId) && !!account.phone),
+    };
+    return on.filter((factor) => has[factor]);
   }
 
   /**
-   * The user's authenticator app, if they set one up, and whether it is how they sign in (they signed up with
-   * it) as opposed to a second factor. One read: the app and the user's other accounts together.
+   * Notes that a passkey of the user answered the ceremony with this challenge, so the same answer counts
+   * once: resolves to false if it was noted before (the create decides between two requests). Only accepted
+   * answers are noted, so nobody fills the store without a passkey; the user's notes of ceremonies that have
+   * expired (`expiresAt`) go meanwhile.
    */
-  async totpApp(userId: string): Promise<{ account: StoredAccount; signsIn: boolean } | null> {
+  async useCeremony(userId: string, challenge: string, expiresAt: number): Promise<boolean> {
+    const now = Date.now();
+    for (const old of await this.store.findMany('verification', { userId, purpose: 'passkey' })) {
+      if (Number(old.expiresAt) <= now) await this.store.delete('verification', { id: old.id });
+    }
+    const id = `passkey:${createHash('sha256').update(challenge).digest('base64url')}`;
+    return this.store.create('verification', { id, userId, purpose: 'passkey', codeHash: '', attempts: 0, expiresAt });
+  }
+
+  /** Removes all of the user's passkeys. Resolves to how many there were. */
+  async removePasskeys(userId: string): Promise<number> {
+    let removed = 0;
+    for (const passkey of await this.passkeys(userId)) removed += await this.store.delete('account', { id: passkey.id });
+    return removed;
+  }
+
+  /**
+   * The user's authenticator app, if they set one up, and whether they signed up with it (as opposed to
+   * adding it later). One read: the app and the user's other accounts together.
+   */
+  async totpApp(userId: string): Promise<{ account: StoredAccount; signedUpWith: boolean } | null> {
     const accounts = await this.accounts(userId);
     const account = accounts.find((a) => a.key === totpAccountKey(userId));
-    return account ? { account, signsIn: isPrimary(account, accounts) } : null;
-  }
-
-  /** Whether someone can sign in as the user: they have a sign-in method. */
-  async hasSignInMethod(userId: string): Promise<boolean> {
-    return (await this.primaryAccount(userId)) !== null;
+    return account ? { account, signedUpWith: isPrimary(account, accounts) } : null;
   }
 
   /**
-   * How the user signs in, e.g. `['google']`; empty while nobody can. A user has one sign-in method (only
-   * users from before madAuth 0.4 may have a password and Google); a second factor (the authenticator app of
-   * a password user, SMS) is a step of it, not a way in. The app of a user who signed up with it counts only
-   * while it signs in on its own (`methods` lists it).
+   * Whether the user's sign-up got as far as a way in: they have an account other than a phone for SMS codes.
+   * A sign-up with the authenticator app has none until the app is set up.
    */
-  async signInMethods(userId: string, methods: MethodSettings): Promise<SignInMethod[]> {
-    const accounts = await this.accounts(userId);
-    const signIn = accounts.filter((account) => isPrimary(account, accounts)).map(methodOf);
-    return SIGN_IN_METHODS.filter((m) => signIn.includes(m) && (m !== 'totp' || methods.totp !== undefined));
+  async hasSignInMethod(userId: string): Promise<boolean> {
+    return (await this.accounts(userId)).some((account) => methodOf(account) !== 'sms');
+  }
+
+  /**
+   * How the user signs in, e.g. `['google', 'passkey']`: the methods they have that sign in on their own as
+   * `methods` allows (`allowAsSignInMethod`); empty while nobody can. `without` leaves accounts out, to see
+   * whether the user could still sign in without them.
+   */
+  async signInMethods(userId: string, methods: MethodSettings, without?: (account: StoredAccount) => boolean): Promise<SignInMethod[]> {
+    const has = (await this.accounts(userId)).filter((account) => !without?.(account)).map(methodOf);
+    return SIGN_IN_METHODS.filter((m) => has.includes(m) && methods[m]?.allowAsSignInMethod === true);
+  }
+
+  /**
+   * Whether the accounts `without` picks are the user's last way in: they sign in now (as `methods` allows),
+   * and wouldn't without them. A user who can't sign in now anyway (an admin switched their methods off) is
+   * not locked out by it.
+   */
+  async isLastWayIn(userId: string, methods: MethodSettings, without: (account: StoredAccount) => boolean): Promise<boolean> {
+    const [now, after] = await Promise.all([this.signInMethods(userId, methods), this.signInMethods(userId, methods, without)]);
+    return now.length > 0 && after.length === 0;
+  }
+
+  /** The user's accounts of the sign-in methods, for the list of their methods: everything but the phone. */
+  async methodAccounts(userId: string): Promise<StoredAccount[]> {
+    return (await this.accounts(userId)).filter((account) => methodOf(account) !== 'sms');
   }
 
   /**
@@ -372,7 +452,7 @@ export class Users {
 
   /**
    * Adds a sign-in method or a second factor to a user. Resolves to null if the account key is taken, or if
-   * it is a sign-in method and the user has one already.
+   * it is `primary` and the user signed up with another account already.
    */
   async linkAccount(userId: string, account: NewAccount): Promise<StoredAccount | null> {
     const primary = account.primary ?? ALWAYS_PRIMARY.includes(methodOf(account));
@@ -389,6 +469,11 @@ export class Users {
       phone: account.phone ?? null,
       primaryUserId: primary ? userId : null,
       secondFactor: !primary,
+      name: account.passkey?.name ?? null,
+      credentialId: account.passkey?.credentialId ?? null,
+      signCount: account.passkey?.signCount ?? null,
+      transports: account.passkey?.transports ?? null,
+      lastUsedAt: account.passkey ? 0 : null,
       createdAt: Date.now(),
     };
     return (await this.store.create('account', record as unknown as Row)) ? record : null;

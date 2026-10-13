@@ -3,8 +3,8 @@ import type { LoginMethodId } from '../methods.js';
 import type { MadauthError, MadauthUser, Result, SecondFactor } from '../result.js';
 
 /**
- * Whether a method asks for the authenticator app as a second factor: never, when the user has set one up
- * (`optional`), or always, so that a user without one sets it up at the next sign-in (`required`).
+ * Whether a method asks for a second factor: never, when the user has set one up (`optional`), or always, so
+ * that a user without one sets it up at the next sign-in (`required`).
  */
 export type SecondFactorPolicy = 'none' | 'optional' | 'required';
 
@@ -26,31 +26,50 @@ export interface ServerConfig {
   emailLink: { secondFactor: SecondFactorPolicy } | null;
   /** Whether SMS codes are on as a second factor: a signed-in user can add a phone, and a sign-in can ask for a code sent to it. */
   sms: boolean;
+  /**
+   * Passkeys, when they are on: a signed-in user can add them, and they are a second factor of the methods
+   * that ask for one. `signIn` says whether they sign in on their own, `secondFactor` whether such a sign-in
+   * then asks for a second factor. Absent from servers before madAuth 0.6.
+   */
+  passkey?: { signIn: boolean; secondFactor: SecondFactorPolicy } | null;
 }
 
 /** What a sign-in still needs after its first step, and which sign-in it is. */
 export interface PendingStep {
   /**
-   * `code`: a code from the authenticator app; `sms`: a code sent to the user's phone; `setup`: a second
-   * factor has to be set up first (the app, or a phone when the server has SMS codes on).
+   * `passkey`: a passkey of the user; `code`: a code from the authenticator app; `sms`: a code sent to the
+   * user's phone; `setup`: a second factor has to be set up first.
    */
-  step: 'code' | 'setup' | 'sms';
+  step: 'passkey' | 'code' | 'setup' | 'sms';
   method: LoginMethodId;
-  /** With `code` and `sms`: the second factors the user can finish with, so a screen can offer the switch. */
+  /**
+   * With `passkey`, `code` and `sms`: the second factors the user can finish with, so a screen can offer the
+   * switch. With `setup`: those the user can set up (a server before madAuth 0.6 names none: the app, or a phone).
+   */
   factors?: SecondFactor[];
 }
 
-/** The step an error stands for: `totp_required`, `sms_required` or `totp_setup_required`; undefined for any other. */
+const STEPS: Partial<Record<string, PendingStep['step']>> = {
+  passkey_required: 'passkey',
+  totp_required: 'code',
+  sms_required: 'sms',
+  totp_setup_required: 'setup',
+};
+
+/** The factor each step asks for. */
+const STEP_FACTORS: Record<Exclude<PendingStep['step'], 'setup'>, SecondFactor> = { passkey: 'passkey', code: 'totp', sms: 'sms' };
+
+/** The step an error stands for: `passkey_required`, `totp_required`, `sms_required` or `totp_setup_required`; undefined for any other. */
 export function secondStepOf(error: MadauthError): PendingStep['step'] | undefined {
-  return error.code === 'totp_required' ? 'code' : error.code === 'sms_required' ? 'sms' : error.code === 'totp_setup_required' ? 'setup' : undefined;
+  return STEPS[error.code];
 }
 
 /** The pending step a second-step error stands for, with the factors it names; undefined for any other error. */
 export function pendingStepOf(error: MadauthError, method: LoginMethodId): PendingStep | undefined {
   const step = secondStepOf(error);
   if (!step) return undefined;
-  if (step === 'setup') return { step, method };
-  return { step, method, factors: error.factors?.length ? error.factors : [step === 'sms' ? 'sms' : 'totp'] };
+  if (step === 'setup') return error.factors?.length ? { step, method, factors: error.factors } : { step, method };
+  return { step, method, factors: error.factors?.length ? error.factors : [STEP_FACTORS[step]] };
 }
 
 /** What the madAuth core gives a provider during setup. */
@@ -70,8 +89,8 @@ export interface ProviderContext {
   /**
    * A sign-in failed outside the dialog (e.g. after the redirect flow): with `ui: 'dialog'` and nobody signed
    * in, the dialog opens by itself and shows it; otherwise it is shown the next time the dialog opens.
-   * A `totp_required`, `sms_required` or `totp_setup_required` error is not a failure: the sign-in goes on
-   * with its second step, see {@link signInContinues}.
+   * A `passkey_required`, `totp_required`, `sms_required` or `totp_setup_required` error is not a failure:
+   * the sign-in goes on with its second step, see {@link signInContinues}.
    */
   signInFailed(error: MadauthError): void;
   /** A sign-in outside the dialog needs its second step next: the dialog opens on that step. */
@@ -80,6 +99,8 @@ export interface ProviderContext {
 
 export interface ButtonOptions {
   theme: 'light' | 'dark';
+  /** `link`: the button adds the provider to the signed-in user's methods instead of signing in. */
+  purpose?: 'signin' | 'link';
   onResult(result: Result<{ user: MadauthUser }>): void;
 }
 

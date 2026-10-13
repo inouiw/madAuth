@@ -63,6 +63,12 @@ export interface PasswordApi {
    */
   confirmReset(options: ConfirmResetOptions): Promise<Result<{ user: MadauthUser }>>;
   /**
+   * Adds a password to the signed-in user's methods (e.g. a Google user's): from then on it signs them in
+   * too, with their address. Within ten minutes of signing in only, else it fails with `reauth_required`.
+   * Fails with `weak_password`, `already_added` (they have one: "Forgot password?" changes it) or `no_session`.
+   */
+  add(options: { password: string }): Promise<Result>;
+  /**
    * The server's rules for new passwords, for hints in your form: the fewest characters (`minLength`) and how
    * hard to guess a password must be (`minScore`, 0 to 4 as zxcvbn rates it). And whether the method asks for
    * the authenticator app as a second factor (`none`, `optional`, `required`). Null until initialized.
@@ -142,6 +148,12 @@ export function createPasswordApi(core: Core): PasswordApi {
       const over = result.isSuccess || result.error.code === 'link_invalid' || secondStepOf(result.error) !== undefined;
       if (over) clearResetToken(p);
       return result;
+    },
+
+    async add({ password }) {
+      const result = await call('/auth/password/add', { password });
+      if (!result.isSuccess && result.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
+      return result.isSuccess ? ok() : result;
     },
 
     loadRating: loadPasswordRating,

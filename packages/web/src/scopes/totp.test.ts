@@ -233,7 +233,7 @@ describe('Madauth.totp', () => {
     const first = await Madauth.password.signIn(credentials);
 
     expect(first).toMatchObject({ isSuccess: false, error: { code: 'totp_setup_required', method: 'password' } });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'password' });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'password', factors: ['totp'] });
     expect(await Madauth.totp.startSetup()).toMatchObject({ isSuccess: true, secret: TOTP_SECRET });
     const done = await Madauth.totp.confirmSetup({ code: CODE });
     expect(done).toEqual({ isSuccess: true, recoveryCodes: RECOVERY_CODES, user: grace });
@@ -262,7 +262,7 @@ describe('Madauth.totp', () => {
       isSuccess: false,
       error: { code: 'totp_setup_required', method: 'totp' },
     });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'totp' });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'totp', factors: ['totp'] });
     await Madauth.totp.startSetup();
     expect(await Madauth.totp.confirmSetup({ code: CODE })).toEqual({
       isSuccess: true,
@@ -288,7 +288,7 @@ describe('Madauth.totp', () => {
 
     expect(result).toEqual({ isSuccess: true, leftOut: [] });
     expect(location.href).toBe('https://app.example.com/page?x=1#other=1');
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'totp' });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'totp', factors: ['totp'] });
     expect(Madauth.currentUser).toBeNull();
     expect(await Madauth.totp.startSetup()).toMatchObject({ isSuccess: true });
     expect(await Madauth.totp.confirmSetup({ code: CODE })).toMatchObject({ isSuccess: true, user: { email: 'new@example.com' } });

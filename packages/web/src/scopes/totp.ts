@@ -37,8 +37,8 @@ export interface TotpPolicy {
   signIn: boolean;
   /** People can sign up with the app alone. */
   signUp: boolean;
-  /** The methods that ask for a code from the app once it is set up (`optional`) or always (`required`). */
-  secondFactorFor: ('google' | 'github' | 'password' | 'email-link')[];
+  /** The methods that ask for a second factor once one is set up (`optional`) or always (`required`). */
+  secondFactorFor: ('google' | 'github' | 'password' | 'email-link' | 'passkey')[];
 }
 
 /**
@@ -192,11 +192,12 @@ export function createTotpApi(core: Core): TotpApi {
     get policy() {
       const config = core.config();
       if (!config?.totp) return null;
-      const secondFactorFor: ('google' | 'github' | 'password' | 'email-link')[] = [];
+      const secondFactorFor: TotpPolicy['secondFactorFor'] = [];
       if (config.google && config.google.secondFactor !== 'none') secondFactorFor.push('google');
       if (config.github && config.github.secondFactor !== 'none') secondFactorFor.push('github');
       if (config.password && config.password.secondFactor !== 'none') secondFactorFor.push('password');
       if (config.emailLink && config.emailLink.secondFactor !== 'none') secondFactorFor.push('email-link');
+      if (config.passkey?.signIn && config.passkey.secondFactor !== 'none') secondFactorFor.push('passkey');
       return { signIn: config.totp.signIn, signUp: config.totp.signUp, secondFactorFor };
     },
   };

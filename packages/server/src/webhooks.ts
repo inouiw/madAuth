@@ -23,6 +23,8 @@ export const WEBHOOK_TYPES = [
   'user.second_factor_enabled',
   'user.second_factor_disabled',
   'user.recovery_code_used',
+  'user.method_added',
+  'user.method_removed',
 ] as const;
 
 /** The calls that hand over an e-mail (as opposed to events and checks). */

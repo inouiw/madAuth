@@ -1,5 +1,5 @@
 // A custom login screen: everything madAuth's dialog does, built with the headless API.
-import { EmailLink, GitHub, GoogleFedcm, Madauth, Password, Totp, type MadauthError, type MadauthUser, type Result, type SecondFactor } from '@madauth/web';
+import { EmailLink, GitHub, GoogleFedcm, Madauth, Passkey, Password, Totp, type MadauthError, type MadauthUser, type Result, type SecondFactor } from '@madauth/web';
 
 type View =
   | 'signin'
@@ -15,7 +15,8 @@ type View =
   | 'email-link'
   | 'sms-code'
   | 'sms-setup'
-  | 'sms-setup-code';
+  | 'sms-setup-code'
+  | 'passkey-step';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -34,6 +35,7 @@ const titles: Record<View, string> = {
   'sms-code': 'Enter the code from the SMS',
   'sms-setup': 'Add your phone number',
   'sms-setup-code': 'Add your phone number',
+  'passkey-step': 'Confirm with your passkey',
 };
 
 /** The second factors the sign-in under way can finish with, from the error that asked for the step. */
@@ -47,7 +49,7 @@ let pending: { email: string; purpose: 'verify' | 'reset' | 'signin'; code?: str
 let showingCodes = false;
 
 // ui: 'custom' — this page shows its own screen, so madAuth's dialog never opens.
-void Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Totp(), new EmailLink()], ui: 'custom' }).then((result) => {
+void Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Passkey(), new Totp(), new EmailLink()], ui: 'custom' }).then((result) => {
   // The hint under "forgot password" names the providers the server offers (their users have no password); without any, it goes.
   const providers = (['google', 'github'] as const).filter((method) => !result.leftOut.includes(method)).map((method) => ({ google: 'Google', github: 'GitHub' })[method]);
   $('#provider-hint').textContent = `Signed up with ${providers.join(' or ')}? There is no password to reset: use that button instead.`;
@@ -58,6 +60,7 @@ void Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Passw
   if (policy) $('#password-hint').textContent = `At least ${policy.minLength} characters.`;
   // The authenticator app on its own, and signing up with it, only when the server lets it.
   $('#go-totp').hidden = !Madauth.totp.policy?.signIn;
+  $('#go-passkey').hidden = !Madauth.passkey.signInAvailable;
   $('#go-totp-signup').hidden = !Madauth.totp.policy?.signUp;
   // The e-mail link, only when the server offers it (its link is handled by initialize, like the confirmation links).
   $('#go-email-link').hidden = !Madauth.emailLink.policy;
@@ -65,6 +68,7 @@ void Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Passw
   const step = Madauth.totp.pendingStep;
   factors = step?.factors ?? [];
   if (step?.step === 'code') showTotpCode();
+  if (step?.step === 'passkey') show('passkey-step');
   if (step?.step === 'sms') void startSmsStep();
   if (step?.step === 'setup') void startSetup();
 });
@@ -84,6 +88,7 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   else {
     void refreshAuthenticator();
     void refreshPhone();
+    $('#passkey-add').hidden = !Madauth.passkey.available;
   }
 }
 
@@ -109,6 +114,9 @@ function report(result: Result): boolean {
   if (result.isSuccess) return true;
   factors = result.error.factors ?? [];
   if (result.error.code === 'totp_required') showTotpCode();
+  else if (result.error.code === 'passkey_required') show('passkey-step');
+  // The user closed the browser's passkey dialog: nothing to say.
+  else if (result.error.code === 'cancelled') say('');
   else if (result.error.code === 'sms_required') void startSmsStep();
   else if (result.error.code === 'totp_setup_required') void startSetup();
   else say(messageFor(result.error), true);
@@ -254,6 +262,7 @@ async function startSetup(): Promise<void> {
   // with the app sets the app up, never a phone.
   const pending = Madauth.totp.pendingStep;
   $('#use-phone').hidden = !(pending?.step === 'setup' && pending.method !== 'totp' && Madauth.sms.available);
+  $('#use-passkey-setup').hidden = !(pending?.step === 'setup' && pending.factors?.includes('passkey') && Madauth.passkey.available);
   $('#qr').innerHTML = '';
   $('#secret').textContent = '';
   let result = await Madauth.totp.startSetup();
@@ -446,3 +455,22 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-go]')) 
   button.addEventListener('click', () => show(button.dataset.go as View));
 }
 $('#sign-out').addEventListener('click', () => void Madauth.signOut());
+
+// --- Passkeys ---
+
+$('#go-passkey').addEventListener('click', async () => report(await Madauth.passkey.signIn()));
+$('#passkey-verify').addEventListener('click', async () => {
+  const result = await Madauth.passkey.verify();
+  // Too late: the sign-in starts over.
+  if (!result.isSuccess && result.error.code === 'challenge_expired') show('signin', messageFor(result.error));
+  else report(result);
+});
+// The setup step of a sign-in: a new passkey finishes it.
+$('#use-passkey-setup').addEventListener('click', async () => report(await Madauth.passkey.add()));
+$('#passkey-add').addEventListener('click', async () => {
+  const result = await Madauth.passkey.add();
+  if (result.isSuccess) alert(`Added the passkey "${result.passkey.name}".`);
+  // Ten minutes after signing in, changing how one signs in takes a new sign-in.
+  else if (result.error.code === 'reauth_required') alert('Sign out and in again, then add the passkey.');
+  else if (result.error.code !== 'cancelled') alert(result.error.message);
+});

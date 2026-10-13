@@ -529,6 +529,7 @@ describe('configuration', () => {
       // The test receiver asks for every type, email.send_signin_link and sms.send_code included: the e-mail link and SMS codes are configured and on.
       emailLink: { secondFactor: 'none' },
       sms: true,
+      passkey: null,
     });
     expect((await app.request('/auth/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } })).status).toBe(404);
   });

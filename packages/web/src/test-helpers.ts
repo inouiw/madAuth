@@ -80,8 +80,18 @@ export interface FakeServer {
   /** The addresses whose users have set up the authenticator app, and their recovery codes left. */
   authenticators: Set<string>;
   recoveryCodes: Map<string, string[]>;
-  /** A sign-in whose first step is done, waiting for a code or a setup (the challenge cookie), with the factors that can finish it. */
-  challenge: { email: string; next: 'totp' | 'totp-setup' | 'sms'; method: 'google' | 'github' | 'password' | 'totp' | 'email-link'; factors: ('totp' | 'sms')[] } | undefined;
+  /** A sign-in whose first step is done, waiting for a second factor or a setup (the challenge cookie), with the factors that can finish it. */
+  challenge:
+    | { email: string; next: 'passkey' | 'totp' | 'totp-setup' | 'sms'; method: 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'passkey'; factors: ('passkey' | 'totp' | 'sms')[] }
+    | undefined;
+  /** Passkeys, when the server has them on: whether they sign in on their own, and that sign-in's policy. */
+  passkey: { signIn: boolean; secondFactor: SecondFactorPolicy } | null;
+  /** The passkeys, by credential id: whose, their account id and name. */
+  passkeys: Map<string, { email: string; id: string; name: string }>;
+  /** Google, GitHub and the e-mail link the users added while signed in, by e-mail address. */
+  linked: Map<string, Set<'google' | 'github' | 'email-link'>>;
+  /** The user signed in more than ten minutes ago: changing a method answers `reauth_required`. */
+  staleSignIn: boolean;
   /** A setup under way (the setup cookie); set to undefined to simulate its expiry. */
   totpSetup: { email: string } | undefined;
   /** The phone numbers of the users who added one, by e-mail address. */
@@ -136,6 +146,10 @@ export function fakeServer(): FakeServer {
     smsSetup: undefined,
     smsTooSoon: false,
     sessionTtl: 3600,
+    passkey: null,
+    passkeys: new Map(),
+    linked: new Map(),
+    staleSignIn: false,
   };
   const mask = (phone: string) => `${phone.slice(0, 3)} ${'•'.repeat(Math.max(0, phone.length - 5))} ${phone.slice(-2)}`;
   const normalizePhone = (value: unknown) => {
@@ -157,16 +171,21 @@ export function fakeServer(): FakeServer {
   /** The authenticator app is in use at all: on its own, or as the second factor of a method. */
   const totpOn = () => server.methods.totp || server.policy.google !== 'none' || server.policy.github !== 'none' || server.policy.password !== 'none' || server.policy['email-link'] !== 'none';
   /** What follows a primary method that succeeded: the session, or a code (from the app, or by SMS) or the app's setup. */
-  const afterPrimary = (email: string, method: 'google' | 'github' | 'password' | 'email-link') => {
-    const policy = server.policy[method];
+  const passkeysOf = (email: string) => [...server.passkeys.values()].filter((p) => p.email === email);
+  const afterPrimary = (email: string, method: 'google' | 'github' | 'password' | 'email-link' | 'passkey') => {
+    const policy = method === 'passkey' ? (server.passkey?.secondFactor ?? 'none') : server.policy[method];
     const app = server.authenticators.has(email);
     const phone = server.methods.sms && server.phones.has(email);
-    const factors: ('totp' | 'sms')[] = [...(app ? (['totp'] as const) : []), ...(phone ? (['sms'] as const) : [])];
-    const next = policy === 'none' ? undefined : app ? 'totp' : phone ? 'sms' : policy === 'required' ? 'totp-setup' : undefined;
+    const passkey = !!server.passkey && method !== 'passkey' && passkeysOf(email).length > 0;
+    const factors: ('passkey' | 'totp' | 'sms')[] = [...(passkey ? (['passkey'] as const) : []), ...(app ? (['totp'] as const) : []), ...(phone ? (['sms'] as const) : [])];
+    const next: 'passkey' | 'totp' | 'sms' | 'totp-setup' | undefined =
+      policy === 'none' ? undefined : factors.length ? factors[0] : policy === 'required' ? 'totp-setup' : undefined;
     if (!next) return signedIn(email);
     server.challenge = { email, next, method, factors };
-    const error = next === 'totp' ? 'totp_required' : next === 'sms' ? 'sms_required' : 'totp_setup_required';
-    return json({ error, message: 'the second step is next', method, factors }, 401);
+    const error = { passkey: 'passkey_required', totp: 'totp_required', sms: 'sms_required', 'totp-setup': 'totp_setup_required' }[next];
+    // For the setup, the factors that can be set up: a passkey when they are on, the app, and a phone when SMS codes are on.
+    const named = next === 'totp-setup' ? [...(server.passkey && method !== 'passkey' ? ['passkey'] : []), 'totp', ...(server.methods.sms ? ['sms'] : [])] : factors;
+    return json({ error, message: 'the second step is next', method, factors: named }, 401);
   };
   /** Checks a code from the app (`CODE`) or uses up a recovery code. */
   const codeOk = (email: string, body: Record<string, string>): boolean => {
@@ -176,6 +195,11 @@ export function fakeServer(): FakeServer {
     if (index < 0) return false;
     codes.splice(index, 1);
     return true;
+  };
+  /** A method as the admin API answers it. */
+  const setting = (configured: boolean, listed: boolean, signIn: boolean, secondFactor: SecondFactorPolicy) => {
+    const enabled = configured && listed;
+    return { configured, enabled, allowAsSignInMethod: enabled && signIn, secondFactor: enabled ? secondFactor : 'none' };
   };
   const isAdmin = () => !!(server.user?.claims?.roles as string[] | undefined)?.includes('admin');
   /** The server's answer to a password that breaks its rules; a few common ones stand for "too easy to guess". */
@@ -215,7 +239,104 @@ export function fakeServer(): FakeServer {
           email: { verification: server.password },
           emailLink: server.emailLink && server.methods['email-link'] ? { secondFactor: server.policy['email-link'] } : null,
           sms: server.methods.sms,
+          passkey: server.passkey,
         });
+      // --- Passkeys ---
+      case 'POST /auth/passkey/signin/options':
+        if (!server.passkey?.signIn) return json({ error: 'method_disabled', message: 'off' }, 403);
+        return json({ challenge: 'c2lnbmlu', rpId: 'localhost', userVerification: 'required' });
+      case 'POST /auth/passkey/signin/verify': {
+        const id = (body as unknown as { response?: { id?: string } }).response?.id ?? '';
+        const passkey = server.passkeys.get(id);
+        if (!passkey) return json({ error: 'passkey_unknown', message: 'unknown' }, 401);
+        return afterPrimary(passkey.email, 'passkey');
+      }
+      case 'POST /auth/passkey/register/options': {
+        if (!server.passkey) return json({ error: 'method_disabled', message: 'off' }, 403);
+        const who = whoSetsUp();
+        if (!who) return json({ error: 'no_session', message: 'sign in' }, 401);
+        if (server.user && server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        return json({
+          challenge: 'cmVnaXN0ZXI',
+          rp: { id: 'localhost', name: 'localhost' },
+          user: { id: 'dXNy', name: who, displayName: who },
+          pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+          authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+          excludeCredentials: passkeysOf(who).map(() => ({ id: 'b2xk', type: 'public-key' })),
+        });
+      }
+      case 'POST /auth/passkey/register/verify': {
+        const who = whoSetsUp();
+        if (!who) return json({ error: 'no_session', message: 'sign in' }, 401);
+        const credential = (body as unknown as { response?: { id?: string } }).response?.id ?? '';
+        const passkey = { email: who, id: `acc_${server.passkeys.size + 1}`, name: (body as { name?: string }).name || 'Passkey' };
+        server.passkeys.set(credential, passkey);
+        const info = { id: passkey.id, name: passkey.name, createdAt: 1, lastUsedAt: 0 };
+        if (!server.user && server.challenge?.next === 'totp-setup') {
+          server.challenge = undefined;
+          const res = signedIn(who);
+          const { user } = (await res.json()) as { user: MadauthUser };
+          return json({ passkey: info, user });
+        }
+        return json({ passkey: info });
+      }
+      case 'POST /auth/passkey/verify/options': {
+        const challenge = server.challenge;
+        if (!challenge?.factors.includes('passkey')) return json({ error: 'challenge_expired', message: 'sign in again' }, 401);
+        return json({ challenge: 'dmVyaWZ5', rpId: 'localhost', allowCredentials: [{ id: 'b2xk', type: 'public-key' }], userVerification: 'required' });
+      }
+      case 'POST /auth/passkey/verify': {
+        const challenge = server.challenge;
+        if (!challenge?.factors.includes('passkey')) return json({ error: 'challenge_expired', message: 'sign in again' }, 401);
+        const id = (body as unknown as { response?: { id?: string } }).response?.id ?? '';
+        if (server.passkeys.get(id)?.email !== challenge.email) return json({ error: 'verification_failed', message: 'wrong passkey' }, 401);
+        server.challenge = undefined;
+        return signedIn(challenge.email);
+      }
+      // --- The user's methods ---
+      case 'GET /auth/methods': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        const account = server.accounts.get(user);
+        const methods = [
+          ...(account?.password ? [{ id: 'acc_password', method: 'password', signIn: true, createdAt: 1 }] : []),
+          ...[...(server.linked.get(user) ?? [])].map((method) => ({ id: `acc_${method}`, method, signIn: true, createdAt: 1, ...(method === 'email-link' ? {} : { email: user }) })),
+          ...(server.authenticators.has(user) ? [{ id: 'acc_totp', method: 'totp', signIn: server.methods.totp, createdAt: 1 }] : []),
+          ...passkeysOf(user).map((p) => ({ id: p.id, method: 'passkey', signIn: !!server.passkey?.signIn, createdAt: 1, name: p.name, lastUsedAt: 0 })),
+        ];
+        return json({ methods });
+      }
+      case 'POST /auth/methods/remove': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        const id = (body as { id?: string }).id;
+        const passkey = [...server.passkeys.entries()].find(([, p]) => p.id === id && p.email === user);
+        if (passkey) server.passkeys.delete(passkey[0]);
+        else if (id === 'acc_password' && server.accounts.get(user)?.password) server.accounts.get(user)!.password = '';
+        else if (id?.startsWith('acc_') && server.linked.get(user)?.delete(id.slice(4) as 'google')) {
+          // removed
+        } else return json({ error: 'method_not_found', message: 'gone' }, 404);
+        return json({});
+      }
+      case 'POST /auth/password/add':
+      case 'POST /auth/email-link/add': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        if (url.pathname === '/auth/password/add') {
+          const weak = weakPassword(body.password);
+          if (weak) return weak;
+          const account = server.accounts.get(user) ?? { password: '', verified: true };
+          if (account.password) return json({ error: 'already_added', message: 'has one' }, 409);
+          server.accounts.set(user, { ...account, password: body.password });
+        } else {
+          const linked = server.linked.get(user) ?? new Set();
+          if (linked.has('email-link')) return json({ error: 'already_added', message: 'has it' }, 409);
+          server.linked.set(user, linked.add('email-link'));
+        }
+        return json({});
+      }
       // --- The e-mail link ---
       case 'POST /auth/email-link/send': {
         if (!server.emailLink) break;
@@ -294,7 +415,7 @@ export function fakeServer(): FakeServer {
         if (account.app) {
           // A sign-up with the app: it is set up now.
           server.challenge = { email: target, next: 'totp-setup', method: 'totp', factors: [] };
-          return json({ error: 'totp_setup_required', message: 'set it up', method: 'totp', factors: [] }, 401);
+          return json({ error: 'totp_setup_required', message: 'set it up', method: 'totp', factors: ['totp'] }, 401);
         }
         return afterPrimary(target, 'password');
       }
@@ -501,18 +622,21 @@ export function fakeServer(): FakeServer {
           const on = (value: unknown) => value === true || (!!value && typeof value === 'object');
           const policyOf = (value: unknown): SecondFactorPolicy =>
             value && typeof value === 'object' && 'secondFactor' in value ? ((value as { secondFactor: SecondFactorPolicy }).secondFactor ?? 'none') : 'none';
-          server.methods = { google: on(methods.google), github: on(methods.github), password: on(methods.password), totp: on(methods.totp), 'email-link': on(methods['email-link']), sms: on(methods.sms) };
+          // The app is listed in `methods` when it signs in on its own.
+          const signsIn = (value: unknown) => on(value) && (value as { allowAsSignInMethod?: unknown }).allowAsSignInMethod === true;
+          server.methods = { google: on(methods.google), github: on(methods.github), password: on(methods.password), totp: signsIn(methods.totp), 'email-link': on(methods['email-link']), sms: on(methods.sms) };
           server.policy = { google: policyOf(methods.google), github: policyOf(methods.github), password: policyOf(methods.password), 'email-link': policyOf(methods['email-link']) };
         }
         return json({
           password: server.passwordRules,
           methods: {
-            google: { configured: server.google, enabled: server.google && server.methods.google, secondFactor: server.policy.google },
-            github: { configured: server.github, enabled: server.github && server.methods.github, secondFactor: server.policy.github },
-            password: { configured: server.password, enabled: server.password && server.methods.password, secondFactor: server.policy.password },
-            totp: { configured: true, enabled: server.methods.totp },
-            'email-link': { configured: server.emailLink, enabled: server.emailLink && server.methods['email-link'], secondFactor: server.policy['email-link'] },
-            sms: { configured: true, enabled: server.methods.sms },
+            google: setting(server.google, server.methods.google, true, server.policy.google),
+            github: setting(server.github, server.methods.github, true, server.policy.github),
+            password: setting(server.password, server.methods.password, true, server.policy.password),
+            totp: setting(true, server.methods.totp, true, 'none'),
+            'email-link': setting(server.emailLink, server.methods['email-link'], true, server.policy['email-link']),
+            passkey: setting(true, !!server.passkey, !!server.passkey?.signIn, server.passkey?.secondFactor ?? 'none'),
+            sms: setting(true, server.methods.sms, false, 'none'),
           },
         });
       }
@@ -570,7 +694,42 @@ export function gisScripts(): NodeListOf<HTMLScriptElement> {
   return document.querySelectorAll('script[src="https://accounts.google.com/gsi/client"]');
 }
 
+/**
+ * A browser with passkeys: `PublicKeyCredential` and `navigator.credentials`, whose dialog answers with the
+ * passkey `id` (its credential id at the fake server), or as `outcome` says: the user closed it, or the
+ * device holds one of the user's passkeys already. `conditional` says whether autofill offers passkeys.
+ */
+export function stubWebAuthn(options: { id?: string; outcome?: 'ok' | 'cancel' | 'exists'; conditional?: boolean } = {}) {
+  const state = { id: options.id ?? 'cred-1', outcome: options.outcome ?? 'ok', conditional: options.conditional ?? false };
+  const answer = (kind: 'create' | 'get') => {
+    if (state.outcome === 'cancel') return Promise.reject(new DOMException('closed', 'NotAllowedError'));
+    if (state.outcome === 'exists') return Promise.reject(new DOMException('exists', 'InvalidStateError'));
+    return Promise.resolve({ id: state.id, toJSON: () => ({ id: state.id, rawId: state.id, type: 'public-key', response: { kind } }) });
+  };
+  const credentials = {
+    create: vi.fn((_options: CredentialCreationOptions) => answer('create')),
+    get: vi.fn((request: CredentialRequestOptions) =>
+      // Autofill waits for a pick that never comes in a test, until it is aborted.
+      request.mediation === 'conditional'
+        ? new Promise((_, reject) => request.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))))
+        : answer('get'),
+    ),
+  };
+  vi.stubGlobal(
+    'PublicKeyCredential',
+    class {
+      static isConditionalMediationAvailable = async () => state.conditional;
+      static parseCreationOptionsFromJSON = (json: unknown) => json;
+      static parseRequestOptionsFromJSON = (json: unknown) => json;
+      static signalUnknownCredential = vi.fn(async () => {});
+    },
+  );
+  Object.defineProperty(navigator, 'credentials', { value: credentials, configurable: true });
+  return { state, credentials };
+}
+
 export function resetAll(): void {
+  delete (navigator as { credentials?: unknown }).credentials;
   resetMadauthForTests();
   resetGisForTests();
   delete window.google;

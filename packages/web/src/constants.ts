@@ -6,6 +6,8 @@ export const REDIRECT_NEXT_PARAM = 'madauth_next';
 export const REDIRECT_FACTORS_PARAM = 'madauth_factors';
 /** Next to the error and the next step: which method's sign-in it is (`madauth_method=github`). Servers before 0.5 send none. */
 export const REDIRECT_METHOD_PARAM = 'madauth_method';
+/** After a redirect that added the provider to the signed-in user's methods (`#madauth_linked=github`). */
+export const REDIRECT_LINKED_PARAM = 'madauth_linked';
 
 /** Hash parameters of the links in madAuth's e-mails (`#madauth_verify=<token>`, `#madauth_reset=<token>`, `#madauth_signin=<token>`). */
 export const VERIFY_LINK_PARAM = 'madauth_verify';

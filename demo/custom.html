@@ -27,8 +27,9 @@
             <button type="button" data-go="forgot">Forgot password?</button>
             <button type="button" data-go="signup">Create account</button>
           </p>
-          <!-- Only when the server lets the authenticator app sign in on its own, or offers the e-mail link. -->
+          <!-- Only when the server lets passkeys or the authenticator app sign in on their own, or offers the e-mail link. -->
           <p class="links">
+            <button type="button" id="go-passkey" hidden>Sign in with a passkey</button>
             <button type="button" data-go="totp" id="go-totp" hidden>Sign in with the authenticator app</button>
             <button type="button" data-go="email-link" id="go-email-link" hidden>Sign in with an e-mail link</button>
           </p>
@@ -106,6 +107,15 @@
           <p class="links"><button type="button" data-go="signin">Back to sign in</button></p>
         </div>
 
+        <!-- The second step that ended with passkey_required (Madauth.passkey.verify): the browser's passkey dialog. -->
+        <div data-view="passkey-step" hidden>
+          <p>Use your passkey to finish signing in.</p>
+          <p class="links">
+            <button type="button" id="passkey-verify">Use passkey</button>
+            <button type="button" data-go="signin">Back to sign in</button>
+          </p>
+        </div>
+
         <!-- The second step after a password or Google sign-in that ended with totp_required (Madauth.totp.verify). -->
         <div data-view="totp-code" hidden>
           <p>Enter the code from your authenticator app, or a recovery code, to finish signing in.</p>
@@ -165,6 +175,8 @@
           <p class="links">
             <!-- During a sign-in, when the server has SMS codes on: a phone instead of the app. -->
             <button type="button" id="use-phone" hidden>Use your phone number instead</button>
+            <!-- When the sign-in can be finished with a new passkey (the error's factors). -->
+            <button type="button" id="use-passkey-setup" hidden>Create a passkey instead</button>
             <button type="button" id="totp-setup-cancel">Cancel</button>
           </p>
         </div>
@@ -191,6 +203,10 @@
         <p class="links">
           <button type="button" id="sms-setup" hidden>Add a phone number</button>
           <button type="button" id="sms-remove" hidden>Remove the phone number</button>
+        </p>
+        <!-- Passkeys: Madauth.passkey.add() runs the browser's passkey dialog; Madauth.methods lists and removes them. -->
+        <p class="links">
+          <button type="button" id="passkey-add" hidden>Add a passkey</button>
         </p>
         <button id="sign-out" type="button">Sign out</button>
       </section>

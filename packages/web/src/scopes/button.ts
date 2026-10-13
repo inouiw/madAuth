@@ -7,6 +7,13 @@ export interface ButtonRenderOptions {
   /** `auto` (default) follows the `color-scheme` of the container. */
   theme?: 'auto' | 'light' | 'dark';
   /**
+   * `signin` (default) signs in. `link` adds the provider to the signed-in user's methods (within ten
+   * minutes of signing in, else `reauth_required`): the button says "Connect …", `onResult` gets the user as
+   * they are, or `account_taken` when the provider's account signs in another user. A redirect provider
+   * comes back with `linked` in the result of `Madauth.initialize`.
+   */
+  purpose?: 'signin' | 'link';
+  /**
    * Called with the outcome of a sign-in through this button. `Madauth.onAuthStateChanged` listeners are
    * notified as well. With a redirect provider (`GoogleRedirect`, `GitHub`) the page navigates away instead.
    */
@@ -38,7 +45,7 @@ export function createButtonApi(core: Core, method: LoginMethodId, hint: string)
           return;
         }
         const theme = options.theme === 'light' || options.theme === 'dark' ? options.theme : isDark(container) ? 'dark' : 'light';
-        unmount = provider.renderButton!(container, { theme, onResult: (result) => options.onResult?.(result) });
+        unmount = provider.renderButton!(container, { theme, purpose: options.purpose, onResult: (result) => options.onResult?.(result) });
       });
       return ok({
         remove() {

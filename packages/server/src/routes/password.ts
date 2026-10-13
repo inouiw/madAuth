@@ -14,7 +14,7 @@ import {
 import { passwordAccountKey, toMadauthUser, type Users } from '../users.js';
 import { localeOf, type WebhookClient } from '../webhooks.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
-import { accepted, body, error, nameOf, redirectTarget, signInAnswer, unavailable } from './helpers.js';
+import { accepted, body, error, nameOf, recentUser, redirectTarget, signInAnswer, unavailable } from './helpers.js';
 import { countSignInAttempt } from './lockout.js';
 
 export { MAIL_INTERVAL_MS, RESET_LINK_PARAM, RESET_TTL_MS, VERIFY_LINK_PARAM, VERIFY_TTL_MS } from './emails.js';
@@ -133,6 +133,21 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     if (!user) return accepted(c);
     // If this fails, signing up again is allowed: the account is not confirmed yet.
     return (await emails.sendLinkEmail(user, 'verify', target, locale)) ? accepted(c) : unavailable(c);
+  });
+
+  // A signed-in user without a password adds one: from then on it signs them in too.
+  app.post('/auth/password/add', async (c) => {
+    const user = await recentUser(c, ctx);
+    if (user instanceof Response) return user;
+    const data = await body(c);
+    const weak = await refused(c, data.password, [user.email, user.name]);
+    if (weak) return weak;
+    const taken = () => error(c, 409, 'already_added', 'You have a password already. To change it, use "Forgot password?".');
+    if (await users.passwordAccount(user.id)) return taken();
+    const secret = await hashPassword(data.password as string);
+    if (!(await users.linkAccount(user.id, { key: passwordAccountKey(user.id), secret, primary: false }))) return taken();
+    await ctx.emit('user.method_added', { user: toMadauthUser(user), method: 'password' });
+    return c.json({});
   });
 
   app.post('/auth/password/send-reset', async (c) => {

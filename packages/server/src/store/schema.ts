@@ -46,7 +46,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 7,
+  version: 8,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -76,8 +76,9 @@ export const madauthSchema = {
     },
     /**
      * How a user signs in. `key` is `password:<userId>`, `google:<sub>`, `totp:<userId>` (the authenticator
-     * app, whose `secret` is encrypted), `email-link:<userId>` or `sms:<userId>` (the phone that gets the
-     * codes of the second factor).
+     * app, whose `secret` is encrypted), `email-link:<userId>`, `sms:<userId>` (the phone that gets the
+     * codes of the second factor) or `passkey:<hash of the credential id>` (one per passkey; `secret` is its
+     * public key).
      */
     account: {
       fields: {
@@ -109,6 +110,16 @@ export const madauthSchema = {
          * which madAuth tells apart by their key (since version 7).
          */
         secondFactor: { type: 'boolean', nullable: true },
+        /** A passkey's name, which the user can change. Empty for other accounts (since version 8). */
+        name: { type: 'string', nullable: true },
+        /** A passkey's credential id (base64url), which the browser asks the authenticator for. Empty for other accounts (since version 8). */
+        credentialId: { type: 'string', nullable: true },
+        /** A passkey's signature counter at its last use; 0 for passkeys that keep none (since version 8). */
+        signCount: { type: 'number', nullable: true },
+        /** How the browser reaches a passkey's authenticator (`internal,hybrid`), as it reported them (since version 8). */
+        transports: { type: 'string', nullable: true },
+        /** When a passkey last signed in, or 0 (since version 8). */
+        lastUsedAt: { type: 'number', nullable: true },
         createdAt: { type: 'number' },
       },
     },

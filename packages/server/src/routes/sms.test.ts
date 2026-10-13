@@ -4,8 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runCli } from '../cli.js';
-import { Settings, type MethodSettings } from '../settings.js';
-import { APP_ORIGIN, WEBHOOK_SECRET, WEBHOOK_URL, cookies, passwordApp, post, setClaims, signUpVerified } from '../test/helpers.js';
+import { APP_ORIGIN, WEBHOOK_SECRET, WEBHOOK_URL, cookies, passwordApp, post, setClaims, signUpVerified, setMethods, type TestMethods } from '../test/helpers.js';
 import { base32Decode, stepOf, totp } from '../totp.js';
 
 type Made = ReturnType<typeof passwordApp>;
@@ -24,7 +23,6 @@ afterEach(() => {
 
 const startClock = () => vi.useFakeTimers({ toFake: ['Date'], now: START });
 const advance = (ms: number) => vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + ms });
-const setMethods = (store: Made['store'], methods: MethodSettings) => new Settings(store).set('methods', methods, null);
 const withSession = (session: string, more = '') => ({ Cookie: `madauth_session=${session}${more ? `; ${more}` : ''}` });
 const withChallenge = (res: Response) => ({ Cookie: `madauth_challenge=${cookies(res).madauth_challenge.value}` });
 /** The code of the last SMS the webhook got. */
@@ -51,7 +49,7 @@ async function addApp(app: App, session: string): Promise<Buffer> {
 }
 
 /** Grace with a password and a phone, on a server where password sign-in asks for a second factor when there is one. */
-async function withPhone(methods: MethodSettings = { google: {}, password: { secondFactor: 'optional' }, sms: {} }) {
+async function withPhone(methods: TestMethods = { google: {}, password: { secondFactor: 'optional' }, sms: {} }) {
   startClock();
   const made = passwordApp();
   await setMethods(made.store, methods);
@@ -229,7 +227,7 @@ describe('adding a phone number', () => {
     expect((await post(app, '/auth/sms/remove', { code: lastCode(hook) }, withSession(session))).status).toBe(200);
     const appAlone = await post(app, '/auth/totp/remove', { code: totp(secret, stepOf(Date.now()) + 1) }, withSession(session));
     expect(appAlone.status).toBe(403);
-    expect(await appAlone.json()).toMatchObject({ error: 'required_by_policy', message: expect.stringContaining('phone number') });
+    expect(await appAlone.json()).toMatchObject({ error: 'required_by_policy', message: expect.stringContaining('another second factor') });
     advance(61_000);
     await addPhone(app, hook, session);
     expect((await post(app, '/auth/totp/remove', { code: totp(secret, stepOf(Date.now())) }, withSession(session))).status).toBe(200);
@@ -307,7 +305,8 @@ describe('SMS codes as the second step', () => {
 
     const first = await signIn(app);
 
-    expect(await first.json()).toMatchObject({ error: 'totp_setup_required', method: 'password', factors: [] });
+    // `factors` are those the user can set up: the app, or a phone.
+    expect(await first.json()).toMatchObject({ error: 'totp_setup_required', method: 'password', factors: ['totp', 'sms'] });
     // Neither code step is open yet.
     expect((await post(app, '/auth/sms/send', {}, withChallenge(first))).status).toBe(401);
     const setup = await post(app, '/auth/sms/setup', { phone: PHONE }, withChallenge(first));
@@ -335,7 +334,7 @@ describe('SMS codes as the second step', () => {
     await post(app, '/auth/totp/signup', { email: 'linda@example.com', redirectTo: `${APP_ORIGIN}/account` });
     const link = hook.lastEmail()!.data.link as string;
     const first = await post(app, '/auth/email/verify', { token: link.split('=').at(-1) });
-    expect(await first.json()).toMatchObject({ error: 'totp_setup_required', method: 'totp', factors: [] });
+    expect(await first.json()).toMatchObject({ error: 'totp_setup_required', method: 'totp', factors: ['totp'] });
 
     const refused = await post(app, '/auth/sms/setup', { phone: PHONE }, withChallenge(first));
 

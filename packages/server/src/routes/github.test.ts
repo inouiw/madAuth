@@ -1,8 +1,6 @@
 // GitHub sign-in: GET /auth/github/start and GET /auth/github/callback. See "HTTP API" in docs/server.md
 // and docs/github-security.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { METHODS_SETTING, Settings, type MethodSettings } from '../settings.js';
-import type { StoreAdapter } from '../store/schema.js';
 import {
   APP_ORIGIN,
   GITHUB_CLIENT_ID,
@@ -21,6 +19,7 @@ import {
   startGitHub,
   stubGitHub,
   testApp,
+  setMethods,
 } from '../test/helpers.js';
 import { decrypt } from '../crypto.js';
 import { deriveTokenKey } from '../github.js';
@@ -32,7 +31,6 @@ afterEach(() => {
 
 const GITHUB = { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET };
 const tokenKey = deriveTokenKey(signingKey.d!);
-const setMethods = (store: StoreAdapter, methods: MethodSettings) => new Settings(store).set(METHODS_SETTING, methods, null);
 const session = (app: ReturnType<typeof testApp>, res: Response) => app.request('/auth/session', { headers: { Cookie: cookieHeader(res) } });
 
 describe('GitHub sign-in', () => {
@@ -268,7 +266,7 @@ describe('GitHub sign-in', () => {
     expect(await config()).toEqual({ secondFactor: 'required' });
     const res = await signInWithGitHub(app);
     // Nobody has an app yet: the sign-in goes on with its setup, and the session waits for it.
-    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=totp-setup&madauth_method=github`);
+    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=totp-setup&madauth_factors=totp&madauth_method=github`);
     expect(cookies(res).madauth_session?.value ?? '').toBe('');
     expect(cookies(res).madauth_challenge.value).toBeTruthy();
   });

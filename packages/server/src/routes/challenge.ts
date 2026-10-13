@@ -1,10 +1,10 @@
-// The challenge cookie: carries a sign-in from its first step to its second (a code from the authenticator
-// app, a code by SMS, or the app's setup). Shared by the totp and sms routes.
+// The challenge cookie: carries a sign-in from its first step to its second (a passkey, a code from the
+// authenticator app, a code by SMS, or setting one of them up). Shared by the passkey, totp and sms routes.
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
-import { isOn, type SignInMethod } from '../settings.js';
+import { factorsOn, requiringSecondFactor, signsIn, type MethodWithSecondFactor, type SecondFactor, type SignInMethod } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import { toMadauthUser, type StoredUser } from '../users.js';
 import type { MadauthUser } from '../user.js';
@@ -21,22 +21,24 @@ const COOKIE_PATH = '/auth';
 /** Where madAuth 0.4 set it: deleted there as well, so a cookie from before an upgrade doesn't linger. */
 const LEGACY_COOKIE_PATH = '/auth/totp';
 
-/** A second factor: a code from the authenticator app, or one sent by SMS. */
-export type Factor = 'totp' | 'sms';
+/** A second factor: a passkey, a code from the authenticator app, or one sent by SMS. */
+export type Factor = SecondFactor;
 
 /**
- * What a sign-in still needs after its primary method succeeded: a code from the app, a code by SMS, or
- * setting the app up (or, when SMS codes are on, adding a phone instead).
+ * What a sign-in still needs after its first step succeeded: a passkey, a code from the app, a code by SMS,
+ * or setting a second factor up (`totp-setup`, named after the only one there was at first: the challenge's
+ * `setup` says which can be set up).
  */
-export type NextStep = 'totp' | 'totp-setup' | 'sms';
+export type NextStep = 'passkey' | 'totp' | 'totp-setup' | 'sms';
 
 /** How the second step was passed, for `user.signed_in`. */
-export type SecondFactorVia = 'totp' | 'recovery_code' | 'sms';
+export type SecondFactorVia = 'passkey' | 'totp' | 'recovery_code' | 'sms';
 
 /**
  * The challenge cookie: who passed the first step, how (`amr`, empty for a sign-up with the app), what comes
- * next, which factors the user can finish with, and what the method knows beyond the record (Google's name
- * and picture), for the session.
+ * next, which factors the user can finish with, which they can set up when the setup is next (absent in
+ * cookies from before madAuth 0.6: the app or a phone), and what the method knows beyond the record (Google's
+ * name and picture), for the session.
  */
 export interface Challenge {
   sub: string;
@@ -45,6 +47,7 @@ export interface Challenge {
   method: SignInMethod;
   next: NextStep;
   factors: Factor[];
+  setup?: Factor[];
   profile?: { name?: string; picture?: string };
 }
 
@@ -66,8 +69,8 @@ export function clearChallenge(c: Context, secure: boolean): void {
 
 /**
  * The request's challenge for this step, or null if there is none, it expired, or it waits for another
- * step: a code (`totp`, `sms`) needs the factor among the challenge's, so a user who has both can switch;
- * the setup needs `next` to be it.
+ * step: a factor (`passkey`, `totp`, `sms`) needs to be among the challenge's, so a user who has several can
+ * switch; the setup needs `next` to be it.
  */
 export async function readChallenge(c: Context, ctx: AppContext, step: NextStep): Promise<ChallengeClaims | null> {
   const claims = await readToken<ChallengeClaims>(await ctx.keys, ctx.config.issuer, CHALLENGE_TYP, getCookie(c, CHALLENGE_COOKIE));
@@ -77,19 +80,25 @@ export async function readChallenge(c: Context, ctx: AppContext, step: NextStep)
   return fits ? claims : null;
 }
 
-/** A challenge finishes only if the method it belongs to is still on: an admin may have switched it off meanwhile. */
+/** A challenge finishes only if the method it belongs to still signs in: an admin may have switched it off meanwhile. */
 export const methodStillOn = async (c: Context, ctx: AppContext, challenge: Challenge): Promise<boolean> =>
-  isOn(challenge.method, ctx.configured, await ctx.methods(c));
+  signsIn(challenge.method, ctx.configured, await ctx.methods(c));
 
 export const methodOff = (c: Context): Response => error(c, 403, 'method_disabled', 'This way of signing in is switched off.');
 
 /**
- * Who sets a second factor up: the user whose sign-in waits for the setup (the challenge, the latest sign-in
- * at this browser), else the signed-in user. Starting a session ends the challenge, so an abandoned one
- * can't outlive a later sign-in. A challenge from before a password reset no longer counts.
+ * Who sets a second factor up: the user whose sign-in waits for the setup of `factor` (the challenge, the
+ * latest sign-in at this browser), else the signed-in user. Starting a session ends the challenge, so an
+ * abandoned one can't outlive a later sign-in. A challenge from before a password reset no longer counts.
  */
-export async function pendingOrSignedIn(c: Context, ctx: AppContext): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | null> {
-  const challenge = await readChallenge(c, ctx, 'totp-setup');
+export async function pendingOrSignedIn(
+  c: Context,
+  ctx: AppContext,
+  factor: Factor,
+): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | null> {
+  const pending = await readChallenge(c, ctx, 'totp-setup');
+  // A cookie from before madAuth 0.6 names no factors: the app or a phone could be set up then.
+  const challenge = pending && (Array.isArray(pending.setup) ? pending.setup.includes(factor) : factor !== 'passkey') ? pending : null;
   const waiting = challenge ? await ctx.users.findById(challenge.sub) : null;
   if (challenge && waiting && waiting.sessionVersion === challenge.sv) return { user: waiting, challenge };
   const session = await ctx.currentUser(c);
@@ -103,11 +112,45 @@ export async function finishSignIn(
   ctx: AppContext,
   user: StoredUser,
   challenge: ChallengeClaims,
-  amr: 'otp' | 'sms',
+  amr: 'otp' | 'sms' | 'passkey',
   via: SecondFactorVia,
 ): Promise<MadauthUser> {
   const result = await ctx.startSession(c, toMadauthUser(user, challenge.profile), [...challenge.amr, amr], { method: challenge.method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
   // For a sign-up with the app, the app is the method itself, not a second factor.
   await ctx.emit('user.signed_in', { user: result, method: challenge.method, ...(challenge.amr.length ? { secondFactor: via } : {}) });
   return result;
+}
+
+/** How a message names the methods whose policy can require a second factor. A method without a name here does not compile. */
+const POLICY_NAMES = {
+  google: 'Google',
+  github: 'GitHub',
+  password: 'e-mail & password',
+  'email-link': 'the e-mail link',
+  passkey: 'a passkey',
+} satisfies Record<MethodWithSecondFactor, string>;
+
+/**
+ * Why the signed-in user can't do without `factor` (all their passkeys; with `keepsOne`, one of several), as
+ * the answer to send; null if they can. Each method whose policy is `required` needs a second factor the user
+ * keeps, which is on and isn't the method itself (a passkey is no second factor of a passkey sign-in).
+ * `what` names the factor in the message.
+ */
+export async function requiredByPolicy(
+  c: Context,
+  ctx: AppContext,
+  userId: string,
+  factor: Factor,
+  what: string,
+  keepsOne = false,
+): Promise<Response | null> {
+  const methods = await ctx.methods(c);
+  const required = requiringSecondFactor(ctx.configured, methods);
+  if (!required.length) return null;
+  const has = await ctx.users.secondFactors(userId, factorsOn(ctx.configured, methods));
+  const left = keepsOne ? has : has.filter((f) => f !== factor);
+  const lacking = required.filter((method) => !left.some((f) => f !== method));
+  if (!lacking.length) return null;
+  const names = lacking.map((method) => POLICY_NAMES[method]).join(' and ');
+  return error(c, 403, 'required_by_policy', `Signing in with ${names} requires a second factor, so ${what} can't be removed. Set up another second factor first, or delete your account.`);
 }

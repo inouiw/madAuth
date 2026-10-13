@@ -116,6 +116,15 @@
             <button type="button" data-call="removeSms" hidden>Madauth.sms.remove({ code })</button>
           </p>
         </div>
+        <!-- The user's sign-in methods: Madauth.manageSignInMethods() lists them and adds or removes one; Madauth.setUpPasskey() adds a passkey. -->
+        <div class="authenticator methods-box">
+          <span class="caption">Sign-in methods</span>
+          <p id="methods-status"></p>
+          <p class="buttons">
+            <button type="button" data-call="manageSignInMethods">Madauth.manageSignInMethods()</button>
+            <button type="button" data-call="setUpPasskey" hidden>Madauth.setUpPasskey()</button>
+          </p>
+        </div>
         <button id="sign-out" type="button">Sign out</button>
       </section>
 
@@ -185,13 +194,13 @@
           <li class="api-method" data-call="getSettings">
             <button type="button" class="api-row" aria-expanded="false">Madauth.admin.getSettings()</button>
             <div class="api-detail" hidden>
-              <p>The sign-in methods that are on, each with its policy for the authenticator app. Fills the controls of <code>setSettings</code>.</p>
+              <p>The methods that are on, each with whether it signs in on its own and its policy for a second factor. Fills the controls of <code>setSettings</code>.</p>
             </div>
           </li>
           <li class="api-method" data-call="setSettings">
             <button type="button" class="api-row" aria-expanded="false">Madauth.admin.setSettings({ methods })</button>
             <div class="api-detail" hidden>
-              <p>Sends the list of the methods that are on, with the policy of Google, GitHub, password and the e-mail link for the authenticator app; a method that is not listed is off. It applies at once, for everyone.</p>
+              <p>Sends the list of the methods that are on, each with <code>allowAsSignInMethod</code> (the authenticator app and passkeys can be a second factor only) and its <code>secondFactor</code> policy; a method that is not listed is off. A policy needs a second factor that is on: passkeys, the app or SMS codes. It applies at once, for everyone.</p>
               <!--
                 The controls show the server's settings once getSettings succeeded; only then can they be sent back.
               -->
@@ -199,47 +208,38 @@
               <table class="methods">
                 <tr>
                   <td><label><input id="method-google" type="checkbox" /> Google</label></td>
-                  <td>
-                    <label class="policy">
-                      Authenticator app
-                      <select id="policy-google"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
-                    </label>
-                  </td>
+                  <td></td>
+                  <td><label class="policy">Second factor <select id="policy-google"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select></label></td>
                 </tr>
                 <tr>
                   <td><label><input id="method-github" type="checkbox" /> GitHub</label></td>
-                  <td>
-                    <label class="policy">
-                      Authenticator app
-                      <select id="policy-github"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
-                    </label>
-                  </td>
+                  <td></td>
+                  <td><label class="policy">Second factor <select id="policy-github"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select></label></td>
                 </tr>
                 <tr>
                   <td><label><input id="method-password" type="checkbox" /> E-mail &amp; password</label></td>
-                  <td>
-                    <label class="policy">
-                      Authenticator app
-                      <select id="policy-password"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
-                    </label>
-                  </td>
-                </tr>
-                <tr>
-                  <td><label><input id="method-totp" type="checkbox" /> Authenticator app on its own</label></td>
                   <td></td>
-                </tr>
-                <tr>
-                  <td><label><input id="method-sms" type="checkbox" /> SMS codes (as a second factor, next to the app)</label></td>
-                  <td></td>
+                  <td><label class="policy">Second factor <select id="policy-password"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select></label></td>
                 </tr>
                 <tr>
                   <td><label><input id="method-email-link" type="checkbox" /> E-mail link</label></td>
-                  <td>
-                    <label class="policy">
-                      Authenticator app
-                      <select id="policy-email-link"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select>
-                    </label>
-                  </td>
+                  <td></td>
+                  <td><label class="policy">Second factor <select id="policy-email-link"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select></label></td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-passkey" type="checkbox" /> Passkeys</label></td>
+                  <td><label class="policy"><input id="signin-passkey" type="checkbox" /> Signs in on its own</label></td>
+                  <td><label class="policy">Second factor <select id="policy-passkey"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select></label></td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-totp" type="checkbox" /> Authenticator app</label></td>
+                  <td><label class="policy"><input id="signin-totp" type="checkbox" /> Signs in on its own</label></td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td><label><input id="method-sms" type="checkbox" /> SMS codes (a second factor only)</label></td>
+                  <td></td>
+                  <td></td>
                 </tr>
               </table>
             </div>

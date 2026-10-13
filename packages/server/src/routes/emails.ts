@@ -21,7 +21,7 @@ export const RESET_LINK_PARAM = 'madauth_reset';
 export const SIGNIN_LINK_PARAM = 'madauth_signin';
 
 /** The purposes that send a link (and a code) by e-mail; SMS codes are sent by routes/sms.ts. */
-export type LinkPurpose = Exclude<VerificationPurpose, 'sms'>;
+export type LinkPurpose = Exclude<VerificationPurpose, 'sms' | 'passkey'>;
 
 /** How long each kind of link lives, how it reaches the app, and which e-mail carries it. */
 const LINKS: Record<LinkPurpose, { ttl: number; param: string; type: WebhookType }> = {

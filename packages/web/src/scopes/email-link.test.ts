@@ -140,7 +140,7 @@ describe('Madauth.emailLink', () => {
       isSuccess: false,
       error: { code: 'totp_setup_required', method: 'email-link' },
     });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'email-link' });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'email-link', factors: ['totp'] });
   });
 
   it('H31: left out when the server does not offer the e-mail link; without the provider the scope says so', async () => {

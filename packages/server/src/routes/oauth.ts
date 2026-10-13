@@ -8,9 +8,10 @@ import type { AppContext } from '../app.js';
 import { normalizeEmail } from '../password.js';
 import type { SignInMethod } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
-import type { StoredUser } from '../users.js';
+import { toMadauthUser, type StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
 import type { Factor, NextStep } from './challenge.js';
+import { recentUser } from './helpers.js';
 
 /** Hash parameter that carries a sign-in error back to the app after the redirect flow. */
 export const REDIRECT_ERROR_PARAM = 'madauth_error';
@@ -23,6 +24,8 @@ export const REDIRECT_FACTORS_PARAM = 'madauth_factors';
  * so the app can tell the providers apart. Servers before 0.5 send none: only Google had a redirect flow.
  */
 export const REDIRECT_METHOD_PARAM = 'madauth_method';
+/** Hash parameter after a redirect that added the provider to the signed-in user's methods (`madauth_linked=github`). */
+export const REDIRECT_LINKED_PARAM = 'madauth_linked';
 
 const OAUTH_COOKIE = 'madauth_oauth';
 const OAUTH_TYP = 'madauth-oauth-state+jwt';
@@ -38,6 +41,8 @@ export interface OAuthState {
   /** The app page the user comes back to. */
   returnTo: string;
   locale?: string;
+  /** When the flow adds the provider to a signed-in user's methods instead of signing in: the user's id. */
+  link?: string;
 }
 
 /** The PKCE challenge of a verifier: its SHA-256, base64url. */
@@ -51,13 +56,14 @@ export async function pkceChallenge(verifier: string): Promise<string> {
  * the provider's redirect to the callback under `cookiePath`. `returnTo` is the app page to send the user
  * back to; the request's `locale` query is kept for the sign-up check.
  */
-export async function startOAuth(c: Context, ctx: AppContext, cookiePath: string, returnTo: URL): Promise<OAuthState> {
+export async function startOAuth(c: Context, ctx: AppContext, cookiePath: string, returnTo: URL, link?: string): Promise<OAuthState> {
   const oauth: OAuthState = {
     state: randomString(),
     nonce: randomString(),
     verifier: randomString(),
     returnTo: returnTo.href,
     locale: localeOf(c.req.query('locale')),
+    ...(link ? { link } : {}),
   };
   const token = await signToken(await ctx.keys, ctx.config.issuer, OAUTH_TYP, { ...oauth }, OAUTH_TTL);
   // Lax: the cookie must come back on the top-level redirect from the provider to /callback.
@@ -85,7 +91,19 @@ export async function takeOAuthState(c: Context, ctx: AppContext, cookiePath: st
     verifier: oauth.verifier,
     returnTo: oauth.returnTo,
     ...(typeof oauth.locale === 'string' ? { locale: oauth.locale } : {}),
+    ...(typeof oauth.link === 'string' ? { link: oauth.link } : {}),
   };
+}
+
+/**
+ * For `/start` with `link=1`: the id of the signed-in user who adds the provider, if they signed in recently;
+ * otherwise the error to send back (`no_session`, `reauth_required`). Null without `link`: a sign-in.
+ */
+export async function linkingUser(c: Context, ctx: AppContext): Promise<{ link: string } | { error: string } | null> {
+  if (c.req.query('link') !== '1') return null;
+  const user = await recentUser(c, ctx);
+  if (user instanceof Response) return { error: ((await user.json()) as { error: string }).error };
+  return { link: user.id };
 }
 
 /**
@@ -93,10 +111,11 @@ export async function takeOAuthState(c: Context, ctx: AppContext, cookiePath: st
  * set), with the error, or with the second step the sign-in goes on with and which second factors can
  * finish it (the challenge cookie is set). `method` names the sign-in in the hash in the last two cases.
  */
-export function redirectBack(c: Context, returnTo: string, method: SignInMethod): (error?: string, next?: NextStep, factors?: Factor[]) => Response {
-  return (error, next, factors = []) => {
+export function redirectBack(c: Context, returnTo: string, method: SignInMethod): (error?: string, next?: NextStep, factors?: Factor[], linked?: boolean) => Response {
+  return (error, next, factors = [], linked = false) => {
     const url = new URL(returnTo);
     if (error) url.hash = `${REDIRECT_ERROR_PARAM}=${error}&${REDIRECT_METHOD_PARAM}=${method}`;
+    if (linked) url.hash = `${REDIRECT_LINKED_PARAM}=${method}`;
     // The step, and which second factors can finish it, so the page can offer the switch.
     if (next) url.hash = `${REDIRECT_NEXT_PARAM}=${next}${factors.length ? `&${REDIRECT_FACTORS_PARAM}=${factors.join(',')}` : ''}&${REDIRECT_METHOD_PARAM}=${method}`;
     return c.redirect(url.href, 302);
@@ -133,6 +152,7 @@ const METHOD_NAMES = {
   password: 'a password',
   totp: 'an authenticator app',
   'email-link': 'an e-mail link',
+  passkey: 'a passkey',
 } satisfies Record<SignInMethod, string>;
 
 /**
@@ -140,7 +160,7 @@ const METHOD_NAMES = {
  * new user after the operator's sign-up check, or takes over a user with the same address whom nobody can
  * sign in as yet (a sign-up that was never finished). It never joins a user who signs in another way: that
  * would open their account to whoever controls the provider's account, past a password and the
- * authenticator app.
+ * authenticator app. The user adds it while signed in instead (see {@link linkProviderAccount}).
  */
 export async function resolveProviderUser(
   ctx: AppContext,
@@ -216,4 +236,31 @@ export async function resolveProviderUser(
     if (user) return signedIn(user);
   }
   return { ok: false, error: 'temporarily_unavailable', message: 'Please try again.' };
+}
+
+export type LinkResult = { ok: true } | { ok: false; error: 'account_taken' | 'no_session'; message: string };
+
+/**
+ * Adds a verified provider account to the methods of `userId`, who signed in recently: from then on it signs
+ * them in too, whatever address it has. An account that belongs to another user stays theirs. Emits
+ * `user.method_added`.
+ */
+export async function linkProviderAccount(ctx: AppContext, provider: OAuthProvider, userId: string, profile: ProviderProfile): Promise<LinkResult> {
+  const { users } = ctx;
+  const user = await users.findById(userId);
+  if (!user) return { ok: false, error: 'no_session', message: 'Please sign in first.' };
+  const taken: LinkResult = { ok: false, error: 'account_taken', message: `This ${provider.name} account signs in another user. Use another one.` };
+  const existing = await users.findAccountByKey(profile.key);
+  if (existing) {
+    // Left behind by a deletion that did not finish: it would hold the key forever.
+    if (!(await users.findById(existing.userId))) await users.deleteAccount(existing.id);
+    else if (existing.userId !== user.id) return taken;
+    else {
+      await users.updateAccount(existing.id, { email: profile.email, ...(profile.secret ? { secret: profile.secret } : {}) });
+      return { ok: true };
+    }
+  }
+  if (!(await users.linkAccount(user.id, { key: profile.key, email: profile.email, secret: profile.secret, primary: false }))) return taken;
+  await ctx.emit('user.method_added', { user: toMadauthUser(user), method: provider.method, email: profile.email });
+  return { ok: true };
 }

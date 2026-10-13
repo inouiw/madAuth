@@ -1,6 +1,7 @@
 // Small helpers the route modules share: reading the body, the shape of errors, and common answers.
 import type { Context } from 'hono';
 import type { AppContext, SignInStep } from '../app.js';
+import type { StoredUser } from '../users.js';
 
 export type Body = Record<string, unknown>;
 
@@ -10,7 +11,7 @@ export async function body(c: Context): Promise<Body> {
   return data && typeof data === 'object' ? (data as Body) : {};
 }
 
-export function error(c: Context, status: 400 | 401 | 403 | 404 | 429 | 503, code: string, message: string): Response {
+export function error(c: Context, status: 400 | 401 | 403 | 404 | 409 | 429 | 503, code: string, message: string): Response {
   return c.json({ error: code, message }, status);
 }
 
@@ -32,6 +33,27 @@ export function originHost(ctx: AppContext, c: Context): string {
 export const accepted = (c: Context): Response => c.json({}, 202);
 
 export const noSession = (c: Context): Response => error(c, 401, 'no_session', 'Please sign in first.');
+
+/**
+ * How recently the user must have signed in to change how they sign in: add or remove a method. A session
+ * that someone took over can then not give its thief a way in of their own.
+ */
+export const RECENT_SIGN_IN_MS = 10 * 60 * 1000;
+
+/**
+ * The signed-in user, if they signed in within RECENT_SIGN_IN_MS (renewals don't count); otherwise the answer
+ * to send: `no_session`, or `reauth_required` (sign in again, then try again).
+ */
+export async function recentUser(c: Context, ctx: AppContext): Promise<StoredUser | Response> {
+  const session = await ctx.currentUser(c);
+  const user = session ? await ctx.users.findById(session.id) : null;
+  if (!user) return noSession(c);
+  const signedInAt = await ctx.signedInAt(c);
+  if (signedInAt === null || Date.now() - signedInAt > RECENT_SIGN_IN_MS) {
+    return error(c, 401, 'reauth_required', 'For your security, sign in again to change how you sign in.');
+  }
+  return user;
+}
 
 export function redirectTarget(ctx: AppContext, c: Context, value: unknown): URL | Response {
   const url = ctx.allowedUrl(value);
@@ -57,7 +79,9 @@ export function signInAnswer(c: Context, step: SignInStep): Response {
     const rest = { method: step.method, factors: step.factors };
     if (step.next === 'totp') return c.json({ error: 'totp_required', message: 'Enter the code from your authenticator app to finish signing in.', ...rest }, 401);
     if (step.next === 'sms') return c.json({ error: 'sms_required', message: 'Enter the code we sent to your phone to finish signing in.', ...rest }, 401);
-    return c.json({ error: 'totp_setup_required', message: 'Set up an authenticator app to finish signing in.', ...rest }, 401);
+    if (step.next === 'passkey') return c.json({ error: 'passkey_required', message: 'Confirm with your passkey to finish signing in.', ...rest }, 401);
+    // `factors` are the second factors the user can set up here.
+    return c.json({ error: 'totp_setup_required', message: 'Set up a second factor to finish signing in.', ...rest }, 401);
   }
   return c.json({ user: step.user });
 }

@@ -19,24 +19,26 @@ import {
   METHODS,
   MAX_MIN_LENGTH,
   DEFAULT_PASSWORD_RULES,
-  SIGN_IN_METHODS,
+  SECOND_FACTOR_POLICIES,
   Settings,
-  anyOn,
   canSignUp,
-  hasSecondFactor,
+  checkMethodSettings,
+  factorsOn,
   initialMethods,
   isConfigured,
   isOn,
   parseMethodSettings,
   parsePasswordRules,
   policyOf,
-  authenticatorOn,
+  signsIn,
   type MethodId,
   type MethodSettings,
   type PasswordRules,
   type SignInMethod,
 } from './settings.js';
-import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims } from './tokens.js';
+import { methodRoutes } from './routes/methods.js';
+import { passkeyRoutes } from './routes/passkey.js';
+import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { deriveTotpKey } from './totp.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 import { Users, toMadauthUser, type StoredUser } from './users.js';
@@ -86,6 +88,11 @@ export interface AppContext {
   secondStep(c: Context, user: StoredUser, amr: string[], method: SignInMethod, profile?: { name?: string; picture?: string }): Promise<SignInStep>;
   /** The user of the request's session, or null if there is none or it has ended; renews it on the way like GET /auth/session. */
   currentUser(c: Context): Promise<MadauthUser | null>;
+  /**
+   * When the user of the request's session signed in (milliseconds since 1970), kept across renewals; null
+   * without a session, or for one from before madAuth 0.6. Call after {@link currentUser}.
+   */
+  signedInAt(c: Context): Promise<number | null>;
   users: Users;
   settings: Settings;
   /** Present when WEBHOOK_URL is configured. */
@@ -128,7 +135,7 @@ export function createApp(config: MadauthConfig): Hono {
    * Sets the cookies of a session: the session token for app backends, the renewal token for this server
    * only, and the expiry time for the web library.
    */
-  const issueSession = async (c: Context, user: MadauthUser, amr: string[], extra?: { sv?: number }) => {
+  const issueSession = async (c: Context, user: MadauthUser, amr: string[], extra?: SessionExtra) => {
     const signingKeys = await keys;
     const [sessionToken, renewalToken] = await Promise.all([
       signSession(signingKeys, issuer, sessionTtlSeconds, user, amr, extra),
@@ -202,7 +209,8 @@ export function createApp(config: MadauthConfig): Hono {
       session && user && renewal && renewal.sub === session.sub && renewal.sv === session.sv && renewal.email === session.email;
     const renewed = sameSignIn ? user : renewal ? await checked(renewal) : null;
     if (renewal && renewed) {
-      await issueSession(c, renewed, renewal.amr, { sv: renewal.sv });
+      // The sign-in it renews is still the one the user made: its time stays.
+      await issueSession(c, renewed, renewal.amr, { sv: renewal.sv, auth_time: renewal.auth_time });
       return renewed;
     }
     // Still valid, but not renewable (e.g. the renewal cookie is gone): it lasts until it expires.
@@ -234,27 +242,32 @@ export function createApp(config: MadauthConfig): Hono {
       const firstSession = signedUpAt === 0 && (await users.markSignedUp(user.id));
       // A sign-in that was waiting for the authenticator app is over, whichever way this session came about.
       clearChallenge(c, secure);
-      await issueSession(c, user, amr, extra);
+      await issueSession(c, user, amr, { ...extra, auth_time: Math.floor(Date.now() / 1000) });
       const result = { ...user, amr };
       if (firstSession) await this.emit('user.signed_up', { user: result, method });
       return result;
     },
     async secondStep(c, user, amr, method, profile) {
       const methods = await this.methods(c);
-      if (!isOn(method, configured, methods)) return { disabled: true };
-      // The app itself is the method of a sign-up with it: it is set up now, or asked for if it exists already.
-      const policy = method === 'totp' ? 'required' : policyOf(method, methods);
+      if (!signsIn(method, configured, methods)) return { disabled: true };
       let next: NextStep | null = null;
+      // The factors the user can finish with; for a setup, those the user can set up.
       let factors: Factor[] = [];
-      if (policy !== 'none') {
-        // A phone counts when SMS codes are on; a sign-up with the app is finished with the app. The app comes
-        // first when the user has both: the client can switch to the SMS.
-        const [app, phone] = await Promise.all([
-          users.totpAccount(user.id),
-          method !== 'totp' && isOn('sms', configured, methods) ? users.smsAccount(user.id) : null,
-        ]);
-        factors = [...(app ? (['totp'] as const) : []), ...(phone ? (['sms'] as const) : [])];
-        next = app ? 'totp' : phone ? 'sms' : policy === 'required' ? 'totp-setup' : null;
+      if (method === 'totp') {
+        // The app itself is the method of a sign-up with it: it is set up now, or asked for if it exists already.
+        const app = await users.totpAccount(user.id);
+        next = app ? 'totp' : 'totp-setup';
+        factors = ['totp'];
+      } else {
+        const policy = policyOf(method, methods);
+        if (policy !== 'none') {
+          // The second factors that are on, but never the method itself: a passkey is no second factor of a
+          // passkey sign-in. They come in the order of SECOND_FACTORS: the client offers a switch to the others.
+          const on = factorsOn(configured, methods, method);
+          const has = await users.secondFactors(user.id, on);
+          next = has[0] ?? (policy === 'required' ? 'totp-setup' : null);
+          factors = has.length ? has : on;
+        }
       }
       if (next) {
         // A sign-in that goes on with a second step ends the session there was at this browser, if any:
@@ -262,7 +275,8 @@ export function createApp(config: MadauthConfig): Hono {
         clearSession(c);
         // Only what the session will show; the cookie is signed, not encrypted.
         const known = { ...(profile?.name ? { name: profile.name } : {}), ...(profile?.picture ? { picture: profile.picture } : {}) };
-        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, factors, ...(Object.keys(known).length ? { profile: known } : {}) });
+        const step = next === 'totp-setup' ? { factors: [], setup: factors } : { factors };
+        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, ...step, ...(Object.keys(known).length ? { profile: known } : {}) });
         return { next, method, factors };
       }
       const result = await this.startSession(c, toMadauthUser(user, profile), amr, { method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
@@ -270,6 +284,11 @@ export function createApp(config: MadauthConfig): Hono {
       return { user: result };
     },
     currentUser: currentSession,
+    async signedInAt(c) {
+      const session = await tokenClaims(c, SESSION_COOKIE, SESSION_TYP);
+      const claims = session ?? (await tokenClaims(c, RENEWAL_COOKIE, RENEWAL_TYP));
+      return typeof claims?.auth_time === 'number' ? claims.auth_time * 1000 : null;
+    },
     users,
     settings,
     webhook: config.webhook ? createWebhookClient(config.webhook, config.webhookFetch) : undefined,
@@ -343,17 +362,21 @@ export function createApp(config: MadauthConfig): Hono {
   app.get('/auth/config', async (c) => {
     const current = await ctx.methods(c);
     const on = (method: MethodId) => isOn(method, configured, current);
+    const signIn = (method: MethodId) => signsIn(method, configured, current);
     const rules = on('password') ? await settings.passwordRules() : null;
     return c.json({
       google: on('google') ? { clientId: config.google!.clientId, codeFlow: !!config.google!.clientSecret, secondFactor: policyOf('google', current) } : null,
       github: on('github') ? { secondFactor: policyOf('github', current) } : null,
       password: rules ? { ...rules, secondFactor: policyOf('password', current) } : null,
-      // The app can be set up when it is in use at all; `signIn` says whether it signs in on its own.
-      totp: authenticatorOn(configured, current) ? { signIn: on('totp'), signUp: on('totp') && emailVerification } : null,
+      // The app can be set up when it is on; `signIn` says whether it signs in on its own (allowAsSignInMethod).
+      totp: on('totp') ? { signIn: signIn('totp'), signUp: signIn('totp') && emailVerification } : null,
       email: { verification: emailVerification },
       emailLink: on('email-link') ? { secondFactor: policyOf('email-link', current) } : null,
       // SMS codes as a second factor: a signed-in user can add a phone, and the dialog offers it in the second step.
       sms: on('sms'),
+      // Passkeys: a signed-in user can add them; `signIn` says whether they sign in on their own, `secondFactor`
+      // whether such a sign-in then asks for a code. On, they are a second factor of the methods that ask for one.
+      passkey: on('passkey') ? { signIn: signIn('passkey'), secondFactor: policyOf('passkey', current) } : null,
     });
   });
 
@@ -364,6 +387,11 @@ export function createApp(config: MadauthConfig): Hono {
   if (config.github) githubRoutes(app, ctx, config.github, tokenKey);
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, users, ctx.webhook);
   totpRoutes(app, ctx, totpKeys);
+  passkeyRoutes(app, ctx);
+  // GitHub's authorization goes with the account, with the token kept from its last sign-in.
+  methodRoutes(app, ctx, async (account) => {
+    if (config.github && account.key.startsWith('github:')) await revokeGrant(config.github, tokenKey, account);
+  });
 
   app.get('/auth/session', async (c) => {
     const user = await currentSession(c);
@@ -389,7 +417,7 @@ export function createApp(config: MadauthConfig): Hono {
     const stored = await users.findById(user.id);
     // An app that is switched off server-wide protects nothing, so it is not asked for either. A phone for
     // SMS codes alone does not protect the deletion (not covered yet, see docs/sms-security.md).
-    const protects = stored && authenticatorOn(configured, await ctx.methods(c));
+    const protects = stored && isOn('totp', configured, await ctx.methods(c));
     const authenticator = protects ? await users.totpAccount(user.id) : null;
     if (stored && authenticator) {
       // Deleting the user removes their authenticator app too, so like removing it, it takes a current code.
@@ -470,8 +498,8 @@ export function createApp(config: MadauthConfig): Hono {
 
   /**
    * The settings as the admin API answers them: for each method (and `sms`), whether the server is configured
-   * for it, whether it is on, and (the methods with a second factor) whether it asks for one; and the rules
-   * for new passwords.
+   * for it, whether it is on, whether it signs in on its own and whether it asks for a second factor; and
+   * the rules for new passwords.
    */
   const settingsAnswer = (methods: MethodSettings, password: PasswordRules) => ({
     password,
@@ -481,7 +509,8 @@ export function createApp(config: MadauthConfig): Hono {
         {
           configured: configured(method),
           enabled: isOn(method, configured, methods),
-          ...(hasSecondFactor(method) ? { secondFactor: policyOf(method, methods) } : {}),
+          allowAsSignInMethod: signsIn(method, configured, methods),
+          secondFactor: isOn(method, configured, methods) ? policyOf(method, methods) : 'none',
         },
       ]),
     ),
@@ -501,12 +530,13 @@ export function createApp(config: MadauthConfig): Hono {
     const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
     if (data.methods === undefined && data.password === undefined) return invalid('Pass methods, password or both.');
     // Both are checked before either is written.
-    const next = data.methods === undefined ? undefined : parseMethodSettings(data.methods, { booleans: true });
+    const next = data.methods === undefined ? undefined : parseMethodSettings(data.methods);
     if (next === null) {
       return invalid(
-        `methods must list the sign-in methods that are on (${SIGN_IN_METHODS.join(', ')}; sms for SMS codes as a second factor), each as true, {} or ` +
-          '{ "secondFactor": "none" | "optional" | "required" } (google, github, password and email-link), e.g. ' +
-          '{ "google": {}, "password": { "secondFactor": "optional" }, "sms": {} }. A method that is not listed is off.',
+        `methods must list the methods that are on (${METHODS.join(', ')}), each as { "allowAsSignInMethod": true | false, ` +
+          `"secondFactor": ${SECOND_FACTOR_POLICIES.map((p) => `"${p}"`).join(' | ')} }, both given, e.g. ` +
+          '{ "google": { "allowAsSignInMethod": true, "secondFactor": "none" }, "password": { "allowAsSignInMethod": true, "secondFactor": "optional" }, ' +
+          '"totp": { "allowAsSignInMethod": false, "secondFactor": "none" } }. A method that is not listed is off.',
       );
     }
     const rules = data.password === undefined ? undefined : parsePasswordRules(data.password);
@@ -516,9 +546,8 @@ export function createApp(config: MadauthConfig): Hono {
           `{ "minLength": 10, "minScore": 3 }. What is left out takes its default (${DEFAULT_PASSWORD_RULES.minLength}, ${DEFAULT_PASSWORD_RULES.minScore}).`,
       );
     }
-    if (next && !anyOn(signsUp, next)) {
-      return invalid('At least one sign-in method that creates users must stay on: Google, GitHub, e-mail & password, the e-mail link, or the authenticator app with sign-up by e-mail.');
-    }
+    const wrong = next ? checkMethodSettings(next, { configured, signsUp }) : null;
+    if (wrong) return invalid(wrong);
     // Two writes: if the second fails, the first is undone, so a failed request has changed nothing.
     const previousRules = rules && next ? await settings.passwordRules() : undefined;
     const password = rules ? await settings.setPasswordRules(rules, caller.email) : await settings.passwordRules();
@@ -543,12 +572,28 @@ export function createApp(config: MadauthConfig): Hono {
     if (!isValidEmail(data.email)) return invalidEmail(c);
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
-    // The app of a user who signed up with it is how they sign in, not a second factor: without it, they sign up with the app again.
+    // The app a user signed up with is told as part of their sign-up: without it, they sign up with the app again.
     const app = await users.totpApp(user.id);
-    const secondFactor = !!app && !app.signsIn;
+    const secondFactor = !!app && !app.signedUpWith;
     const removed = await users.removeTotp(user.id);
     if (removed && secondFactor) await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'totp', by: caller.email });
     return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
+  });
+
+  // The same for a user who lost their passkeys.
+  app.post('/auth/admin/passkey/remove', async (c) => {
+    const caller = await admin(c);
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    if (!isValidEmail(data.email)) return invalidEmail(c);
+    const user = await users.findByEmail(normalizeEmail(data.email));
+    if (!user) return noUser(c);
+    for (const passkey of await users.passkeys(user.id)) {
+      if (await users.unlinkAccount(passkey.key)) {
+        await ctx.emit('user.method_removed', { user: toMadauthUser(user), method: 'passkey', passkey: { id: passkey.id, name: passkey.name }, by: caller.email });
+      }
+    }
+    return c.json({ email: user.emailNormalized, userId: user.id, passkeys: 0 });
   });
 
   // The same for a user who lost the phone that gets the SMS codes.

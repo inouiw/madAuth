@@ -1,7 +1,16 @@
-import { EXPIRY_COOKIE, REDIRECT_ERROR_PARAM, REDIRECT_FACTORS_PARAM, REDIRECT_METHOD_PARAM, REDIRECT_NEXT_PARAM, SIGNIN_LINK_PARAM, VERIFY_LINK_PARAM } from './constants.js';
+import {
+  EXPIRY_COOKIE,
+  REDIRECT_ERROR_PARAM,
+  REDIRECT_FACTORS_PARAM,
+  REDIRECT_LINKED_PARAM,
+  REDIRECT_METHOD_PARAM,
+  REDIRECT_NEXT_PARAM,
+  SIGNIN_LINK_PARAM,
+  VERIFY_LINK_PARAM,
+} from './constants.js';
 import { takeHashParam } from './hash.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
-import type { AuthenticatorEnabledDetail, AuthenticatorFailedDetail, SmsEnabledDetail, SmsFailedDetail } from './madauth-login.js';
+import type { AuthenticatorEnabledDetail, AuthenticatorFailedDetail, PasskeyAddedDetail, SmsEnabledDetail, SmsFailedDetail } from './madauth-login.js';
 import { isLoginMethodId, type LoginMethodId } from './methods.js';
 import { pendingStepOf, type DeletedAccount, type PendingStep, type ProviderContext, type ServerConfig, type SignInProvider } from './providers/provider.js';
 import { fail, ok, toErrorCode, type MadauthError, type MadauthUser, type Result, type SecondFactor } from './result.js';
@@ -10,6 +19,8 @@ import { createAdminApi } from './scopes/admin.js';
 import { createEmailLinkApi } from './scopes/email-link.js';
 import { createGitHubApi } from './scopes/github.js';
 import { createGoogleApi } from './scopes/google.js';
+import { createMethodsApi } from './scopes/methods.js';
+import { createPasskeyApi, type PasskeyInfo } from './scopes/passkey.js';
 import { createPasswordApi } from './scopes/password.js';
 import { createSmsApi } from './scopes/sms.js';
 import { createTotpApi } from './scopes/totp.js';
@@ -25,7 +36,7 @@ export interface MadauthOptions {
    * when the page was opened from a password reset link, when a sign-in goes on with a second step, or with
    * the error of a sign-in that failed outside it (a redirect, a link, One Tap) while nobody is signed in.
    * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.github`, `Madauth.totp`,
-   * `Madauth.emailLink` and `Madauth.sms`; the dialog never opens.
+   * `Madauth.emailLink`, `Madauth.passkey`, `Madauth.sms` and `Madauth.methods`; the dialog never opens.
    */
   ui?: 'dialog' | 'custom';
   /**
@@ -49,9 +60,11 @@ export type AuthStateListener = (user: MadauthUser | null) => void;
 /**
  * What `initialize` resolves to: a {@link Result}, plus `leftOut`, the methods whose providers were left out
  * because the server doesn't offer them (see {@link Madauth.initialize}). It is there on a failure as well,
- * e.g. when a redirect sign-in failed although madAuth is ready; empty when nothing was left out.
+ * e.g. when a redirect sign-in failed although madAuth is ready; empty when nothing was left out. `linked`
+ * is set when the page came back from a redirect that added Google or GitHub to the signed-in user's methods
+ * (a button with `purpose: 'link'`); one that failed is the failure, e.g. `account_taken`.
  */
-export type InitializeResult = Result & { leftOut: LoginMethodId[] };
+export type InitializeResult = Result & { leftOut: LoginMethodId[]; linked?: 'google' | 'github' };
 
 interface State {
   serverUrl: string;
@@ -127,7 +140,7 @@ function logError<T extends object>(result: Result<T>): Result<T> {
   return result;
 }
 
-/** The step a `totp_required`, `sms_required` or `totp_setup_required` error stands for, with the method whose sign-in it is. */
+/** The step a `passkey_required`, `totp_required`, `sms_required` or `totp_setup_required` error stands for, with the method whose sign-in it is. */
 function nextStepOf(error: MadauthError): PendingStep | undefined {
   return pendingStepOf(error, isLoginMethodId(error.method) ? error.method : 'password');
 }
@@ -228,17 +241,22 @@ async function handleSignInLink(ctx: ProviderContext, providers: Map<LoginMethod
   else ctx.signInFailed(res.error);
 }
 
+const isFactor = (f: string): f is SecondFactor => f === 'totp' || f === 'sms' || f === 'passkey';
+
 /**
  * Back from a redirect sign-in (Google's code flow, GitHub): with its error, or with the first step done and
- * a code (from the app, or by SMS) or the app's setup next. The server names the method next to either; a
- * server before 0.5 names none, and only Google had a redirect flow then. The URL is tidied up either way.
+ * a second factor or its setup next. The server names the method next to either; a server before 0.5 names
+ * none, and only Google had a redirect flow then. Or back from a redirect that added the provider to the
+ * signed-in user's methods: resolves to which. The URL is tidied up either way.
  */
-function handleRedirectReturn(ctx: ProviderContext): void {
+function handleRedirectReturn(ctx: ProviderContext): 'google' | 'github' | undefined {
+  const linked = takeHashParam(REDIRECT_LINKED_PARAM);
   const error = takeHashParam(REDIRECT_ERROR_PARAM);
   const next = takeHashParam(REDIRECT_NEXT_PARAM);
-  const named = (takeHashParam(REDIRECT_FACTORS_PARAM) ?? '').split(',').filter((f): f is SecondFactor => f === 'totp' || f === 'sms');
+  const named = (takeHashParam(REDIRECT_FACTORS_PARAM) ?? '').split(',').filter(isFactor);
   // Only the redirect providers come back this way: anything else in the hash counts as Google's.
   const via = takeHashParam(REDIRECT_METHOD_PARAM);
+  if (linked === 'google' || linked === 'github') return linked;
   const method: LoginMethodId = via === 'github' ? 'github' : 'google';
   if (error) {
     const code = toErrorCode(error);
@@ -246,10 +264,12 @@ function handleRedirectReturn(ctx: ProviderContext): void {
     const name = s.methodNames[method];
     const message = Object.hasOwn(s.redirectErrors, code) ? s.redirectErrors[code as keyof Strings['redirectErrors']](name) : s.redirectFailed(name, error);
     ctx.signInFailed({ code, message });
-    return;
+    return undefined;
   }
-  if (next === 'totp' || next === 'sms') ctx.signInContinues({ step: next === 'totp' ? 'code' : 'sms', method, factors: named.length ? named : [next] });
-  else if (next === 'totp-setup') ctx.signInContinues({ step: 'setup', method });
+  const steps = { passkey: 'passkey', totp: 'code', sms: 'sms' } as const;
+  if (next === 'totp' || next === 'sms' || next === 'passkey') ctx.signInContinues({ step: steps[next], method, factors: named.length ? named : [next] });
+  else if (next === 'totp-setup') ctx.signInContinues(named.length ? { step: 'setup', method, factors: named } : { step: 'setup', method });
+  return undefined;
 }
 
 async function initialize(target: State, run: number): Promise<{ ready: Result; result: InitializeResult }> {
@@ -309,7 +329,7 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
   };
   await handleVerifyLink(ctx);
   await handleSignInLink(ctx, providers);
-  handleRedirectReturn(ctx);
+  const linked = handleRedirectReturn(ctx);
   // A provider for a method the server doesn't offer (e.g. GoogleRedirect without a Google client on
   // the server) is left out, so the page works with the other methods: the server's configuration
   // decides what is on, and a development server often has less than production. Other failures
@@ -331,7 +351,8 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
   // Opened from a password reset link: show the dialog's "new password" form once madAuth is ready.
   if (Madauth.password.pendingReset) openDialogSoon();
   // A failed redirect sign-in is reported by initialize, but madAuth itself is ready.
-  return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError, leftOut } : { isSuccess: true, leftOut } };
+  const extra = linked ? { linked } : {};
+  return { ready: ok(), result: signInError ? { isSuccess: false, error: signInError, leftOut, ...extra } : { isSuccess: true, leftOut, ...extra } };
 }
 
 async function whenReady(): Promise<Result> {
@@ -500,6 +521,61 @@ export const Madauth = {
   },
 
   /**
+   * Opens the dialog on the "Create a passkey" screen for the signed-in user; the browser's passkey dialog
+   * follows. Resolves with the new passkey. Within ten minutes of signing in only: later the dialog asks the
+   * user to sign in again first, and goes on with the passkey after. Fails with `cancelled` when the dialog
+   * is closed before, `no_session` when nobody is signed in, and `flow_not_enabled` when the server has
+   * passkeys switched off or the browser has none. With `ui: 'custom'` use `Madauth.passkey.add()`.
+   */
+  async setUpPasskey(): Promise<Result<{ passkey: PasskeyInfo }>> {
+    const ready = await whenReady();
+    if (!ready.isSuccess) return ready;
+    if (state!.ui === 'custom') {
+      return fail('invalid_options', "Madauth.setUpPasskey() opens madAuth's dialog, but initialize was called with ui: 'custom'. Use Madauth.passkey.add() instead.");
+    }
+    if (!Madauth.passkey.available) return fail('flow_not_enabled', 'The madAuth server has passkeys switched off, or this browser has none.');
+    if (!user) return fail('no_session', 'Nobody is signed in.');
+    const element = dialogElement();
+    return new Promise((resolve) => {
+      const finish = (result: Result<{ passkey: PasskeyInfo }>) => {
+        element.removeEventListener('madauth-passkey-added', onAdded);
+        element.removeEventListener('madauth-cancel', onCancel);
+        resolve(result);
+      };
+      const onAdded = (e: CustomEvent<PasskeyAddedDetail>) => finish({ isSuccess: true, passkey: e.detail.passkey });
+      const onCancel = () => finish(fail('cancelled', 'The dialog was closed.'));
+      element.addEventListener('madauth-passkey-added', onAdded);
+      element.addEventListener('madauth-cancel', onCancel);
+      void element.openPasskeySetup();
+    });
+  },
+
+  /**
+   * Opens the dialog on the signed-in user's sign-in methods: which they have, with buttons to add another
+   * (a passkey, a password, Google, GitHub, the e-mail link, the authenticator app, as the server offers them)
+   * and to remove one. Resolves when the dialog is closed. Changing a method takes a sign-in within the last
+   * ten minutes: the dialog asks the user to sign in again when needed. Fails with `no_session` when nobody is
+   * signed in. With `ui: 'custom'` use `Madauth.methods` and the methods' own calls.
+   */
+  async manageSignInMethods(): Promise<Result> {
+    const ready = await whenReady();
+    if (!ready.isSuccess) return ready;
+    if (state!.ui === 'custom') {
+      return fail('invalid_options', "Madauth.manageSignInMethods() opens madAuth's dialog, but initialize was called with ui: 'custom'. Use Madauth.methods instead.");
+    }
+    if (!user) return fail('no_session', 'Nobody is signed in.');
+    const element = dialogElement();
+    return new Promise((resolve) => {
+      const onClose = () => {
+        element.removeEventListener('madauth-cancel', onClose);
+        resolve(ok());
+      };
+      element.addEventListener('madauth-cancel', onClose);
+      void element.openMethods();
+    });
+  },
+
+  /**
    * Changes the language of the dialog and of the e-mails, e.g. when the user switches the language of
    * your app. An open dialog shows the new language at once. See {@link MadauthOptions.locale}.
    */
@@ -604,6 +680,12 @@ export const Madauth = {
 
   /** SMS codes as a second factor: the second step, and adding or removing the phone. Needs no provider. */
   sms: createSmsApi(core),
+
+  /** Passkeys: signing in with one (needs `new Passkey()`), the second step, adding and renaming them. */
+  passkey: createPasskeyApi(core),
+
+  /** The signed-in user's sign-in methods: listing and removing them. */
+  methods: createMethodsApi(core),
 
   /** Reading and setting claims and settings, for users with the role `admin`. */
   admin: createAdminApi(core),

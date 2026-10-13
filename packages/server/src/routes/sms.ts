@@ -5,11 +5,11 @@ import type { Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
-import { METHODS_WITH_SECOND_FACTOR, isOn, policyOf } from '../settings.js';
+import { isOn } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import { smsAccountKey, toMadauthUser, type StoredAccount, type StoredUser, type Users } from '../users.js';
 import { WEBHOOK_TIMEOUT_MS, localeOf, type WebhookClient } from '../webhooks.js';
-import { finishSignIn, methodOff, methodStillOn, pendingOrSignedIn, readChallenge, type ChallengeClaims } from './challenge.js';
+import { finishSignIn, methodOff, methodStillOn, pendingOrSignedIn, readChallenge, requiredByPolicy, type ChallengeClaims } from './challenge.js';
 import { MAIL_INTERVAL_MS as SMS_INTERVAL_MS } from './emails.js';
 import { body, error, noSession, originHost, smsUnavailable, type Body } from './helpers.js';
 import { countSignInAttempt } from './lockout.js';
@@ -104,7 +104,7 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
    * codes are never the only factor.
    */
   const whoSetsUp = async (c: Context): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | { answer: Response }> => {
-    const who = await pendingOrSignedIn(c, ctx);
+    const who = await pendingOrSignedIn(c, ctx, 'sms');
     if (!who || (who.challenge && !who.challenge.amr.length)) return { answer: noSession(c) };
     if (who.challenge && !(await methodStillOn(c, ctx, who.challenge))) return { answer: methodOff(c) };
     return who;
@@ -214,12 +214,9 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
     if (!user) return noSession(c);
     const account = await users.smsAccount(user.id);
     if (!account) return error(c, 400, 'no_phone', 'No phone number is set up.');
-    // With a policy that requires a second factor, the phone can only go while the app stays.
-    const methods = await ctx.methods(c);
-    const required = METHODS_WITH_SECOND_FACTOR.some((method) => isOn(method, ctx.configured, methods) && policyOf(method, methods) === 'required');
-    if (required && !(await users.totpAccount(user.id))) {
-      return error(c, 403, 'required_by_policy', "Signing in requires a second factor, so the phone number can't be removed without an authenticator app.");
-    }
+    // With a policy that requires a second factor, the phone can only go while another one (the app, a passkey) stays.
+    const required = await requiredByPolicy(c, ctx, user.id, 'sms', 'the phone number');
+    if (required) return required;
     // Removing the number takes a code sent to it (see `send`): a stolen session alone can't switch the protection off.
     const wrong = await checkCode(c, user, account, await body(c));
     if (wrong) return wrong;

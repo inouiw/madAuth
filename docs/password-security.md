@@ -107,7 +107,6 @@ All password endpoints are `POST` requests. madAuth only accepts them from an `O
 
 - Checking new passwords against lists of leaked passwords (e.g. Have I Been Pwned).
 - Changing the password while signed in (use "Forgot password?" meanwhile).
-- Adding a password to a user who signs in with Google ("Forgot password?" only resets a password that exists), and connecting a Google account to a password user while signed in: a Google sign-in never joins a user who signs in another way.
 - Moving users with existing password hashes from another system.
 
 A second factor for the password is covered: the [authenticator app](totp-security.md).
