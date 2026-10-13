@@ -61,7 +61,8 @@ function showNotes(): void {
 // policy asks for it, and it signs in nobody alone), and the e-mail link when the server's webhook doesn't
 // send its e-mails or an admin has it off.
 void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new Passkey(), new Totp(), new EmailLink()] }).then(async (result) => {
-  if (result.linked) showOutput(`Back from linking ${result.linked}`, result);
+  // Back from adding Google or GitHub in the dialog's list of methods: below "Manage Sign-In Methods".
+  if (result.linked) showOutput($('#methods-output'), `Back from linking ${result.linked}`, result);
   // GoogleRedirect is left out when Google is off or has no client secret; GET /auth/config tells which.
   if (flow !== 'redirect' || !result.leftOut.includes('google')) return;
   const config = await fetch(new URL('/auth/config', location.href).href)
@@ -92,8 +93,10 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   if (!user) {
     // Nothing of the previous user stays on the page: the parameters, the responses, the settings, the app, the phone.
     resetExplorer();
-    $('#totp-output').hidden = true;
-    output.textContent = '';
+    for (const box of [$('#totp-output'), $('#methods-output')]) {
+      box.hidden = true;
+      box.querySelector('pre')!.textContent = '';
+    }
     $<HTMLInputElement>('#totp-code').value = '';
     showAuthenticator(false, false);
     showPhone(false, false);
@@ -202,12 +205,12 @@ async function refreshMethods(): Promise<void> {
 
 // --- The authenticator and phone calls in the account section: each shows what it resolved to below the buttons ---
 
-const output = $('#output');
 const asText = (result: unknown) => (typeof result === 'string' ? result : JSON.stringify(result, null, 2));
 
-function showOutput(label: string, result: unknown): void {
-  $('#totp-output').hidden = false;
-  output.textContent = `${label}\n${asText(result)}`;
+/** Shows what a call resolved to in a response box: the authenticator app's, or the one below "Manage Sign-In Methods". */
+function showOutput(box: HTMLElement, label: string, result: unknown): void {
+  box.hidden = false;
+  box.querySelector('pre')!.textContent = `${label}\n${asText(result)}`;
 }
 
 const accountCalls: Record<string, () => Promise<unknown>> = {
@@ -239,7 +242,8 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#account butt
     try {
       const result = await accountCalls[button.dataset.call!]();
       // Labelled with the call: the code of a button that has a name of its own too.
-      if (Madauth.currentUser?.id === user) showOutput((button.querySelector('code') ?? button).textContent, result);
+      const box = button.id === 'manage-methods' ? $('#methods-output') : $('#totp-output');
+      if (Madauth.currentUser?.id === user) showOutput(box, (button.querySelector('code') ?? button).textContent, result);
     } finally {
       button.disabled = false;
     }

@@ -93,6 +93,11 @@
           Manage Sign-In Methods
           <code>Madauth.manageSignInMethods()</code>
         </button>
+        <!-- What the dialog resolved to, below its button; a status region, so screen readers announce it. -->
+        <div id="methods-output" class="api-box" hidden>
+          <span class="caption">Response</span>
+          <pre role="status"></pre>
+        </div>
         <!-- The authenticator app: Madauth.setUpAuthenticator() opens the dialog with the QR code; the other calls take a code. -->
         <div class="authenticator">
           <span class="caption">Authenticator app</span>

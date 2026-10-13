@@ -1969,6 +1969,9 @@ export class MadauthLogin extends LitElement {
       --_control-radius: max(0px, calc(var(--_radius) - 6px));
       --_group-radius: max(0px, calc(var(--_radius) - 4px));
       --_control-height: 44px;
+      --_icon-size: 18px;
+      /* Between a passkey's two icons. */
+      --_icon-gap: 4px;
       --_surface: light-dark(#fff, #1b1c1f);
       --_text: light-dark(#17181a, #f1f2f3);
       --_muted: light-dark(#5c6066, #a6a9af);
@@ -2054,8 +2057,8 @@ export class MadauthLogin extends LitElement {
 
     .icon {
       flex-shrink: 0;
-      width: 18px;
-      height: 18px;
+      width: var(--_icon-size);
+      height: var(--_icon-size);
       fill: none;
       stroke: currentColor;
       stroke-width: 1.75;
@@ -2147,12 +2150,12 @@ export class MadauthLogin extends LitElement {
     .icons {
       display: flex;
       flex-shrink: 0;
-      gap: 4px;
+      gap: var(--_icon-gap);
     }
 
-    /* In a list with a passkey's two icons, every other row's icon takes as much room (a second icon and the gap: 18px + 4px), so the labels line up. */
+    /* In a list with a passkey's two icons, every other row's icon takes as much room, so the labels line up. */
     ul:has(.icons) :is(.row, .method) > .icon:not(.chevron) {
-      margin-inline-end: 22px;
+      margin-inline-end: calc(var(--_icon-size) + var(--_icon-gap));
     }
 
     .divider {

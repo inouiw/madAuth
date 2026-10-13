@@ -403,7 +403,10 @@ describe('demo page', () => {
     await expect.poll(() => dialog()?.querySelector('h2')?.textContent).toBe('Sign-in methods');
     await expect.poll(() => dialog()!.querySelector('[data-action="done"]')).not.toBeNull();
     dialog()!.querySelector<HTMLButtonElement>('[data-action="done"]')!.click();
-    await expect.poll(() => $('#output').textContent).toBe('Madauth.manageSignInMethods()\n{\n  "isSuccess": true\n}');
+    // Below the button, not in the authenticator app's box.
+    await expect.poll(() => $('#methods-output pre').textContent).toBe('Madauth.manageSignInMethods()\n{\n  "isSuccess": true\n}');
+    expect($('#methods-output').hidden).toBe(false);
+    expect($('#output').textContent).not.toContain('manageSignInMethods');
     expect($('#methods-status').textContent).toBe('Google');
   });
 

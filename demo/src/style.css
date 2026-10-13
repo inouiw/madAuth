@@ -318,7 +318,13 @@ pre {
   color: light-dark(#5c6066, #a6a9af);
 }
 
-#output {
+#methods-output {
+  width: min(360px, 100%);
+  text-align: left;
+}
+
+#output,
+#methods-output pre {
   width: min(560px, 100%);
   box-sizing: border-box;
   white-space: pre-wrap;
