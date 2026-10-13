@@ -303,7 +303,7 @@ describe('<madauth-login> in German', () => {
     expect(text('.lead')).toBe(
       'Scannen Sie diesen QR-Code mit Ihrer Authentifizierungs-App (z. B. Google Authenticator oder 1Password) und geben Sie dann den Code ein, den sie anzeigt.',
     );
-    expect(text('.hint')).toBe('Die Anmeldung mit E-Mail-Adresse und Passwort fragt dann zusätzlich nach einem Code aus der App.');
+    expect(text('.hint')).toBe('Die Anmeldung mit einem Passwort fragt dann zusätzlich nach einem Code aus der App.');
     expect($('[part="qr"]')!.getAttribute('aria-label')).toBe('QR-Code für Ihre Authentifizierungs-App');
     expect(text('form.totp-setup .submit')).toBe('Einschalten');
     expect(text('[data-action="cancel"]')).toBe('Abbrechen');

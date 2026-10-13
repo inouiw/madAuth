@@ -1143,7 +1143,7 @@ export class MadauthLogin extends LitElement {
     const s = this.strings;
     const setup = this.setup;
     const policy = Madauth.totp.policy;
-    const asks = (policy?.secondFactorFor ?? []).map((method) => s.methods[method].label).join(s.and);
+    const asks = (policy?.secondFactorFor ?? []).map((method) => s.methodNames[method]).join(s.and);
     return html`
       <p class="lead">${this.setupForSignIn ? s.totpSetup.requiredLead : s.totpSetup.lead}</p>
       ${!this.setupForSignIn && asks ? html`<p class="hint">${s.totpSetup.effects.secondFactor(asks)}</p>` : null}
@@ -1339,7 +1339,7 @@ export class MadauthLogin extends LitElement {
   /** Adding a phone number: the number, then (next view) the code sent to it. */
   private renderSmsSetup() {
     const s = this.strings;
-    const asks = (Madauth.totp.policy?.secondFactorFor ?? []).map((method) => s.methods[method].label).join(s.and);
+    const asks = (Madauth.totp.policy?.secondFactorFor ?? []).map((method) => s.methodNames[method]).join(s.and);
     return html`
       <p class="lead">${this.setupForSignIn ? s.smsSetup.requiredLead : s.smsSetup.lead}</p>
       ${!this.setupForSignIn && asks ? html`<p class="hint">${s.smsSetup.effect(asks)}</p>` : null}
@@ -1525,7 +1525,7 @@ export class MadauthLogin extends LitElement {
   /** Creating a passkey: for the signed-in user, or as the setup step of a sign-in. */
   private renderPasskeySetup() {
     const s = this.strings;
-    const asks = (Madauth.totp.policy?.secondFactorFor ?? []).filter((m) => m !== 'passkey').map((method) => s.methods[method].label).join(s.and);
+    const asks = (Madauth.totp.policy?.secondFactorFor ?? []).filter((m) => m !== 'passkey').map((method) => s.methodNames[method]).join(s.and);
     return html`
       <p class="lead">${this.setupForSignIn ? s.passkeySetup.requiredLead : s.passkeySetup.lead}</p>
       ${!this.setupForSignIn && Madauth.passkey.policy?.signIn ? html`<p class="hint">${s.passkeySetup.signsIn}</p>` : null}
