@@ -5,11 +5,12 @@ import type { Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
-import { METHODS_WITH_SECOND_FACTOR, isOn, policyOf } from '../settings.js';
+import { isOn } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import { smsAccountKey, toMadauthUser, type StoredAccount, type StoredUser, type Users } from '../users.js';
 import { WEBHOOK_TIMEOUT_MS, localeOf, type WebhookClient } from '../webhooks.js';
-import { finishSignIn, methodOff, methodStillOn, pendingOrSignedIn, readChallenge, type ChallengeClaims } from './challenge.js';
+import { finishSignIn, methodOff, methodStillOn, pendingFactor, readChallenge, whoSetsUp } from './challenge.js';
+import { removeAccount, removalRefused } from './methods.js';
 import { MAIL_INTERVAL_MS as SMS_INTERVAL_MS } from './emails.js';
 import { body, error, noSession, originHost, smsUnavailable, type Body } from './helpers.js';
 import { countSignInAttempt } from './lockout.js';
@@ -103,16 +104,10 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
    * user. A sign-up with the app alone has no first factor yet: it sets the app up, not a phone, so SMS
    * codes are never the only factor.
    */
-  const whoSetsUp = async (c: Context): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | { answer: Response }> => {
-    const who = await pendingOrSignedIn(c, ctx);
-    if (!who || (who.challenge && !who.challenge.amr.length)) return { answer: noSession(c) };
-    if (who.challenge && !(await methodStillOn(c, ctx, who.challenge))) return { answer: methodOff(c) };
-    return who;
-  };
 
   app.post(`${ROUTE_PATH}/setup`, async (c) => {
-    const who = await whoSetsUp(c);
-    if ('answer' in who) return who.answer;
+    const who = await whoSetsUp(c, ctx, 'sms');
+    if (who instanceof Response) return who;
     const { user } = who;
     const data = await body(c);
     const phone = normalizePhone(data.phone);
@@ -146,8 +141,8 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
   });
 
   app.post(`${ROUTE_PATH}/confirm`, async (c) => {
-    const who = await whoSetsUp(c);
-    if ('answer' in who) return who.answer;
+    const who = await whoSetsUp(c, ctx, 'sms');
+    if (who instanceof Response) return who;
     const { user, challenge } = who;
     const setup = await readToken<SetupClaims>(await ctx.keys, config.issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
     if (!setup || setup.sub !== user.id || typeof setup.phone !== 'string') {
@@ -196,13 +191,12 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
   });
 
   app.post(`${ROUTE_PATH}/verify`, async (c) => {
-    const challenge = await readChallenge(c, ctx, 'sms');
-    if (!challenge) return expired(c);
-    if (!(await methodStillOn(c, ctx, challenge))) return methodOff(c);
-    const user = await users.findById(challenge.sub);
-    // The user is gone, a password reset ended their sessions meanwhile, or the number was removed.
-    const account = user && user.sessionVersion === challenge.sv ? await users.smsAccount(user.id) : null;
-    if (!user || !account) return expired(c);
+    const pending = await pendingFactor(c, ctx, 'sms');
+    if (pending instanceof Response) return pending;
+    const { challenge, user } = pending;
+    // The number was removed meanwhile.
+    const account = await users.smsAccount(user.id);
+    if (!account) return expired(c);
     const wrong = await checkCode(c, user, account, await body(c));
     if (wrong) return wrong;
     return c.json({ user: await finishSignIn(c, ctx, user, challenge, 'sms', 'sms') });
@@ -212,18 +206,17 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
     const session = await ctx.currentUser(c);
     const user = session ? await users.findById(session.id) : null;
     if (!user) return noSession(c);
-    const account = await users.smsAccount(user.id);
+    const accounts = await users.accounts(user.id);
+    const account = accounts.find((a) => a.key === smsAccountKey(user.id));
     if (!account) return error(c, 400, 'no_phone', 'No phone number is set up.');
-    // With a policy that requires a second factor, the phone can only go while the app stays.
-    const methods = await ctx.methods(c);
-    const required = METHODS_WITH_SECOND_FACTOR.some((method) => isOn(method, ctx.configured, methods) && policyOf(method, methods) === 'required');
-    if (required && !(await users.totpAccount(user.id))) {
-      return error(c, 403, 'required_by_policy', "Signing in requires a second factor, so the phone number can't be removed without an authenticator app.");
-    }
+    // With a policy that requires a second factor, the phone can only go while another one (the app, a passkey) stays.
+    const refused = await removalRefused(c, ctx, accounts, account, 'the phone number');
+    if (refused) return refused;
     // Removing the number takes a code sent to it (see `send`): a stolen session alone can't switch the protection off.
     const wrong = await checkCode(c, user, account, await body(c));
     if (wrong) return wrong;
-    await users.removeSms(user.id);
+    const removed = await removeAccount(c, ctx, accounts, account);
+    if (removed instanceof Response) return removed;
     await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'sms' });
     return c.json({});
   });

@@ -93,12 +93,12 @@ Other dev servers have a similar setting. In production, your reverse proxy or C
 
 ## 6. Sign users in
 
-Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `GitHub`, `EmailLink` for the e-mail link, and `Totp` for signing in with the authenticator app on its own (once an admin lists it with `set-methods`). The app as a second factor needs no provider, and neither do SMS codes: once an admin sets the policy, the dialog asks for the code by itself, and a user sets the app up from your app with `Madauth.setUpAuthenticator()`, or adds a phone with `Madauth.setUpSms()`.
+Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `GitHub`, `EmailLink` for the e-mail link, `Passkey` for signing in with a passkey, and `Totp` for signing in with the authenticator app on its own (once an admin lists them with `set-methods`). Second factors need no provider: once an admin sets the policy, the dialog asks for a passkey, a code from the app or a code by SMS by itself, and a user adds one from your app with `Madauth.setUpPasskey()`, `Madauth.setUpAuthenticator()` or `Madauth.setUpSms()`, or all of their sign-in methods with `Madauth.manageSignInMethods()`.
 
 ```ts
-import { Madauth, Password, Totp, EmailLink } from '@madauth/web';
+import { Madauth, Password, Passkey, Totp, EmailLink } from '@madauth/web';
 
-Madauth.initialize({ providers: [new Password(), new Totp(), new EmailLink()] });
+Madauth.initialize({ providers: [new Password(), new Passkey(), new Totp(), new EmailLink()] });
 Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
 signInButton.onclick = () => Madauth.signIn();
 ```
@@ -121,10 +121,10 @@ To make a user an admin, who can then manage [claims](server.md#claims) and [sig
 npx @madauth/server set-roles admin@example.com admin --env-file .env
 ```
 
-To ask every password user for the authenticator app, from the command line (or as an admin from your app), with the e-mail link on as well:
+To ask every password user for a second factor (a passkey or the authenticator app), from the command line (or as an admin from your app), with the e-mail link on and passkeys signing in on their own as well:
 
 ```bash
-npx @madauth/server set-methods google password=required email-link --env-file .env
+npx @madauth/server set-methods google password=required email-link passkey totp=second-factor --env-file .env
 ```
 
 ## Next

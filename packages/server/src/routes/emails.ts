@@ -4,6 +4,7 @@
 import type { Context } from 'hono';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
+import { signInPredicate } from '../settings.js';
 import type { CodeResult, StoredUser, Users, VerificationPurpose } from '../users.js';
 import { WEBHOOK_TIMEOUT_MS, type WebhookClient, type WebhookType } from '../webhooks.js';
 import { error, type Body } from './helpers.js';
@@ -21,7 +22,7 @@ export const RESET_LINK_PARAM = 'madauth_reset';
 export const SIGNIN_LINK_PARAM = 'madauth_signin';
 
 /** The purposes that send a link (and a code) by e-mail; SMS codes are sent by routes/sms.ts. */
-export type LinkPurpose = Exclude<VerificationPurpose, 'sms'>;
+export type LinkPurpose = Exclude<VerificationPurpose, 'sms' | 'passkey'>;
 
 /** How long each kind of link lives, how it reaches the app, and which e-mail carries it. */
 const LINKS: Record<LinkPurpose, { ttl: number; param: string; type: WebhookType }> = {
@@ -81,7 +82,7 @@ export function createEmails(ctx: AppContext, users: Users, webhook: WebhookClie
 
     async sendAccountEmail(user, type, target, locale) {
       if (!webhook.wants(type)) return true;
-      const methods = await users.signInMethods(user.id, await ctx.settings.methods());
+      const methods = await users.signInMethods(user.id, signInPredicate(ctx.configured, await ctx.settings.methods()));
       return sendEmail(user, type, { link: target.href, site: target.host, locale, methods });
     },
 

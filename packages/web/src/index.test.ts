@@ -13,7 +13,7 @@ afterEach(resetAll);
 describe('@madauth/web', () => {
   it('W7: exports exactly the public API', () => {
     expect(Object.keys(madauth).sort()).toEqual(
-      ['EmailLink', 'GitHub', 'GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'Password', 'Totp', 'loginMethods'].sort(),
+      ['EmailLink', 'GitHub', 'GoogleFedcm', 'GoogleRedirect', 'Madauth', 'MadauthLogin', 'Passkey', 'Password', 'Totp', 'loginMethods'].sort(),
     );
     expect(Object.keys(madauth.Madauth).sort()).toEqual(
       [
@@ -25,11 +25,15 @@ describe('@madauth/web', () => {
         'github',
         'google',
         'initialize',
+        'manageSignInMethods',
+        'methods',
         'onAuthStateChanged',
+        'passkey',
         'password',
         'sessionReady',
         'setLocale',
         'setUpAuthenticator',
+        'setUpPasskey',
         'setUpSms',
         'signIn',
         'signOut',
@@ -42,14 +46,18 @@ describe('@madauth/web', () => {
 
   it('H12: scopes each sign-in method’s actions', () => {
     expect(Object.keys(madauth.Madauth.password).sort()).toEqual(
-      ['confirmReset', 'loadRating', 'pendingReset', 'policy', 'sendResetEmail', 'sendVerificationEmail', 'signIn', 'signUp', 'verifyEmail'].sort(),
+      ['add', 'confirmReset', 'loadRating', 'pendingReset', 'policy', 'sendResetEmail', 'sendVerificationEmail', 'signIn', 'signUp', 'verifyEmail'].sort(),
     );
     expect(Object.keys(madauth.Madauth.google)).toEqual(['renderButton']);
     expect(Object.keys(madauth.Madauth.github)).toEqual(['renderButton']);
     expect(Object.keys(madauth.Madauth.totp).sort()).toEqual(
       ['confirmSetup', 'newRecoveryCodes', 'pendingStep', 'policy', 'remove', 'sendVerificationEmail', 'signIn', 'signUp', 'startSetup', 'status', 'verify', 'verifyEmail'].sort(),
     );
-    expect(Object.keys(madauth.Madauth.emailLink).sort()).toEqual(['policy', 'send', 'verify']);
+    expect(Object.keys(madauth.Madauth.emailLink).sort()).toEqual(['add', 'policy', 'send', 'verify']);
+    expect(Object.keys(madauth.Madauth.passkey).sort()).toEqual(['add', 'available', 'conditionalAvailable', 'pendingStep', 'policy', 'rename', 'signIn', 'signInAvailable', 'verify']);
+    expect(Object.keys(madauth.Madauth.methods).sort()).toEqual(['list', 'remove']);
+    expectTypeOf(madauth.Madauth.passkey).toEqualTypeOf<madauth.PasskeyApi>();
+    expectTypeOf(madauth.Madauth.methods).toEqualTypeOf<madauth.MethodsApi>();
     expect(Object.keys(madauth.Madauth.sms).sort()).toEqual(['available', 'confirmSetup', 'pendingStep', 'remove', 'send', 'setUp', 'status', 'verify']);
     expectTypeOf(madauth.Madauth.password).toEqualTypeOf<madauth.PasswordApi>();
     expectTypeOf(madauth.Madauth.emailLink).toEqualTypeOf<madauth.EmailLinkApi>();

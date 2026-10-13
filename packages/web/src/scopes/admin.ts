@@ -5,14 +5,27 @@ import type { Core } from './core.js';
 /** What admins attach to a user, e.g. `{ roles: ['admin'], plan: 'pro' }`. See "Claims" in docs/server.md. */
 export type Claims = Record<string, unknown>;
 
-/** A sign-in method of the server, as the settings describe it. */
+/** A method of the server, as the settings describe it. */
 export interface MethodSetting {
   /** Whether the server has what the method needs (e.g. a Google client). Only a configured method can be on. */
   configured: boolean;
-  /** Whether users can sign in with it right now. */
+  /** Whether it is on: listed in the settings, and configured. */
   enabled: boolean;
-  /** Google, GitHub, password and the e-mail link: whether they ask for the authenticator app as a second factor. */
-  secondFactor?: SecondFactorPolicy;
+  /** Whether it signs users in on its own; false for one that is off, or only a second factor. */
+  allowAsSignInMethod: boolean;
+  /** Whether a sign-in with it asks for a second factor; `none` for one that is off or does not sign in. */
+  secondFactor: SecondFactorPolicy;
+}
+
+/** How an admin switches a method on: both settings, always. */
+export interface MethodToSet {
+  /**
+   * Whether it signs users in on its own. Google, GitHub, password and the e-mail link always do (`true`),
+   * SMS codes never (`false`); the authenticator app and passkeys either do, or are only a second factor.
+   */
+  allowAsSignInMethod: boolean;
+  /** Whether a sign-in with it asks for a second factor; `none` for a method that does not sign in. */
+  secondFactor: SecondFactorPolicy;
 }
 
 /**
@@ -24,23 +37,20 @@ export interface PasswordRules {
   minScore: number;
 }
 
+/** The ids of the methods in the settings. */
+export type MethodId = 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'passkey' | 'sms';
+
 export interface Settings {
-  methods: { google: MethodSetting; github: MethodSetting; password: MethodSetting; totp: MethodSetting; 'email-link': MethodSetting; sms: MethodSetting };
+  methods: Record<MethodId, MethodSetting>;
   password: PasswordRules;
 }
 
-/** The list of methods to switch on: `true` or `{}` for on, with a policy for Google, GitHub, password and the e-mail link. A method left out is off. */
-export interface MethodsToSet {
-  google?: boolean | { secondFactor?: SecondFactorPolicy };
-  github?: boolean | { secondFactor?: SecondFactorPolicy };
-  password?: boolean | { secondFactor?: SecondFactorPolicy };
-  /** The authenticator app on its own: the e-mail address and a code sign in. */
-  totp?: boolean | Record<string, never>;
-  /** The passwordless e-mail link. */
-  'email-link'?: boolean | { secondFactor?: SecondFactorPolicy };
-  /** SMS codes as a second factor (next to the authenticator app), for the methods whose policy asks for one. */
-  sms?: boolean | Record<string, never>;
-}
+/**
+ * The list of methods to switch on, each with both of its settings. A method left out is off. A second
+ * factor a policy asks for must be on too (`totp`, `passkey` or `sms`), e.g.
+ * `{ password: { allowAsSignInMethod: true, secondFactor: 'optional' }, totp: { allowAsSignInMethod: false, secondFactor: 'none' } }`.
+ */
+export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 
 /**
  * Managing claims and settings, for users with the role `admin` (`claims.roles`). The first admin is made
@@ -74,6 +84,8 @@ export interface AdminApi {
    * `invalid_email` or `user_not_found`.
    */
   removeAuthenticator(email: string): Promise<Result<{ userId: string }>>;
+  /** Removes all passkeys of a user who lost them. Fails with `forbidden`, `invalid_email` or `user_not_found`. */
+  removePasskeys(email: string): Promise<Result<{ userId: string }>>;
 }
 
 export function createAdminApi(core: Core): AdminApi {
@@ -92,5 +104,6 @@ export function createAdminApi(core: Core): AdminApi {
     getSettings: () => call('settings/get', {}, settings),
     setSettings: (value) => call('settings/set', { methods: value.methods, password: value.password }, settings),
     removeAuthenticator: (email) => call('totp/remove', { email }, (data: { userId: string }) => ({ userId: data.userId })),
+    removePasskeys: (email) => call('passkey/remove', { email }, (data: { userId: string }) => ({ userId: data.userId })),
   };
 }

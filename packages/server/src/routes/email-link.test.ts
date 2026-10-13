@@ -1,7 +1,6 @@
 // Behaviour described in docs/email-link-security.md; update the doc when changing it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Settings, type MethodSettings } from '../settings.js';
-import { REDIRECT_TO, WEBHOOK_SECRET, WEBHOOK_URL, cookies, getNonce, googleIdToken, linkAndCode, passwordApp, post, signUpVerified, verify } from '../test/helpers.js';
+import { REDIRECT_TO, WEBHOOK_SECRET, WEBHOOK_URL, cookies, getNonce, googleIdToken, linkAndCode, passwordApp, post, signUpVerified, verify, setMethods } from '../test/helpers.js';
 import { base32Decode, stepOf, totp } from '../totp.js';
 
 type Made = ReturnType<typeof passwordApp>;
@@ -17,7 +16,6 @@ const startClock = () => vi.useFakeTimers({ toFake: ['Date'], now: START });
 const advance = (ms: number) => vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + ms });
 
 /** Which methods are on, written as an admin would. */
-const setMethods = (store: Made['store'], methods: MethodSettings) => new Settings(store).set('methods', methods, null);
 
 const send = (app: Made['app'], email = LINDA, more: Record<string, unknown> = {}) =>
   post(app, '/auth/email-link/send', { email, redirectTo: REDIRECT_TO, locale: 'de', ...more });

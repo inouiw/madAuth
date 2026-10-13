@@ -6,7 +6,7 @@ import { isValidEmail, normalizeEmail } from '../password.js';
 import { emailLinkAccountKey, toMadauthUser, type StoredUser, type Users } from '../users.js';
 import { localeOf, type WebhookClient } from '../webhooks.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
-import { accepted, body, error, redirectTarget, signInAnswer, unavailable } from './helpers.js';
+import { accepted, body, error, recentUser, redirectTarget, signInAnswer, unavailable } from './helpers.js';
 
 export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhook: WebhookClient): void {
   const emails = createEmails(ctx, users, webhook);
@@ -62,6 +62,17 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
     // Created by another request meanwhile: the same answer, and the next request finds the user.
     if (!user) return accepted(c);
     return send(user);
+  });
+
+  // A signed-in user adds the e-mail link: from then on a link to their address signs them in too.
+  app.post('/auth/email-link/add', async (c) => {
+    const user = await recentUser(c, ctx);
+    if (user instanceof Response) return user;
+    if (!(await users.linkAccount(user.id, { key: emailLinkAccountKey(user.id), primary: false }))) {
+      return error(c, 409, 'already_added', 'You sign in with an e-mail link already.');
+    }
+    await ctx.emit('user.method_added', { user: toMadauthUser(user), method: 'email-link' });
+    return c.json({});
   });
 
   app.post('/auth/email-link/verify', async (c) => {

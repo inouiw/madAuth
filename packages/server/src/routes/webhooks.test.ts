@@ -15,8 +15,8 @@ import {
   post,
   signUpVerified,
   verify,
+  setMethods,
 } from '../test/helpers.js';
-import { Settings } from '../settings.js';
 import { generateWebhookSecret } from '../webhooks.js';
 
 afterEach(() => {
@@ -272,8 +272,6 @@ describe('events', () => {
 });
 
 describe('user.signed_up', () => {
-  const setMethods = (store: ReturnType<typeof passwordApp>['store'], methods: ConstructorParameters<typeof Settings>[1]) =>
-    new Settings(store).set('methods', methods, null);
 
   it('is sent once, at the first session, also when two sign-ins come at once', async () => {
     vi.useFakeTimers({ toFake: ['Date'], now: 1_700_000_000_000 });

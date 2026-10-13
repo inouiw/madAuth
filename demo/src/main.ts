@@ -4,6 +4,7 @@ import {
   GoogleFedcm,
   GoogleRedirect,
   Madauth,
+  Passkey,
   Password,
   Totp,
   type DeleteAccountOptions,
@@ -59,7 +60,8 @@ function showNotes(): void {
 // when the server has no OAuth App for it or an admin has it off, the authenticator app when the server has it switched off (no
 // policy asks for it, and it signs in nobody alone), and the e-mail link when the server's webhook doesn't
 // send its e-mails or an admin has it off.
-void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new Totp(), new EmailLink()] }).then(async (result) => {
+void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new Passkey(), new Totp(), new EmailLink()] }).then(async (result) => {
+  if (result.linked) showOutput(`Back from linking ${result.linked}`, result);
   // GoogleRedirect is left out when Google is off or has no client secret; GET /auth/config tells which.
   if (flow !== 'redirect' || !result.leftOut.includes('google')) return;
   const config = await fetch(new URL('/auth/config', location.href).href)
@@ -107,6 +109,7 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   $('#admin-note').hidden = isAdmin(user);
   void refreshAuthenticator();
   void refreshPhone();
+  void refreshMethods();
   // An admin sees the server's settings in the controls before they can send them back.
   if (isAdmin(user) && settingsLoadedFor !== user.id) {
     settingsLoadedFor = user.id;
@@ -182,6 +185,21 @@ function showPhone(on: boolean, offered: boolean): void {
   $('[data-call="removeSms"]').hidden = !on;
 }
 
+// --- The user's sign-in methods ---
+
+const methodNames: Record<string, string> = { google: 'Google', github: 'GitHub', password: 'password', totp: 'authenticator app', 'email-link': 'e-mail link', passkey: 'passkey' };
+
+/** Shows how the signed-in user signs in, and whether passkeys can be added. */
+async function refreshMethods(): Promise<void> {
+  const user = Madauth.currentUser;
+  const list = await Madauth.methods.list();
+  if (Madauth.currentUser?.id !== user?.id) return;
+  $('#methods-status').textContent = !list.isSuccess
+    ? list.error.message
+    : list.methods.map((m) => (m.method === 'passkey' ? `passkey "${m.name}"` : methodNames[m.method]) + (m.signIn ? '' : ' (second factor only)')).join(', ') || 'None.';
+  $('[data-call="setUpPasskey"]').hidden = !Madauth.passkey.available;
+}
+
 // --- The authenticator and phone calls in the account section: each shows what it resolved to below the buttons ---
 
 const output = $('#output');
@@ -193,6 +211,10 @@ function showOutput(label: string, result: unknown): void {
 }
 
 const accountCalls: Record<string, () => Promise<unknown>> = {
+  // The dialog lists the user's methods, adds and removes them; it may ask the user to sign in again first.
+  manageSignInMethods: () => Madauth.manageSignInMethods().then(async (result) => (await Promise.all([refreshMethods(), refreshAuthenticator()]), result)),
+  // The dialog asks for a name, then the browser creates the passkey.
+  setUpPasskey: () => Madauth.setUpPasskey().then(async (result) => (await refreshMethods(), result)),
   // The dialog shows the QR code, asks for the first code and shows the recovery codes.
   setUpAuthenticator: () => Madauth.setUpAuthenticator().then(async (result) => (await refreshAuthenticator(), result)),
   newRecoveryCodes: () => Madauth.totp.newRecoveryCodes(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
@@ -245,9 +267,16 @@ function api<A extends Args>(build: (values: Values) => A | string, call: (args:
   return { build, call: (args) => call(args as A) };
 }
 
-type MethodId = 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'sms';
-type WithPolicy = 'google' | 'github' | 'password' | 'email-link';
+type MethodId = 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'passkey' | 'sms';
+const ALL_METHODS = ['google', 'github', 'password', 'email-link', 'passkey', 'totp', 'sms'] as const;
+/** The methods whose policy for a second factor can be set: those that sign in. */
+const WITH_POLICY = ['google', 'github', 'password', 'email-link', 'passkey'] as const;
+/** The methods that sign in on their own or are only a second factor, as the admin chooses. */
+const EITHER = ['passkey', 'totp'] as const;
+type WithPolicy = (typeof WITH_POLICY)[number];
+type Either = (typeof EITHER)[number];
 const methodBox = (method: MethodId) => $<HTMLInputElement>(`#method-${method}`);
+const signInBox = (method: Either) => $<HTMLInputElement>(`#signin-${method}`);
 const policySelect = (method: WithPolicy) => $<HTMLSelectElement>(`#policy-${method}`);
 /** The user whose sign-in loaded the settings, so a claims change (which also notifies) doesn't load them again. */
 let settingsLoadedFor: string | undefined;
@@ -262,11 +291,15 @@ let settingsLoaded = false;
 function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSettings>> | null>(result: T): T {
   const methods: Settings['methods'] | undefined = result?.isSuccess ? result.methods : undefined;
   // A method the server doesn't list (an older server) counts as not configured.
-  for (const method of ['google', 'github', 'password', 'totp', 'email-link', 'sms'] as const) {
+  for (const method of ALL_METHODS) {
     methodBox(method).checked = methods?.[method]?.enabled ?? false;
     methodBox(method).disabled = !methods?.[method]?.configured;
   }
-  for (const method of ['google', 'github', 'password', 'email-link'] as const) {
+  for (const method of EITHER) {
+    signInBox(method).checked = methods?.[method]?.allowAsSignInMethod ?? false;
+    signInBox(method).disabled = !methods?.[method]?.configured;
+  }
+  for (const method of WITH_POLICY) {
     policySelect(method).value = methods?.[method]?.secondFactor ?? 'none';
     policySelect(method).disabled = !methods?.[method]?.configured;
   }
@@ -279,17 +312,16 @@ function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSetti
   return result;
 }
 
-/** The list to send: what is checked is on, with the policy next to it; the rest is off. */
+/** The list to send: what is checked is on, with both of its settings; the rest is off. */
 function methodsToSet(): MethodsToSet {
-  const policy = (method: WithPolicy) => ({ secondFactor: policySelect(method).value as 'none' | 'optional' | 'required' });
-  return {
-    google: methodBox('google').checked ? policy('google') : false,
-    github: methodBox('github').checked ? policy('github') : false,
-    password: methodBox('password').checked ? policy('password') : false,
-    totp: methodBox('totp').checked,
-    'email-link': methodBox('email-link').checked ? policy('email-link') : false,
-    sms: methodBox('sms').checked,
-  };
+  const set: MethodsToSet = {};
+  for (const method of ALL_METHODS) {
+    if (!methodBox(method).checked) continue;
+    const signIn = method === 'sms' ? false : (EITHER as readonly string[]).includes(method) ? signInBox(method as Either).checked : true;
+    const policy = signIn && (WITH_POLICY as readonly string[]).includes(method) ? (policySelect(method as WithPolicy).value as 'none' | 'optional' | 'required') : 'none';
+    set[method] = { allowAsSignInMethod: signIn, secondFactor: policy };
+  }
+  return set;
 }
 
 /** The claims typed as JSON, or the reason they can't be sent. */

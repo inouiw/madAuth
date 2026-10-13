@@ -2,7 +2,7 @@ import type { PendingStep } from '../providers/provider.js';
 import { Totp } from '../providers/totp.js';
 import { qrSvg } from '../qr.js';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
-import type { Core } from './core.js';
+import { serverCalls, type Core } from './core.js';
 import { currentPage, emailConfirmation, signedIn, type SendEmailOptions } from './email.js';
 
 /** A code from the authenticator app, or one of the recovery codes. */
@@ -37,8 +37,8 @@ export interface TotpPolicy {
   signIn: boolean;
   /** People can sign up with the app alone. */
   signUp: boolean;
-  /** The methods that ask for a code from the app once it is set up (`optional`) or always (`required`). */
-  secondFactorFor: ('google' | 'github' | 'password' | 'email-link')[];
+  /** The methods that ask for a second factor once one is set up (`optional`) or always (`required`). */
+  secondFactorFor: ('google' | 'github' | 'password' | 'email-link' | 'passkey')[];
 }
 
 /**
@@ -116,22 +116,7 @@ export function createTotpApi(core: Core): TotpApi {
   /** The app as a method of its own is what the provider adds; the second step and the account calls need none. */
   const registered = () => core.provider('totp') instanceof Totp;
 
-  /**
-   * Waits for initialize, checks that the server has the app switched on, then calls it. With `session`,
-   * a 401 means that nobody is signed in.
-   */
-  async function call<T extends object>(
-    path: string,
-    init: { method?: 'GET' | 'POST'; body?: Record<string, unknown>; session?: boolean } = {},
-  ): Promise<Result<T>> {
-    const ready = await core.whenReady();
-    if (!ready.isSuccess) return ready;
-    if (!core.config()?.totp) return switchedOff();
-    const res = await core.request<T>(path, { method: init.method ?? 'POST', body: init.body });
-    if (res.ok) return ok(res.data);
-    if (init.session && res.status === 401 && res.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
-    return { isSuccess: false, error: res.error };
-  }
+  const call = serverCalls(core, { isOn: (config) => !!config?.totp, switchedOff });
 
   const post = <T extends object>(path: string, body: Record<string, unknown>) => call<T>(path, { body });
   const confirmation = emailConfirmation(core, 'totp', post);
@@ -192,11 +177,12 @@ export function createTotpApi(core: Core): TotpApi {
     get policy() {
       const config = core.config();
       if (!config?.totp) return null;
-      const secondFactorFor: ('google' | 'github' | 'password' | 'email-link')[] = [];
+      const secondFactorFor: TotpPolicy['secondFactorFor'] = [];
       if (config.google && config.google.secondFactor !== 'none') secondFactorFor.push('google');
       if (config.github && config.github.secondFactor !== 'none') secondFactorFor.push('github');
       if (config.password && config.password.secondFactor !== 'none') secondFactorFor.push('password');
       if (config.emailLink && config.emailLink.secondFactor !== 'none') secondFactorFor.push('email-link');
+      if (config.passkey?.signIn && config.passkey.secondFactor !== 'none') secondFactorFor.push('passkey');
       return { signIn: config.totp.signIn, signUp: config.totp.signUp, secondFactorFor };
     },
   };

@@ -5,7 +5,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
-import { METHODS_WITH_SECOND_FACTOR, authenticatorOn, isOn, policyOf, type MethodWithSecondFactor } from '../settings.js';
+import { isOn } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import {
   TOTP_WINDOW,
@@ -21,9 +21,10 @@ import {
 } from '../totp.js';
 import { newId, toMadauthUser, totpAccountKey, type StoredAccount, type StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
-import { finishSignIn, methodOff, methodStillOn, pendingOrSignedIn, readChallenge } from './challenge.js';
+import { finishSignIn, pendingFactor, whoSetsUp } from './challenge.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
 import { accepted, body, error, nameOf, noSession, originHost, redirectTarget, unavailable, type Body } from './helpers.js';
+import { removeAccount, removalRefused } from './methods.js';
 import { countSignInAttempt } from './lockout.js';
 
 export { CHALLENGE_COOKIE, CHALLENGE_TTL, CHALLENGE_TYP, clearChallenge, setChallenge, type Challenge, type NextStep } from './challenge.js';
@@ -109,14 +110,14 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
 
   // Every route: an admin switched the authenticator app off, on its own and as a second factor.
   app.use(`${COOKIE_PATH}/*`, async (c, next) => {
-    if (!authenticatorOn(ctx.configured, await methodsNow(c))) {
+    if (!isOn('totp', ctx.configured, await methodsNow(c))) {
       return error(c, 403, 'method_disabled', 'The authenticator app is switched off.');
     }
     await next();
   });
 
   /** Whether the app signs in on its own (the e-mail address and a code), as opposed to a second step only. */
-  const standalone = async (c: Context) => isOn('totp', ctx.configured, await methodsNow(c));
+  const standalone = (c: Context) => ctx.enabled(c, 'totp');
   const notStandalone = (c: Context) => error(c, 403, 'method_disabled', 'Signing in with the authenticator app alone is switched off.');
 
   /** The stored user of the request's session, or null. */
@@ -125,8 +126,6 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     return user ? users.findById(user.id) : null;
   };
 
-  /** Who sets the app up: the user whose sign-in waits for the setup, else the signed-in user (see challenge.ts). */
-  const whoSetsUp = (c: Context) => pendingOrSignedIn(c, ctx);
 
   /** New recovery codes, with what is stored for them. */
   const newRecoveryCodes = () => {
@@ -138,9 +137,10 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   const issuerLabel = (c: Context): string => config.totpIssuer || originHost(ctx, c);
 
   app.post(`${COOKIE_PATH}/setup`, async (c) => {
-    const who = await whoSetsUp(c);
-    if (!who) return noSession(c);
-    if (who.challenge && !(await methodStillOn(c, ctx, who.challenge))) return methodOff(c);
+    // Allowed as a sign-in method, a first app is a way in of its own: like adding a passkey, only within ten
+    // minutes of signing in, so a session someone took over gives them no lasting way in.
+    const who = await whoSetsUp(c, ctx, 'totp', async (user) => (await standalone(c)) && !(await users.totpAccount(user.id)));
+    if (who instanceof Response) return who;
     // Replacing an app takes a current code from it (or a recovery code), like removing it: a stolen
     // session alone must not swap the app and the recovery codes for the thief's. The approval holds for
     // SETUP_TTL in the setup cookie, so starting again (or a closed dialog) costs no second code.
@@ -176,11 +176,10 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   });
 
   app.post(`${COOKIE_PATH}/confirm`, async (c) => {
-    const who = await whoSetsUp(c);
-    if (!who) return noSession(c);
+    const who = await whoSetsUp(c, ctx, 'totp');
+    if (who instanceof Response) return who;
     const { challenge } = who;
     let { user } = who;
-    if (challenge && !(await methodStillOn(c, ctx, challenge))) return methodOff(c);
     const data = await body(c);
     const setup = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
     const secret =
@@ -194,8 +193,8 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     // setup's id, and the secret only if the account still has the setup it had when this one started.
     // Of two setups confirmed at once, exactly one wins; the other drops its codes and starts again. A new
     // app starts without failed attempts, and the code just used can't sign in.
-    // A sign-up with the app sets up how the user signs in; every other setup is a second factor of the method
-    // they have. A user has one way to sign in: if they got another meanwhile, the sign-up's app is refused.
+    // A sign-up with the app sets up the account the user signs up with; every other setup adds the app to a
+    // user who has a method already. If a sign-up got another method meanwhile, the sign-up's app is refused.
     const signUp = challenge?.method === 'totp';
     // The challenge of a sign-up with the app comes from a used confirmation link. A password sign-up for the
     // address meanwhile took the confirmation back until its own e-mail is used; nobody has, so the app wins
@@ -222,8 +221,8 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     }
     await users.clearRecoveryCodes(user.id, { except: setup.setup });
     deleteCookie(c, SETUP_COOKIE, cookie);
-    // A new or replaced second factor is told; the app a user signs in with is part of their sign-up (`user.signed_up`).
-    const secondFactor = replaced ? !replaced.signsIn : !signUp;
+    // A new or replaced app is told; the app a user signed up with is part of their sign-up (`user.signed_up`).
+    const secondFactor = replaced ? !replaced.signedUpWith : !signUp;
     if (secondFactor) await ctx.emit('user.second_factor_enabled', { user: toMadauthUser(user), method: 'totp' });
     if (!challenge) return c.json({ recoveryCodes });
     const result = await finishSignIn(c, ctx, user, challenge, 'otp', 'totp');
@@ -231,14 +230,12 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   });
 
   app.post(`${COOKIE_PATH}/verify`, async (c) => {
-    const expired = () => error(c, 401, 'challenge_expired', 'The sign-in has expired. Please sign in again.');
-    const challenge = await readChallenge(c, ctx, 'totp');
-    if (!challenge) return expired();
-    if (!(await methodStillOn(c, ctx, challenge))) return methodOff(c);
-    const user = await users.findById(challenge.sub);
-    // The user is gone, a password reset ended their sessions meanwhile, or the app was removed.
-    const account = user && user.sessionVersion === challenge.sv ? await users.totpAccount(user.id) : null;
-    if (!user || !account) return expired();
+    const pending = await pendingFactor(c, ctx, 'totp');
+    if (pending instanceof Response) return pending;
+    const { challenge, user } = pending;
+    // The app was removed meanwhile.
+    const account = await users.totpAccount(user.id);
+    if (!account) return error(c, 401, 'challenge_expired', 'The sign-in has expired. Please sign in again.');
     const via = await checkCode(c, ctx, keys, user, account, await body(c));
     if (via instanceof Response) return via;
     return c.json({ user: await finishSignIn(c, ctx, user, challenge, 'otp', via) });
@@ -250,12 +247,10 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const wrong = () => error(c, 401, 'invalid_credentials', 'E-mail or code is wrong.');
     if (!isValidEmail(data.email)) return wrong();
     const user = await users.findByEmail(normalizeEmail(data.email));
-    const app = user ? await users.totpApp(user.id) : null;
-    const account = app?.account;
-    // An unknown address, one without an app, one nobody confirmed, or a wrong code: all the same answer. The
-    // app signs in on its own only for a user who signed up with it; as a second factor it is a step of their
-    // method, and never a way past it.
-    if (!user || !user.emailVerified || !app?.signsIn || !account?.secret) return wrong();
+    const account = user ? await users.totpAccount(user.id) : null;
+    // An unknown address, one without an app, one nobody confirmed, or a wrong code: all the same answer. With
+    // the app allowed as a sign-in method, every user who has one signs in with it alone: the admin's decision.
+    if (!user || !user.emailVerified || !account?.secret) return wrong();
     const via = await checkCode(c, ctx, keys, user, account, data, wrong);
     if (via instanceof Response) return via;
     const result = await ctx.startSession(c, toMadauthUser(user), ['otp'], { method: 'totp', signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
@@ -266,27 +261,19 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   app.post(`${COOKIE_PATH}/remove`, async (c) => {
     const user = await signedIn(c);
     if (!user) return noSession(c);
-    const methods = await methodsNow(c);
-    const required = METHODS_WITH_SECOND_FACTOR.filter((method) => isOn(method, ctx.configured, methods) && policyOf(method, methods) === 'required');
-    // A phone for SMS codes satisfies the policy as well: with one, the app may go.
-    const smsOn = isOn('sms', ctx.configured, methods);
-    if (required.length && !(smsOn && (await users.smsAccount(user.id)))) {
-      // A method without a name here does not compile.
-      const names = required.map((method) => ({ google: 'Google', github: 'GitHub', password: 'e-mail & password', 'email-link': 'the e-mail link' } satisfies Record<MethodWithSecondFactor, string>)[method]);
-      const alternative = smsOn ? ' Add a phone number for SMS codes first, or' : ' To stop using it,';
-      return error(c, 403, 'required_by_policy', `Signing in with ${names.join(' and ')} requires a second factor, so the authenticator app can't be removed.${alternative} delete your account.`);
-    }
-    const app = await users.totpApp(user.id);
-    if (!app) return c.json({});
-    const { account } = app;
-    // A user who signed up with the app has no other way in: without it, nobody could sign in as them.
-    if (app.signsIn) {
-      return error(c, 403, 'only_method', 'The authenticator app is the only way you sign in, so it can\'t be removed. Delete your account instead.');
-    }
+    const accounts = await users.accounts(user.id);
+    const account = accounts.find((a) => a.key === totpAccountKey(user.id));
+    if (!account) return c.json({});
+    // Another second factor (a passkey, a phone) satisfies a policy as well; and the app is not the user's last way in.
+    const refused = await removalRefused(c, ctx, accounts, account, 'the authenticator app');
+    if (refused) return refused;
     // Removing the app takes a current code: a stolen session alone can't switch the protection off.
     const via = await checkCode(c, ctx, keys, user, account, await body(c));
     if (via instanceof Response) return via;
-    await users.removeTotp(user.id);
+    const removed = await removeAccount(c, ctx, accounts, account);
+    if (removed instanceof Response) return removed;
+    if (!removed) return c.json({});
+    await users.clearRecoveryCodes(user.id);
     await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'totp' });
     return c.json({});
   });

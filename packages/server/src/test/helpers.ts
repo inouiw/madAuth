@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 import { createApp } from '../app.js';
 import type { MadauthConfig } from '../config.js';
 import { generateSigningKey } from '../keys.js';
+import { METHODS_SETTING, Settings, parseMethodSettings, type MethodId, type MethodSettings, type SecondFactorPolicy } from '../settings.js';
 import type { StoreAdapter } from '../store/schema.js';
 import { createSqliteAdapter } from '../store/sqlite.js';
 import { Users } from '../users.js';
@@ -318,4 +319,27 @@ export async function linkGoogleAsBefore(store: StoreAdapter, userId: string, su
   const account = await new Users(store).linkAccount(userId, { key: `google:${sub}`, email, primary: false });
   // Records from then say neither whether they sign in nor whether they are a second factor.
   await store.update('account', { id: account!.id }, { secondFactor: null });
+}
+
+/** Methods as tests set them: in full, or in a shorthand (`{}` or `{ secondFactor }`), as madAuth before 0.6 stored them. */
+export type TestMethods = Partial<Record<MethodId, { allowAsSignInMethod?: boolean; secondFactor?: SecondFactorPolicy }>>;
+
+/**
+ * Stores which methods are on. Without `allowAsSignInMethod` anywhere, the shorthand means what it did before
+ * 0.6: a listed method signs in on its own (SMS codes: a second factor), and the authenticator app is a second
+ * factor wherever a policy asks for one.
+ */
+export async function setMethods(store: StoreAdapter, methods: TestMethods): Promise<void> {
+  const full = Object.values(methods).some((setting) => setting && 'allowAsSignInMethod' in setting);
+  const shorthand = (): MethodSettings => {
+    const settings: MethodSettings = Object.fromEntries(
+      Object.entries(methods).map(([method, setting]) => [method, { allowAsSignInMethod: method !== 'sms', secondFactor: setting?.secondFactor ?? 'none' }]),
+    );
+    const asks = Object.values(settings).some((setting) => setting.secondFactor !== 'none');
+    if (asks && !settings.totp) settings.totp = { allowAsSignInMethod: false, secondFactor: 'none' };
+    return settings;
+  };
+  const parsed = full ? parseMethodSettings(methods) : shorthand();
+  if (!parsed) throw new Error(`Not a methods setting: ${JSON.stringify(methods)}`);
+  await new Settings(store).set(METHODS_SETTING, parsed, null);
 }

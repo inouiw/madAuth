@@ -11,10 +11,12 @@ import {
 } from './madauth.js';
 import { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
 import type { ButtonApi } from './scopes/button.js';
+import type { SignInMethodInfo } from './scopes/methods.js';
+import type { PasskeyInfo } from './scopes/passkey.js';
 import { secondStepOf, type PendingStep } from './providers/provider.js';
 import type { CodeOptions } from './scopes/totp.js';
 import { qrModules, qrViewBox, type QrModules } from './qr.js';
-import type { MadauthError, MadauthErrorCode, MadauthUser, Result, SecondFactor } from './result.js';
+import { SECOND_FACTORS, type MadauthError, type MadauthErrorCode, type MadauthUser, type Result, type SecondFactor } from './result.js';
 import { languageOf, stringsFor, type Strings } from './strings.js';
 
 export interface SignedInDetail {
@@ -44,6 +46,11 @@ export interface SmsFailedDetail {
   error: MadauthError;
 }
 
+/** `madauth-passkey-added`: the signed-in user added a passkey. */
+export interface PasskeyAddedDetail {
+  passkey: PasskeyInfo;
+}
+
 /** The screens of the dialog. */
 type View =
   | 'signin'
@@ -58,7 +65,19 @@ type View =
   | 'email-link'
   | 'sms-code'
   | 'sms-setup'
-  | 'sms-setup-code';
+  | 'sms-setup-code'
+  | 'passkey'
+  | 'passkey-setup'
+  | 'methods'
+  | 'add-password';
+
+/** The views that change the signed-in user's methods: after signing in again, the dialog goes back to them. */
+const changeViews = ['passkey-setup', 'methods', 'add-password'] as const satisfies readonly View[];
+type ChangeView = (typeof changeViews)[number];
+const isChangeView = (view: View): view is ChangeView => (changeViews as readonly View[]).includes(view);
+
+/** How long the passkeys' autofill waits with one ceremony before it starts over: the server's lasts five minutes. */
+const CONDITIONAL_RENEW_MS = 4 * 60 * 1000;
 
 /** The step a sign-in goes on with, from the error that says so. */
 const nextStep = secondStepOf;
@@ -131,6 +150,18 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
       <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
     </svg>
   `,
+  password: html`
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  `,
+  passkey: html`
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" />
+      <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />
+    </svg>
+  `,
 };
 
 /**
@@ -145,6 +176,7 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
  * @fires madauth-error - A sign-in failed, or madAuth is not initialized. `detail` is an {@link ErrorDetail}.
  * @fires madauth-authenticator-enabled - The signed-in user set up the authenticator app and saw the recovery codes. `detail` is an {@link AuthenticatorEnabledDetail}.
  * @fires madauth-sms-enabled - The signed-in user added a phone number for SMS codes. `detail` is an {@link SmsEnabledDetail}.
+ * @fires madauth-passkey-added - The signed-in user added a passkey. `detail` is a {@link PasskeyAddedDetail}.
  *
  * @cssprop --madauth-primary - Fill color of the primary buttons.
  * @cssprop --madauth-radius - Corner radius of the dialog, buttons and fields.
@@ -176,6 +208,7 @@ export class MadauthLogin extends LitElement {
     smsPhone: { state: true },
     factors: { state: true },
     passwordScore: { state: true },
+    methodList: { state: true },
   };
 
   /** Title shown at the top of the dialog. Default: "Sign in" in the dialog's language. */
@@ -243,6 +276,18 @@ export class MadauthLogin extends LitElement {
   private pendingPhone?: string;
   /** What the code in the sms-code view is for: the second step, or approving a new number. */
   private smsCodePurpose: 'signin' | 'replace' = 'signin';
+  /** In the setup step of a sign-in: the second factors the user can set up. */
+  private setupFactors?: SecondFactor[];
+  /** The signed-in user's methods, in the methods view; undefined while they load. */
+  private methodList?: SignInMethodInfo[];
+  /** The view that changes the user's methods and asked them to sign in again: the dialog goes back to it after. */
+  private reauthThen?: ChangeView;
+  /** The passkey's setup or the app's was started from the methods view: it goes back there after. */
+  private fromMethods = false;
+  /** Passkeys offered in the e-mail field's autofill, while the sign-in view is shown: how to stop it, and when it has stopped. */
+  private conditional?: { abort: AbortController; done: Promise<void> };
+  /** The autofill's sign-in failed: it isn't started again until the view changes, or every render would ask again. */
+  private conditionalFailed = false;
 
   private stopFollowingLocale?: () => void;
 
@@ -306,26 +351,86 @@ export class MadauthLogin extends LitElement {
     this.requestUpdate();
     await this.updateComplete;
     if (!this.dialog.open) this.dialog.showModal();
+    // The dialog was closed during the render above: the passkeys' autofill starts now that it is open.
+    if (this.view === 'signin' && this.usable) this.startConditional();
     return ready;
   }
 
   /** Goes on with the second step where a sign-in left off. */
   private continueWith(pending: PendingStep): void {
+    void this.stopConditional();
     this.primary = pending.method;
     this.useRecovery = false;
     this.setupNeedsCode = false;
+    if (pending.step === 'setup') {
+      this.factors = undefined;
+      this.setupForSignIn = true;
+      // A server before madAuth 0.6 names none: the app, or a phone (never for a sign-up with the app).
+      const named = pending.factors?.length ? pending.factors : undefined;
+      this.setupFactors = (named ?? ['totp', ...(this.primary !== 'totp' && Madauth.sms.available ? (['sms'] as const) : [])]).filter(
+        (factor) => factor !== 'passkey' || Madauth.passkey.available,
+      );
+      // Only passkeys can be set up, and this browser has none: nothing the dialog can do.
+      if (!this.setupFactors.length) {
+        this.showError({ code: 'passkey_unsupported', message: 'This browser does not support passkeys.' }, this.primary);
+        return;
+      }
+      this.startFactorSetup(this.setupFactors[0]);
+      return;
+    }
     this.factors = pending.factors;
     if (pending.step === 'code') {
       this.view = 'totp-code';
       return;
     }
-    if (pending.step === 'sms') {
-      void this.startSmsStep();
+    if (pending.step === 'passkey') {
+      this.view = 'passkey';
       return;
     }
-    this.setupForSignIn = true;
+    void this.startSmsStep();
+  }
+
+  /** The setup of a second factor in a sign-in: the app, a phone, or a passkey. */
+  private startFactorSetup(factor: SecondFactor): void {
+    this.notice = undefined;
+    this.error = null;
+    if (factor === 'passkey') {
+      this.view = 'passkey-setup';
+      return;
+    }
+    if (factor === 'sms') {
+      this.view = 'sms-setup';
+      return;
+    }
     this.view = 'totp-setup';
     void this.startSetup();
+  }
+
+  /**
+   * Opens the dialog on the "Create a passkey" screen for the signed-in user. Usually called through
+   * `Madauth.setUpPasskey()`, which resolves once the passkey is added.
+   */
+  async openPasskeySetup(): Promise<void> {
+    this.setupForSignIn = false;
+    this.fromMethods = false;
+    this.view = 'passkey-setup';
+    const ready = await this.show();
+    if (!ready.isSuccess) this.showError(ready.error);
+  }
+
+  /**
+   * Opens the dialog on the signed-in user's sign-in methods. Usually called through
+   * `Madauth.manageSignInMethods()`, which resolves when the dialog is closed.
+   */
+  async openMethods(): Promise<void> {
+    this.setupForSignIn = false;
+    this.view = 'methods';
+    const ready = await this.show();
+    if (!ready.isSuccess) {
+      this.showError(ready.error);
+      return;
+    }
+    await this.loadMethods();
   }
 
   /**
@@ -364,6 +469,9 @@ export class MadauthLogin extends LitElement {
 
   override updated(changed: PropertyValues): void {
     this.syncButtons();
+    // The user's passkeys in the e-mail field's autofill, while the sign-in view is shown.
+    if (this.view === 'signin' && this.dialog.open && this.usable) this.startConditional();
+    else void this.stopConditional();
     // The button that led here is gone with the old view, which would leave the focus on the page behind the
     // dialog. A view that focuses a field of its own (e.g. the password after signIn({ email })) does so later.
     if (changed.has('view') && changed.get('view') !== undefined && this.dialog.open) this.focusView();
@@ -387,12 +495,15 @@ export class MadauthLogin extends LitElement {
     for (const slot of slots) {
       if (this.buttons.has(slot)) continue;
       const method = slot.dataset.button as LoginMethodId;
-      const rendered = buttonScopes[method]?.().renderButton(slot, { onResult: (result) => this.finish(method, result) });
+      const link = slot.dataset.purpose === 'link';
+      const onResult = link ? (result: Result<{ user: MadauthUser }>) => this.onLinked(result) : (result: Result<{ user: MadauthUser }>) => this.finish(method, result);
+      const rendered = buttonScopes[method]?.().renderButton(slot, { purpose: link ? 'link' : 'signin', onResult });
       if (rendered?.isSuccess) this.buttons.set(slot, { method, remove: rendered.remove });
     }
   }
 
   private onDialogClose(): void {
+    void this.stopConditional();
     // The sign-in view's fields stay for the next opening: a shown password must not.
     hidePasswords(this.renderRoot);
     for (const button of this.buttons.values()) button.remove();
@@ -420,6 +531,11 @@ export class MadauthLogin extends LitElement {
     this.smsPhone = undefined;
     this.pendingPhone = undefined;
     this.smsCodePurpose = 'signin';
+    this.setupFactors = undefined;
+    this.methodList = undefined;
+    this.reauthThen = undefined;
+    this.fromMethods = false;
+    this.conditionalFailed = false;
     this.clearStrength();
   }
 
@@ -431,9 +547,9 @@ export class MadauthLogin extends LitElement {
     if (!result.isSuccess) {
       const step = nextStep(result.error);
       if (step) {
-        this.continueWith({ step, method, factors: result.error.factors });
         this.notice = undefined;
         this.error = null;
+        this.continueWith({ step, method, factors: result.error.factors });
         return;
       }
       this.showError(result.error, method);
@@ -441,7 +557,17 @@ export class MadauthLogin extends LitElement {
     }
     const detail: SignedInDetail = { method, user: result.user };
     this.dispatchEvent(new CustomEvent('madauth-signed-in', { detail, bubbles: true, composed: true }));
-    this.close();
+    if (!this.returnAfterReauth()) this.close();
+  }
+
+  /** The sign-in was the one again before changing a method: back to where that was. False if it wasn't. */
+  private returnAfterReauth(): boolean {
+    const then = this.reauthThen;
+    if (!then || !this.dialog.open) return false;
+    this.reauthThen = undefined;
+    if (then === 'methods') this.backToMethods();
+    else this.goTo(then);
+    return true;
   }
 
   /** The recovery codes were seen: the setup is done, and a sign-in that waited for it is finished. */
@@ -449,9 +575,20 @@ export class MadauthLogin extends LitElement {
     const recoveryCodes = this.recoveryCodes;
     if (!recoveryCodes) return;
     this.recoveryCodes = undefined;
+    if (this.fromMethods && this.dialog.open) {
+      // Set up from the list of methods: back to it.
+      const detail: AuthenticatorEnabledDetail = { recoveryCodes };
+      this.dispatchEvent(new CustomEvent('madauth-authenticator-enabled', { detail, bubbles: true, composed: true }));
+      this.backToMethods('added');
+      return;
+    }
     if (this.setupUser) {
       const detail: SignedInDetail = { method: this.primary, user: this.setupUser };
       this.dispatchEvent(new CustomEvent('madauth-signed-in', { detail, bubbles: true, composed: true }));
+      if (this.returnAfterReauth()) {
+        this.setupUser = undefined;
+        return;
+      }
     } else {
       const detail: AuthenticatorEnabledDetail = { recoveryCodes };
       this.dispatchEvent(new CustomEvent('madauth-authenticator-enabled', { detail, bubbles: true, composed: true }));
@@ -473,6 +610,12 @@ export class MadauthLogin extends LitElement {
       this.goTo('totp');
     }
     if (m.id === 'email-link' && this.emailLinkAvailable) this.goTo('email-link');
+    if (m.id === 'passkey' && this.passkeyAvailable) void this.onPasskeySignIn();
+  }
+
+  /** Whether passkeys sign in on their own here: the Passkey provider, the server, and the browser. */
+  private get passkeyAvailable(): boolean {
+    return this.usable && Madauth.passkey.signInAvailable;
   }
 
   private get passwordAvailable(): boolean {
@@ -496,6 +639,7 @@ export class MadauthLogin extends LitElement {
     this.notice = undefined;
     this.error = null;
     this.view = view;
+    this.conditionalFailed = false;
     this.clearStrength();
   }
 
@@ -641,6 +785,14 @@ export class MadauthLogin extends LitElement {
   private get viewTitle(): string {
     const s = this.strings;
     switch (this.view) {
+      case 'passkey':
+        return s.passkeyStep.heading;
+      case 'passkey-setup':
+        return s.passkeySetup.heading;
+      case 'methods':
+        return s.methodsView.heading;
+      case 'add-password':
+        return s.addPassword.heading;
       case 'signup':
         return s.createAccount;
       case 'check-inbox':
@@ -718,6 +870,7 @@ export class MadauthLogin extends LitElement {
     const resend = error.code === 'email_unverified' && error.method === 'password' && this.view === 'signin';
     const restart = error.code === 'setup_expired' && this.view === 'totp-setup';
     const restartSms = error.code === 'setup_expired' && this.view === 'sms-setup-code';
+    const reauth = error.code === 'reauth_required' && isChangeView(this.view);
     return html`
       <div class="notice error" part="error" role="alert" data-code=${error.code}>
         ${infoIcon}
@@ -734,6 +887,9 @@ export class MadauthLogin extends LitElement {
           ${restartSms
             ? html`<button class="link" part="link" type="button" data-action="restart-sms-setup" ?disabled=${this.busy}
                 @click=${() => this.startSmsSetup({ phone: this.pendingPhone ?? '' })}>${this.strings.totpSetup.startAgain}</button>`
+            : null}
+          ${reauth
+            ? html`<button class="link" part="link" type="button" data-action="sign-in-again" @click=${() => this.signInAgain()}>${this.strings.signInAgain}</button>`
             : null}
         </span>
       </div>
@@ -766,6 +922,14 @@ export class MadauthLogin extends LitElement {
         return this.renderSmsSetup();
       case 'sms-setup-code':
         return this.renderSmsSetupCode();
+      case 'passkey':
+        return this.renderPasskeyStep();
+      case 'passkey-setup':
+        return this.renderPasskeySetup();
+      case 'methods':
+        return this.renderMethods();
+      case 'add-password':
+        return this.renderAddPassword();
       default:
         return this.renderSignInView();
     }
@@ -779,7 +943,11 @@ export class MadauthLogin extends LitElement {
   private get offered(): LoginMethod[] {
     return this.usable
       ? loginMethods.filter(
-          (m) => providerFor(m.id) && (m.id !== 'totp' || this.totpAvailable) && (m.id !== 'email-link' || this.emailLinkAvailable),
+          (m) =>
+            providerFor(m.id) &&
+            (m.id !== 'totp' || this.totpAvailable) &&
+            (m.id !== 'email-link' || this.emailLinkAvailable) &&
+            (m.id !== 'passkey' || this.passkeyAvailable),
         )
       : [];
   }
@@ -947,9 +1115,7 @@ export class MadauthLogin extends LitElement {
       </form>
       <p class="links">
         ${this.toggleRecoveryLink()}
-        ${!this.setupNeedsCode && this.factors?.includes('sms')
-          ? html`<button class="link" part="link" type="button" data-action="use-sms" @click=${() => this.startSmsStep()}>${s.useSms}</button>`
-          : null}
+        ${this.setupNeedsCode ? null : this.stepAlternatives('totp')}
         ${this.setupNeedsCode
           ? html`<button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>`
           : html`<button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${s.backToSignIn}</button>`}
@@ -1001,13 +1167,21 @@ export class MadauthLogin extends LitElement {
           ? html`<p class="hint" role="status">${s.loading}</p>`
           : null}
       <p class="links">
-        ${/* A sign-up with the app sets the app up, never a phone: the server refuses the phone for it. */
-        this.setupForSignIn && this.primary !== 'totp' && Madauth.sms.available
-          ? html`<button class="link" part="link" type="button" data-action="use-phone" @click=${() => this.goTo('sms-setup')}>${s.smsSetup.usePhone}</button>`
-          : null}
+        ${this.setupAlternatives('totp')}
         <button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>
       </p>
     `;
+  }
+
+  /** In the setup step of a sign-in: links to set up the other factors the user can choose from instead of `current`. */
+  private setupAlternatives(current: SecondFactor) {
+    if (!this.setupForSignIn) return null;
+    const s = this.strings;
+    const links = { passkey: ['use-passkey-setup', s.passkeySetup.useInstead], totp: ['use-app-setup', s.smsSetup.useAppInstead], sms: ['use-phone', s.smsSetup.usePhone] } as const;
+    return (this.setupFactors ?? []).filter((factor) => factor !== current).map((factor) => {
+      const [action, text] = links[factor];
+      return html`<button class="link" part="link" type="button" data-action=${action} @click=${() => this.startFactorSetup(factor)}>${text}</button>`;
+    });
   }
 
   /**
@@ -1118,14 +1292,26 @@ export class MadauthLogin extends LitElement {
         <button class="link" part="link" type="button" data-action="resend-sms" ?disabled=${this.busy} @click=${() => this.sendSms(true)}>
           ${s.smsCode.sendAgain}
         </button>
-        ${!replacing && this.factors?.includes('totp')
-          ? html`<button class="link" part="link" type="button" data-action="use-app" @click=${() => this.switchToApp()}>${s.useApp}</button>`
-          : null}
+        ${replacing ? null : this.stepAlternatives('sms')}
         ${replacing
           ? html`<button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>`
           : html`<button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${s.backToSignIn}</button>`}
       </p>
     `;
+  }
+
+  /** In the second step: links to the user's other second factors, instead of `current`. */
+  private stepAlternatives(current: SecondFactor) {
+    const s = this.strings;
+    const links = {
+      passkey: ['use-passkey', s.usePasskey, () => this.goTo('passkey')],
+      totp: ['use-app', s.useApp, () => this.switchToApp()],
+      sms: ['use-sms', s.useSms, () => void this.startSmsStep()],
+    } as const;
+    return SECOND_FACTORS.filter((factor) => factor !== current && this.factors?.includes(factor)).map((factor) => {
+      const [action, text, go] = links[factor];
+      return html`<button class="link" part="link" type="button" data-action=${action} @click=${go}>${text}</button>`;
+    });
   }
 
   /** From the SMS step to the app's code: the user has both. */
@@ -1168,20 +1354,10 @@ export class MadauthLogin extends LitElement {
         </button>
       </form>
       <p class="links">
-        ${this.setupForSignIn
-          ? html`<button class="link" part="link" type="button" data-action="use-app-setup" @click=${() => this.backToAppSetup()}>${s.smsSetup.useAppInstead}</button>`
-          : null}
+        ${this.setupAlternatives('sms')}
         <button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>
       </p>
     `;
-  }
-
-  /** From the phone's setup back to the app's, during a sign-in. */
-  private backToAppSetup(): void {
-    this.notice = undefined;
-    this.error = null;
-    this.view = 'totp-setup';
-    void this.startSetup();
   }
 
   private async onSmsSetup(e: Event): Promise<void> {
@@ -1264,6 +1440,316 @@ export class MadauthLogin extends LitElement {
     this.dispatchEvent(new CustomEvent('madauth-sms-enabled', { detail, bubbles: true, composed: true }));
     this.dialog.returnValue = 'done';
     if (this.dialog.open) this.dialog.close('done');
+  }
+
+  // --- Passkeys ---
+
+  /** Signs in with a passkey alone: the browser's passkey dialog. */
+  private async onPasskeySignIn(): Promise<void> {
+    // The browser takes one passkey request at a time: the autofill's has to be over first.
+    await this.stopConditional();
+    // Finished while still busy: a sign-in closes the dialog before the autofill could start again.
+    await this.run(async () => {
+      const result = await Madauth.passkey.signIn();
+      // Closing the browser's dialog is no error worth showing.
+      if (!result.isSuccess && result.error.code === 'cancelled') return;
+      this.finish('passkey', result);
+    });
+  }
+
+  /**
+   * Offers the user's passkeys in the e-mail field's autofill while the sign-in view is shown: the browser
+   * waits for a pick, which signs in. Stopped when the view goes or another sign-in starts, and started over
+   * before the server's ceremony expires, since the browser may wait longer.
+   */
+  private startConditional(): void {
+    // While busy, a sign-in runs, perhaps the passkey's own: the browser takes one passkey request at a time.
+    if (this.conditional || this.conditionalFailed || this.busy || !this.passkeyAvailable) return;
+    const abort = new AbortController();
+    const renew = setTimeout(() => {
+      if (this.conditional?.abort !== abort) return;
+      void this.stopConditional().then(() => {
+        if (this.view === 'signin' && this.dialog.open) this.startConditional();
+      });
+    }, CONDITIONAL_RENEW_MS);
+    const done = this.waitForPick(abort).finally(() => clearTimeout(renew));
+    this.conditional = { abort, done };
+  }
+
+  private async waitForPick(abort: AbortController): Promise<void> {
+    if (!(await Madauth.passkey.conditionalAvailable()) || abort.signal.aborted) return;
+    const result = await Madauth.passkey.signIn({ conditional: true, signal: abort.signal });
+    if (abort.signal.aborted || this.conditional?.abort !== abort) return;
+    this.conditional = undefined;
+    // A passkey the server doesn't know is forgotten by the browser: the autofill may offer the others.
+    if (!result.isSuccess && result.error.code !== 'passkey_unknown') this.conditionalFailed = true;
+    if (!result.isSuccess && result.error.code === 'cancelled') return;
+    this.finish('passkey', result);
+  }
+
+  /** Ends the autofill's wait; resolves once the browser has let go of it, so another passkey request can start. */
+  private stopConditional(): Promise<void> {
+    const conditional = this.conditional;
+    this.conditional = undefined;
+    conditional?.abort.abort();
+    return conditional?.done ?? Promise.resolve();
+  }
+
+  /** The second step with a passkey. */
+  private renderPasskeyStep() {
+    const s = this.strings;
+    return html`
+      <p class="lead">${s.passkeyStep.lead}</p>
+      <button part="method" class="submit" type="button" data-action="verify-passkey" ?disabled=${this.busy} @click=${() => this.onPasskeyVerify()}>
+        <span class="label">${s.passkeyStep.button}</span>
+      </button>
+      <p class="links">
+        ${this.stepAlternatives('passkey')}
+        <button class="link" part="link" type="button" data-action="back" @click=${() => this.goTo('signin')}>${s.backToSignIn}</button>
+      </p>
+    `;
+  }
+
+  private async onPasskeyVerify(): Promise<void> {
+    const result = await this.run(() => Madauth.passkey.verify());
+    if (!result) return;
+    if (!result.isSuccess && result.error.code === 'challenge_expired') {
+      // The sign-in starts over.
+      this.goTo('signin');
+      this.showError(result.error, this.primary);
+      return;
+    }
+    this.finish(this.primary, result);
+  }
+
+  /** Creating a passkey: for the signed-in user, or as the setup step of a sign-in. */
+  private renderPasskeySetup() {
+    const s = this.strings;
+    const asks = (Madauth.totp.policy?.secondFactorFor ?? []).filter((m) => m !== 'passkey').map((method) => s.methods[method].label).join(s.and);
+    return html`
+      <p class="lead">${this.setupForSignIn ? s.passkeySetup.requiredLead : s.passkeySetup.lead}</p>
+      ${!this.setupForSignIn && Madauth.passkey.policy?.signIn ? html`<p class="hint">${s.passkeySetup.signsIn}</p>` : null}
+      ${!this.setupForSignIn && asks ? html`<p class="hint">${s.passkeySetup.effect(asks)}</p>` : null}
+      <form part="form" class="passkey-setup" @submit=${this.onPasskeyCreate}>
+        <div class="field">
+          <label for="passkey-name">${s.passkeySetup.name} <span class="optional">${s.optional}</span></label>
+          <input part="input" id="passkey-name" name="name" type="text" autocomplete="off" maxlength="64" />
+          <p class="hint">${s.passkeySetup.nameHint}</p>
+        </div>
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.passkeySetup.create}</span>
+        </button>
+      </form>
+      <p class="links">
+        ${this.setupAlternatives('passkey')}
+        ${this.fromMethods
+          ? html`<button class="link" part="link" type="button" data-action="back-to-methods" @click=${() => this.backToMethods()}>${s.cancel}</button>`
+          : html`<button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${s.cancel}</button>`}
+      </p>
+    `;
+  }
+
+  private async onPasskeyCreate(e: Event): Promise<void> {
+    const name = (this.fields(e).name ?? '').trim();
+    const result = await this.run(() => Madauth.passkey.add(name ? { name } : {}));
+    if (!result) return;
+    if (!result.isSuccess) {
+      if (result.error.code !== 'cancelled') this.showError(result.error, 'passkey');
+      return;
+    }
+    // The setup finished a sign-in: the user is in.
+    if (result.user) {
+      this.finish(this.primary, { isSuccess: true, user: result.user });
+      return;
+    }
+    const detail: PasskeyAddedDetail = { passkey: result.passkey };
+    this.dispatchEvent(new CustomEvent('madauth-passkey-added', { detail, bubbles: true, composed: true }));
+    if (this.fromMethods) {
+      this.backToMethods('added');
+      return;
+    }
+    this.dialog.returnValue = 'done';
+    if (this.dialog.open) this.dialog.close('done');
+  }
+
+  // --- The signed-in user's methods ---
+
+  /** Changing a method needs a recent sign-in: to the sign-in view, and back to this view after. */
+  private signInAgain(): void {
+    this.reauthThen = isChangeView(this.view) ? this.view : undefined;
+    this.goTo('signin');
+  }
+
+  /** To the list of methods, loaded anew, with what changed as the notice. */
+  private backToMethods(notice?: 'added' | 'removed'): void {
+    this.fromMethods = false;
+    this.goTo('methods');
+    if (notice) this.notice = (strings) => strings.methodsView[notice];
+    void this.loadMethods();
+  }
+
+  /** Loads the user's methods into the list. */
+  private async loadMethods(): Promise<void> {
+    const result = await Madauth.methods.list();
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      return;
+    }
+    this.methodList = result.methods;
+  }
+
+  /** A date as the user's language writes it, e.g. "3 Oct 2026". */
+  private date(ms: number): string {
+    return new Date(ms).toLocaleDateString(currentLocale(), { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  private renderMethods() {
+    const s = this.strings;
+    const v = s.methodsView;
+    const list = this.methodList;
+    const has = (method: LoginMethodId) => !!list?.some((m) => m.method === method);
+    // The last method that signs the user in can't go (the server refuses it): no button for it.
+    const signsIn = list?.filter((m) => m.signIn) ?? [];
+    const lastWayIn = (m: SignInMethodInfo) => m.signIn && signsIn.length === 1;
+    const config = (method: 'google' | 'github') => providerFor(method)?.renderButton && !has(method);
+    return html`
+      <p class="lead">${v.lead}</p>
+      ${list
+        ? html`
+            <ul class="method-list">
+              ${list.map((m) => {
+                const label = m.method === 'passkey' && m.name ? m.name : v.labels[m.method];
+                const details = [
+                  m.method === 'passkey' ? v.labels.passkey : m.email,
+                  m.method === 'passkey' ? (m.lastUsedAt ? v.lastUsed(this.date(m.lastUsedAt)) : v.neverUsed) : undefined,
+                  m.signIn ? undefined : v.secondFactorOnly,
+                ].filter(Boolean);
+                return html`
+                  <li class="method" data-method=${m.method}>
+                    ${rowIcons[m.method] ?? null}
+                    <span class="method-text">
+                      <span class="label">${label}</span>
+                      ${details.length ? html`<span class="hint">${details.join(' · ')}</span>` : null}
+                    </span>
+                    ${m.removable && !lastWayIn(m)
+                      ? html`<button class="link" part="link" type="button" data-action="remove" aria-label=${v.removeLabel(label)} ?disabled=${this.busy}
+                          @click=${() => this.onRemove(m)}>${v.remove}</button>`
+                      : null}
+                  </li>
+                `;
+              })}
+            </ul>
+          `
+        : html`<p class="hint" role="status">${v.loading}</p>`}
+      ${list
+        ? html`
+            <section class="others">
+              <h3>${v.add}</h3>
+              <ul>
+                ${Madauth.passkey.available
+                  ? html`<li>${this.addRow('passkey', v.addPasskey, () => {
+                      this.fromMethods = true;
+                      this.goTo('passkey-setup');
+                    })}</li>`
+                  : null}
+                ${providerFor('password') && Madauth.password.policy && !has('password')
+                  ? html`<li>${this.addRow('password', v.addPassword, () => this.goTo('add-password'))}</li>`
+                  : null}
+                ${providerFor('email-link') && Madauth.emailLink.policy && !has('email-link')
+                  ? html`<li>${this.addRow('email-link', v.addEmailLink, () => this.onAddEmailLink())}</li>`
+                  : null}
+                ${Madauth.totp.policy && !has('totp')
+                  ? html`<li>${this.addRow('totp', v.addApp, () => {
+                      this.fromMethods = true;
+                      this.setupForSignIn = false;
+                      this.goTo('totp-setup');
+                      void this.startSetup();
+                    })}</li>`
+                  : null}
+              </ul>
+              ${config('google') || config('github')
+                ? html`<div class="buttons">
+                    ${(['google', 'github'] as const)
+                      .filter((m) => config(m))
+                      .map((m) => html`<div class="button-slot ${m}-slot" data-button=${m} data-purpose="link" title=${v.connect(s.methodNames[m])}></div>`)}
+                  </div>`
+                : null}
+            </section>
+          `
+        : null}
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="done" @click=${() => this.dialog.close()}>${v.done}</button>
+      </p>
+    `;
+  }
+
+  /** A row of the "Add a sign-in method" list. */
+  private addRow(method: LoginMethodId, label: string, onClick: () => void) {
+    return html`
+      <button part="method" class="row" type="button" data-add=${method} ?disabled=${this.busy} @click=${onClick}>
+        ${rowIcons[method] ?? null}
+        <span class="label">${label}</span>
+        ${chevronIcon}
+      </button>
+    `;
+  }
+
+  private async onRemove(m: SignInMethodInfo): Promise<void> {
+    const result = await this.run(() => Madauth.methods.remove(m.id));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, m.method);
+      return;
+    }
+    this.backToMethods('removed');
+  }
+
+  private async onAddEmailLink(): Promise<void> {
+    const result = await this.run(() => Madauth.emailLink.add());
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, 'email-link');
+      return;
+    }
+    this.backToMethods('added');
+  }
+
+  /** A provider's button that links (Google, GitHub) reported back. */
+  private onLinked(result: Result<{ user: MadauthUser }>): void {
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      return;
+    }
+    this.backToMethods('added');
+  }
+
+  /** A password for the signed-in user. */
+  private renderAddPassword() {
+    const s = this.strings;
+    return html`
+      <p class="lead">${s.addPassword.lead}</p>
+      <form part="form" class="add-password" @submit=${this.onAddPassword}>
+        <input type="email" name="username" autocomplete="username" .value=${Madauth.currentUser?.email ?? ''} hidden />
+        ${this.passwordField('new-password', s.password)}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.setPassword}</span>
+        </button>
+      </form>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="back-to-methods" @click=${() => this.backToMethods()}>${s.cancel}</button>
+      </p>
+    `;
+  }
+
+  private async onAddPassword(e: Event): Promise<void> {
+    const { password = '' } = this.fields(e);
+    const result = await this.run(() => Madauth.password.add({ password }));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, 'password');
+      return;
+    }
+    this.backToMethods('added');
   }
 
   // --- The e-mail link ---
@@ -1373,10 +1859,12 @@ export class MadauthLogin extends LitElement {
     // Next to a password, `username`: password managers save and fill the address together with it. Without
     // one, `email`: on a `username` field the iCloud Passwords extension for Chrome opens its panel, with
     // nothing to fill there.
+    // `webauthn`: the browser offers the user's passkeys in the field's autofill as well (see startConditional).
+    const passkeys = this.view === 'signin' && this.passkeyAvailable ? ' webauthn' : '';
     return html`
       <div class="field">
         <label for="email">${this.strings.email}</label>
-        <input part="input" id="email" name="email" type="email" autocomplete=${withPassword ? 'username' : 'email'} .value=${this.email} />
+        <input part="input" id="email" name="email" type="email" autocomplete=${`${withPassword ? 'username' : 'email'}${passkeys}`} .value=${this.email} />
       </div>
     `;
   }
@@ -1883,6 +2371,33 @@ export class MadauthLogin extends LitElement {
       color: inherit;
     }
 
+    .method-list {
+      margin: 0 0 16px;
+    }
+    .method {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: calc(var(--_control-height) + 4px);
+      padding: 6px 12px 6px 14px;
+    }
+    .method .icon {
+      flex: none;
+      color: var(--_muted);
+    }
+    .method-text {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .method-text .hint {
+      margin: 0;
+    }
+    .method .link {
+      margin: 0;
+    }
+
     .qr {
       display: block;
       width: 176px;
@@ -1952,5 +2467,6 @@ declare global {
     'madauth-authenticator-failed': CustomEvent<AuthenticatorFailedDetail>;
     'madauth-sms-enabled': CustomEvent<SmsEnabledDetail>;
     'madauth-sms-failed': CustomEvent<SmsFailedDetail>;
+    'madauth-passkey-added': CustomEvent<PasskeyAddedDetail>;
   }
 }

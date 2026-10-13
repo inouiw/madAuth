@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runCli } from '../cli.js';
 import { loadConfig } from '../config.js';
 import { generateSigningKey } from '../keys.js';
-import { Settings, type MethodSettings } from '../settings.js';
 import { createSqliteAdapter } from '../store/sqlite.js';
 import {
   ALL_EVENTS,
@@ -29,11 +28,12 @@ import {
   signingKey,
   testApp,
   verify,
+  setMethods,
+  type TestMethods,
 } from '../test/helpers.js';
 import { base32Decode, stepOf, totp } from '../totp.js';
 
 type App = ReturnType<typeof testApp>;
-type Made = ReturnType<typeof passwordApp>;
 
 const grace = { email: 'grace@example.com', password: 'correct horse battery' };
 const graceUser = { id: expect.stringMatching(/^usr_/), email: 'grace@example.com', name: 'Grace Hopper' };
@@ -54,7 +54,6 @@ function advance(ms: number) {
 const codeFor = (secret: Buffer, offset = 0) => totp(secret, stepOf(Date.now()) + offset);
 
 /** Which methods are on, written as an admin would. */
-const setMethods = (store: Made['store'], methods: MethodSettings) => new Settings(store).set('methods', methods, null);
 
 const withSession = (session: string, more = '') => ({ Cookie: `madauth_session=${session}${more ? `; ${more}` : ''}` });
 
@@ -70,7 +69,7 @@ async function setUp(app: App, session: string, body: Record<string, unknown> = 
 }
 
 /** Grace with a password and the app, on a server where password sign-in asks for it when set up. */
-async function enrolled(methods: MethodSettings = { google: { secondFactor: 'none' }, password: { secondFactor: 'optional' } }) {
+async function enrolled(methods: TestMethods = { google: { secondFactor: 'none' }, password: { secondFactor: 'optional' } }) {
   vi.useFakeTimers({ toFake: ['Date'], now: START });
   const made = passwordApp();
   await setMethods(made.store, methods);
@@ -81,10 +80,10 @@ async function enrolled(methods: MethodSettings = { google: { secondFactor: 'non
   return { ...made, session, userId: userId as string, secret, recoveryCodes };
 }
 
-const standalone: MethodSettings = { google: { secondFactor: 'none' }, password: { secondFactor: 'optional' }, totp: {} };
+const standalone: TestMethods = { google: { secondFactor: 'none' }, password: { secondFactor: 'optional' }, totp: {} };
 
 /** Grace, who signed up with the app alone: it is how she signs in, not a second factor. */
-async function appUser(methods: MethodSettings = standalone) {
+async function appUser(methods: TestMethods = standalone) {
   vi.useFakeTimers({ toFake: ['Date'], now: START });
   const made = passwordApp();
   await setMethods(made.store, methods);
@@ -243,28 +242,29 @@ describe('setting up the authenticator app while signed in', () => {
     expect(await late.json()).toMatchObject({ error: 'code_required' });
   });
 
-  it('T31: the app as a second factor never signs in alone, and can be removed whatever is switched on', async () => {
+  it('T31: allowed as a sign-in method, the app signs in everyone who has one; only as a second factor, nobody; it never goes as the last way in', async () => {
     const { app, hook, store, session, secret } = await enrolled(standalone);
     advance(60_000);
 
-    // The app signs in on its own on this server, but not for Grace: she signs in with her password, and
-    // the app is a step of it. The answer is the one for an address without an app.
+    // The admin allows the app as a sign-in method: Grace, who added it as a second factor of her password,
+    // signs in with it alone as well.
     const alone = await signInWithApp(app, { email: grace.email, code: codeFor(secret) });
-    expect(alone.status).toBe(401);
-    expect(await alone.json()).toEqual({ error: 'invalid_credentials', message: 'E-mail or code is wrong.' });
-    expect(hook.types()).toEqual([]);
+    expect(alone.status).toBe(200);
+    expect(hook.types()).toEqual(['user.signed_in']);
 
-    // The account says it is a second factor: it stays one when her password goes, e.g. by a deletion that
-    // stopped partway, and never becomes a way in by itself.
-    const [{ id: userId }] = await store.findMany('user', {});
-    const password = await store.findOne('account', { key: `password:${userId}` });
-    await store.delete('account', { key: `password:${userId}` });
+    // Only as a second factor, it is a step of her password again, and no way in by itself.
+    await setMethods(store, { google: {}, password: { secondFactor: 'optional' } });
     advance(60_000);
-    expect((await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).status).toBe(401);
-    await store.create('account', password!);
+    expect(await (await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).json()).toMatchObject({ error: 'method_disabled' });
 
-    // With password sign-in off, the app is no way in for her either, so it can go.
-    await setMethods(store, { google: { secondFactor: 'none' }, totp: {} });
+    // With password sign-in off, the app is her last way in: it can't go.
+    await setMethods(store, { google: {}, totp: {} });
+    advance(60_000);
+    const last = await post(app, '/auth/totp/remove', { code: codeFor(secret) }, withSession(session));
+    expect(last.status).toBe(403);
+    expect(await last.json()).toMatchObject({ error: 'only_method' });
+    // With her password on again, it can.
+    await setMethods(store, standalone);
     advance(60_000);
     expect((await post(app, '/auth/totp/remove', { code: codeFor(secret) }, withSession(session))).status).toBe(200);
   });
@@ -485,10 +485,10 @@ describe('signing in with the app alone', () => {
     expect(alone.status).toBe(403);
     expect(await alone.json()).toMatchObject({ error: 'method_disabled' });
 
-    // On its own: people who sign up with the app sign in with it. Grace's is a step of her password, still.
+    // Allowed as a sign-in method: people sign up with the app, and everyone who has one signs in with it, Grace too.
     await setMethods(store, standalone);
     expect(await config()).toMatchObject({ totp: { signIn: true, signUp: true } });
-    expect((await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).status).toBe(401);
+    expect((await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).status).toBe(200);
   });
 
   it('T13: deleting the account takes a current code once the app is set up, and removes it with the codes', async () => {
@@ -702,10 +702,17 @@ describe('the second step after a password, Google or GitHub', () => {
     await setClaims(store, grace.email, { roles: ['admin'] });
     expect((await post(app, '/auth/password/signin', grace)).status).toBe(200);
 
-    const set = await post(app, '/auth/admin/settings/set', { methods: { google: {}, password: { secondFactor: 'required' } } }, withSession(session));
+    const methods = {
+      google: { allowAsSignInMethod: true, secondFactor: 'none' },
+      password: { allowAsSignInMethod: true, secondFactor: 'required' },
+      totp: { allowAsSignInMethod: false, secondFactor: 'none' },
+    };
+    const set = await post(app, '/auth/admin/settings/set', { methods }, withSession(session));
 
     expect(set.status).toBe(200);
-    expect(await set.json()).toMatchObject({ methods: { password: { enabled: true, secondFactor: 'required' }, totp: { configured: true, enabled: false } } });
+    expect(await set.json()).toMatchObject({
+      methods: { password: { enabled: true, secondFactor: 'required' }, totp: { configured: true, enabled: true, allowAsSignInMethod: false } },
+    });
     const next = await post(app, '/auth/password/signin', grace);
     expect(await next.json()).toMatchObject({ error: 'totp_required' });
     expect((await post(app, '/auth/totp/verify', { code: codeFor(secret, 1) }, { Cookie: `madauth_challenge=${cookies(next).madauth_challenge.value}` })).status).toBe(200);
@@ -989,6 +996,13 @@ describe('signing up with the app alone', () => {
     const confirmed = await post(app, '/auth/email/verify', { token });
     expect(confirmed.status).toBe(403);
     expect(await confirmed.json()).toMatchObject({ error: 'method_disabled' });
+    // On only as a second factor, the app signs nobody up either, and the link is not used up for it.
+    await setMethods(store, { password: { allowAsSignInMethod: true, secondFactor: 'optional' }, totp: { allowAsSignInMethod: false, secondFactor: 'none' } });
+    expect(await (await post(app, '/auth/email/verify', { token })).json()).toMatchObject({ error: 'method_disabled' });
+    expect((await store.findMany('user', {}))[0]).toMatchObject({ emailVerified: false });
+    await setMethods(store, standalone);
+    expect(await (await post(app, '/auth/email/verify', { token })).json()).toMatchObject({ error: 'totp_setup_required' });
+    await setMethods(store, { password: { secondFactor: 'optional' } });
 
     // Without the e-mails there is no sign-up route, but setting the app up still works.
     const noEmails = passwordApp({ password: undefined, webhook: undefined });
@@ -1017,6 +1031,7 @@ describe('signing up with the app alone', () => {
       email: { verification: true },
       emailLink: null,
       sms: false,
+      passkey: null,
     });
     expect((await signUp(only)).status).toBe(202);
   });

@@ -9,9 +9,9 @@ export interface LoginMethod {
   description: string;
 }
 
-export type LoginMethodId = 'password' | 'google' | 'github' | 'totp' | 'email-link';
+export type LoginMethodId = 'password' | 'google' | 'github' | 'totp' | 'email-link' | 'passkey';
 
-const order: LoginMethodId[] = ['google', 'github', 'password', 'totp', 'email-link'];
+const order: LoginMethodId[] = ['google', 'github', 'password', 'passkey', 'totp', 'email-link'];
 
 export const isLoginMethodId = (value: unknown): value is LoginMethodId => typeof value === 'string' && (order as string[]).includes(value);
 

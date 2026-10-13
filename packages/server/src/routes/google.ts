@@ -6,8 +6,18 @@ import { verifyGoogleIdToken, type GoogleProfile } from '../google.js';
 import { randomString, readToken, signToken } from '../tokens.js';
 import { googleAccountKey } from '../users.js';
 import { localeOf } from '../webhooks.js';
-import { signInAnswer } from './helpers.js';
-import { pkceChallenge, redirectBack, resolveProviderUser, startOAuth, takeOAuthState, type OAuthProvider, type ProviderProfile } from './oauth.js';
+import { recentUser, signInAnswer } from './helpers.js';
+import {
+  finishLink,
+  linkProviderAccount,
+  pkceChallenge,
+  redirectBack,
+  resolveProviderUser,
+  startOAuth,
+  takeOAuthState,
+  type OAuthProvider,
+  type ProviderProfile,
+} from './oauth.js';
 
 const NONCE_COOKIE = 'madauth_nonce';
 const NONCE_TYP = 'madauth-nonce+jwt';
@@ -49,9 +59,8 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     return c.json({ nonce });
   });
 
-  app.post('/auth/google/verify', async (c) => {
-    if (!(await ctx.enabled(c, 'google'))) return disabled(c);
-    const body = await c.req.json<{ credential?: unknown; locale?: unknown }>().catch(() => ({}) as { credential?: unknown; locale?: unknown });
+  /** The Google profile of the ID token in the request, checked against the nonce cookie; else the answer to send. */
+  const verifiedCredential = async (c: Context, body: { credential?: unknown }): Promise<GoogleProfile | Response> => {
     if (typeof body.credential !== 'string' || !body.credential) {
       return c.json({ error: 'verification_failed', message: 'credential is missing' }, 400);
     }
@@ -68,12 +77,32 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
       return c.json({ error: result.error, message: result.reason }, result.error === 'email_unverified' ? 403 : 401);
     }
     deleteCookie(c, NONCE_COOKIE, { path: COOKIE_PATH, secure });
-    const resolved = await resolveProviderUser(ctx, GOOGLE, toProfile(result.profile), localeOf(body.locale));
+    return result.profile;
+  };
+
+  app.post('/auth/google/verify', async (c) => {
+    if (!(await ctx.enabled(c, 'google'))) return disabled(c);
+    const body = await c.req.json<{ credential?: unknown; locale?: unknown }>().catch(() => ({}) as { credential?: unknown; locale?: unknown });
+    const profile = await verifiedCredential(c, body);
+    if (profile instanceof Response) return profile;
+    const resolved = await resolveProviderUser(ctx, GOOGLE, toProfile(profile), localeOf(body.locale));
     if (!resolved.ok) {
       if (resolved.error === 'other_method') return c.json({ error: resolved.error, message: resolved.message, methods: resolved.methods }, 403);
       return c.json({ error: resolved.error, message: resolved.message }, resolved.error === 'signup_rejected' ? 403 : 503);
     }
-    return signInAnswer(c, await ctx.secondStep(c, resolved.user, ['google'], 'google', result.profile));
+    return signInAnswer(c, await ctx.secondStep(c, resolved.user, ['google'], 'google', profile));
+  });
+
+  // A signed-in user adds a Google account to their methods, with an ID token from One Tap / FedCM.
+  app.post('/auth/google/link', async (c) => {
+    if (!(await ctx.enabled(c, 'google'))) return disabled(c);
+    const user = await recentUser(c, ctx);
+    if (user instanceof Response) return user;
+    const profile = await verifiedCredential(c, await c.req.json<{ credential?: unknown }>().catch(() => ({})));
+    if (profile instanceof Response) return profile;
+    const linked = await linkProviderAccount(ctx, GOOGLE, user, toProfile(profile));
+    if (!linked.ok) return c.json({ error: linked.error, message: linked.message }, 409);
+    return c.json({});
   });
 
   // --- Server-side authorization-code flow with PKCE (only with GOOGLE_CLIENT_SECRET) ---
@@ -88,7 +117,9 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     if (!returnUrl) return c.text('return_to must be an absolute URL whose origin is in ALLOWED_ORIGINS', 400);
     // The browser is on its way from the app: a method that is off sends it back there, with the error.
     if (!(await ctx.enabled(c, 'google'))) return redirectBack(c, returnUrl.href, 'google')('method_disabled');
+    // With `link=1`, the signed-in user adds Google to their methods.
     const oauth = await startOAuth(c, ctx, COOKIE_PATH, returnUrl);
+    if ('error' in oauth) return redirectBack(c, returnUrl.href, 'google')(oauth.error);
 
     const url = new URL(GOOGLE_AUTH_ENDPOINT);
     url.search = new URLSearchParams({
@@ -141,6 +172,8 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
       keys: config.jwksResolver,
     });
     if (!result.ok) return back(result.error);
+    const linked = await finishLink(c, ctx, GOOGLE, oauth, toProfile(result.profile));
+    if (linked) return linked;
     const resolved = await resolveProviderUser(ctx, GOOGLE, toProfile(result.profile), oauth.locale);
     if (!resolved.ok) return back(resolved.error);
     const step = await ctx.secondStep(c, resolved.user, ['google'], 'google', result.profile);

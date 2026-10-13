@@ -95,6 +95,14 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
         `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName('secondFactor')} ${columnType(dialect, madauthSchema.models.account.fields.secondFactor)};`,
       ].join('\n'),
   },
+  {
+    // Passkeys: their name, credential id, signature counter, transports and last use.
+    version: 8,
+    sql: (dialect) =>
+      (['name', 'credentialId', 'signCount', 'transports', 'lastUsedAt', 'rpId'] as const)
+        .map((field) => `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName(field)} ${columnType(dialect, madauthSchema.models.account.fields[field])};`)
+        .join('\n'),
+  },
 ];
 
 /**

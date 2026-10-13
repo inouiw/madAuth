@@ -1,4 +1,4 @@
-import { toErrorCode, type MadauthError, type SecondFactor } from './result.js';
+import { isSecondFactor, toErrorCode, type MadauthError } from './result.js';
 
 export type HttpResult<T> = { ok: true; data: T } | { ok: false; status: number; error: MadauthError };
 
@@ -45,7 +45,7 @@ export async function request<T>(serverUrl: string, path: string, init: RequestI
   // What some answers say besides the code: the method a sign-in goes on with, or how an address signs in.
   if (typeof data?.method === 'string') error.method = data.method;
   if (Array.isArray(data?.methods)) error.methods = data.methods.filter((m): m is string => typeof m === 'string');
-  if (Array.isArray(data?.factors)) error.factors = data.factors.filter((f): f is SecondFactor => f === 'totp' || f === 'sms');
+  if (Array.isArray(data?.factors)) error.factors = data.factors.filter(isSecondFactor);
   // Which password rule a weak password breaks, so the dialog can say it in the user's language.
   if (typeof data?.minLength === 'number') error.minLength = data.minLength;
   if (typeof data?.minScore === 'number') error.minScore = data.minScore;

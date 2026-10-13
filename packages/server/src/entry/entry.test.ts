@@ -6,6 +6,7 @@ import type { LambdaContext, LambdaEvent } from 'hono/aws-lambda';
 import { importJWK, SignJWT } from 'jose';
 import { describe, expect, it, vi } from 'vitest';
 import { runCli } from '../cli.js';
+import { loadConfig } from '../config.js';
 import type { StoreAdapter } from '../store/schema.js';
 import { createTablesSql } from '../store/sql.js';
 import { createSqliteAdapter } from '../store/sqlite.js';
@@ -75,6 +76,7 @@ describe('deployment entry points', () => {
       email: { verification: true },
       emailLink: null,
       sms: false,
+      passkey: null,
     });
     expect(nonce).toMatchObject({ statusCode: 200 });
     expect((nonce as { cookies: string[] }).cookies[0]).toMatch(/^madauth_nonce=/);
@@ -223,16 +225,19 @@ describe('deployment entry points', () => {
     const fromFour = await runCli(['schema', '--from', '4']);
     expect(fromFour.output).toMatch(/^ALTER TABLE madauth_account ADD COLUMN last_used_step DOUBLE PRECISION NOT NULL DEFAULT 0;/);
     expect(fromFour.output).toContain('CREATE TABLE madauth_recovery_code (');
+    const V8 = '\nALTER TABLE madauth_account ADD COLUMN name TEXT;\nALTER TABLE madauth_account ADD COLUMN credential_id TEXT;\nALTER TABLE madauth_account ADD COLUMN sign_count DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN transports TEXT;\nALTER TABLE madauth_account ADD COLUMN last_used_at DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN rp_id TEXT;';
     expect(await runCli(['schema', '--from', '5'])).toEqual({
       exitCode: 0,
       output: 'ALTER TABLE madauth_account ADD COLUMN phone TEXT;\nALTER TABLE madauth_user ADD COLUMN last_sms_at DOUBLE PRECISION;\n' +
-        'ALTER TABLE madauth_user ADD COLUMN signed_up_at DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN primary_user_id TEXT;\nCREATE UNIQUE INDEX madauth_account_primary_user_id ON madauth_account (primary_user_id);\nALTER TABLE madauth_account ADD COLUMN second_factor BOOLEAN;',
+        'ALTER TABLE madauth_user ADD COLUMN signed_up_at DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN primary_user_id TEXT;\nCREATE UNIQUE INDEX madauth_account_primary_user_id ON madauth_account (primary_user_id);\nALTER TABLE madauth_account ADD COLUMN second_factor BOOLEAN;' +
+        V8,
     });
-    expect(await runCli(['schema', '--from', '6'])).toEqual({ exitCode: 0, output: 'ALTER TABLE madauth_user ADD COLUMN signed_up_at DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN primary_user_id TEXT;\nCREATE UNIQUE INDEX madauth_account_primary_user_id ON madauth_account (primary_user_id);\nALTER TABLE madauth_account ADD COLUMN second_factor BOOLEAN;' });
-    expect(await runCli(['schema', '--from', '7'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
+    expect(await runCli(['schema', '--from', '6'])).toEqual({ exitCode: 0, output: 'ALTER TABLE madauth_user ADD COLUMN signed_up_at DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN primary_user_id TEXT;\nCREATE UNIQUE INDEX madauth_account_primary_user_id ON madauth_account (primary_user_id);\nALTER TABLE madauth_account ADD COLUMN second_factor BOOLEAN;' + V8 });
+    expect(await runCli(['schema', '--from', '7'])).toEqual({ exitCode: 0, output: V8.slice(1) });
+    expect(await runCli(['schema', '--from', '8'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
     expect(await runCli(['schema', '--from', 'x'])).toMatchObject({ exitCode: 1 });
     // A version this madAuth does not know yet.
-    expect(await runCli(['schema', '--from', '8'])).toMatchObject({ exitCode: 1 });
+    expect(await runCli(['schema', '--from', '9'])).toMatchObject({ exitCode: 1 });
   });
 
   it('set-roles makes the first admin without a running server, and get-roles prints the roles', async () => {
@@ -288,6 +293,37 @@ describe('deployment entry points', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('a server refuses to start with the methods madAuth before 0.6 saved with the app on its own; get-methods names the choice, set-methods makes it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
+    const env = {
+      MADAUTH_ISSUER: 'https://auth.example.com',
+      MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
+      ALLOWED_ORIGINS: APP_ORIGIN,
+      GOOGLE_CLIENT_ID: CLIENT_ID,
+      WEBHOOK_URL,
+      WEBHOOK_SECRET,
+      WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset',
+      DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}`,
+    };
+    const io = { ask: async () => '', askSecret: async () => '' };
+    try {
+      const store = createSqliteAdapter(join(dir, 'madauth.db'));
+      await store.create('setting', { id: 'methods', value: '{"google":{},"password":{"secondFactor":"required"},"totp":{}}', updatedAt: 1, updatedBy: null });
+      await expect(loadConfig(env)).rejects.toThrow(/before 0\.6/);
+
+      const shown = await runCli(['get-methods'], io, env);
+      expect(shown.exitCode).toBe(0);
+      expect(shown.output).toContain('totp (second factor only)');
+      expect(shown.output).toContain('"set-methods google password=required totp=second-factor"');
+
+      expect(await runCli(['set-methods', 'google', 'password=required', 'totp=second-factor'], io, env)).toMatchObject({ exitCode: 0 });
+      expect((await runCli(['get-methods'], io, env)).output).not.toContain('before 0.6');
+      expect((await loadConfig(env)).issuer).toBe('https://auth.example.com');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('set-methods switches sign-in methods off and on without a running server, but never all off', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
     // The server's whole configuration, as with --env-file: both methods.
@@ -303,39 +339,54 @@ describe('deployment entry points', () => {
     };
     const io = { ask: async () => '', askSecret: async () => '' };
 
-    // Until set: the configured methods, without the authenticator app on its own (which is always configured).
-    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google, password. Switched off: totp.' });
-    expect(await runCli(['set-methods', 'google'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp.' });
-    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp.' });
-    // The list says what is on, with the policy for the authenticator app as a second factor.
+    // Until set: the configured methods, without the authenticator app and passkeys (which are always configured).
+    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google, password. Switched off: totp, passkey.' });
+    expect(await runCli(['set-methods', 'google'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp, passkey.' });
+    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp, passkey.' });
+    // The list says what is on, with its policy for a second factor; listed alone, a method signs in.
     expect(await runCli(['set-methods', 'google', 'password=required', 'totp'], io, env)).toEqual({
       exitCode: 0,
-      output: 'Switched on: google, password (second factor required), totp.',
+      output: 'Switched on: google, password (second factor required), totp. Switched off: passkey.',
     });
-    expect(await runCli(['set-methods', 'fax'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('Unknown sign-in method "fax"') });
+    expect(await runCli(['set-methods', 'google', 'password=optional', 'totp=second-factor', 'passkey'], io, env)).toEqual({
+      exitCode: 0,
+      output: 'Switched on: google, password (second factor optional), totp (second factor only), passkey.',
+    });
+    expect(await runCli(['set-methods', 'fax'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('Unknown method "fax"') });
+    // Google, GitHub, password and the e-mail link always sign in.
+    expect(await runCli(['set-methods', 'google=second-factor'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('always signs in') });
     // The e-mail link and SMS codes are not configured here (no email.send_signin_link, no sms.send_code): listing them changes nothing.
-    expect(await runCli(['set-methods', 'google', 'email-link=optional', 'sms'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp.' });
+    expect(await runCli(['set-methods', 'google', 'email-link', 'sms'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp, passkey.' });
+    // Nor does SMS count as the second factor a policy asks for.
+    expect(await runCli(['set-methods', 'google', 'password=optional', 'sms'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('none is on') });
     const withLink = { ...env, WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset,email.send_signin_link,sms.send_code' };
-    expect(await runCli(['get-methods'], io, withLink)).toEqual({ exitCode: 0, output: 'Switched on: google, email-link (second factor optional), sms. Switched off: password, totp.' });
-    expect(await runCli(['set-methods', 'email-link=required'], io, withLink)).toEqual({ exitCode: 0, output: 'Switched on: email-link (second factor required). Switched off: google, password, totp, sms.' });
+    expect(await runCli(['set-methods', 'google', 'email-link=optional', 'sms'], io, withLink)).toMatchObject({ exitCode: 0 });
+    expect(await runCli(['get-methods'], io, withLink)).toEqual({
+      exitCode: 0,
+      output: 'Switched on: google, email-link (second factor optional), sms (second factor only). Switched off: password, totp, passkey.',
+    });
+    expect(await runCli(['set-methods', 'email-link=required', 'sms'], io, withLink)).toEqual({
+      exitCode: 0,
+      output: 'Switched on: email-link (second factor required), sms (second factor only). Switched off: google, password, totp, passkey.',
+    });
     expect(await runCli(['set-methods', 'email-link=maybe'], io, withLink)).toMatchObject({ exitCode: 1, output: expect.stringContaining('none, optional, required') });
-    expect(await runCli(['set-methods', 'sms=required'], io, withLink)).toMatchObject({ exitCode: 1, output: expect.stringContaining('take a policy') });
+    expect(await runCli(['set-methods', 'email-link', 'sms=required'], io, withLink)).toMatchObject({ exitCode: 1, output: expect.stringContaining('asks for no second factor') });
     // SMS codes alone sign nobody in.
-    expect(await runCli(['set-methods', 'sms'], io, withLink)).toMatchObject({ exitCode: 1, output: expect.stringContaining('nobody could sign up') });
+    expect(await runCli(['set-methods', 'sms'], io, withLink)).toMatchObject({ exitCode: 1, output: expect.stringContaining('At least one') });
     expect(await runCli(['set-methods', 'google', 'password=required', 'totp'], io, env)).toMatchObject({ exitCode: 0 });
     expect(await runCli(['set-methods', 'password=maybe'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('none, optional, required') });
     expect(await runCli(['set-methods', 'totp=required'], io, env)).toMatchObject({ exitCode: 1 });
     // Nothing listed: that would switch everything off.
-    expect(await runCli(['set-methods'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('nobody could sign up') });
+    expect(await runCli(['set-methods'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('At least one') });
 
     // A password-only server: "set-methods google" would switch off the only method there is.
     const passwordOnly = { ...env, GOOGLE_CLIENT_ID: undefined };
     expect(await runCli(['set-methods', 'google'], io, passwordOnly)).toEqual({
       exitCode: 1,
-      output: 'That would leave no sign-in method on that creates users, so nobody could sign up. On this server these do: password, totp.',
+      output: 'At least one sign-in method that creates users must stay on. On this server these do: password, totp.',
     });
     // What was set above holds: Google is simply not configured here.
-    expect(await runCli(['get-methods'], io, passwordOnly)).toEqual({ exitCode: 0, output: 'Switched on: password (second factor required), totp.' });
+    expect(await runCli(['get-methods'], io, passwordOnly)).toEqual({ exitCode: 0, output: 'Switched on: password (second factor required), totp. Switched off: passkey.' });
     expect(await runCli(['get-methods'], io, { DATABASE_URL: env.DATABASE_URL })).toMatchObject({ exitCode: 1, output: expect.stringContaining('MADAUTH_ISSUER') });
     rmSync(dir, { recursive: true, force: true });
   });

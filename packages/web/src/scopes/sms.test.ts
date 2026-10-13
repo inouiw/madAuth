@@ -121,8 +121,8 @@ describe('Madauth.sms', () => {
     server.policy.password = 'required';
     await init();
 
-    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'totp_setup_required', factors: [] } });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'password' });
+    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'totp_setup_required', factors: ['totp', 'sms'] } });
+    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'password', factors: ['totp', 'sms'] });
     expect(await Madauth.sms.setUp({ phone: PHONE })).toEqual({ isSuccess: true, phone: MASKED_PHONE });
     const done = await Madauth.sms.confirmSetup({ code: CODE });
 

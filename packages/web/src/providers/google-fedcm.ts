@@ -83,7 +83,8 @@ export class GoogleFedcm implements SignInProvider {
       callback: ({ credential }) => void this.#onCredential(credential),
       use_fedcm_for_button: true,
       itp_support: true,
-      context: 'signin',
+      // Linking uses the account with this site rather than signing in to it.
+      context: this.#button?.purpose === 'link' ? 'use' : 'signin',
     });
     return ok();
   }
@@ -123,6 +124,8 @@ export class GoogleFedcm implements SignInProvider {
 
   async #onCredential(credential: string): Promise<void> {
     const ctx = this.#ctx!;
+    // A button that links adds the Google account to the signed-in user instead of signing in.
+    if (this.#button?.purpose === 'link') return this.#onLink(this.#button, credential);
     const res = await ctx.request<{ user: MadauthUser }>('/auth/google/verify', {
       method: 'POST',
       body: { credential },
@@ -140,5 +143,15 @@ export class GoogleFedcm implements SignInProvider {
     } else if (!result.isSuccess) {
       ctx.signInFailed(result.error);
     }
+  }
+
+  async #onLink(mount: ButtonMount, credential: string): Promise<void> {
+    const ctx = this.#ctx!;
+    const res = await ctx.request('/auth/google/link', { method: 'POST', body: { credential } });
+    const user = ctx.currentUser;
+    if (res.ok && user) mount.onResult({ isSuccess: true, user });
+    else mount.onResult({ isSuccess: false, error: res.ok ? { code: 'no_session', message: 'Nobody is signed in.' } : res.error });
+    // A nonce is used up by an attempt; give the button a fresh one for another.
+    if (this.#button === mount) void this.#renderButton(mount);
   }
 }

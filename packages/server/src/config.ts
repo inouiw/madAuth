@@ -1,6 +1,6 @@
 import type { JWK, JWTVerifyGetKey } from 'jose';
 import { assertPrivateSigningJwk, generateSigningKey } from './keys.js';
-import type { MethodConfig } from './settings.js';
+import { METHODS_SETTING, Settings, legacyAppProblem, type MethodConfig } from './settings.js';
 import type { StoreAdapter } from './store/schema.js';
 import {
   DEV_WEBHOOK_RECEIVER_URL,
@@ -26,6 +26,11 @@ export interface MadauthConfig {
   cookieDomain?: string;
   /** The name authenticator apps show next to the account (TOTP_ISSUER). Default: the host of the app that asked for the setup. */
   totpIssuer?: string;
+  /**
+   * The domain passkeys belong to (PASSKEY_RP_ID), e.g. `example.com` for apps on `example.com` and its
+   * subdomains. Default: the host of the app that asks, so a passkey works on that host only.
+   */
+  passkeyRpId?: string;
   /** Google sign-in; off when GOOGLE_CLIENT_ID is not set. */
   google?: {
     /** OAuth web client ID (GOOGLE_CLIENT_ID). */
@@ -93,6 +98,7 @@ export const envVars = {
   GITHUB_CLIENT_SECRET: false,
   DATABASE_URL: true,
   TOTP_ISSUER: false,
+  PASSKEY_RP_ID: false,
   WEBHOOK_URL: false,
   WEBHOOK_SECRET: false,
   WEBHOOK_EVENTS: false,
@@ -149,10 +155,20 @@ function readEnv(env: Record<string, string | undefined>, name: keyof typeof env
 }
 
 /**
- * Reads and validates the madAuth configuration from environment variables.
- * Throws a {@link ConfigError} naming the variable that is missing or invalid.
+ * Reads and validates the madAuth configuration from environment variables, and checks that the settings in
+ * the store can be used as they are. Throws a {@link ConfigError} naming the variable that is missing or
+ * invalid, or the setting an admin has to set again.
  */
-export async function loadConfig(
+export async function loadConfig(env: Record<string, string | undefined>, overrides: ConfigOverrides = {}): Promise<MadauthConfig> {
+  const config = await readConfig(env, overrides);
+  // A setting whose meaning changed is not guessed at: the admin chooses (the command line reads the configuration with readConfig).
+  const problem = legacyAppProblem(await new Settings(config.store).get(METHODS_SETTING));
+  if (problem) throw new ConfigError(problem);
+  return config;
+}
+
+/** {@link loadConfig} without the check of the stored settings: for the command line, which sets them. */
+export async function readConfig(
   env: Record<string, string | undefined>,
   overrides: ConfigOverrides = {},
 ): Promise<MadauthConfig> {
@@ -254,10 +270,18 @@ export async function loadConfig(
     );
   }
 
+  const passkeyRpId = read('PASSKEY_RP_ID')?.toLowerCase();
+  if (passkeyRpId && !allowedOrigins.some((origin) => isWithin(new URL(origin).hostname, passkeyRpId))) {
+    throw new ConfigError(
+      `PASSKEY_RP_ID must be the host of an app in ALLOWED_ORIGINS or a domain above it (e.g. example.com for https://app.example.com), but "${passkeyRpId}" is neither.`,
+    );
+  }
+
   return {
     issuer,
     signingKey,
     allowedOrigins,
+    passkeyRpId,
     sessionTtlSeconds,
     renewalTtlSeconds,
     cookieDomain: read('COOKIE_DOMAIN'),
@@ -399,4 +423,9 @@ function webhookFromEnv(url: string | undefined, secret: string | undefined, eve
     );
   }
   return { url: parsed.href, secret, events: selected };
+}
+
+/** Whether `host` is `domain` or one of its subdomains, as WebAuthn requires of a page and its passkeys' domain. */
+export function isWithin(host: string, domain: string): boolean {
+  return host === domain || host.endsWith(`.${domain}`);
 }

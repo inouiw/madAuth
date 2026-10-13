@@ -19,13 +19,16 @@ const ada = {
 let sessionUser: DemoUser | null = null;
 /** Who the next Google sign-in signs in as. */
 let signInAs: DemoUser = ada;
+/** A method as the admin API answers it. */
+const method = (enabled: boolean, allowAsSignInMethod = enabled, secondFactor = 'none', configured = true) => ({ configured, enabled, allowAsSignInMethod, secondFactor });
 let settings = {
-  google: { configured: true, enabled: true, secondFactor: 'none' },
-  github: { configured: true, enabled: true, secondFactor: 'none' },
-  password: { configured: true, enabled: false, secondFactor: 'optional' },
-  totp: { configured: true, enabled: false },
-  'email-link': { configured: true, enabled: true, secondFactor: 'none' },
-  sms: { configured: true, enabled: true },
+  google: method(true),
+  github: method(true),
+  password: method(false, false, 'optional'),
+  totp: method(false),
+  'email-link': method(true),
+  passkey: method(false),
+  sms: method(true, false),
 };
 /** When set, the fake server answers settings/get only once it resolves. */
 let holdSettings: Promise<void> | undefined;
@@ -113,21 +116,13 @@ vi.stubGlobal(
         await holdSettings;
         return json({ methods: settings });
       case 'POST /auth/admin/settings/set': {
-        // The list replaces what was on: a method that is not in it (or false) is off.
-        const { methods } = body();
-        const on = (value: unknown) => value === true || (!!value && typeof value === 'object');
-        if (!on(methods.google) && !on(methods.github) && !on(methods.password) && !on(methods.totp) && !on(methods['email-link'])) {
+        // The list replaces what was on: a method that is not in it is off.
+        const { methods } = body() as { methods: Record<string, { allowAsSignInMethod: boolean; secondFactor: string } | undefined> };
+        if (!['google', 'github', 'password', 'totp', 'email-link'].some((id) => methods[id]?.allowAsSignInMethod)) {
           return json({ error: 'invalid_settings', message: 'At least one sign-in method must stay on.' }, 400);
         }
-        const policy = (value: { secondFactor?: string } | boolean | undefined) => (typeof value === 'object' && value.secondFactor) || 'none';
-        settings = {
-          google: { configured: true, enabled: on(methods.google), secondFactor: policy(methods.google) },
-          github: { configured: true, enabled: on(methods.github), secondFactor: policy(methods.github) },
-          password: { configured: true, enabled: on(methods.password), secondFactor: policy(methods.password) },
-          totp: { configured: true, enabled: on(methods.totp) },
-          'email-link': { configured: true, enabled: on(methods['email-link']), secondFactor: policy(methods['email-link']) },
-          sms: { configured: true, enabled: on(methods.sms) },
-        };
+        const of = (id: string) => method(!!methods[id], !!methods[id]?.allowAsSignInMethod, methods[id]?.secondFactor ?? 'none');
+        settings = { google: of('google'), github: of('github'), password: of('password'), totp: of('totp'), 'email-link': of('email-link'), passkey: of('passkey'), sms: of('sms') };
         return json({ methods: settings });
       }
     }
@@ -277,21 +272,21 @@ describe('demo page', () => {
     expect($<HTMLInputElement>('#method-password').checked).toBe(false);
 
     // GitHub switched off is a valid setting: no note. Not configured, the admin is told what it needs.
-    settings.github = { configured: true, enabled: false, secondFactor: 'none' };
+    settings.github = method(false);
     execute('getSettings').click();
     await expect.poll(() => $<HTMLInputElement>('#method-github').checked).toBe(false);
     expect($('#github-note').hidden).toBe(true);
-    settings.github = { configured: false, enabled: false, secondFactor: 'none' };
+    settings.github = method(false, false, 'none', false);
     execute('getSettings').click();
     await expect.poll(() => $('#github-note').hidden).toBe(false);
     expect($<HTMLInputElement>('#method-github').disabled).toBe(true);
-    settings.github = { configured: true, enabled: true, secondFactor: 'none' };
+    settings.github = method(true);
     execute('getSettings').click();
     await expect.poll(() => $('#github-note').hidden).toBe(true);
 
     // The controls of setSettings are its parameters: the request changes with them, before anything is sent.
     open('setSettings');
-    expect(request('setSettings')).toContain('"password": false');
+    expect(request('setSettings')).not.toContain('"password"');
     $<HTMLInputElement>('#method-password').checked = true;
     changed($('#method-password'));
     $<HTMLSelectElement>('#policy-password').value = 'required';
@@ -300,18 +295,17 @@ describe('demo page', () => {
     changed($('#method-totp'));
     $<HTMLInputElement>('#method-email-link').checked = false;
     changed($('#method-email-link'));
-    expect(request('setSettings')).toBe(
-      `Madauth.admin.setSettings({ methods })\n${JSON.stringify({ methods: { google: { secondFactor: 'none' }, github: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false, sms: true } }, null, 2)}`,
-    );
+    const on = { allowAsSignInMethod: true, secondFactor: 'none' };
+    const factor = { allowAsSignInMethod: false, secondFactor: 'none' };
+    const sent = { methods: { google: on, github: on, password: { allowAsSignInMethod: true, secondFactor: 'required' }, totp: factor, sms: factor } };
+    expect(request('setSettings')).toBe(`Madauth.admin.setSettings({ methods })\n${JSON.stringify(sent, null, 2)}`);
     execute('setSettings').click();
     await expect.poll(() => settings.password.enabled).toBe(true);
     expect(settings.password.secondFactor).toBe('required');
     expect(settings.totp.enabled).toBe(true);
     expect(settings['email-link'].enabled).toBe(false);
-    const [, sent] = [...vi.mocked(fetch).mock.calls].reverse().find(([url]: [unknown, RequestInit?]) => String(url).endsWith('/auth/admin/settings/set')) as [string, RequestInit];
-    expect(JSON.parse(String(sent.body))).toEqual({
-      methods: { google: { secondFactor: 'none' }, github: { secondFactor: 'none' }, password: { secondFactor: 'required' }, totp: true, 'email-link': false, sms: true },
-    });
+    const [, call] = [...vi.mocked(fetch).mock.calls].reverse().find(([url]: [unknown, RequestInit?]) => String(url).endsWith('/auth/admin/settings/set')) as [string, RequestInit];
+    expect(JSON.parse(String(call.body))).toEqual(sent);
     await expect.poll(() => response('setSettings')).toContain('"secondFactor": "required"');
     expect(execute('setSettings').disabled).toBe(false);
 

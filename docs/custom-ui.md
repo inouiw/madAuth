@@ -3,13 +3,13 @@
 madAuth's dialog (`Madauth.signIn()`) is optional. Everything it does is available as methods, grouped by sign-in method, so you can build a login screen that fits your app. The dialog itself is built only on these methods.
 
 ```ts
-import { Madauth, GoogleFedcm, GitHub, Password, Totp, EmailLink } from '@madauth/web';
+import { Madauth, GoogleFedcm, GitHub, Password, Passkey, Totp, EmailLink } from '@madauth/web';
 
-Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Totp(), new EmailLink()], ui: 'custom' });
+Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Passkey(), new Totp(), new EmailLink()], ui: 'custom' });
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 ```
 
-`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.signIn()`, `Madauth.setUpAuthenticator()` and `Madauth.setUpSms()` return an `invalid_options` error.
+`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.signIn()`, `Madauth.setUpAuthenticator()`, `Madauth.setUpSms()`, `Madauth.setUpPasskey()` and `Madauth.manageSignInMethods()` return an `invalid_options` error.
 
 All methods resolve to a result object and never throw for expected failures:
 
@@ -28,14 +28,15 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 
 | Method | Result | Errors |
 | --- | --- | --- |
-| `signIn({ email, password })` | `{ user }` | `invalid_credentials`, `email_unverified`, `too_many_attempts`; `totp_required` or `totp_setup_required` when the sign-in goes on with the [authenticator app](#authenticator-app-madauthtotp) |
+| `signIn({ email, password })` | `{ user }` | `invalid_credentials`, `email_unverified`, `too_many_attempts`; `passkey_required`, `totp_required`, `sms_required` or `totp_setup_required` when the sign-in goes on with a [second factor](#the-second-step) |
 | `signUp({ email, password, name?, redirectTo? })` | — | `invalid_email`, `weak_password`, `signup_rejected`, `temporarily_unavailable` |
 | `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
 | `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `totp_required` or `totp_setup_required` like `signIn` |
 | `sendResetEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
 | `confirmReset({ newPassword, token? })` or `confirmReset({ newPassword, email, code })` | `{ user }` | `link_invalid`, `code_invalid`, `codes_locked`, `weak_password`; `totp_required` or `totp_setup_required` like `signIn` |
 | `pendingReset` | `boolean` | True when the page was opened from a reset link |
-| `policy` | `{ minLength, minScore, secondFactor } \| null` | The server's [password rules](server.md#password-rules), for a hint next to the field, and whether the method asks for the authenticator app (`none`, `optional`, `required`) |
+| `add({ password })` | — | Adds a password to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods): `weak_password`, `already_added`, `reauth_required`, `no_session` |
+| `policy` | `{ minLength, minScore, secondFactor } \| null` | The server's [password rules](server.md#password-rules), for a hint next to the field, and whether the method asks for a second factor (`none`, `optional`, `required`) |
 | `loadRating()` | `(password, userInputs?) => number` | For a strength meter: loads the rating the server uses for `minScore` and resolves to a function that rates a password from 0 to 4. Pass the user's name and e-mail address as `userInputs`, as the server does. It downloads zxcvbn-ts (about 220 kB compressed) on the first call, so call it when the password field is shown or first typed in. |
 
 `signUp`, `sendVerificationEmail` and `sendResetEmail` succeed whether or not the address has an account (or a password to reset), so nobody can probe for accounts. Tell the user to check their inbox in every case.
@@ -102,7 +103,8 @@ Needs `new EmailLink()` in `initialize`, and on the server a webhook that sends 
 | --- | --- | --- |
 | `send({ email, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `method_disabled`, `temporarily_unavailable` |
 | `verify({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`, `method_disabled`; `totp_required` or `totp_setup_required` when the sign-in goes on with the [authenticator app](#authenticator-app-madauthtotp) |
-| `policy` | `{ secondFactor } \| null` | Whether the method asks for the authenticator app (`none`, `optional`, `required`); null when the server doesn't offer the method |
+| `add()` | — | Adds the e-mail link to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods): `already_added`, `reauth_required`, `no_session` |
+| `policy` | `{ secondFactor } \| null` | Whether the method asks for a second factor (`none`, `optional`, `required`); null when the server doesn't offer the method |
 
 `send` succeeds for every address: an unknown one is signed up on first use (your [sign-up check](server.md#webhooks) permitting, `signup_rejected` otherwise), and the owner of an address that signs in another way, e.g. with a password, gets an e-mail that says so instead of a link. Tell the user to check their inbox in every case.
 
@@ -136,19 +138,19 @@ The methods work whenever the app is in use on the server: as the second factor 
 | `verify({ code })` or `verify({ recoveryCode })` | `{ user }` | `code_invalid`, `too_many_attempts`, `challenge_expired` |
 | `startSetup()`, or `startSetup({ code })` / `startSetup({ recoveryCode })` when the user has an app already | `{ secret, uri, qrSvg }` | `no_session`; `code_required` (an app exists: give a code from it), `code_invalid` |
 | `confirmSetup({ code })` | `{ recoveryCodes, user? }` | `code_invalid`, `setup_expired`, `no_session` |
-| `remove({ code })` or `remove({ recoveryCode })` | — | `code_invalid`, `required_by_policy`, `only_method` (the app is the user's only way to sign in; offer deleting the account), `no_session` |
+| `remove({ code })` or `remove({ recoveryCode })` | — | `code_invalid`, `required_by_policy`, `only_method` (the app is the user's last way to sign in; offer adding another method), `no_session` |
 | `newRecoveryCodes({ code })` or `newRecoveryCodes({ recoveryCode })` | `{ recoveryCodes }` | `code_invalid`, `no_authenticator`, `no_session` |
 | `status()` | `{ enabled, recoveryCodesLeft }` | `no_session` |
 | `signIn({ email, code })` or `signIn({ email, recoveryCode })` | `{ user }` | `invalid_credentials`, `too_many_attempts`, `method_disabled` |
 | `signUp({ email, name?, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `temporarily_unavailable`, `method_disabled` |
 | `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
 | `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `totp_setup_required` for a sign-up with the app |
-| `pendingStep` | `{ step: 'code' \| 'sms' \| 'setup', method, factors? } \| null` | What a sign-in under way still needs, e.g. after the redirect flow or a link from an e-mail; `method` is the method whose sign-in it is (`google`, `github`, `password`, `totp` or `email-link`), `factors` which second factors can finish it (`totp`, `sms`) |
-| `policy` | `{ signIn, signUp, secondFactorFor } \| null` | What the app does on this server: whether it signs in on its own (for the users who signed up with it), whether people can sign up with it, and which methods ask for it |
+| `pendingStep` | `{ step: 'passkey' \| 'code' \| 'sms' \| 'setup', method, factors? } \| null` | What a sign-in under way still needs, e.g. after the redirect flow or a link from an e-mail; `method` is the method whose sign-in it is (`google`, `github`, `password`, `totp`, `email-link` or `passkey`), `factors` which second factors can finish it (`passkey`, `totp`, `sms`), or for `setup` which can be set up |
+| `policy` | `{ signIn, signUp, secondFactorFor } \| null` | What the app does on this server: whether it signs in on its own (for every user who has one), whether people can sign up with it, and which methods ask for a second factor |
 
 ### The second step
 
-When the policy of Google, GitHub, password or the e-mail link asks for a second factor, `password.signIn` (also `verifyEmail` and `confirmReset`), `emailLink.verify` and the Google button's `onResult` end with `totp_required` instead of a user: the first step was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. The error's `factors` says what the user can finish with: with `sms` among them (they have a phone as well, see [SMS codes](#sms-codes-madauthsms)), offer "send a code by SMS instead". With `sms_required` the user has a phone and no app: the SMS step. With `totp_setup_required` the user has no factor yet and the policy requires one: run the setup below, or, when `Madauth.sms.available`, offer adding a phone instead; `confirmSetup` then signs them in and returns `user` as well. A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
+When the policy of a method asks for a second factor, `password.signIn` (also `verifyEmail` and `confirmReset`), `emailLink.verify`, `passkey.signIn` and the Google button's `onResult` end with `totp_required` instead of a user: the first step was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. The error's `factors` says what the user can finish with: with `sms` among them (they have a phone as well, see [SMS codes](#sms-codes-madauthsms)), offer "send a code by SMS instead"; with `passkey`, "use a passkey instead". With `passkey_required` the user has a passkey, which comes first: a button that calls `Madauth.passkey.verify()` (the browser's dialog needs the user's click). With `sms_required` the user has a phone and nothing else: the SMS step. With `totp_setup_required` the user has no factor yet and the policy requires one, and `factors` says which they can set up: the app (the setup below), a phone (when `Madauth.sms.available`) or a passkey (`Madauth.passkey.add()`); each signs them in once it is set up and returns `user` as well. A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
 
 A sign-in that started outside your screen, i.e. the redirect flow (`#madauth_next=…`) or the link in a confirmation or sign-in e-mail, leaves its step in `pendingStep` after `initialize`: show the matching form.
 
@@ -191,7 +193,7 @@ A second factor next to the app, never a sign-in on its own. The methods work wh
 | `confirmSetup({ code })` | `{ user? }` | `code_invalid`, `setup_expired`, `no_session` |
 | `send()` | `{ phone }` (masked) | `too_soon`, `no_phone`, `challenge_expired`, `no_session` |
 | `verify({ code })` | `{ user }` | `code_invalid`, `too_many_attempts`, `challenge_expired` |
-| `remove({ code })` | — | `code_invalid`, `no_phone`, `required_by_policy` (a policy requires a second factor and the user has no app), `no_session` |
+| `remove({ code })` | — | `code_invalid`, `no_phone`, `required_by_policy` (a policy requires a second factor and the user has no other one), `no_session` |
 | `status()` | `{ enabled, phone }` | `no_session` |
 | `pendingStep` | like `Madauth.totp.pendingStep` | `step: 'sms'` when a code by SMS is next |
 | `available` | `boolean` | Whether the server has SMS codes on |
@@ -227,7 +229,7 @@ confirmForm.onsubmit = async () => {
 
 ### The app on its own
 
-When the server lists the app as a method (`policy.signIn`), `signIn({ email, code })` signs in with the address and a code from the app, for users who signed up with it, with `invalid_credentials` for an unknown address, one without the app, one whose app is a second factor and a wrong code alike. With `policy.signUp`, `signUp({ email, name? })` creates an account that signs in with the app alone: it sends the confirmation e-mail, `verifyEmail` (or the link) ends with `totp_setup_required`, and the setup above signs the new user in.
+When the server allows the app as a sign-in method (`policy.signIn`), `signIn({ email, code })` signs in with the address and a code from the app, for every user who has one, with `invalid_credentials` for an unknown address, one without the app and a wrong code alike. With `policy.signUp`, `signUp({ email, name? })` creates an account that signs in with the app alone: it sends the confirmation e-mail, `verifyEmail` (or the link) ends with `totp_setup_required`, and the setup above signs the new user in.
 
 ## Google: `Madauth.google`
 
@@ -251,6 +253,8 @@ You can call `renderButton` before `initialize` has finished. The button appears
 
 One Tap (`GoogleFedcm` with its default `autoPrompt: true`) works on custom screens as well.
 
+With `purpose: 'link'`, the button adds a Google account to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods) instead of signing in: with `GoogleFedcm`, `onResult` gets the user as they are, or `account_taken` (the Google account signs in another user) or `reauth_required`; with `GoogleRedirect`, the page comes back with `linked: 'google'` in the result of `Madauth.initialize`, or with the error. The button says "Connect Google" for the redirect; Google's own button keeps its text.
+
 ## GitHub: `Madauth.github`
 
 Needs `new GitHub()` in `initialize`.
@@ -263,7 +267,32 @@ const result = Madauth.github.renderButton(document.querySelector('#github-butto
 if (result.isSuccess) result.remove();
 ```
 
-It renders a "Continue with GitHub" button (GitHub's mark, black on white or white on dark) that starts the server's redirect flow: the browser goes to GitHub and comes back to the page, without its hash. The user then arrives through `onAuthStateChanged`. A sign-in that failed is returned by `initialize` (e.g. `cancelled`, `email_unverified` for a GitHub account without a verified address, `other_method` when the address signs in another way), and one that goes on with a second factor is in `Madauth.totp.pendingStep` with `method: 'github'`. The button is labelled in English or German, see [Language](#language).
+With `purpose: 'link'` it says "Connect GitHub" and adds GitHub to the signed-in user's methods, like Google's: the page comes back with `linked: 'github'` in the result of `Madauth.initialize`. It renders a "Continue with GitHub" button (GitHub's mark, black on white or white on dark) that starts the server's redirect flow: the browser goes to GitHub and comes back to the page, without its hash. The user then arrives through `onAuthStateChanged`. A sign-in that failed is returned by `initialize` (e.g. `cancelled`, `email_unverified` for a GitHub account without a verified address, `other_method` when the address signs in another way), and one that goes on with a second factor is in `Madauth.totp.pendingStep` with `method: 'github'`. The button is labelled in English or German, see [Language](#language).
+
+## Passkeys: `Madauth.passkey`
+
+Signing in with a passkey alone needs `new Passkey()` in `initialize` and a server that allows it; the second step, adding and renaming work whenever the server has passkeys on (`available`).
+
+| Method | Resolves to | Errors |
+| --- | --- | --- |
+| `signIn()` or `signIn({ conditional: true, signal })` | `{ user }` | `cancelled` (the user closed the browser's dialog), `passkey_unknown`, `verification_failed`, `method_disabled`, `passkey_unsupported`; the [second step](#the-second-step) when the passkey's policy asks for one |
+| `verify()` | `{ user }` | Finishes a sign-in that ended with `passkey_required`: `cancelled`, `verification_failed`, `challenge_expired` |
+| `add({ name? })` | `{ passkey, user? }` | Adds a passkey for the signed-in user, or as the setup of a sign-in (`totp_setup_required` with `passkey` in `factors`; then it signs in, `user`): `cancelled`, `already_added`, `reauth_required`, `verification_failed`, `no_session`, `passkey_unsupported` |
+| `rename({ id, name })` | `{ passkey }` | `method_not_found`, `invalid_options`, `no_session` |
+| `conditionalAvailable()` | `boolean` | Whether the browser offers passkeys in an e-mail field's autofill |
+| `available`, `signInAvailable` | `boolean` | Whether passkeys are on here (server and browser), and whether they sign in on their own here |
+| `policy` | `{ signIn, secondFactor } \| null` | What passkeys do on this server |
+
+A passkey button calls `signIn()`. For the autofill, give the e-mail field `autocomplete="username webauthn"` and start `signIn({ conditional: true, signal })` when the screen shows: the browser offers the user's passkeys in the field's suggestions, and the call resolves when the user picks one. Abort it (`signal`) before another sign-in starts, and when the screen goes. `cancelled` is no error to show: the user closed the dialog.
+
+## A user's sign-in methods: `Madauth.methods`
+
+| Method | Resolves to | Errors |
+| --- | --- | --- |
+| `list()` | `{ methods: [{ id, method, signIn, removable, createdAt, email?, name?, lastUsedAt? }] }` | `no_session` |
+| `remove(id)` | — | `only_method` (the user's last way in), `required_by_policy`, `reauth_required`, `method_not_found`, `no_session` |
+
+A user adds a method with its own call: `Madauth.passkey.add()`, `Madauth.password.add({ password })`, `Madauth.emailLink.add()`, the Google or GitHub button with `purpose: 'link'`, or the app's setup. Adding and removing need a sign-in within the last ten minutes: otherwise they fail with `reauth_required`, and the user signs in again first. The authenticator app is removed with `Madauth.totp.remove`, which takes a code. See [Several sign-in methods](sign-in-methods.md).
 
 ## Language
 

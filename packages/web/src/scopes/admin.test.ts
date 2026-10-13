@@ -61,16 +61,21 @@ describe('Madauth.admin', () => {
       isSuccess: true,
       password: { minLength: 8, minScore: 2 },
       methods: {
-        google: { configured: true, enabled: true, secondFactor: 'none' },
-        github: { configured: false, enabled: false, secondFactor: 'none' },
-        password: { configured: true, enabled: true, secondFactor: 'none' },
-        totp: { configured: true, enabled: false },
-        'email-link': { configured: true, enabled: false, secondFactor: 'none' },
-        sms: { configured: true, enabled: false },
+        google: { configured: true, enabled: true, allowAsSignInMethod: true, secondFactor: 'none' },
+        github: { configured: false, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
+        password: { configured: true, enabled: true, allowAsSignInMethod: true, secondFactor: 'none' },
+        totp: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
+        'email-link': { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
+        passkey: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
+        sms: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
       },
     });
-    // The list replaces what was on: password is left out, Google asks for the authenticator app, the app signs in alone.
-    expect(await Madauth.admin.setSettings({ methods: { google: { secondFactor: 'optional' }, totp: true } })).toMatchObject({
+    // The list replaces what was on: password is left out, Google asks for a second factor, the app signs in alone.
+    const methods = {
+      google: { allowAsSignInMethod: true, secondFactor: 'optional' },
+      totp: { allowAsSignInMethod: true, secondFactor: 'none' },
+    } as const;
+    expect(await Madauth.admin.setSettings({ methods })).toMatchObject({
       isSuccess: true,
       methods: {
         google: { enabled: true, secondFactor: 'optional' },
@@ -80,7 +85,7 @@ describe('Madauth.admin', () => {
     });
     expect(server.requests.at(-1)).toMatchObject({
       url: `${SERVER}/auth/admin/settings/set`,
-      body: { methods: { google: { secondFactor: 'optional' }, totp: true } },
+      body: { methods },
     });
     // The password rules alone leave the methods as they are.
     expect(await Madauth.admin.setSettings({ password: { minLength: 12 } })).toMatchObject({

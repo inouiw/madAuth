@@ -34,7 +34,7 @@ Code: `POST /auth/email-link/send` and `verify` in [`email-link.ts`](../packages
 
 ## A method signs in only users who have it
 
-A link never signs into an account that signs in with a password, Google, GitHub or the authenticator app alone: such a user gets the "you already have an account" e-mail. Otherwise a link would turn every password account into a passwordless one, and the authenticator app a user set up would count for nothing when they are signed in by e-mail. The other way round, a password sign-up or a Google or GitHub sign-in with a link user's address is refused the same way (`email.send_already_registered`, `403 other_method`), and "Forgot password?" tells them they have no password (`email.send_password_reset_no_password`).
+A link never signs into an account that signs in with a password, Google, GitHub or the authenticator app alone, unless the user added the e-mail link while signed in (see [Several sign-in methods](sign-in-methods.md)): such a user gets the "you already have an account" e-mail. Otherwise a link would turn every password account into a passwordless one, and the authenticator app a user set up would count for nothing when they are signed in by e-mail. The other way round, a password sign-up or a Google or GitHub sign-in with a link user's address is refused the same way (`email.send_already_registered`, `403 other_method`), and "Forgot password?" tells them they have no password (`email.send_password_reset_no_password`).
 
 Code: [`email-link.ts`](../packages/server/src/routes/email-link.ts), `resolveProviderUser` in [`oauth.ts`](../packages/server/src/routes/oauth.ts).
 
@@ -62,4 +62,3 @@ A link user gets the same madAuth session as every other user, with `amr: ["emai
 
 - Binding the link to the browser that asked for it: a link opened on another device signs in there, which is also what makes the code unnecessary on the same device. The short lifetime limits the risk.
 - Remembering a device, so a second factor is not asked every time.
-- Adding a password, or a Google account, to a link user while signed in.

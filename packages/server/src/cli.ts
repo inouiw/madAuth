@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 import { parseArgs, parseEnv } from 'node:util';
-import { loadConfig, loadStore, methodConfig } from './config.js';
+import { loadStore, methodConfig, readConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
 import { claimsFromJson, parseClaims, parseRoles, type Claims } from './claims.js';
@@ -10,16 +10,17 @@ import {
   DEFAULT_PASSWORD_RULES,
   MAX_MIN_LENGTH,
   SECOND_FACTOR_POLICIES,
-  SIGN_IN_METHODS,
   Settings,
-  anyOn,
   canSignUp,
-  hasSecondFactor,
+  checkMethodSettings,
   initialMethods,
+  legacyAppProblem,
+  METHODS_SETTING,
   isConfigured,
   isPasswordScore,
   isOn,
   policyOf,
+  signsIn,
   type MethodId,
   type MethodSettings,
   type PasswordRules,
@@ -58,13 +59,15 @@ Commands:
   set-claims <email> <json>    Replace the claims of a user, e.g. '{"roles":["admin"],"plan":"pro"}'.
   get-claims <email>           Print the claims of a user as JSON.
   set-methods [method[=policy]...]
-                               Switch sign-in methods on and off while the server runs: the listed ones
-                               are on, the others off. Methods: google, github, password, totp (the
-                               authenticator app on its own), email-link (passwordless sign-in by e-mail),
-                               and sms (SMS codes as a second factor, next to the app). google, github,
-                               password and email-link take a policy for the second factor: none (default),
-                               optional or required, e.g. set-methods google password=required totp email-link=optional sms
-  get-methods                  Print which sign-in methods are switched on, with their policies.
+                               Switch methods on and off while the server runs: the listed ones are on,
+                               the others off. Methods: google, github, password, email-link (passwordless
+                               sign-in by e-mail), totp (the authenticator app), passkey, and sms (SMS
+                               codes). Listed alone, a method is allowed as a sign-in method (sms: a second
+                               factor). A policy says whether a sign-in with it asks for a second factor:
+                               none (default), optional or required. totp=second-factor and
+                               passkey=second-factor are on only as a second factor, e.g.
+                               set-methods google password=required passkey totp=second-factor sms
+  get-methods                  Print which methods are switched on, with their policies.
   set-password-rules [min-length=<n>] [min-score=<0-4>]
                                Set the rules for new passwords: the minimum length (default 8, at most 128)
                                and how hard to guess they must be, 0 (anything) to 4 (default 2: no common
@@ -74,7 +77,8 @@ Commands:
   remove-totp <email>          Remove a user's authenticator app and recovery codes: the last resort when
                                both are lost. With a required policy, the user sets it up again next time.
   remove-sms <email>           Remove a user's phone number for SMS codes, when they lost the phone.
-                               The claims commands, remove-totp and remove-sms use DATABASE_URL from the
+  remove-passkeys <email>      Remove all passkeys of a user, when they lost them.
+                               The claims commands and the remove commands use DATABASE_URL from the
                                environment; the methods commands need the server's whole configuration
                                (e.g. --env-file .env).
   schema [--dialect <name>] [--from <version>]
@@ -238,6 +242,7 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     'get-claims': 1,
     'remove-totp': 1,
     'remove-sms': 1,
+    'remove-passkeys': 1,
   };
   const maxArguments = command ? (argumentLimits[command] ?? 0) : 0;
   if (rest.length > maxArguments) {
@@ -290,6 +295,9 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     }
     if (command === 'remove-sms') {
       return await removeSms(rest[0], env);
+    }
+    if (command === 'remove-passkeys') {
+      return await removePasskeys(rest[0], env);
     }
   } catch (e) {
     return { output: e instanceof Error ? e.message : String(e), exitCode: 1 };
@@ -412,7 +420,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
 
   // The server's own checks, on the file as it will be read, so that it is ready to use. The database is
   // not opened here: a placeholder stands in for DATABASE_URL.
-  await loadConfig({ ...parseEnv(content), DATABASE_URL: undefined }, { store: {} as StoreAdapter });
+  await readConfig({ ...parseEnv(content), DATABASE_URL: undefined }, { store: {} as StoreAdapter });
 
   // Always a new file, readable by its owner only: it holds secrets, and an overwritten file would keep its mode.
   if (options.force) rmSync(file, { force: true });
@@ -548,7 +556,7 @@ async function claims(
 
 async function methods(command: 'set-methods' | 'get-methods', args: string[], env: Env) {
   // The whole configuration: only a method the server is configured for can be on, and one must stay on.
-  const config = await loadConfig(env);
+  const config = await readConfig(env);
   const forMethods = methodConfig(config);
   const configured = (method: MethodId) => isConfigured(forMethods, method);
   const signsUp = (method: SignInMethod) => canSignUp(forMethods, method);
@@ -556,36 +564,33 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
   if (command === 'set-methods') {
     const next: MethodSettings = {};
     for (const arg of args) {
-      const [name, policy, ...more] = arg.split('=');
+      const [name, value, ...more] = arg.split('=');
       if (!(METHODS as readonly string[]).includes(name) || more.length) {
-        return { output: `Unknown sign-in method "${arg}". Methods: ${METHODS.join(', ')}, e.g. set-methods google password=required totp sms.`, exitCode: 1 };
+        return { output: `Unknown method "${arg}". Methods: ${METHODS.join(', ')}, e.g. set-methods google password=required passkey totp=second-factor sms.`, exitCode: 1 };
       }
       const method = name as MethodId;
-      if (policy !== undefined && (!hasSecondFactor(method) || !(SECOND_FACTOR_POLICIES as readonly string[]).includes(policy))) {
-        return {
-          output: `"${arg}": google, github, password and email-link take a policy for the second factor: ${SECOND_FACTOR_POLICIES.join(', ')}.`,
-          exitCode: 1,
-        };
+      const secondFactorOnly = value === 'second-factor' || method === 'sms';
+      if (value !== undefined && value !== 'second-factor' && !(SECOND_FACTOR_POLICIES as readonly string[]).includes(value)) {
+        return { output: `"${arg}": the value is a policy for the second factor (${SECOND_FACTOR_POLICIES.join(', ')}), or second-factor.`, exitCode: 1 };
       }
-      next[method] = hasSecondFactor(method) ? { secondFactor: (policy as SecondFactorPolicy | undefined) ?? 'none' } : {};
+      const policy = value === undefined || value === 'second-factor' ? 'none' : (value as SecondFactorPolicy);
+      next[method] = { allowAsSignInMethod: !secondFactorOnly, secondFactor: policy };
     }
-    if (!anyOn(signsUp, next)) {
-      const usable = SIGN_IN_METHODS.filter(signsUp);
-      return {
-        output: `That would leave no sign-in method on that creates users, so nobody could sign up. On this server these do: ${usable.join(', ')}.`,
-        exitCode: 1,
-      };
-    }
+    const wrong = checkMethodSettings(next, { configured, signsUp });
+    if (wrong) return { output: wrong, exitCode: 1 };
     await settings.changeMethods(() => next, null);
   }
   const current = await settings.methods();
   const describe = (method: MethodId) => {
-    const policy = hasSecondFactor(method) ? policyOf(method, current) : 'none';
+    if (!signsIn(method, configured, current)) return `${method} (second factor only)`;
+    const policy = policyOf(method, current);
     return policy !== 'none' ? `${method} (second factor ${policy})` : method;
   };
   const on = METHODS.filter((method) => isOn(method, configured, current)).map(describe);
   const off = METHODS.filter((method) => configured(method) && !isOn(method, configured, current));
-  return { output: `Switched on: ${on.join(', ')}.${off.length ? ` Switched off: ${off.join(', ')}.` : ''}`, exitCode: 0 };
+  // A list from before 0.6 that the server refuses to start with: say why, and what to run.
+  const problem = legacyAppProblem(await settings.get(METHODS_SETTING));
+  return { output: `Switched on: ${on.join(', ')}.${off.length ? ` Switched off: ${off.join(', ')}.` : ''}${problem ? `\n\n${problem}` : ''}`, exitCode: 0 };
 }
 
 /** The password rules in words. */
@@ -638,6 +643,19 @@ async function removeSms(email: string | undefined, env: Env) {
   const removed = await users.removeSms(user.id);
   return {
     output: removed ? `Removed the phone number of ${address}.` : `${address} has no phone number for SMS codes.`,
+    exitCode: 0,
+  };
+}
+
+async function removePasskeys(email: string | undefined, env: Env) {
+  if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
+  const users = new Users(await loadStore(env));
+  const address = normalizeEmail(email);
+  const user = await users.findByEmail(address);
+  if (!user) return { output: `No user has the e-mail address ${address}.`, exitCode: 1 };
+  const removed = await users.removePasskeys(user.id);
+  return {
+    output: removed ? `Removed ${removed === 1 ? 'the passkey' : `the ${removed} passkeys`} of ${address}.` : `${address} has no passkeys.`,
     exitCode: 0,
   };
 }

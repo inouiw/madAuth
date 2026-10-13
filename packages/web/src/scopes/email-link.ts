@@ -21,7 +21,13 @@ export interface EmailLinkApi {
    * is handled by `Madauth.initialize` when the page opens from it.
    */
   verify(options: { email: string; code: string }): Promise<Result<{ user: MadauthUser }>>;
-  /** Whether the method asks for the authenticator app as a second factor; null until initialized, or when the server doesn't offer the method. */
+  /**
+   * Adds the e-mail link to the signed-in user's methods: from then on a link to their address signs them
+   * in too. Within ten minutes of signing in only, else it fails with `reauth_required`. Fails with
+   * `already_added` or `no_session`.
+   */
+  add(): Promise<Result>;
+  /** Whether the method asks for a second factor; null until initialized, or when the server doesn't offer the method. */
   readonly policy: { secondFactor: SecondFactorPolicy } | null;
 }
 
@@ -47,6 +53,11 @@ export function createEmailLinkApi(core: Core): EmailLinkApi {
 
     async verify({ email, code }) {
       return signedIn(core, 'email-link', await call('/auth/email-link/verify', { email, code }));
+    },
+
+    async add() {
+      const result = await call('/auth/email-link/add', {});
+      return result.isSuccess ? ok() : result;
     },
 
     get policy() {

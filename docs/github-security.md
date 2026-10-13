@@ -20,7 +20,7 @@ Code: `fetchGitHubAccount` in [`packages/server/src/github.ts`](../packages/serv
 
 ## A method signs in only users who have it
 
-A GitHub sign-in never joins a user who signs in another way: an address that has a password, a Google account, an e-mail link account or the authenticator app alone is refused: the callback sends the user back with `madauth_error=other_method`, and the page says the address signs in another way. Whoever controls the GitHub account must not get past them. The one exception is a sign-up nobody finished (a password that was never confirmed, an e-mail link never used): GitHub proved the address, so that user is taken over and the unproven method goes. The other way round, a password sign-up or an e-mail link for a GitHub user's address gets `email.send_already_registered`, and "Forgot password?" gets `email.send_password_reset_no_password`, both naming `github` among the user's `methods`.
+A GitHub sign-in never joins a user who signs in another way: an address that has a password, a Google account, an e-mail link account or the authenticator app alone is refused: the callback sends the user back with `madauth_error=other_method`, and the page says the address signs in another way. Whoever controls the GitHub account must not get past them. The one exception is a sign-up nobody finished (a password that was never confirmed, an e-mail link never used): GitHub proved the address, so that user is taken over and the unproven method goes. The other way round, a password sign-up or an e-mail link for a GitHub user's address gets `email.send_already_registered`, and "Forgot password?" gets `email.send_password_reset_no_password`, both naming `github` among the user's `methods`. A user adds GitHub to their methods while signed in instead (`/auth/github/start?link=1`), and a GitHub user adds a password or a passkey the same way: see [Several sign-in methods](sign-in-methods.md#google-and-github).
 
 The operator's sign-up check (`user.signing_up`, `method: "github"`) runs before a new user is created and fails closed; `user.signed_up` comes with the user's first session.
 
@@ -52,6 +52,5 @@ A GitHub user gets the same madAuth session as every other user, with `amr: ["gi
 
 ## Not covered yet
 
-- Linking a GitHub account to a user who signs in another way, while signed in.
 - Remembering a device, so a second factor is not asked every time.
 - Expiring tokens: with **Expire user access tokens** on (GitHub's default for a new OAuth App, see the [setup](server.md#github-oauth-app-setup)), tokens expire in eight hours, and madAuth does not refresh them. The stored token has then usually expired when the user deletes their account, and the authorization stays at GitHub; signing in is not affected.

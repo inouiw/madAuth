@@ -10,13 +10,17 @@ export interface MadauthUser {
   /**
    * How the session was authenticated (RFC 8176): `pwd` (password), `google`, `github`, `email` (the e-mail link),
    * `otp` (the authenticator app, on its own or as the second factor), `sms` (a code by SMS as the second
-   * factor), e.g. `['pwd', 'otp']`. Present on a user that comes with a session.
+   * factor), `passkey` (a passkey, on its own or as the second factor), e.g. `['pwd', 'otp']`. Present on a
+   * user that comes with a session.
    */
   amr?: string[];
 }
 
-/** A second factor: a code from the authenticator app, or one sent by SMS. */
-export type SecondFactor = 'totp' | 'sms';
+/** The second factors, in the order a sign-in offers them: a passkey, a code from the authenticator app, one sent by SMS. */
+export const SECOND_FACTORS = ['passkey', 'totp', 'sms'] as const;
+export type SecondFactor = (typeof SECOND_FACTORS)[number];
+
+export const isSecondFactor = (value: unknown): value is SecondFactor => (SECOND_FACTORS as readonly unknown[]).includes(value);
 
 const errorCodes = [
   'invalid_options',
@@ -45,6 +49,14 @@ const errorCodes = [
   'totp_required',
   'totp_setup_required',
   'sms_required',
+  'passkey_required',
+  'passkey_unknown',
+  'passkey_unsupported',
+  'reauth_required',
+  'account_taken',
+  'already_added',
+  'method_not_found',
+  'forbidden_origin',
   'invalid_phone',
   'no_phone',
   'too_soon',
@@ -64,9 +76,12 @@ export interface MadauthError {
   code: MadauthErrorCode;
   /** Human-readable details, e.g. which option is invalid. */
   message: string;
-  /** With `totp_required`, `sms_required` and `totp_setup_required`: the method whose sign-in goes on with the second step. */
+  /** With `passkey_required`, `totp_required`, `sms_required` and `totp_setup_required`: the method whose sign-in goes on with the second step. */
   method?: string;
-  /** With `totp_required` and `sms_required`: the second factors the user can finish the sign-in with, e.g. `['totp', 'sms']`. */
+  /**
+   * With `passkey_required`, `totp_required` and `sms_required`: the second factors the user can finish the
+   * sign-in with, e.g. `['totp', 'sms']`. With `totp_setup_required`: those they can set up.
+   */
   factors?: SecondFactor[];
   /** With `other_method`: how the address signs in instead, e.g. `['password']`. */
   methods?: string[];

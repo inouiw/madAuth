@@ -59,7 +59,7 @@ describe('SQLite adapter', () => {
     // Schema version 1: users had no count of wrong codes and no claims, accounts no e-mail and no last code,
     // and there were no settings and no recovery codes.
     const { wrongCodes: _, claims: __, lastSmsAt: _________, signedUpAt: __________, ...v1Fields } = madauthSchema.models.user.fields;
-    const { email: ___, lastUsedStep: _____, setupId: _______, phone: ________, primaryUserId: ___________, secondFactor: ____________, ...v1AccountFields } = madauthSchema.models.account.fields;
+    const { email: ___, lastUsedStep: _____, setupId: _______, phone: ________, primaryUserId: ___________, secondFactor: ____________, name: _a, credentialId: _b, signCount: _c, transports: _d, lastUsedAt: _e, rpId: _f, ...v1AccountFields } = madauthSchema.models.account.fields;
     const { setting: ____, recoveryCode: ______, ...v1Models } = madauthSchema.models;
     const v1 = { version: 1, models: { ...v1Models, user: { fields: v1Fields }, account: { fields: v1AccountFields } } };
     const db = new DatabaseSync(path);
@@ -76,7 +76,7 @@ describe('SQLite adapter', () => {
     expect(await store.create('setting', { id: 'methods', value: '{}', updatedAt: 1, updatedBy: null })).toBe(true);
     // An account from before version 5 reads as if no authenticator code was ever used, before 6 has no phone,
     // and before 7 doesn't say whether it is the user's sign-in method.
-    expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ email: null, lastUsedStep: 0, setupId: null, phone: null, primaryUserId: null, secondFactor: null });
+    expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ email: null, lastUsedStep: 0, setupId: null, phone: null, primaryUserId: null, secondFactor: null, name: null, credentialId: null });
     expect(await store.update('account', { id: 'acc_1', lastUsedStep: 0 }, { lastUsedStep: 7 })).toBe(1);
     expect(await store.update('account', { id: 'acc_1' }, { phone: '+41791234567' })).toBe(1);
     expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ phone: '+41791234567' });
@@ -129,11 +129,19 @@ describe('createTablesSql', () => {
   });
 
   it('upgradeTablesSql lists what newer schema versions added, per dialect', () => {
+    const V8 =
+      'ALTER TABLE madauth_account ADD COLUMN name TEXT;\n' +
+      'ALTER TABLE madauth_account ADD COLUMN credential_id TEXT;\n' +
+      'ALTER TABLE madauth_account ADD COLUMN sign_count DOUBLE PRECISION;\n' +
+      'ALTER TABLE madauth_account ADD COLUMN transports TEXT;\n' +
+      'ALTER TABLE madauth_account ADD COLUMN last_used_at DOUBLE PRECISION;\n' +
+      'ALTER TABLE madauth_account ADD COLUMN rp_id TEXT;';
     const V7 =
       'ALTER TABLE madauth_user ADD COLUMN signed_up_at DOUBLE PRECISION;\n' +
       'ALTER TABLE madauth_account ADD COLUMN primary_user_id TEXT;\n' +
       'CREATE UNIQUE INDEX madauth_account_primary_user_id ON madauth_account (primary_user_id);\n' +
-      'ALTER TABLE madauth_account ADD COLUMN second_factor BOOLEAN;';
+      'ALTER TABLE madauth_account ADD COLUMN second_factor BOOLEAN;\n' +
+      V8;
     expect(upgradeTablesSql('postgres', 1).split('\n')[0]).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE PRECISION NOT NULL DEFAULT 0;');
     expect(upgradeTablesSql('mysql', 1).split('\n')[0]).toBe('ALTER TABLE madauth_user ADD COLUMN wrong_codes DOUBLE NOT NULL DEFAULT 0;');
     expect(upgradeTablesSql('mysql', 2).split('\n')[0]).toBe('CREATE TABLE madauth_role (');
@@ -161,6 +169,8 @@ describe('createTablesSql', () => {
     // unique index, since SQLite can't add a UNIQUE column, and on a fixed-length string for MySQL.
     expect(upgradeTablesSql('postgres', 6)).toBe(V7);
     expect(upgradeTablesSql('mysql', 6).split('\n')[1]).toBe('ALTER TABLE madauth_account ADD COLUMN primary_user_id VARCHAR(255);');
+    // Version 8 added passkeys: their name, credential id, counter, transports and last use.
+    expect(upgradeTablesSql('postgres', 7)).toBe(V8);
     expect(upgradeTablesSql('sqlite', madauthSchema.version)).toBe('');
   });
 

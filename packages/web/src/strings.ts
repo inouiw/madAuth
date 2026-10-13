@@ -21,6 +21,7 @@ export const en = {
     password: { label: 'Email & password', description: 'Sign in with your email address and password' },
     totp: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
     'email-link': { label: 'Email link', description: 'Passwordless sign-in by email' },
+    passkey: { label: 'Passkey', description: 'Sign in with your fingerprint, face or screen lock' },
   } satisfies Record<LoginMethodId, { label: string; description: string }>,
 
   // Fields
@@ -152,9 +153,62 @@ export const en = {
     /** What the phone will do, from the server's policy. */
     effect: (methods: string) => `From then on, signing in with ${methods} can also ask for a code sent to your phone.`,
   },
+  // Passkeys
+  usePasskey: 'Use a passkey instead',
+  /** The second step with a passkey. */
+  passkeyStep: {
+    heading: 'Confirm with your passkey',
+    lead: 'Use your passkey to finish signing in.',
+    button: 'Use passkey',
+  },
+  passkeySetup: {
+    heading: 'Create a passkey',
+    lead: 'A passkey signs you in with your fingerprint, face or screen lock. It is kept on your device or in your password manager.',
+    /** When a sign-in requires a second factor and the user has none yet. */
+    requiredLead: 'Signing in requires a second factor. Create a passkey: it uses your fingerprint, face or screen lock.',
+    name: 'Name',
+    /** Under the name field. */
+    nameHint: 'So you can tell your passkeys apart, e.g. "Laptop".',
+    create: 'Create passkey',
+    /** In the setup of another factor during a sign-in. */
+    useInstead: 'Create a passkey instead',
+    /** What the passkey will do, from the server's policy. */
+    effect: (methods: string) => `From then on, signing in with ${methods} can also ask for your passkey.`,
+    signsIn: 'From then on, it signs you in by itself.',
+  },
+  /** The signed-in user's sign-in methods. */
+  methodsView: {
+    heading: 'Sign-in methods',
+    lead: 'These are the ways you sign in. Add another one, so you can still sign in if you lose one.',
+    labels: { google: 'Google', github: 'GitHub', password: 'Password', totp: 'Authenticator app', 'email-link': 'Email link', passkey: 'Passkey' } satisfies Record<LoginMethodId, string>,
+    /** Next to a method the server allows only as a second factor. */
+    secondFactorOnly: 'As a second factor',
+    lastUsed: (date: string) => `Last used ${date}`,
+    neverUsed: 'Not used yet',
+    remove: 'Remove',
+    removeLabel: (name: string) => `Remove ${name}`,
+    add: 'Add a sign-in method',
+    addPasskey: 'Add a passkey',
+    addPassword: 'Add a password',
+    addEmailLink: 'Sign in with email links',
+    addApp: 'Set up an authenticator app',
+    /** The button of a provider (Google, GitHub) that adds it. */
+    connect: (name: string) => `Connect ${name}`,
+    added: 'Added.',
+    removed: 'Removed.',
+    done: 'Done',
+    loading: 'Loading…',
+  },
+  addPassword: {
+    heading: 'Add a password',
+    lead: 'From then on, you can also sign in with your email address and this password.',
+  },
+  /** `reauth_required`: adding or removing a method needs a recent sign-in. */
+  signInAgain: 'Sign in again',
+
   /** `other_method` with the methods the server named, e.g. "a password", and the provider that was refused, if known. */
   otherMethod: (how: string, instead?: string) => `This email address signs in with ${how}. Use that instead${instead ? ` of ${instead}` : ''}.`,
-  methodNames: { google: 'Google', github: 'GitHub', password: 'a password', totp: 'an authenticator app', 'email-link': 'an email link' },
+  methodNames: { google: 'Google', github: 'GitHub', password: 'a password', totp: 'an authenticator app', 'email-link': 'an email link', passkey: 'a passkey' },
   and: ' and ',
   /** Between alternatives in a sentence. */
   orList: ' or ',
@@ -178,7 +232,14 @@ export const en = {
     required_by_policy: 'Signing in requires a second factor, so it can’t be removed.',
     code_required: 'Please enter a code from your authenticator app.',
     no_authenticator: 'No authenticator app is set up.',
-    only_method: 'The authenticator app is the only way you sign in, so it can’t be removed.',
+    only_method: 'This is the only way you sign in, so it can’t be removed. Add another one first.',
+    passkey_unknown: 'This passkey is not registered here any more. Sign in another way.',
+    passkey_unsupported: 'This browser does not support passkeys.',
+    reauth_required: 'For your security, sign in again to change how you sign in.',
+    account_taken: 'This account signs in another user. Use another one.',
+    already_added: 'You have added this already.',
+    method_not_found: 'This sign-in method is gone already.',
+    forbidden_origin: 'Passkeys can’t be used on this page.',
     other_method: 'This email address signs in another way. Use that instead.',
     invalid_phone: 'Please enter a valid mobile number with the country code, e.g. +41 79 123 45 67.',
     no_phone: 'No phone number is set up.',
@@ -209,6 +270,9 @@ export const en = {
     method_disabled: (name: string) => `${name} sign-in is switched off at the moment.`,
     temporarily_unavailable: (name: string) => `${name} sign-in is not available right now. Please try again later.`,
     other_method: (name: string) => `This email address signs in another way. Use that instead of ${name}.`,
+    account_taken: (name: string) => `This ${name} account signs in another user. Connect another one.`,
+    reauth_required: (name: string) => `To connect ${name}, sign in again first.`,
+    no_session: (name: string) => `To connect ${name}, sign in first.`,
   } satisfies Partial<Record<MadauthErrorCode, (name: string) => string>>,
   redirectFailed: (name: string, code: string) => `${name} sign-in failed (${code}).`,
 };
@@ -226,6 +290,7 @@ export const de: Strings = {
     password: { label: 'E-Mail-Adresse und Passwort', description: 'Mit E-Mail-Adresse und Passwort anmelden' },
     totp: { label: 'Authentifizierungs-App', description: 'Einmalcode aus Ihrer Authentifizierungs-App' },
     'email-link': { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
+    passkey: { label: 'Passkey', description: 'Mit Fingerabdruck, Gesicht oder Bildschirmsperre anmelden' },
   },
 
   email: 'E-Mail-Adresse',
@@ -331,8 +396,51 @@ export const de: Strings = {
     useAppInstead: 'Stattdessen eine Authentifizierungs-App einrichten',
     effect: (methods) => `Die Anmeldung mit ${methods} kann dann zusätzlich nach einem Code fragen, der an Ihr Mobiltelefon gesendet wird.`,
   },
+  usePasskey: 'Stattdessen einen Passkey verwenden',
+  passkeyStep: {
+    heading: 'Mit Passkey bestätigen',
+    lead: 'Verwenden Sie Ihren Passkey, um die Anmeldung abzuschließen.',
+    button: 'Passkey verwenden',
+  },
+  passkeySetup: {
+    heading: 'Passkey erstellen',
+    lead: 'Ein Passkey meldet Sie mit Fingerabdruck, Gesicht oder Bildschirmsperre an. Er wird auf Ihrem Gerät oder in Ihrem Passwortmanager gespeichert.',
+    requiredLead: 'Für die Anmeldung ist ein zweiter Faktor erforderlich. Erstellen Sie einen Passkey: Er verwendet Fingerabdruck, Gesicht oder Bildschirmsperre.',
+    name: 'Name',
+    nameHint: 'Damit Sie Ihre Passkeys auseinanderhalten können, z. B. „Laptop“.',
+    create: 'Passkey erstellen',
+    useInstead: 'Stattdessen einen Passkey erstellen',
+    effect: (methods) => `Die Anmeldung mit ${methods} kann dann zusätzlich nach Ihrem Passkey fragen.`,
+    signsIn: 'Danach meldet er Sie auch allein an.',
+  },
+  methodsView: {
+    heading: 'Anmeldemethoden',
+    lead: 'So melden Sie sich an. Fügen Sie eine weitere Methode hinzu, damit Sie sich auch anmelden können, wenn Sie eine verlieren.',
+    labels: { google: 'Google', github: 'GitHub', password: 'Passwort', totp: 'Authentifizierungs-App', 'email-link': 'E-Mail-Link', passkey: 'Passkey' },
+    secondFactorOnly: 'Als zweiter Faktor',
+    lastUsed: (date) => `Zuletzt verwendet am ${date}`,
+    neverUsed: 'Noch nicht verwendet',
+    remove: 'Entfernen',
+    removeLabel: (name) => `${name} entfernen`,
+    add: 'Anmeldemethode hinzufügen',
+    addPasskey: 'Passkey hinzufügen',
+    addPassword: 'Passwort hinzufügen',
+    addEmailLink: 'Mit E-Mail-Links anmelden',
+    addApp: 'Authentifizierungs-App einrichten',
+    connect: (name) => `${name} verbinden`,
+    added: 'Hinzugefügt.',
+    removed: 'Entfernt.',
+    done: 'Fertig',
+    loading: 'Wird geladen …',
+  },
+  addPassword: {
+    heading: 'Passwort hinzufügen',
+    lead: 'Danach können Sie sich auch mit Ihrer E-Mail-Adresse und diesem Passwort anmelden.',
+  },
+  signInAgain: 'Erneut anmelden',
+
   otherMethod: (how, instead) => `Diese E-Mail-Adresse meldet sich mit ${how} an. Verwenden Sie das ${instead ? `statt ${instead}` : 'stattdessen'}.`,
-  methodNames: { google: 'Google', github: 'GitHub', password: 'einem Passwort', totp: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link' },
+  methodNames: { google: 'Google', github: 'GitHub', password: 'einem Passwort', totp: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link', passkey: 'einem Passkey' },
   and: ' und ',
   orList: ' oder ',
 
@@ -354,7 +462,14 @@ export const de: Strings = {
     required_by_policy: 'Für die Anmeldung ist ein zweiter Faktor erforderlich, daher kann er nicht entfernt werden.',
     code_required: 'Bitte geben Sie einen Code aus Ihrer Authentifizierungs-App ein.',
     no_authenticator: 'Es ist keine Authentifizierungs-App eingerichtet.',
-    only_method: 'Die Authentifizierungs-App ist Ihre einzige Anmeldemethode, daher kann sie nicht entfernt werden.',
+    only_method: 'Dies ist Ihre einzige Anmeldemethode, daher kann sie nicht entfernt werden. Fügen Sie zuerst eine weitere hinzu.',
+    passkey_unknown: 'Dieser Passkey ist hier nicht mehr registriert. Melden Sie sich auf andere Weise an.',
+    passkey_unsupported: 'Dieser Browser unterstützt keine Passkeys.',
+    reauth_required: 'Melden Sie sich zu Ihrer Sicherheit erneut an, um Ihre Anmeldemethoden zu ändern.',
+    account_taken: 'Mit diesem Konto meldet sich ein anderer Benutzer an. Verwenden Sie ein anderes.',
+    already_added: 'Sie haben dies bereits hinzugefügt.',
+    method_not_found: 'Diese Anmeldemethode ist bereits entfernt.',
+    forbidden_origin: 'Auf dieser Seite können keine Passkeys verwendet werden.',
     other_method: 'Diese E-Mail-Adresse meldet sich auf andere Weise an. Verwenden Sie diese stattdessen.',
     invalid_phone: 'Bitte geben Sie eine gültige Mobilnummer mit Ländervorwahl ein, z. B. +41 79 123 45 67.',
     no_phone: 'Es ist keine Mobilnummer eingerichtet.',
@@ -383,6 +498,9 @@ export const de: Strings = {
     method_disabled: (name) => `Die Anmeldung mit ${name} ist derzeit abgeschaltet.`,
     temporarily_unavailable: (name) => `Die Anmeldung mit ${name} ist derzeit nicht verfügbar. Bitte versuchen Sie es später erneut.`,
     other_method: (name) => `Diese E-Mail-Adresse meldet sich auf andere Weise an. Verwenden Sie diese statt ${name}.`,
+    account_taken: (name) => `Mit diesem ${name}-Konto meldet sich ein anderer Benutzer an. Verbinden Sie ein anderes.`,
+    reauth_required: (name) => `Um ${name} zu verbinden, melden Sie sich zuerst erneut an.`,
+    no_session: (name) => `Um ${name} zu verbinden, melden Sie sich zuerst an.`,
   },
   redirectFailed: (name, code) => `Die Anmeldung mit ${name} ist fehlgeschlagen (${code}).`,
 };

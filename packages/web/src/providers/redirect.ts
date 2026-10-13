@@ -30,7 +30,8 @@ export function renderRedirectButton(
   button.innerHTML = `${style.logo}<span></span>`;
   const label = button.querySelector('span')!;
   const setLabel = () => {
-    label.textContent = stringsFor(ctx.locale).methods[method].label;
+    const s = stringsFor(ctx.locale);
+    label.textContent = options.purpose === 'link' ? s.methodsView.connect(s.methodNames[method]) : s.methods[method].label;
   };
   setLabel();
   const stopFollowingLocale = ctx.onLocaleChanged(setLabel);
@@ -49,7 +50,7 @@ export function renderRedirectButton(
     font: style.font,
     cursor: 'pointer',
   });
-  button.addEventListener('click', () => startRedirect(ctx, method));
+  button.addEventListener('click', () => startRedirect(ctx, method, options.purpose === 'link'));
   container.replaceChildren(button);
   return () => {
     stopFollowingLocale();
@@ -59,10 +60,11 @@ export function renderRedirectButton(
 
 /**
  * Sends the browser to the server's start route of the method, with the locale for the sign-up check (like the
- * other sign-up requests); the user comes back to this page, without its hash.
+ * other sign-up requests); the user comes back to this page, without its hash. With `link`, the flow adds the
+ * provider to the signed-in user's methods instead of signing in.
  */
-export function startRedirect(ctx: ProviderContext, method: LoginMethodId): void {
+export function startRedirect(ctx: ProviderContext, method: LoginMethodId, link = false): void {
   const returnTo = location.href.split('#')[0];
   const locale = ctx.locale ? `&locale=${encodeURIComponent(ctx.locale)}` : '';
-  location.assign(`${ctx.serverUrl}/auth/${method}/start?return_to=${encodeURIComponent(returnTo)}${locale}`);
+  location.assign(`${ctx.serverUrl}/auth/${method}/start?return_to=${encodeURIComponent(returnTo)}${locale}${link ? '&link=1' : ''}`);
 }

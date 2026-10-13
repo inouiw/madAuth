@@ -52,8 +52,19 @@ export interface SessionClaims extends JWTPayload {
   amr: string[];
   /** The user's session version; a password reset increments it and so ends older sessions. */
   sv?: number;
+  /**
+   * When the user signed in (seconds since 1970, as in OpenID Connect): kept when the session is renewed, so
+   * it says how recently the user proved who they are. Absent in tokens from before madAuth 0.6.
+   */
+  auth_time?: number;
   /** The user's claims when the session was issued. */
   claims?: Record<string, unknown>;
+}
+
+/** What a session carries next to the user: their session version, and when they signed in. */
+export interface SessionExtra {
+  sv?: number;
+  auth_time?: number;
 }
 
 export function signSession(
@@ -62,7 +73,7 @@ export function signSession(
   ttlSeconds: number,
   user: MadauthUser,
   amr: string[],
-  extra: { sv?: number } = {},
+  extra: SessionExtra = {},
 ): Promise<string> {
   const claims: SessionClaims = {
     ...extra,
@@ -87,7 +98,7 @@ export function signRenewal(
   ttlSeconds: number,
   user: MadauthUser,
   amr: string[],
-  extra: { sv?: number } = {},
+  extra: SessionExtra = {},
 ): Promise<string> {
   const claims: SessionClaims = {
     ...extra,
