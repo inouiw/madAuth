@@ -62,6 +62,12 @@ export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | 
 export type SignInStep = { user: MadauthUser } | { next: NextStep; method: SignInMethod; factors: SecondFactor[] } | { disabled: true };
 
 /** What the route modules share. */
+/** A signed-in user, and when they signed in (milliseconds since 1970; null for a session from before madAuth 0.6). */
+export interface SignIn {
+  user: MadauthUser;
+  signedInAt: number | null;
+}
+
 export interface AppContext {
   config: MadauthConfig;
   keys: Promise<SigningKeys>;
@@ -92,10 +98,11 @@ export interface AppContext {
   /** The user of the request's session, or null if there is none or it has ended; renews it on the way like GET /auth/session. */
   currentUser(c: Context): Promise<MadauthUser | null>;
   /**
-   * When the user of the request's session signed in (milliseconds since 1970), kept across renewals; null
-   * without a session, or for one from before madAuth 0.6. Call after {@link currentUser}.
+   * {@link currentUser}, with when that user signed in (milliseconds since 1970, kept across renewals; null for
+   * a session from before madAuth 0.6): from the token the user was read from, so another user's token in the
+   * same request can't make the sign-in look recent.
    */
-  signedInAt(c: Context): Promise<number | null>;
+  currentSignIn(c: Context): Promise<SignIn | null>;
   users: Users;
   settings: Settings;
   /** Present when WEBHOOK_URL is configured. */
@@ -193,18 +200,25 @@ export function createApp(config: MadauthConfig): Hono {
     return Object.keys(current).length ? { ...user, claims: current } : user;
   };
 
+  /** The user, with the sign-in time of the token they were read from. */
+  const signInOf = (user: MadauthUser, claims: SessionClaims): SignIn => ({
+    user,
+    signedInAt: typeof claims.auth_time === 'number' ? claims.auth_time * 1000 : null,
+  });
+
   /**
-   * The user of the request's session, or null if there is none or it has ended. A session token that is
-   * missing, expired, past half of its lifetime or carries outdated claims is replaced on the way, if the
-   * request has a valid renewal token: the user and their claims are checked again, and new cookies are set.
+   * The user of the request's session and when they signed in, or null if there is none or it has ended. A
+   * session token that is missing, expired, past half of its lifetime or carries outdated claims is replaced on
+   * the way, if the request has a valid renewal token: the user and their claims are checked again, and new
+   * cookies are set.
    */
-  const currentSession = async (c: Context): Promise<MadauthUser | null> => {
+  const currentSignIn = async (c: Context): Promise<SignIn | null> => {
     const session = await tokenClaims(c, SESSION_COOKIE, SESSION_TYP);
     // The claims are read again, so a change shows the next time the app checks the session.
     const user = session ? await checked(session) : null;
-    const upToDate =
-      session && user && sameClaims(user.claims, session.claims) && Date.now() / 1000 - session.iat <= sessionTtlSeconds / 2;
-    if (upToDate) return user;
+    if (session && user && sameClaims(user.claims, session.claims) && Date.now() / 1000 - session.iat <= sessionTtlSeconds / 2) {
+      return signInOf(user, session);
+    }
 
     const renewal = await tokenClaims(c, RENEWAL_COOKIE, RENEWAL_TYP);
     // Both tokens of one sign-in: the check of the session token holds for the renewal token as well.
@@ -214,11 +228,14 @@ export function createApp(config: MadauthConfig): Hono {
     if (renewal && renewed) {
       // The sign-in it renews is still the one the user made: its time stays.
       await issueSession(c, renewed, renewal.amr, { sv: renewal.sv, auth_time: renewal.auth_time });
-      return renewed;
+      return signInOf(renewed, renewal);
     }
     // Still valid, but not renewable (e.g. the renewal cookie is gone): it lasts until it expires.
-    return user;
+    return session && user ? signInOf(user, session) : null;
   };
+
+  /** The user of the request's session, or null; see {@link currentSignIn}. */
+  const currentSession = async (c: Context): Promise<MadauthUser | null> => (await currentSignIn(c))?.user ?? null;
 
   // The settings of a request, read once: every route that needs them shares the read.
   const methodsOf = new WeakMap<Request, Promise<MethodSettings>>();
@@ -288,11 +305,7 @@ export function createApp(config: MadauthConfig): Hono {
       return { user: result };
     },
     currentUser: currentSession,
-    async signedInAt(c) {
-      const session = await tokenClaims(c, SESSION_COOKIE, SESSION_TYP);
-      const claims = session ?? (await tokenClaims(c, RENEWAL_COOKIE, RENEWAL_TYP));
-      return typeof claims?.auth_time === 'number' ? claims.auth_time * 1000 : null;
-    },
+    currentSignIn,
     users,
     settings,
     webhook: config.webhook ? createWebhookClient(config.webhook, config.webhookFetch) : undefined,

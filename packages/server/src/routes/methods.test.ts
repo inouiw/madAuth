@@ -105,6 +105,23 @@ describe('adding a sign-in method', () => {
     expect(await (await post(app, '/auth/email-link/add', {}, { Cookie: cookie })).json()).toMatchObject({ error: 'reauth_required' });
   });
 
+  it('M13: the sign-in time is the one of the token the user was read from, not of another user\'s token in the request', async () => {
+    const { app, hook } = await withGrace({ ...everything, passkey: ON });
+    // Grace's renewal token, from a sign-in that is no longer recent.
+    const renewal = cookies(await post(app, '/auth/password/signin', grace)).madauth_renewal.value;
+    advance(11 * 60_000);
+    // Mallory signs up just now and deletes her account: her session token is fresh, but its user is gone.
+    const mallory = session(await signUpVerified(app, hook, 'mallory@example.com'));
+    expect((await post(app, '/auth/account/delete', {}, { Cookie: mallory })).status).toBe(204);
+    const mixed = `${mallory}; madauth_renewal=${renewal}`;
+
+    // The request is Grace's, through her renewal token, and so is the time of its sign-in.
+    expect((await methodsOf(app, mixed)).map((m) => m.method)).toEqual(['password']);
+    expect(await (await linkGoogle(app, mixed, { sub: '2002' })).json()).toMatchObject({ error: 'reauth_required' });
+    expect(await (await post(app, '/auth/email-link/add', {}, { Cookie: mixed })).json()).toMatchObject({ error: 'reauth_required' });
+    expect(await (await post(app, '/auth/passkey/register/options', {}, { Cookie: mixed })).json()).toMatchObject({ error: 'reauth_required' });
+  });
+
   it('M4: a Google user adds a password and the e-mail link; "Forgot password?" then resets it', async () => {
     startClock();
     const { app, hook, store } = passwordApp();

@@ -42,9 +42,10 @@ export const RECENT_SIGN_IN_MS = 10 * 60 * 1000;
 
 /** The signed-in user as stored, and whether they signed in within RECENT_SIGN_IN_MS (renewals don't count); null without a session. */
 export async function signedInUser(c: Context, ctx: AppContext): Promise<{ user: StoredUser; recent: boolean } | null> {
-  const session = await ctx.currentUser(c);
-  if (!session) return null;
-  const [user, signedInAt] = await Promise.all([ctx.users.findById(session.id), ctx.signedInAt(c)]);
+  const signIn = await ctx.currentSignIn(c);
+  if (!signIn) return null;
+  const user = await ctx.users.findById(signIn.user.id);
+  const { signedInAt } = signIn;
   return user ? { user, recent: signedInAt !== null && Date.now() - signedInAt <= RECENT_SIGN_IN_MS } : null;
 }
 
