@@ -72,14 +72,18 @@ async function openDialog() {
 }
 
 describe('<madauth-login> and passkeys', () => {
-  it('DP1: the sign-in view offers a passkey; it signs in, and closing the browser dialog shows no error', async () => {
+  it('DP1: the sign-in view offers a passkey first; it signs in, and closing the browser dialog shows no error', async () => {
     const server = passkeyServer();
     server.passkeys.set('cred-1', { email: grace.email!, id: 'acc_1', name: 'Laptop' });
     const browser = stubWebAuthn({ outcome: 'cancel' });
     const result = openDialog();
     await settle();
 
-    expect($('[data-method="passkey"]')!.textContent).toContain('Passkey');
+    // A button above the password form, not a row under "Other ways to sign in".
+    expect($('.buttons > :first-child')!.dataset.method).toBe('passkey');
+    expect(text('[data-method="passkey"]')).toBe('Sign in with a passkey');
+    expect($$('[data-method="passkey"] svg')).toHaveLength(2);
+    expect($$('.others [data-method]').map((row) => row.dataset.method)).toEqual(['email-link']);
     await click('[data-method="passkey"]');
     expect($('.error')).toBeNull();
     expect(login().shadowRoot!.querySelector('dialog')!.open).toBe(true);
