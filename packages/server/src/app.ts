@@ -61,13 +61,15 @@ export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | 
  */
 export type SignInStep = { user: MadauthUser } | { next: NextStep; method: SignInMethod; factors: SecondFactor[] } | { disabled: true };
 
-/** What the route modules share. */
 /** A signed-in user, and when they signed in (milliseconds since 1970; null for a session from before madAuth 0.6). */
 export interface SignIn {
   user: MadauthUser;
+  /** The user as stored, read with the session's check. */
+  stored: StoredUser;
   signedInAt: number | null;
 }
 
+/** What the route modules share. */
 export interface AppContext {
   config: MadauthConfig;
   keys: Promise<SigningKeys>;
@@ -98,9 +100,9 @@ export interface AppContext {
   /** The user of the request's session, or null if there is none or it has ended; renews it on the way like GET /auth/session. */
   currentUser(c: Context): Promise<MadauthUser | null>;
   /**
-   * {@link currentUser}, with when that user signed in (milliseconds since 1970, kept across renewals; null for
-   * a session from before madAuth 0.6): from the token the user was read from, so another user's token in the
-   * same request can't make the sign-in look recent.
+   * {@link currentUser}, with the user as stored and when they signed in (milliseconds since 1970, kept across
+   * renewals; null for a session from before madAuth 0.6): from the token the user was read from, so another
+   * user's token in the same request can't make the sign-in look recent.
    */
   currentSignIn(c: Context): Promise<SignIn | null>;
   users: Users;
@@ -189,20 +191,20 @@ export function createApp(config: MadauthConfig): Hono {
     readToken<SessionClaims>(await keys, issuer, typ, getCookie(c, cookie));
 
   /**
-   * The user of these claims with their claims of now, or null if the session has ended: the user is gone,
-   * or a password reset incremented their session version since.
+   * The user of these claims with their claims of now, and as stored; null if the session has ended: the user
+   * is gone, or a password reset incremented their session version since.
    */
-  const checked = async (claims: SessionClaims): Promise<MadauthUser | null> => {
+  const checked = async (claims: SessionClaims): Promise<{ user: MadauthUser; stored: StoredUser } | null> => {
     const stored = await users.findById(claims.sub);
     if (!stored || stored.sessionVersion !== claims.sv) return null;
     const { claims: _, ...user } = userFromClaims(claims);
     const current = claimsFromJson(stored.claims);
-    return Object.keys(current).length ? { ...user, claims: current } : user;
+    return { user: Object.keys(current).length ? { ...user, claims: current } : user, stored };
   };
 
-  /** The user, with the sign-in time of the token they were read from. */
-  const signInOf = (user: MadauthUser, claims: SessionClaims): SignIn => ({
-    user,
+  /** The checked user, with the sign-in time of the token they were read from. */
+  const signInOf = (user: { user: MadauthUser; stored: StoredUser }, claims: SessionClaims): SignIn => ({
+    ...user,
     signedInAt: typeof claims.auth_time === 'number' ? claims.auth_time * 1000 : null,
   });
 
@@ -216,7 +218,7 @@ export function createApp(config: MadauthConfig): Hono {
     const session = await tokenClaims(c, SESSION_COOKIE, SESSION_TYP);
     // The claims are read again, so a change shows the next time the app checks the session.
     const user = session ? await checked(session) : null;
-    if (session && user && sameClaims(user.claims, session.claims) && Date.now() / 1000 - session.iat <= sessionTtlSeconds / 2) {
+    if (session && user && sameClaims(user.user.claims, session.claims) && Date.now() / 1000 - session.iat <= sessionTtlSeconds / 2) {
       return signInOf(user, session);
     }
 
@@ -227,7 +229,7 @@ export function createApp(config: MadauthConfig): Hono {
     const renewed = sameSignIn ? user : renewal ? await checked(renewal) : null;
     if (renewal && renewed) {
       // The sign-in it renews is still the one the user made: its time stays.
-      await issueSession(c, renewed, renewal.amr, { sv: renewal.sv, auth_time: renewal.auth_time });
+      await issueSession(c, renewed.user, renewal.amr, { sv: renewal.sv, auth_time: renewal.auth_time });
       return signInOf(renewed, renewal);
     }
     // Still valid, but not renewable (e.g. the renewal cookie is gone): it lasts until it expires.

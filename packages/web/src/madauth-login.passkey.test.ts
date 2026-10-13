@@ -253,6 +253,21 @@ describe('<madauth-login> and passkeys', () => {
     }
   });
 
+  it('DP12: a passkey button sign-in closes the dialog without starting the autofill again', async () => {
+    const server = passkeyServer();
+    server.passkeys.set('cred-1', { email: grace.email!, id: 'acc_1', name: 'Laptop' });
+    stubWebAuthn({ conditional: true });
+    // Each start of the autofill asks the browser first.
+    const starts = vi.spyOn(PublicKeyCredential, 'isConditionalMediationAvailable');
+    const result = openDialog();
+    await settle();
+    expect(starts).toHaveBeenCalledOnce();
+
+    await click('[data-method="passkey"]');
+    expect(await result).toEqual({ isSuccess: true, user: grace });
+    expect(starts).toHaveBeenCalledOnce();
+  });
+
   it('DP11: an autofill that fails is not asked again until the view changes', async () => {
     const server = passkeyServer();
     stubWebAuthn({ conditional: true });

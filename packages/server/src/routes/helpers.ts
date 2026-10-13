@@ -44,9 +44,8 @@ export const RECENT_SIGN_IN_MS = 10 * 60 * 1000;
 export async function signedInUser(c: Context, ctx: AppContext): Promise<{ user: StoredUser; recent: boolean } | null> {
   const signIn = await ctx.currentSignIn(c);
   if (!signIn) return null;
-  const user = await ctx.users.findById(signIn.user.id);
-  const { signedInAt } = signIn;
-  return user ? { user, recent: signedInAt !== null && Date.now() - signedInAt <= RECENT_SIGN_IN_MS } : null;
+  const { stored: user, signedInAt } = signIn;
+  return { user, recent: signedInAt !== null && Date.now() - signedInAt <= RECENT_SIGN_IN_MS };
 }
 
 /** The signed-in user if they signed in recently, else why not: for the routes that change how a user signs in. */

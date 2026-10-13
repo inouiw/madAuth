@@ -1448,11 +1448,13 @@ export class MadauthLogin extends LitElement {
   private async onPasskeySignIn(): Promise<void> {
     // The browser takes one passkey request at a time: the autofill's has to be over first.
     await this.stopConditional();
-    const result = await this.run(() => Madauth.passkey.signIn());
-    if (!result) return;
-    // Closing the browser's dialog is no error worth showing.
-    if (!result.isSuccess && result.error.code === 'cancelled') return;
-    this.finish('passkey', result);
+    // Finished while still busy: a sign-in closes the dialog before the autofill could start again.
+    await this.run(async () => {
+      const result = await Madauth.passkey.signIn();
+      // Closing the browser's dialog is no error worth showing.
+      if (!result.isSuccess && result.error.code === 'cancelled') return;
+      this.finish('passkey', result);
+    });
   }
 
   /**
