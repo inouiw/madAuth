@@ -155,7 +155,7 @@ const fingerprintIcon = html`
 /** The scopes that render a provider's button (Google, GitHub), by method: the dialog stays on the public API. */
 const buttonScopes: Partial<Record<LoginMethodId, () => ButtonApi>> = { google: () => Madauth.google, github: () => Madauth.github };
 
-/** Icons of the methods listed under "Other ways to sign in". */
+/** Icons of the methods in the rows: under "Other ways to sign in", and in the list of the user's methods. */
 const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
   totp: html`
     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
