@@ -6,7 +6,7 @@ import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
 import { factorsOn, requiringSecondFactor, signsIn, type MethodWithSecondFactor, type SecondFactor, type SignInMethod } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
-import { toMadauthUser, type StoredUser } from '../users.js';
+import { factorsAmong, toMadauthUser, type StoredAccount, type StoredUser } from '../users.js';
 import type { MadauthUser } from '../user.js';
 import { error } from './helpers.js';
 
@@ -86,6 +86,15 @@ export const methodStillOn = async (c: Context, ctx: AppContext, challenge: Chal
 
 export const methodOff = (c: Context): Response => error(c, 403, 'method_disabled', 'This way of signing in is switched off.');
 
+/** The sign-in that waits for the setup of `factor`, with its user; null if there is none (any more). */
+export async function pendingSetup(c: Context, ctx: AppContext, factor: Factor): Promise<{ user: StoredUser; challenge: ChallengeClaims } | null> {
+  const pending = await readChallenge(c, ctx, 'totp-setup');
+  // A cookie from before madAuth 0.6 names no factors: the app or a phone could be set up then.
+  const challenge = pending && (Array.isArray(pending.setup) ? pending.setup.includes(factor) : factor !== 'passkey') ? pending : null;
+  const waiting = challenge ? await ctx.users.findById(challenge.sub) : null;
+  return challenge && waiting && waiting.sessionVersion === challenge.sv ? { user: waiting, challenge } : null;
+}
+
 /**
  * Who sets a second factor up: the user whose sign-in waits for the setup of `factor` (the challenge, the
  * latest sign-in at this browser), else the signed-in user. Starting a session ends the challenge, so an
@@ -96,11 +105,8 @@ export async function pendingOrSignedIn(
   ctx: AppContext,
   factor: Factor,
 ): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | null> {
-  const pending = await readChallenge(c, ctx, 'totp-setup');
-  // A cookie from before madAuth 0.6 names no factors: the app or a phone could be set up then.
-  const challenge = pending && (Array.isArray(pending.setup) ? pending.setup.includes(factor) : factor !== 'passkey') ? pending : null;
-  const waiting = challenge ? await ctx.users.findById(challenge.sub) : null;
-  if (challenge && waiting && waiting.sessionVersion === challenge.sv) return { user: waiting, challenge };
+  const pending = await pendingSetup(c, ctx, factor);
+  if (pending) return pending;
   const session = await ctx.currentUser(c);
   const user = session ? await ctx.users.findById(session.id) : null;
   return user ? { user, challenge: null } : null;
@@ -133,7 +139,8 @@ const POLICY_NAMES = {
 /**
  * Why the signed-in user can't do without `factor` (all their passkeys; with `keepsOne`, one of several), as
  * the answer to send; null if they can. Each method whose policy is `required` needs a second factor the user
- * keeps, which is on and isn't the method itself (a passkey is no second factor of a passkey sign-in).
+ * keeps, which is on and isn't the method itself (a passkey is no second factor of a passkey sign-in); the
+ * passkeys' own policy doesn't count once the last passkey goes. `accounts` are the user's, if read already.
  * `what` names the factor in the message.
  */
 export async function requiredByPolicy(
@@ -142,14 +149,16 @@ export async function requiredByPolicy(
   userId: string,
   factor: Factor,
   what: string,
-  keepsOne = false,
+  options: { keepsOne?: boolean; accounts?: StoredAccount[] } = {},
 ): Promise<Response | null> {
+  const { keepsOne = false } = options;
   const methods = await ctx.methods(c);
   const required = requiringSecondFactor(ctx.configured, methods);
   if (!required.length) return null;
-  const has = await ctx.users.secondFactors(userId, factorsOn(ctx.configured, methods));
+  const on = factorsOn(ctx.configured, methods);
+  const has = options.accounts ? factorsAmong(options.accounts, on) : await ctx.users.secondFactors(userId, on);
   const left = keepsOne ? has : has.filter((f) => f !== factor);
-  const lacking = required.filter((method) => !left.some((f) => f !== method));
+  const lacking = required.filter((method) => (keepsOne || method !== factor) && !left.some((f) => f !== method));
   if (!lacking.length) return null;
   const names = lacking.map((method) => POLICY_NAMES[method]).join(' and ');
   return error(c, 403, 'required_by_policy', `Signing in with ${names} requires a second factor, so ${what} can't be removed. Set up another second factor first, or delete your account.`);

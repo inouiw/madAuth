@@ -1,6 +1,6 @@
 import type { HttpResult, RequestInit } from '../http.js';
 import type { LoginMethodId } from '../methods.js';
-import type { MadauthError, MadauthUser, Result, SecondFactor } from '../result.js';
+import { SECOND_FACTORS, type MadauthError, type MadauthUser, type Result, type SecondFactor } from '../result.js';
 
 /**
  * Whether a method asks for a second factor: never, when the user has set one up (`optional`), or always, so
@@ -56,8 +56,8 @@ const STEPS: Partial<Record<string, PendingStep['step']>> = {
   totp_setup_required: 'setup',
 };
 
-/** The factor each step asks for. */
-const STEP_FACTORS: Record<Exclude<PendingStep['step'], 'setup'>, SecondFactor> = { passkey: 'passkey', code: 'totp', sms: 'sms' };
+/** The step that asks for each factor. */
+export const FACTOR_STEPS: Record<SecondFactor, Exclude<PendingStep['step'], 'setup'>> = { passkey: 'passkey', totp: 'code', sms: 'sms' };
 
 /** The step an error stands for: `passkey_required`, `totp_required`, `sms_required` or `totp_setup_required`; undefined for any other. */
 export function secondStepOf(error: MadauthError): PendingStep['step'] | undefined {
@@ -69,7 +69,8 @@ export function pendingStepOf(error: MadauthError, method: LoginMethodId): Pendi
   const step = secondStepOf(error);
   if (!step) return undefined;
   if (step === 'setup') return error.factors?.length ? { step, method, factors: error.factors } : { step, method };
-  return { step, method, factors: error.factors?.length ? error.factors : [STEP_FACTORS[step]] };
+  const factor = SECOND_FACTORS.find((f) => FACTOR_STEPS[f] === step)!;
+  return { step, method, factors: error.factors?.length ? error.factors : [factor] };
 }
 
 /** What the madAuth core gives a provider during setup. */

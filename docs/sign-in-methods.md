@@ -19,7 +19,7 @@ Code: `linkProviderAccount` in [`routes/oauth.ts`](../packages/server/src/routes
 
 Adding a method, and removing one, is refused with `401 reauth_required` more than ten minutes after the user signed in: the session's `auth_time`, which renewals keep. A session someone took over (a stolen cookie, an unlocked computer) must not let them add a way in that outlives it, nor take one away. The user signs in again (`Madauth.manageSignInMethods()` asks them to, and goes back to the methods after), and the change follows.
 
-Setting up the authenticator app or adding a phone keeps its own rules (a code from the current app or phone to replace them), see [Authenticator app security](totp-security.md#setting-the-app-up) and [SMS code security](sms-security.md).
+A first authenticator app needs it too while the app is allowed as a sign-in method, since it is a way in then. Otherwise setting up the app or adding a phone keeps its own rules (a code from the current app or phone to replace them), see [Authenticator app security](totp-security.md#setting-the-app-up) and [SMS code security](sms-security.md).
 
 Code: `recentUser` in [`routes/helpers.ts`](../packages/server/src/routes/helpers.ts), `auth_time` in [`tokens.ts`](../packages/server/src/tokens.ts).
 
@@ -36,7 +36,7 @@ Removing GitHub takes its authorization back at GitHub, with the token kept from
 - **Not the last way in.** A method can't go when the user would have no method left that the admin allows as a sign-in method (`403 only_method`): nobody could sign in as them, and a sign-up for their address could take the user over. A method switched off by the admin doesn't count, nor one the server is not configured for (e.g. GitHub without its OAuth App). A user who can't sign in now anyway (every method of theirs is switched off) is not locked out by the removal.
 - **Not the last second factor a policy requires.** See [Passkey security](passkey-security.md#removing-a-passkey).
 
-The account a user signed up with is no different: it can go once another method signs them in.
+The account a user signed up with is no different: it can go once another method signs them in. Two removals at once can't both take the last ways in: a removal that finds the user without a way in afterwards puts its account back and answers `only_method`.
 
 ## What the webhook is told
 

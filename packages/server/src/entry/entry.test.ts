@@ -225,7 +225,7 @@ describe('deployment entry points', () => {
     const fromFour = await runCli(['schema', '--from', '4']);
     expect(fromFour.output).toMatch(/^ALTER TABLE madauth_account ADD COLUMN last_used_step DOUBLE PRECISION NOT NULL DEFAULT 0;/);
     expect(fromFour.output).toContain('CREATE TABLE madauth_recovery_code (');
-    const V8 = '\nALTER TABLE madauth_account ADD COLUMN name TEXT;\nALTER TABLE madauth_account ADD COLUMN credential_id TEXT;\nALTER TABLE madauth_account ADD COLUMN sign_count DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN transports TEXT;\nALTER TABLE madauth_account ADD COLUMN last_used_at DOUBLE PRECISION;';
+    const V8 = '\nALTER TABLE madauth_account ADD COLUMN name TEXT;\nALTER TABLE madauth_account ADD COLUMN credential_id TEXT;\nALTER TABLE madauth_account ADD COLUMN sign_count DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN transports TEXT;\nALTER TABLE madauth_account ADD COLUMN last_used_at DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN rp_id TEXT;';
     expect(await runCli(['schema', '--from', '5'])).toEqual({
       exitCode: 0,
       output: 'ALTER TABLE madauth_account ADD COLUMN phone TEXT;\nALTER TABLE madauth_user ADD COLUMN last_sms_at DOUBLE PRECISION;\n' +

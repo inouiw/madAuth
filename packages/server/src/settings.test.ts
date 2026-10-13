@@ -92,6 +92,10 @@ describe('parseMethodSettings', () => {
     expect(parseLegacyMethodSettings({ google: {}, totp: {} })).toEqual({ google: signIn(), totp: factorOnly });
     expect(legacyAppProblem({ google: {}, password: { secondFactor: 'required' }, totp: {} })).toContain('"set-methods google password=required totp=second-factor"');
     expect(legacyAppProblem({ google: {}, password: { secondFactor: 'required' } })).toBeNull();
+    // On an app-only server, the app has to keep signing in: only that command is named.
+    const appOnly = legacyAppProblem({ totp: {}, sms: {} })!;
+    expect(appOnly).toContain('"set-methods totp sms"');
+    expect(appOnly).not.toContain('second-factor');
     expect(legacyAppProblem({ totp: signIn() })).toBeNull();
     expect(legacyAppProblem(undefined)).toBeNull();
     for (const bad of [{ google: true }, { totp: { secondFactor: 'required' } }, { passkey: {} }, { google: signIn() }]) {

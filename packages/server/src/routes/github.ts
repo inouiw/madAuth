@@ -71,7 +71,7 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig, t
     }
     const resolved = await resolveProviderUser(ctx, GITHUB, profile, oauth.locale);
     if (!resolved.ok) return back(resolved.error);
-    const step = await ctx.secondStep(c, resolved.user, ['github'], 'github', { name: account.name, picture: account.picture });
+    const step = await ctx.secondStep(c, resolved.user, ['github'], 'github', { name: account.name, picture: account.picture }, new URL(oauth.returnTo).origin);
     if ('disabled' in step) return back('method_disabled');
     // The app continues with the second step (a code, or the app's setup); the challenge cookie is set.
     if ('next' in step) return back(undefined, step.next, step.factors);

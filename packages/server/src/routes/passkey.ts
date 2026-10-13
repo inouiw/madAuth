@@ -14,12 +14,12 @@ import type { Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
-import { isWithin } from '../config.js';
+import { isWithin, type MadauthConfig } from '../config.js';
 import { isOn, signsIn } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import { passkeyAccountKey, toMadauthUser, type StoredAccount, type StoredUser } from '../users.js';
-import { finishSignIn, methodOff, methodStillOn, pendingOrSignedIn, readChallenge, type ChallengeClaims } from './challenge.js';
-import { body, error, noSession, originHost, recentUser, signInAnswer, type Body } from './helpers.js';
+import { finishSignIn, methodOff, methodStillOn, pendingSetup, readChallenge, type ChallengeClaims } from './challenge.js';
+import { body, error, nameOf, noSession, originHost, recentUser, signInAnswer, type Body } from './helpers.js';
 
 /** The routes, and where the ceremony cookie is sent. */
 const ROUTE_PATH = '/auth/passkey';
@@ -65,6 +65,22 @@ export interface PasskeyEntry {
   lastUsedAt: number;
 }
 
+/**
+ * The domain the passkeys of an app belong to: PASSKEY_RP_ID, else the app's host. Null when the app is
+ * outside PASSKEY_RP_ID (the browser would refuse its passkeys), or `origin` is none.
+ */
+export function passkeyDomain(config: Pick<MadauthConfig, 'passkeyRpId'>, origin: string | undefined): string | null {
+  const host = origin && URL.canParse(origin) ? new URL(origin).hostname : '';
+  const rpId = config.passkeyRpId ?? host;
+  return host && isWithin(host, rpId) ? rpId : null;
+}
+
+/** Whether a passkey answers on `rpId`: it was made for that domain (passkeys stored without one count). */
+export const usableOn =
+  (rpId: string | null) =>
+  (account: StoredAccount): boolean =>
+    !!rpId && (!account.rpId || account.rpId === rpId);
+
 const toEntry = (account: StoredAccount): PasskeyEntry => ({
   id: account.id,
   name: account.name ?? '',
@@ -72,8 +88,6 @@ const toEntry = (account: StoredAccount): PasskeyEntry => ({
   lastUsedAt: account.lastUsedAt ?? 0,
 });
 
-/** A name as the user gave it: trimmed and cut; null if there is none. */
-const passkeyName = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim().slice(0, MAX_NAME_LENGTH) : null);
 
 /** The transports as stored, and back. */
 const joinTransports = (transports: readonly string[] | undefined): string | null => (transports?.length ? transports.join(',') : null);
@@ -94,16 +108,12 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
     await next();
   });
 
-  /**
-   * The domain the passkeys of the requesting app belong to: PASSKEY_RP_ID, else the app's host. Null when
-   * the app is outside PASSKEY_RP_ID: the browser would refuse its passkeys.
-   */
+  /** The domain the passkeys of the requesting app belong to, and the app; null when it can't use passkeys. */
   const rpIdOf = (c: Context): { rpId: string; origin: string } | null => {
     // POST routes only: the origin is one of ALLOWED_ORIGINS (see app.ts).
     const origin = c.req.header('origin') ?? '';
-    const host = URL.canParse(origin) ? new URL(origin).hostname : '';
-    const rpId = config.passkeyRpId ?? host;
-    return host && isWithin(host, rpId) ? { rpId, origin } : null;
+    const rpId = passkeyDomain(config, origin);
+    return rpId ? { rpId, origin } : null;
   };
   const wrongDomain = (c: Context) =>
     error(c, 403, 'forbidden_origin', `Passkeys belong to ${config.passkeyRpId}: this app's address is outside it, so it can't use them.`);
@@ -168,8 +178,8 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
    * the signed-in user if they signed in recently; else the answer to send.
    */
   const whoAdds = async (c: Context): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | Response> => {
-    const pending = await pendingOrSignedIn(c, ctx, 'passkey');
-    if (pending?.challenge) {
+    const pending = await pendingSetup(c, ctx, 'passkey');
+    if (pending) {
       // A sign-up with the app has no first factor yet: it sets the app up, so a passkey is never added for it.
       if (!pending.challenge.amr.length) return noSession(c);
       return (await methodStillOn(c, ctx, pending.challenge)) ? pending : methodOff(c);
@@ -227,12 +237,12 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
     // The answer adds one passkey: the same options don't add another.
     if (!verification.verified || !(await users.useCeremony(user.id, ceremony.challenge, ceremony.exp * 1000))) return failed(c);
     const { credential } = verification.registrationInfo;
-    const name = passkeyName(data.name) ?? 'Passkey';
+    const name = nameOf(data.name, MAX_NAME_LENGTH) ?? 'Passkey';
     const account = await users.linkAccount(user.id, {
       key: passkeyAccountKey(credential.id),
       secret: Buffer.from(credential.publicKey).toString('base64url'),
       primary: false,
-      passkey: { name, credentialId: credential.id, signCount: credential.counter, transports: joinTransports(credential.transports) },
+      passkey: { name, credentialId: credential.id, signCount: credential.counter, transports: joinTransports(credential.transports), rpId: ceremony.rpId },
     });
     if (!account) return error(c, 409, 'already_added', 'This passkey is added already.');
     const passkey = toEntry(account);
@@ -291,7 +301,8 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
     if (pending instanceof Response) return pending;
     const domain = rpIdOf(c);
     if (!domain) return wrongDomain(c);
-    const passkeys = await users.passkeys(pending.user.id);
+    // Only those that answer here: a passkey made for another domain can't.
+    const passkeys = (await users.passkeys(pending.user.id)).filter(usableOn(domain.rpId));
     if (!passkeys.length) return error(c, 401, 'challenge_expired', 'The sign-in has expired. Please sign in again.');
     // Only the user's own passkeys: they signed in already, the browser needs no choice of account.
     const options = await generateAuthenticationOptions({
@@ -326,7 +337,7 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
     const session = await ctx.currentUser(c);
     if (!session) return noSession(c);
     const data = await body(c);
-    const name = passkeyName(data.name);
+    const name = nameOf(data.name, MAX_NAME_LENGTH);
     if (!name) return error(c, 400, 'invalid_options', `name must be a text of 1 to ${MAX_NAME_LENGTH} characters.`);
     const account = typeof data.id === 'string' ? (await users.passkeys(session.id)).find((p) => p.id === data.id) : undefined;
     if (!account || !(await users.updateAccount(account.id, { name }))) return error(c, 404, 'method_not_found', 'You have no such passkey.');

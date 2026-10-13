@@ -16,8 +16,11 @@ export interface MadauthUser {
   amr?: string[];
 }
 
-/** A second factor: a passkey, a code from the authenticator app, or one sent by SMS. */
-export type SecondFactor = 'passkey' | 'totp' | 'sms';
+/** The second factors, in the order a sign-in offers them: a passkey, a code from the authenticator app, one sent by SMS. */
+export const SECOND_FACTORS = ['passkey', 'totp', 'sms'] as const;
+export type SecondFactor = (typeof SECOND_FACTORS)[number];
+
+export const isSecondFactor = (value: unknown): value is SecondFactor => (SECOND_FACTORS as readonly unknown[]).includes(value);
 
 const errorCodes = [
   'invalid_options',

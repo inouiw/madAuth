@@ -59,7 +59,7 @@ describe('SQLite adapter', () => {
     // Schema version 1: users had no count of wrong codes and no claims, accounts no e-mail and no last code,
     // and there were no settings and no recovery codes.
     const { wrongCodes: _, claims: __, lastSmsAt: _________, signedUpAt: __________, ...v1Fields } = madauthSchema.models.user.fields;
-    const { email: ___, lastUsedStep: _____, setupId: _______, phone: ________, primaryUserId: ___________, secondFactor: ____________, name: _a, credentialId: _b, signCount: _c, transports: _d, lastUsedAt: _e, ...v1AccountFields } = madauthSchema.models.account.fields;
+    const { email: ___, lastUsedStep: _____, setupId: _______, phone: ________, primaryUserId: ___________, secondFactor: ____________, name: _a, credentialId: _b, signCount: _c, transports: _d, lastUsedAt: _e, rpId: _f, ...v1AccountFields } = madauthSchema.models.account.fields;
     const { setting: ____, recoveryCode: ______, ...v1Models } = madauthSchema.models;
     const v1 = { version: 1, models: { ...v1Models, user: { fields: v1Fields }, account: { fields: v1AccountFields } } };
     const db = new DatabaseSync(path);
@@ -134,7 +134,8 @@ describe('createTablesSql', () => {
       'ALTER TABLE madauth_account ADD COLUMN credential_id TEXT;\n' +
       'ALTER TABLE madauth_account ADD COLUMN sign_count DOUBLE PRECISION;\n' +
       'ALTER TABLE madauth_account ADD COLUMN transports TEXT;\n' +
-      'ALTER TABLE madauth_account ADD COLUMN last_used_at DOUBLE PRECISION;';
+      'ALTER TABLE madauth_account ADD COLUMN last_used_at DOUBLE PRECISION;\n' +
+      'ALTER TABLE madauth_account ADD COLUMN rp_id TEXT;';
     const V7 =
       'ALTER TABLE madauth_user ADD COLUMN signed_up_at DOUBLE PRECISION;\n' +
       'ALTER TABLE madauth_account ADD COLUMN primary_user_id TEXT;\n' +

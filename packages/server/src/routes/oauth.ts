@@ -11,7 +11,7 @@ import { randomString, readToken, signToken } from '../tokens.js';
 import { toMadauthUser, type StoredUser } from '../users.js';
 import { localeOf } from '../webhooks.js';
 import type { Factor, NextStep } from './challenge.js';
-import { recentUser } from './helpers.js';
+import { recentSignIn } from './helpers.js';
 
 /** Hash parameter that carries a sign-in error back to the app after the redirect flow. */
 export const REDIRECT_ERROR_PARAM = 'madauth_error';
@@ -101,9 +101,8 @@ export async function takeOAuthState(c: Context, ctx: AppContext, cookiePath: st
  */
 export async function linkingUser(c: Context, ctx: AppContext): Promise<{ link: string } | { error: string } | null> {
   if (c.req.query('link') !== '1') return null;
-  const user = await recentUser(c, ctx);
-  if (user instanceof Response) return { error: ((await user.json()) as { error: string }).error };
-  return { link: user.id };
+  const user = await recentSignIn(c, ctx);
+  return typeof user === 'string' ? { error: user } : { link: user.id };
 }
 
 /**

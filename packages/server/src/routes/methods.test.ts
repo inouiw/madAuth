@@ -211,6 +211,26 @@ describe('removing a sign-in method', () => {
     expect(await (await post(withoutGitHub.app, '/auth/methods/remove', { id: password.id }, { Cookie: cookie })).json()).toMatchObject({ error: 'only_method' });
   });
 
+  it('M11: allowed as a sign-in method, a first authenticator app needs a recent sign-in too; only as a second factor, it doesn\'t', async () => {
+    const { app, store, cookie } = await withGrace({ ...everything, totp: { allowAsSignInMethod: true, secondFactor: 'none' } });
+    advance(11 * 60_000);
+
+    expect(await (await post(app, '/auth/totp/setup', {}, { Cookie: cookie })).json()).toMatchObject({ error: 'reauth_required' });
+    await setMethods(store, { ...everything, totp: { allowAsSignInMethod: false, secondFactor: 'none' } });
+    expect((await post(app, '/auth/totp/setup', {}, { Cookie: cookie })).status).toBe(200);
+  });
+
+  it('M12: two removals at once of the last two ways in leave one', async () => {
+    const { app, cookie } = await withGrace();
+    await linkGoogle(app, cookie, { sub: '2002' });
+    const [password, google] = await methodsOf(app, cookie);
+
+    const results = await Promise.all([password, google].map((m) => post(app, '/auth/methods/remove', { id: m.id }, { Cookie: cookie })));
+
+    expect(results.some((r) => r.status === 403)).toBe(true);
+    expect((await methodsOf(app, cookie)).length).toBeGreaterThan(0);
+  });
+
   it('M9: removing GitHub takes back its authorization at GitHub; the app is removed with a code of its own', async () => {
     const { app, cookie } = await withGrace({ ...everything, totp: { allowAsSignInMethod: false, secondFactor: 'none' } });
     const github = stubGitHub();

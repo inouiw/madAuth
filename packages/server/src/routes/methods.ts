@@ -4,7 +4,7 @@
 import type { Hono } from 'hono';
 import type { AppContext } from '../app.js';
 import { isMethodId, signsIn, type MethodId } from '../settings.js';
-import { methodOf, toMadauthUser, type StoredAccount } from '../users.js';
+import { lastWayIn, methodOf, toMadauthUser, type StoredAccount } from '../users.js';
 import { requiredByPolicy } from './challenge.js';
 import { body, error, noSession, recentUser } from './helpers.js';
 
@@ -59,7 +59,9 @@ export function methodRoutes(app: Hono, ctx: AppContext, onRemoved: (account: St
     const user = await recentUser(c, ctx);
     if (user instanceof Response) return user;
     const data = await body(c);
-    const account = typeof data.id === 'string' ? (await users.methodAccounts(user.id)).find((a) => a.id === data.id) : undefined;
+    // Read once: every check below looks at the same accounts.
+    const accounts = await users.allAccounts(user.id);
+    const account = accounts.find((a) => a.id === data.id && methodOf(a) !== 'sms');
     if (!account) return error(c, 404, 'method_not_found', 'You have no such sign-in method.');
     const method = methodOf(account) as MethodId;
     if (!REMOVABLE.includes(method)) {
@@ -68,15 +70,20 @@ export function methodRoutes(app: Hono, ctx: AppContext, onRemoved: (account: St
     const methods = await ctx.methods(c);
     if (method === 'passkey') {
       // The user's passkeys may be their second factor: one of several may go, the last only with another factor.
-      const others = (await users.passkeys(user.id)).length > 1;
-      const required = await requiredByPolicy(c, ctx, user.id, 'passkey', 'your last passkey', others);
+      const keepsOne = accounts.filter((a) => methodOf(a) === 'passkey').length > 1;
+      const required = await requiredByPolicy(c, ctx, user.id, 'passkey', 'your last passkey', { keepsOne, accounts });
       if (required) return required;
     }
     // Without it, nobody could sign in as the user.
-    if (await users.isLastWayIn(user.id, (m) => isMethodId(m) && signsIn(m, ctx.configured, methods), (a) => a.id === account.id)) {
-      return error(c, 403, 'only_method', "This is the only way you sign in, so it can't be removed. Add another way to sign in first, or delete your account.");
-    }
+    const isSignIn = (m: string) => isMethodId(m) && signsIn(m, ctx.configured, methods);
+    const onlyMethod = () => error(c, 403, 'only_method', "This is the only way you sign in, so it can't be removed. Add another way to sign in first, or delete your account.");
+    if (lastWayIn(accounts, isSignIn, (a) => a.id === account.id)) return onlyMethod();
     if (!(await users.unlinkAccount(account.key))) return c.json({});
+    // Another request may have removed the user's other way in meanwhile: then this one goes back.
+    if (accounts.some((a) => isSignIn(methodOf(a))) && !(await users.allAccounts(user.id)).some((a) => isSignIn(methodOf(a)))) {
+      await users.restoreAccount(account);
+      return onlyMethod();
+    }
     await onRemoved(account);
     await ctx.emit('user.method_removed', { user: toMadauthUser(user), method, ...(method === 'passkey' ? { passkey: { id: account.id, name: account.name } } : {}) });
     return c.json({});

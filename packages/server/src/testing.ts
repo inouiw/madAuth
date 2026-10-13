@@ -52,6 +52,7 @@ function testAccount(overrides: Row = {}): Row {
     signCount: null,
     transports: null,
     lastUsedAt: null,
+    rpId: null,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };

@@ -120,6 +120,8 @@ export const madauthSchema = {
         transports: { type: 'string', nullable: true },
         /** When a passkey last signed in, or 0 (since version 8). */
         lastUsedAt: { type: 'number', nullable: true },
+        /** The domain a passkey belongs to (the WebAuthn relying party id); it answers only there (since version 8). */
+        rpId: { type: 'string', nullable: true },
         createdAt: { type: 'number' },
       },
     },

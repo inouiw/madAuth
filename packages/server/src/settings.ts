@@ -156,10 +156,16 @@ export function legacyAppProblem(stored: unknown): string | null {
     return policy === 'none' ? method : `${method}=${policy}`;
   });
   const command = (totp: string) => `set-methods ${listed.map((arg) => (arg === 'totp' ? totp : arg)).join(' ')}`;
-  return (
+  const intro =
     'The sign-in methods were saved by madAuth before 0.6 and let the authenticator app sign in on its own (totp). ' +
     'Then it did so only for the users who signed up with it; now it does for everyone who has one, also for those who set it up ' +
-    'as a second factor, or for nobody. Choose, then start the server again: ' +
+    'as a second factor, or for nobody.';
+  // With nothing else that signs in, the app has to: a list with it as a second factor only would be refused.
+  if (!Object.keys(stored).some((method) => method !== 'totp' && method !== 'sms')) {
+    return `${intro} Here it is the only method that signs in, so keep it: run "${command('totp')}", then start the server again. See docs/upgrading.md.`;
+  }
+  return (
+    `${intro} Choose, then start the server again: ` +
     `"${command('totp=second-factor')}" keeps the app a second factor (users who signed up with it alone can't sign in until you allow it), ` +
     `"${command('totp')}" lets everyone who has the app sign in with it alone. See docs/upgrading.md.`
   );

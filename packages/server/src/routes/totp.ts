@@ -23,7 +23,7 @@ import { newId, toMadauthUser, totpAccountKey, type StoredAccount, type StoredUs
 import { localeOf } from '../webhooks.js';
 import { finishSignIn, methodOff, methodStillOn, pendingOrSignedIn, readChallenge, requiredByPolicy } from './challenge.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
-import { accepted, body, error, nameOf, noSession, originHost, redirectTarget, unavailable, type Body } from './helpers.js';
+import { accepted, body, error, nameOf, noSession, originHost, reauthRequired, redirectTarget, signedInRecently, unavailable, type Body } from './helpers.js';
 import { countSignInAttempt } from './lockout.js';
 
 export { CHALLENGE_COOKIE, CHALLENGE_TTL, CHALLENGE_TYP, clearChallenge, setChallenge, type Challenge, type NextStep } from './challenge.js';
@@ -145,6 +145,9 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     // session alone must not swap the app and the recovery codes for the thief's. The approval holds for
     // SETUP_TTL in the setup cookie, so starting again (or a closed dialog) costs no second code.
     const existing = await users.totpAccount(who.user.id);
+    // Allowed as a sign-in method, a first app is a way in of its own: like adding a passkey, only within ten
+    // minutes of signing in, so a session someone took over gives them no lasting way in.
+    if (!who.challenge && !existing && (await standalone(c)) && !(await signedInRecently(c, ctx))) return reauthRequired(c);
     let approved: number | undefined;
     if (existing) {
       const previous = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));

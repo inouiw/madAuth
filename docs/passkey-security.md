@@ -31,7 +31,7 @@ Code: `finish` in [`routes/passkey.ts`](../packages/server/src/routes/passkey.ts
 
 ## Signing in, and the second step
 
-With passkeys allowed as a sign-in method (`allowAsSignInMethod`), every passkey of a user signs them in on its own, as `["passkey"]`; the `passkey` policy can ask for a second factor after it, which is then the app or a phone, never a passkey. Only as a second factor (`allowAsSignInMethod: false`), a passkey is asked for after another method, and comes first of the user's second factors: `passkey_required`, with the user's passkeys in the options (`allowCredentials`). The challenge cookie of the sign-in and the ceremony cookie both have to fit, and the passkey must be one of the user's.
+With passkeys allowed as a sign-in method (`allowAsSignInMethod`), every passkey of a user signs them in on its own, as `["passkey"]`; the `passkey` policy can ask for a second factor after it, which is then the app or a phone, never a passkey. Only as a second factor (`allowAsSignInMethod: false`), a passkey is asked for after another method, and comes first of the user's second factors: `passkey_required`, with the user's passkeys in the options (`allowCredentials`). A passkey counts as a second factor only on the domain it was made for (it is stored with it): on an app of another domain it couldn't answer, so there the user is asked for another factor, or sets one up under a `required` policy. The challenge cookie of the sign-in and the ceremony cookie both have to fit, and the passkey must be one of the user's.
 
 A passkey the server no longer has (the user removed it) is `401 passkey_unknown`; the web library then tells the browser to forget it, where the browser supports that (the WebAuthn Signal API).
 
@@ -39,7 +39,7 @@ A passkey the server no longer has (the user removed it) is `401 passkey_unknown
 
 - Within ten minutes of signing in, like adding one: `Madauth.methods.remove(id)` or `POST /auth/methods/remove`.
 - Not the last way the user signs in (`403 only_method`): they add another method first, or delete the account.
-- Not the last second factor a `required` policy can ask them for (`403 required_by_policy`): a policy needs a factor the user keeps, other than the method itself. One of several passkeys may always go.
+- Not the last second factor a `required` policy can ask them for (`403 required_by_policy`): a policy needs a factor the user keeps, other than the method itself. One of several passkeys may always go, and the passkeys' own policy doesn't keep the last one: without it, the user signs in with no passkey.
 - A user who lost their passkeys signs in another way and removes them, or asks the operator: `npx @madauth/server remove-passkeys <email>` (it calls no webhook) or `POST /auth/admin/passkey/remove` (`user.method_removed` with `by`).
 
 ## The domain

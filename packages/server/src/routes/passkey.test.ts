@@ -343,6 +343,29 @@ describe('the user\'s passkeys', () => {
     expect(await (await post(app, '/auth/methods/remove', { id: last.id }, { Cookie: cookie })).json()).toMatchObject({ error: 'reauth_required' });
   });
 
+  it('PK17: the passkeys\' own policy doesn\'t keep the last passkey: without it, the user signs in no more with one', async () => {
+    const { app, cookie } = await withGrace({ google: ON, password: ON, passkey: { allowAsSignInMethod: true, secondFactor: 'required' }, totp: FACTOR });
+    const { res } = await addPasskey(app, cookie);
+    const { passkey: added } = (await res.json()) as { passkey: { id: string } };
+
+    expect((await post(app, '/auth/methods/remove', { id: added.id }, { Cookie: cookie })).status).toBe(200);
+  });
+
+  it('PK18: a passkey counts as a second factor only on the domain it was made for', async () => {
+    startClock();
+    const made = passwordApp({ allowedOrigins: [APP_ORIGIN, 'https://other.test'] });
+    await setMethods(made.store, { google: ON, password: { allowAsSignInMethod: true, secondFactor: 'optional' }, passkey: FACTOR, totp: FACTOR });
+    const value = await signUpVerified(made.app, made.hook);
+    await addPasskey(made.app, session(value));
+    advance(60_000);
+
+    // On the app it was made on, the passkey is asked for; on another, it couldn't answer, so it is no factor there.
+    expect(await (await post(made.app, '/auth/password/signin', grace)).json()).toMatchObject({ error: 'passkey_required' });
+    const elsewhere = await post(made.app, '/auth/password/signin', grace, { Origin: 'https://other.test' });
+    expect(elsewhere.status).toBe(200);
+    expect(await made.store.findMany('account', { name: 'Laptop' })).toMatchObject([{ rpId: 'app.example.com' }]);
+  });
+
   it('PK15: an admin, or the command line, removes the passkeys of a user who lost them', async () => {
     const { app, hook, store, cookie } = await withGrace();
     await addPasskey(app, cookie);

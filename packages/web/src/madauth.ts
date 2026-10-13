@@ -12,8 +12,8 @@ import { takeHashParam } from './hash.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
 import type { AuthenticatorEnabledDetail, AuthenticatorFailedDetail, PasskeyAddedDetail, SmsEnabledDetail, SmsFailedDetail } from './madauth-login.js';
 import { isLoginMethodId, type LoginMethodId } from './methods.js';
-import { pendingStepOf, type DeletedAccount, type PendingStep, type ProviderContext, type ServerConfig, type SignInProvider } from './providers/provider.js';
-import { fail, ok, toErrorCode, type MadauthError, type MadauthUser, type Result, type SecondFactor } from './result.js';
+import { FACTOR_STEPS, pendingStepOf, type DeletedAccount, type PendingStep, type ProviderContext, type ServerConfig, type SignInProvider } from './providers/provider.js';
+import { fail, isSecondFactor, ok, toErrorCode, type MadauthError, type MadauthUser, type Result } from './result.js';
 import type { Core } from './scopes/core.js';
 import { createAdminApi } from './scopes/admin.js';
 import { createEmailLinkApi } from './scopes/email-link.js';
@@ -241,8 +241,6 @@ async function handleSignInLink(ctx: ProviderContext, providers: Map<LoginMethod
   else ctx.signInFailed(res.error);
 }
 
-const isFactor = (f: string): f is SecondFactor => f === 'totp' || f === 'sms' || f === 'passkey';
-
 /**
  * Back from a redirect sign-in (Google's code flow, GitHub): with its error, or with the first step done and
  * a second factor or its setup next. The server names the method next to either; a server before 0.5 names
@@ -253,7 +251,7 @@ function handleRedirectReturn(ctx: ProviderContext): 'google' | 'github' | undef
   const linked = takeHashParam(REDIRECT_LINKED_PARAM);
   const error = takeHashParam(REDIRECT_ERROR_PARAM);
   const next = takeHashParam(REDIRECT_NEXT_PARAM);
-  const named = (takeHashParam(REDIRECT_FACTORS_PARAM) ?? '').split(',').filter(isFactor);
+  const named = (takeHashParam(REDIRECT_FACTORS_PARAM) ?? '').split(',').filter(isSecondFactor);
   // Only the redirect providers come back this way: anything else in the hash counts as Google's.
   const via = takeHashParam(REDIRECT_METHOD_PARAM);
   if (linked === 'google' || linked === 'github') return linked;
@@ -266,8 +264,7 @@ function handleRedirectReturn(ctx: ProviderContext): 'google' | 'github' | undef
     ctx.signInFailed({ code, message });
     return undefined;
   }
-  const steps = { passkey: 'passkey', totp: 'code', sms: 'sms' } as const;
-  if (next === 'totp' || next === 'sms' || next === 'passkey') ctx.signInContinues({ step: steps[next], method, factors: named.length ? named : [next] });
+  if (isSecondFactor(next)) ctx.signInContinues({ step: FACTOR_STEPS[next], method, factors: named.length ? named : [next] });
   else if (next === 'totp-setup') ctx.signInContinues(named.length ? { step: 'setup', method, factors: named } : { step: 'setup', method });
   return undefined;
 }

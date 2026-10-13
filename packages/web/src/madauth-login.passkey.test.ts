@@ -7,7 +7,7 @@ import { Passkey } from './providers/passkey.js';
 import { Password } from './providers/password.js';
 import type { SignInProvider } from './providers/provider.js';
 import { Totp } from './providers/totp.js';
-import { SERVER, fakeServer, grace, resetAll, settle, stubWebAuthn } from './test-helpers.js';
+import { CODE, SERVER, fakeServer, grace, resetAll, settle, stubWebAuthn } from './test-helpers.js';
 
 beforeEach(() => {
   resetAll();
@@ -272,5 +272,35 @@ describe('<madauth-login> and passkeys', () => {
     expect($('.error')!.dataset.code).toBe('passkey_unsupported');
     expect(text('h2')).toBe('Sign in');
     void result;
+  });
+
+  it('DP10: signing in again through the app\'s setup goes back to the methods, and manageSignInMethods() resolves only when the dialog closes', async () => {
+    const server = passkeyServer();
+    server.user = grace;
+    server.staleSignIn = true;
+    server.linked.set(grace.email!, new Set(['email-link']));
+    // The next sign-in sets the app up first.
+    server.policy.password = 'required';
+    await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
+    let resolved = false;
+    const result = Madauth.manageSignInMethods().then((r) => ((resolved = true), r));
+    await settle();
+
+    await click('.method[data-method="email-link"] [data-action="remove"]');
+    expect($('.error')!.dataset.code).toBe('reauth_required');
+    await click('[data-action="sign-in-again"]');
+    server.staleSignIn = false;
+    fill(credentials);
+    await submit('signin');
+    expect(text('h2')).toBe('Set up authenticator app');
+    await settle();
+    fill({ code: CODE });
+    await submit('totp-setup');
+    await click('[data-action="saved"]');
+
+    expect(text('h2')).toBe('Sign-in methods');
+    expect(resolved).toBe(false);
+    await click('[data-action="done"]');
+    expect(await result).toEqual({ isSuccess: true });
   });
 });

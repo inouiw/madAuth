@@ -181,7 +181,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     }
     const resolved = await resolveProviderUser(ctx, GOOGLE, toProfile(result.profile), oauth.locale);
     if (!resolved.ok) return back(resolved.error);
-    const step = await ctx.secondStep(c, resolved.user, ['google'], 'google', result.profile);
+    const step = await ctx.secondStep(c, resolved.user, ['google'], 'google', result.profile, new URL(oauth.returnTo).origin);
     if ('disabled' in step) return back('method_disabled');
     // The app continues with the second step (a code, or the app's setup); the challenge cookie is set.
     if ('next' in step) return back(undefined, step.next, step.factors);

@@ -45,15 +45,29 @@ export const RECENT_SIGN_IN_MS = 10 * 60 * 1000;
  * to send: `no_session`, or `reauth_required` (sign in again, then try again).
  */
 export async function recentUser(c: Context, ctx: AppContext): Promise<StoredUser | Response> {
+  const result = await recentSignIn(c, ctx);
+  if (result === 'no_session') return noSession(c);
+  if (result === 'reauth_required') return reauthRequired(c);
+  return result;
+}
+
+/** {@link recentUser} as a result: the user, or why not. */
+export async function recentSignIn(c: Context, ctx: AppContext): Promise<StoredUser | 'no_session' | 'reauth_required'> {
   const session = await ctx.currentUser(c);
   const user = session ? await ctx.users.findById(session.id) : null;
-  if (!user) return noSession(c);
-  const signedInAt = await ctx.signedInAt(c);
-  if (signedInAt === null || Date.now() - signedInAt > RECENT_SIGN_IN_MS) {
-    return error(c, 401, 'reauth_required', 'For your security, sign in again to change how you sign in.');
-  }
-  return user;
+  if (!user) return 'no_session';
+  return (await signedInRecently(c, ctx)) ? user : 'reauth_required';
 }
+
+/** Whether the request's session comes from a sign-in within RECENT_SIGN_IN_MS (renewals don't count). */
+export async function signedInRecently(c: Context, ctx: AppContext): Promise<boolean> {
+  const signedInAt = await ctx.signedInAt(c);
+  return signedInAt !== null && Date.now() - signedInAt <= RECENT_SIGN_IN_MS;
+}
+
+/** The answer when a change to how the user signs in needs a recent sign-in. */
+export const reauthRequired = (c: Context): Response =>
+  error(c, 401, 'reauth_required', 'For your security, sign in again to change how you sign in.');
 
 export function redirectTarget(ctx: AppContext, c: Context, value: unknown): URL | Response {
   const url = ctx.allowedUrl(value);
@@ -62,9 +76,9 @@ export function redirectTarget(ctx: AppContext, c: Context, value: unknown): URL
 
 const MAX_NAME_LENGTH = 100;
 
-/** A name as given at sign-up: trimmed and cut, or null if there is none. */
-export function nameOf(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim().slice(0, MAX_NAME_LENGTH) : null;
+/** A name as given, e.g. at sign-up: trimmed and cut to `maxLength`, or null if there is none. */
+export function nameOf(value: unknown, maxLength = MAX_NAME_LENGTH): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, maxLength) : null;
 }
 
 /**

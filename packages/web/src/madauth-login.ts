@@ -582,6 +582,15 @@ export class MadauthLogin extends LitElement {
     if (this.setupUser) {
       const detail: SignedInDetail = { method: this.primary, user: this.setupUser };
       this.dispatchEvent(new CustomEvent('madauth-signed-in', { detail, bubbles: true, composed: true }));
+      // The sign-in was the one again before changing a method: back to where that was.
+      const then = this.reauthThen;
+      if (then && this.dialog.open) {
+        this.reauthThen = undefined;
+        this.setupUser = undefined;
+        this.goTo(then);
+        if (then === 'methods') void this.loadMethods();
+        return;
+      }
     } else {
       const detail: AuthenticatorEnabledDetail = { recoveryCodes };
       this.dispatchEvent(new CustomEvent('madauth-authenticator-enabled', { detail, bubbles: true, composed: true }));

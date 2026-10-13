@@ -181,6 +181,8 @@ export function fakeServer(): FakeServer {
     const next: 'passkey' | 'totp' | 'sms' | 'totp-setup' | undefined =
       policy === 'none' ? undefined : factors.length ? factors[0] : policy === 'required' ? 'totp-setup' : undefined;
     if (!next) return signedIn(email);
+    // As the real server: a sign-in that goes on with a second step ends the session there was.
+    server.user = null;
     server.challenge = { email, next, method, factors };
     const error = { passkey: 'passkey_required', totp: 'totp_required', sms: 'sms_required', 'totp-setup': 'totp_setup_required' }[next];
     // For the setup, the factors that can be set up: a passkey when they are on, the app, and a phone when SMS codes are on.

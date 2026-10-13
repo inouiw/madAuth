@@ -996,6 +996,13 @@ describe('signing up with the app alone', () => {
     const confirmed = await post(app, '/auth/email/verify', { token });
     expect(confirmed.status).toBe(403);
     expect(await confirmed.json()).toMatchObject({ error: 'method_disabled' });
+    // On only as a second factor, the app signs nobody up either, and the link is not used up for it.
+    await setMethods(store, { password: { allowAsSignInMethod: true, secondFactor: 'optional' }, totp: { allowAsSignInMethod: false, secondFactor: 'none' } });
+    expect(await (await post(app, '/auth/email/verify', { token })).json()).toMatchObject({ error: 'method_disabled' });
+    expect((await store.findMany('user', {}))[0]).toMatchObject({ emailVerified: false });
+    await setMethods(store, standalone);
+    expect(await (await post(app, '/auth/email/verify', { token })).json()).toMatchObject({ error: 'totp_setup_required' });
+    await setMethods(store, { password: { secondFactor: 'optional' } });
 
     // Without the e-mails there is no sign-up route, but setting the app up still works.
     const noEmails = passwordApp({ password: undefined, webhook: undefined });

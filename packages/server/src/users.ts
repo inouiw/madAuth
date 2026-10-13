@@ -69,6 +69,8 @@ export interface StoredAccount {
   transports: string | null;
   /** When a passkey last signed in, or 0. */
   lastUsedAt: number | null;
+  /** The domain a passkey belongs to; it answers only there. */
+  rpId: string | null;
   createdAt: number;
 }
 
@@ -164,6 +166,29 @@ export function isPrimary(account: StoredAccount, accounts: StoredAccount[]): bo
 }
 
 /**
+ * Which of the second factors in `on` the accounts (all of one user's) hold, in the order of `on`.
+ * `passkeyUsable` leaves out passkeys that can't answer where the user is (another domain's).
+ */
+export function factorsAmong(accounts: StoredAccount[], on: readonly SecondFactor[], passkeyUsable: (account: StoredAccount) => boolean = () => true): SecondFactor[] {
+  const has: Record<SecondFactor, boolean> = {
+    passkey: accounts.some((account) => account.key.startsWith('passkey:') && passkeyUsable(account)),
+    totp: accounts.some((account) => methodOf(account) === 'totp'),
+    sms: accounts.some((account) => methodOf(account) === 'sms' && !!account.phone),
+  };
+  return on.filter((factor) => has[factor]);
+}
+
+/**
+ * Whether the accounts `without` picks are the last way in among `accounts` (all of one user's): the user
+ * signs in now with one whose method `signsIn`, and wouldn't without them. A user who can't sign in now
+ * anyway (an admin switched their methods off) is not locked out by it.
+ */
+export function lastWayIn(accounts: StoredAccount[], signsIn: (method: string) => boolean, without: (account: StoredAccount) => boolean): boolean {
+  const ways = accounts.filter((account) => signsIn(methodOf(account)));
+  return ways.length > 0 && ways.every(without);
+}
+
+/**
  * The user as apps see them. `profile` is what the sign-in method knows beyond the record, e.g. Google's
  * picture; the stored name wins over the provider's.
  */
@@ -188,8 +213,8 @@ export interface NewAccount {
   setupId?: string;
   /** For SMS codes: the phone number (E.164). */
   phone?: string;
-  /** For a passkey: its name, credential id, signature counter and transports. */
-  passkey?: { name: string; credentialId: string; signCount: number; transports: string | null };
+  /** For a passkey: its name, credential id, signature counter, transports and domain. */
+  passkey?: { name: string; credentialId: string; signCount: number; transports: string | null; rpId: string };
   /**
    * Whether the account is the one the user signs up with. By default it is for a password, Google, GitHub
    * and the e-mail link; the authenticator app is one only for a sign-up with it, SMS and passkeys never. An
@@ -237,9 +262,19 @@ export class Users {
     return this.findAccountByKey(smsAccountKey(userId));
   }
 
-  /** The user's accounts: their sign-in method and their second factors. */
+  /** The user's accounts: their sign-in methods and their second factors. */
   private async accounts(userId: string): Promise<StoredAccount[]> {
     return (await this.store.findMany('account', { userId })) as unknown as StoredAccount[];
+  }
+
+  /** All of the user's accounts, read once, for the checks that take them ({@link factorsAmong}, {@link lastWayIn}). */
+  async allAccounts(userId: string): Promise<StoredAccount[]> {
+    return this.accounts(userId);
+  }
+
+  /** Puts back an account that was removed: a removal that turned out to leave the user without a way in. */
+  async restoreAccount(account: StoredAccount): Promise<void> {
+    await this.store.create('account', account as unknown as Row);
   }
 
   /** The user's passkeys, oldest first. */
@@ -253,16 +288,12 @@ export class Users {
     return this.findAccountByKey(passkeyAccountKey(credentialId));
   }
 
-  /** Which of the second factors in `on` the user has, in their order: a passkey, the authenticator app, a phone. One read. */
-  async secondFactors(userId: string, on: readonly SecondFactor[]): Promise<SecondFactor[]> {
-    if (!on.length) return [];
-    const accounts = await this.accounts(userId);
-    const has: Record<SecondFactor, boolean> = {
-      passkey: accounts.some((account) => account.key.startsWith('passkey:')),
-      totp: accounts.some((account) => account.key === totpAccountKey(userId)),
-      sms: accounts.some((account) => account.key === smsAccountKey(userId) && !!account.phone),
-    };
-    return on.filter((factor) => has[factor]);
+  /**
+   * Which of the second factors in `on` the user has, in their order: a passkey, the authenticator app, a
+   * phone. `passkeyUsable` leaves out the passkeys that can't answer here (another domain's). One read.
+   */
+  async secondFactors(userId: string, on: readonly SecondFactor[], passkeyUsable?: (account: StoredAccount) => boolean): Promise<SecondFactor[]> {
+    return on.length ? factorsAmong(await this.accounts(userId), on, passkeyUsable) : [];
   }
 
   /**
@@ -321,8 +352,7 @@ export class Users {
    * sign in now anyway (an admin switched their methods off) is not locked out by it. One read.
    */
   async isLastWayIn(userId: string, signsIn: (method: string) => boolean, without: (account: StoredAccount) => boolean): Promise<boolean> {
-    const ways = (await this.accounts(userId)).filter((account) => signsIn(methodOf(account)));
-    return ways.length > 0 && ways.every(without);
+    return lastWayIn(await this.accounts(userId), signsIn, without);
   }
 
   /** The user's accounts of the sign-in methods, for the list of their methods: everything but the phone. */
@@ -474,6 +504,7 @@ export class Users {
       signCount: account.passkey?.signCount ?? null,
       transports: account.passkey?.transports ?? null,
       lastUsedAt: account.passkey ? 0 : null,
+      rpId: account.passkey?.rpId ?? null,
       createdAt: Date.now(),
     };
     return (await this.store.create('account', record as unknown as Row)) ? record : null;
@@ -587,8 +618,8 @@ export class Users {
   /** Deletes the user's pending verifications and password resets; their links and codes stop working. */
   async clearVerifications(userId: string): Promise<void> {
     // The notes of accepted passkey answers stay: without them, such an answer could be used again.
-    for (const purpose of ['verify', 'reset', 'signin', 'sms'] satisfies VerificationPurpose[]) {
-      await this.store.delete('verification', { userId, purpose });
+    for (const record of await this.store.findMany('verification', { userId })) {
+      if (record.purpose !== 'passkey') await this.store.delete('verification', { id: record.id });
     }
   }
 

@@ -37,7 +37,7 @@ import {
   type SignInMethod,
 } from './settings.js';
 import { methodRoutes } from './routes/methods.js';
-import { passkeyRoutes } from './routes/passkey.js';
+import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { deriveTotpKey } from './totp.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
@@ -83,9 +83,18 @@ export interface AppContext {
   /**
    * Finishes a primary sign-in method that succeeded: the session, or the next step with a second factor
    * as the policy of `method` and what the user has set up demand. `amr` is how the user signed in so far;
-   * `profile` is what the method knows beyond the record (e.g. Google's picture). Emits `user.signed_in`.
+   * `profile` is what the method knows beyond the record (e.g. Google's picture). `appOrigin` is the app
+   * the sign-in comes back to, for a request without an Origin (the redirect flows' callbacks): a passkey
+   * counts as a factor only when it answers there. Emits `user.signed_in`.
    */
-  secondStep(c: Context, user: StoredUser, amr: string[], method: SignInMethod, profile?: { name?: string; picture?: string }): Promise<SignInStep>;
+  secondStep(
+    c: Context,
+    user: StoredUser,
+    amr: string[],
+    method: SignInMethod,
+    profile?: { name?: string; picture?: string },
+    appOrigin?: string,
+  ): Promise<SignInStep>;
   /** The user of the request's session, or null if there is none or it has ended; renews it on the way like GET /auth/session. */
   currentUser(c: Context): Promise<MadauthUser | null>;
   /**
@@ -103,7 +112,7 @@ export interface AppContext {
   emailVerification: boolean;
   /** The sign-in methods that are on, as an admin set them: read from the store once per request. */
   methods(c: Context): Promise<MethodSettings>;
-  /** Whether a sign-in method is on: configured, and listed by an admin. */
+  /** Whether a method signs in: configured, listed by an admin, and allowed as a sign-in method. */
   enabled(c: Context, method: MethodId): Promise<boolean>;
   /** Asks the webhook whether someone may sign up (`user.signing_up`). Fails closed: without an answer, nobody signs up. */
   checkSignup(data: { email: string; name?: string; locale?: string; method: SignInMethod }): Promise<SignupCheck>;
@@ -247,7 +256,7 @@ export function createApp(config: MadauthConfig): Hono {
       if (firstSession) await this.emit('user.signed_up', { user: result, method });
       return result;
     },
-    async secondStep(c, user, amr, method, profile) {
+    async secondStep(c, user, amr, method, profile, appOrigin) {
       const methods = await this.methods(c);
       if (!signsIn(method, configured, methods)) return { disabled: true };
       let next: NextStep | null = null;
@@ -264,7 +273,8 @@ export function createApp(config: MadauthConfig): Hono {
           // The second factors that are on, but never the method itself: a passkey is no second factor of a
           // passkey sign-in. They come in the order of SECOND_FACTORS: the client offers a switch to the others.
           const on = factorsOn(configured, methods, method);
-          const has = await users.secondFactors(user.id, on);
+          // A passkey answers only on the domain it was made for: one of another app's is no factor here.
+          const has = await users.secondFactors(user.id, on, usableOn(passkeyDomain(config, appOrigin ?? c.req.header('origin'))));
           next = has[0] ?? (policy === 'required' ? 'totp-setup' : null);
           factors = has.length ? has : on;
         }
@@ -303,7 +313,8 @@ export function createApp(config: MadauthConfig): Hono {
       return reading;
     },
     async enabled(c, method) {
-      return isOn(method, configured, await this.methods(c));
+      // Not a method that is on only as a second factor: a sign-up with the app, e.g., can't go on then.
+      return signsIn(method, configured, await this.methods(c));
     },
     async checkSignup(data) {
       if (!this.webhook?.wants('user.signing_up')) return { ok: true };
