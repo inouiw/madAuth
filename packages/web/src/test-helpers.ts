@@ -299,10 +299,10 @@ export function fakeServer(): FakeServer {
         if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
         const account = server.accounts.get(user);
         const methods = [
-          ...(account?.password ? [{ id: 'acc_password', method: 'password', signIn: true, createdAt: 1 }] : []),
-          ...[...(server.linked.get(user) ?? [])].map((method) => ({ id: `acc_${method}`, method, signIn: true, createdAt: 1, ...(method === 'email-link' ? {} : { email: user }) })),
-          ...(server.authenticators.has(user) ? [{ id: 'acc_totp', method: 'totp', signIn: server.methods.totp, createdAt: 1 }] : []),
-          ...passkeysOf(user).map((p) => ({ id: p.id, method: 'passkey', signIn: !!server.passkey?.signIn, createdAt: 1, name: p.name, lastUsedAt: 0 })),
+          ...(account?.password ? [{ id: 'acc_password', method: 'password', signIn: true, removable: true, createdAt: 1 }] : []),
+          ...[...(server.linked.get(user) ?? [])].map((method) => ({ id: `acc_${method}`, method, signIn: true, removable: true, createdAt: 1, ...(method === 'email-link' ? {} : { email: user }) })),
+          ...(server.authenticators.has(user) ? [{ id: 'acc_totp', method: 'totp', signIn: server.methods.totp, removable: false, createdAt: 1 }] : []),
+          ...passkeysOf(user).map((p) => ({ id: p.id, method: 'passkey', signIn: !!server.passkey?.signIn, removable: true, createdAt: 1, name: p.name, lastUsedAt: 0 })),
         ];
         return json({ methods });
       }

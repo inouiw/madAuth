@@ -1,6 +1,7 @@
 // Several sign-in methods per user: a signed-in user adds and removes them. Behaviour described in
 // docs/sign-in-methods.md; update the doc when changing it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Users } from '../users.js';
 import {
   APP_ORIGIN,
   GITHUB_EMAILS,
@@ -197,6 +198,17 @@ describe('removing a sign-in method', () => {
       ['password', true],
       ['google', false],
     ]);
+  });
+
+  it('M10: a method the server is not configured for does not count as a way in, though it is listed', async () => {
+    const { store, cookie } = await withGrace();
+    const [{ id: userId }] = await store.findMany('user', {});
+    await new Users(store).linkAccount(userId as string, { key: 'github:7001', email: 'grace@example.com', primary: false });
+    // The same store, served without a GitHub OAuth App; the settings still list GitHub.
+    const withoutGitHub = passwordApp({ store });
+    const [password] = await methodsOf(withoutGitHub.app, cookie);
+
+    expect(await (await post(withoutGitHub.app, '/auth/methods/remove', { id: password.id }, { Cookie: cookie })).json()).toMatchObject({ error: 'only_method' });
   });
 
   it('M9: removing GitHub takes back its authorization at GitHub; the app is removed with a code of its own', async () => {

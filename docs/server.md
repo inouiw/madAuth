@@ -673,7 +673,7 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/passkey/verify/options` | `{}`, with the challenge cookie → the options for `navigator.credentials.get()` with the user's passkeys; 401 `challenge_expired` |
 | `POST /auth/passkey/verify` | `{ response }`, with the challenge and the ceremony cookie → `{ user }` and the session cookie; 401 `challenge_expired` or `verification_failed` |
 | `POST /auth/passkey/rename` | `{ id, name }`, signed in → `{ passkey }`; 400 `invalid_options`, 404 `method_not_found` |
-| `GET /auth/methods` | `{ methods: [{ id, method, signIn, createdAt, email?, name?, lastUsedAt? }] }`: the signed-in user's [sign-in methods](sign-in-methods.md), the authenticator app among them (`signIn`: whether it signs in on its own now); 401 `no_session` |
+| `GET /auth/methods` | `{ methods: [{ id, method, signIn, removable, createdAt, email?, name?, lastUsedAt? }] }`: the signed-in user's [sign-in methods](sign-in-methods.md), the authenticator app among them (`signIn`: whether it signs in on its own now; `removable`: whether `/auth/methods/remove` takes it); 401 `no_session` |
 | `POST /auth/methods/remove` | `{ id }`, signed in within ten minutes → `{}`: removes a password, Google, GitHub (its authorization at GitHub too), the e-mail link or a passkey; 400 `invalid_options` (the app: `/auth/totp/remove`), 401 `reauth_required`, 403 `only_method` or `required_by_policy`, 404 `method_not_found` |
 | `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
 | `POST /auth/logout` | Clears the cookies of the session |

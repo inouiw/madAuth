@@ -289,7 +289,7 @@ A passkey button calls `signIn()`. For the autofill, give the e-mail field `auto
 
 | Method | Resolves to | Errors |
 | --- | --- | --- |
-| `list()` | `{ methods: [{ id, method, signIn, createdAt, email?, name?, lastUsedAt? }] }` | `no_session` |
+| `list()` | `{ methods: [{ id, method, signIn, removable, createdAt, email?, name?, lastUsedAt? }] }` | `no_session` |
 | `remove(id)` | — | `only_method` (the user's last way in), `required_by_policy`, `reauth_required`, `method_not_found`, `no_session` |
 
 A user adds a method with its own call: `Madauth.passkey.add()`, `Madauth.password.add({ password })`, `Madauth.emailLink.add()`, the Google or GitHub button with `purpose: 'link'`, or the app's setup. Adding and removing need a sign-in within the last ten minutes: otherwise they fail with `reauth_required`, and the user signs in again first. The authenticator app is removed with `Madauth.totp.remove`, which takes a code. See [Several sign-in methods](sign-in-methods.md).

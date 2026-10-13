@@ -222,4 +222,55 @@ describe('<madauth-login> and passkeys', () => {
     expect(text('h2')).toBe('Sign-in methods');
     expect(server.accounts.get('ada@example.com')).toMatchObject({ password: 'adas own password!' });
   });
+
+  it('DP8: the autofill starts over before the server\'s ceremony expires, and ends before a passkey button\'s request', async () => {
+    passkeyServer();
+    const browser = stubWebAuthn({ conditional: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
+      void Madauth.signIn();
+      await vi.advanceTimersByTimeAsync(50);
+      const conditional = () => browser.credentials.get.mock.calls.filter(([request]) => request.mediation === 'conditional').map(([request]) => request.signal!);
+      expect(conditional()).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(4 * 60_000 + 50);
+      expect(conditional()).toHaveLength(2);
+      expect(conditional()[0].aborted).toBe(true);
+      expect(conditional()[1].aborted).toBe(false);
+
+      // The passkey button waits for the autofill's request to end, so the browser takes the new one.
+      browser.state.outcome = 'cancel';
+      $<HTMLButtonElement>('[data-method="passkey"]')!.click();
+      await vi.advanceTimersByTimeAsync(50);
+      const explicit = browser.credentials.get.mock.calls.findIndex(([request]) => request.mediation !== 'conditional');
+      expect(explicit).toBeGreaterThan(-1);
+      expect(conditional()[1].aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('DP9: a setup step that only a passkey can finish, in a browser without passkeys, says so', async () => {
+    const server = passkeyServer();
+    server.policy.password = 'required';
+    const result = openDialog();
+    await settle();
+    // The server offers only a passkey to set up.
+    server.methods.sms = false;
+    const realFetch = fetch;
+    vi.stubGlobal('fetch', async (input: string | URL, init?: RequestInit) => {
+      const res = await realFetch(input, init);
+      if (!String(input).endsWith('/auth/password/signin') || res.status !== 401) return res;
+      const body = (await res.json()) as Record<string, unknown>;
+      return new Response(JSON.stringify({ ...body, factors: ['passkey'] }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    fill(credentials);
+    await submit('signin');
+
+    expect($('.error')!.dataset.code).toBe('passkey_unsupported');
+    expect(text('h2')).toBe('Sign in');
+    void result;
+  });
 });

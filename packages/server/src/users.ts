@@ -316,13 +316,13 @@ export class Users {
   }
 
   /**
-   * Whether the accounts `without` picks are the user's last way in: they sign in now (as `methods` allows),
-   * and wouldn't without them. A user who can't sign in now anyway (an admin switched their methods off) is
-   * not locked out by it.
+   * Whether the accounts `without` picks are the user's last way in: the user signs in now with a method that
+   * `signsIn` (on, configured, and allowed as a sign-in method), and wouldn't without them. A user who can't
+   * sign in now anyway (an admin switched their methods off) is not locked out by it. One read.
    */
-  async isLastWayIn(userId: string, methods: MethodSettings, without: (account: StoredAccount) => boolean): Promise<boolean> {
-    const [now, after] = await Promise.all([this.signInMethods(userId, methods), this.signInMethods(userId, methods, without)]);
-    return now.length > 0 && after.length === 0;
+  async isLastWayIn(userId: string, signsIn: (method: string) => boolean, without: (account: StoredAccount) => boolean): Promise<boolean> {
+    const ways = (await this.accounts(userId)).filter((account) => signsIn(methodOf(account)));
+    return ways.length > 0 && ways.every(without);
   }
 
   /** The user's accounts of the sign-in methods, for the list of their methods: everything but the phone. */
@@ -586,7 +586,10 @@ export class Users {
 
   /** Deletes the user's pending verifications and password resets; their links and codes stop working. */
   async clearVerifications(userId: string): Promise<void> {
-    await this.store.delete('verification', { userId });
+    // The notes of accepted passkey answers stay: without them, such an answer could be used again.
+    for (const purpose of ['verify', 'reset', 'signin', 'sms'] satisfies VerificationPurpose[]) {
+      await this.store.delete('verification', { userId, purpose });
+    }
   }
 
   /**

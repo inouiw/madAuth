@@ -94,7 +94,7 @@ export function parsePasswordRules(input: unknown): PasswordRules | null {
   return { minLength: minLength as number, minScore };
 }
 
-const isMethodId = (value: string): value is MethodId => (METHODS as readonly string[]).includes(value);
+export const isMethodId = (value: string): value is MethodId => (METHODS as readonly string[]).includes(value);
 /** Whether a method takes a `secondFactor` policy other than `none`. */
 export const hasSecondFactor = (method: string): method is MethodWithSecondFactor =>
   (METHODS_WITH_SECOND_FACTOR as readonly string[]).includes(method);

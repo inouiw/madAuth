@@ -9,6 +9,7 @@ import { readToken } from '../tokens.js';
 import { SESSION_TYP } from '../user.js';
 import { importSigningKeys } from '../keys.js';
 import { createSqliteAdapter } from '../store/sqlite.js';
+import { Users } from '../users.js';
 import {
   APP_ORIGIN,
   ISSUER,
@@ -198,7 +199,7 @@ describe('signing in with a passkey', () => {
   });
 
   it('PK7: the answer of one sign-in does not sign in again', async () => {
-    const { app, cookie } = await withGrace();
+    const { app, store, cookie } = await withGrace();
     const { passkey } = await addPasskey(app, cookie);
     const options = await post(app, '/auth/passkey/signin/options', {});
     const response = browser.get(await options.json(), passkey);
@@ -212,6 +213,10 @@ describe('signing in with a passkey', () => {
     const twice = browser.get(await again.json(), passkey);
     const both = await Promise.all([1, 2].map(() => post(app, '/auth/passkey/signin/verify', { response: twice }, { Cookie: ceremonyOf(again) })));
     expect(both.map((r) => r.status).sort()).toEqual([200, 401]);
+    // Clearing the user's links and codes (a password reset does) keeps what was used.
+    const [{ id: userId }] = await store.findMany('user', {});
+    await new Users(store).clearVerifications(userId as string);
+    expect(await (await post(app, '/auth/passkey/signin/verify', { response }, { Cookie: ceremonyOf(options) })).json()).toMatchObject({ error: 'verification_failed' });
     // A browser without the cookie gets nowhere.
     expect(await (await post(app, '/auth/passkey/signin/verify', { response })).json()).toMatchObject({ error: 'setup_expired' });
   });

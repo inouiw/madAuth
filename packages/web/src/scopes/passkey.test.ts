@@ -142,8 +142,8 @@ describe('Madauth.methods', () => {
     expect(await Madauth.methods.list()).toEqual({
       isSuccess: true,
       methods: [
-        { id: 'acc_password', method: 'password', signIn: true, createdAt: 1 },
-        { id: 'acc_1', method: 'passkey', signIn: true, createdAt: 1, name: 'Laptop', lastUsedAt: 0 },
+        { id: 'acc_password', method: 'password', signIn: true, removable: true, createdAt: 1 },
+        { id: 'acc_1', method: 'passkey', signIn: true, removable: true, createdAt: 1, name: 'Laptop', lastUsedAt: 0 },
       ],
     });
     expect(await Madauth.methods.remove('acc_1')).toEqual({ isSuccess: true });

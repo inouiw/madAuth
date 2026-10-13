@@ -33,7 +33,7 @@ Removing GitHub takes its authorization back at GitHub, with the token kept from
 
 `POST /auth/methods/remove` (`Madauth.methods.remove(id)`) removes a password, Google, GitHub, the e-mail link or a passkey. The authenticator app takes a code from it (`Madauth.totp.remove`), and the phone one sent to it.
 
-- **Not the last way in.** A method can't go when the user would have no method left that the admin allows as a sign-in method (`403 only_method`): nobody could sign in as them, and a sign-up for their address could take the user over. A method switched off by the admin doesn't count. A user who can't sign in now anyway (every method of theirs is switched off) is not locked out by the removal.
+- **Not the last way in.** A method can't go when the user would have no method left that the admin allows as a sign-in method (`403 only_method`): nobody could sign in as them, and a sign-up for their address could take the user over. A method switched off by the admin doesn't count, nor one the server is not configured for (e.g. GitHub without its OAuth App). A user who can't sign in now anyway (every method of theirs is switched off) is not locked out by the removal.
 - **Not the last second factor a policy requires.** See [Passkey security](passkey-security.md#removing-a-passkey).
 
 The account a user signed up with is no different: it can go once another method signs them in.

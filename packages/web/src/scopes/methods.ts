@@ -9,6 +9,8 @@ export interface SignInMethodInfo {
   method: LoginMethodId;
   /** Whether it signs the user in on its own right now: the server allows it as a sign-in method. */
   signIn: boolean;
+  /** Whether {@link MethodsApi.remove} removes it; the authenticator app takes a code (`Madauth.totp.remove`). */
+  removable: boolean;
   /** When it was added, in milliseconds since 1970. */
   createdAt: number;
   /** Google and GitHub: the provider's address at the last sign-in. */

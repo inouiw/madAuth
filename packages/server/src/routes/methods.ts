@@ -3,7 +3,7 @@
 // a user who signed in recently, see `recentUser`. The rules are described in docs/sign-in-methods.md.
 import type { Hono } from 'hono';
 import type { AppContext } from '../app.js';
-import { signsIn, type MethodId } from '../settings.js';
+import { isMethodId, signsIn, type MethodId } from '../settings.js';
 import { methodOf, toMadauthUser, type StoredAccount } from '../users.js';
 import { requiredByPolicy } from './challenge.js';
 import { body, error, noSession, recentUser } from './helpers.js';
@@ -15,6 +15,8 @@ export interface MethodEntry {
   method: MethodId;
   /** Whether it signs the user in on its own right now (the admin allows it as a sign-in method). */
   signIn: boolean;
+  /** Whether `POST /auth/methods/remove` removes it; the authenticator app takes a code of its own. */
+  removable: boolean;
   createdAt: number;
   /** Google and GitHub: the provider's address at the last sign-in. */
   email?: string;
@@ -44,6 +46,7 @@ export function methodRoutes(app: Hono, ctx: AppContext, onRemoved: (account: St
         id: account.id,
         method,
         signIn: signsIn(method, ctx.configured, methods),
+        removable: REMOVABLE.includes(method),
         createdAt: account.createdAt,
         ...((method === 'google' || method === 'github') && account.email ? { email: account.email } : {}),
         ...(method === 'passkey' ? { name: account.name ?? '', lastUsedAt: account.lastUsedAt ?? 0 } : {}),
@@ -70,7 +73,7 @@ export function methodRoutes(app: Hono, ctx: AppContext, onRemoved: (account: St
       if (required) return required;
     }
     // Without it, nobody could sign in as the user.
-    if (await users.isLastWayIn(user.id, methods, (a) => a.id === account.id)) {
+    if (await users.isLastWayIn(user.id, (m) => isMethodId(m) && signsIn(m, ctx.configured, methods), (a) => a.id === account.id)) {
       return error(c, 403, 'only_method', "This is the only way you sign in, so it can't be removed. Add another way to sign in first, or delete your account.");
     }
     if (!(await users.unlinkAccount(account.key))) return c.json({});

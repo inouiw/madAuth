@@ -75,8 +75,8 @@ type View =
 type ChangeView = 'passkey-setup' | 'methods' | 'add-password';
 const changeViews: readonly View[] = ['passkey-setup', 'methods', 'add-password'];
 
-/** The methods the list can remove; the authenticator app takes a code of its own. */
-const removable: readonly LoginMethodId[] = ['password', 'google', 'github', 'email-link', 'passkey'];
+/** How long the passkeys' autofill waits with one ceremony before it starts over: the server's lasts five minutes. */
+const CONDITIONAL_RENEW_MS = 4 * 60 * 1000;
 
 /** The step a sign-in goes on with, from the error that says so. */
 const nextStep = secondStepOf;
@@ -283,8 +283,8 @@ export class MadauthLogin extends LitElement {
   private reauthThen?: ChangeView;
   /** The passkey's setup or the app's was started from the methods view: it goes back there after. */
   private fromMethods = false;
-  /** Passkeys offered in the e-mail field's autofill, while the sign-in view is shown. */
-  private conditional?: AbortController;
+  /** Passkeys offered in the e-mail field's autofill, while the sign-in view is shown: how to stop it, and when it has stopped. */
+  private conditional?: { abort: AbortController; done: Promise<void> };
 
   private stopFollowingLocale?: () => void;
 
@@ -349,13 +349,13 @@ export class MadauthLogin extends LitElement {
     await this.updateComplete;
     if (!this.dialog.open) this.dialog.showModal();
     // The dialog was closed during the render above: the passkeys' autofill starts now that it is open.
-    if (this.view === 'signin' && this.usable) void this.startConditional();
+    if (this.view === 'signin' && this.usable) this.startConditional();
     return ready;
   }
 
   /** Goes on with the second step where a sign-in left off. */
   private continueWith(pending: PendingStep): void {
-    this.stopConditional();
+    void this.stopConditional();
     this.primary = pending.method;
     this.useRecovery = false;
     this.setupNeedsCode = false;
@@ -367,7 +367,12 @@ export class MadauthLogin extends LitElement {
       this.setupFactors = (named ?? ['totp', ...(this.primary !== 'totp' && Madauth.sms.available ? (['sms'] as const) : [])]).filter(
         (factor) => factor !== 'passkey' || Madauth.passkey.available,
       );
-      this.startFactorSetup(this.setupFactors[0] ?? 'totp');
+      // Only passkeys can be set up, and this browser has none: nothing the dialog can do.
+      if (!this.setupFactors.length) {
+        this.showError({ code: 'passkey_unsupported', message: 'This browser does not support passkeys.' }, this.primary);
+        return;
+      }
+      this.startFactorSetup(this.setupFactors[0]);
       return;
     }
     this.factors = pending.factors;
@@ -462,8 +467,8 @@ export class MadauthLogin extends LitElement {
   override updated(changed: PropertyValues): void {
     this.syncButtons();
     // The user's passkeys in the e-mail field's autofill, while the sign-in view is shown.
-    if (this.view === 'signin' && this.dialog.open && this.usable) void this.startConditional();
-    else this.stopConditional();
+    if (this.view === 'signin' && this.dialog.open && this.usable) this.startConditional();
+    else void this.stopConditional();
     // The button that led here is gone with the old view, which would leave the focus on the page behind the
     // dialog. A view that focuses a field of its own (e.g. the password after signIn({ email })) does so later.
     if (changed.has('view') && changed.get('view') !== undefined && this.dialog.open) this.focusView();
@@ -495,7 +500,7 @@ export class MadauthLogin extends LitElement {
   }
 
   private onDialogClose(): void {
-    this.stopConditional();
+    void this.stopConditional();
     // The sign-in view's fields stay for the next opening: a shown password must not.
     hidePasswords(this.renderRoot);
     for (const button of this.buttons.values()) button.remove();
@@ -538,9 +543,9 @@ export class MadauthLogin extends LitElement {
     if (!result.isSuccess) {
       const step = nextStep(result.error);
       if (step) {
-        this.continueWith({ step, method, factors: result.error.factors });
         this.notice = undefined;
         this.error = null;
+        this.continueWith({ step, method, factors: result.error.factors });
         return;
       }
       this.showError(result.error, method);
@@ -1429,7 +1434,8 @@ export class MadauthLogin extends LitElement {
 
   /** Signs in with a passkey alone: the browser's passkey dialog. */
   private async onPasskeySignIn(): Promise<void> {
-    this.stopConditional();
+    // The browser takes one passkey request at a time: the autofill's has to be over first.
+    await this.stopConditional();
     const result = await this.run(() => Madauth.passkey.signIn());
     if (!result) return;
     // Closing the browser's dialog is no error worth showing.
@@ -1439,23 +1445,37 @@ export class MadauthLogin extends LitElement {
 
   /**
    * Offers the user's passkeys in the e-mail field's autofill while the sign-in view is shown: the browser
-   * waits for a pick, which signs in. Stopped when the view goes or another sign-in starts.
+   * waits for a pick, which signs in. Stopped when the view goes or another sign-in starts, and started over
+   * before the server's ceremony expires, since the browser may wait longer.
    */
-  private async startConditional(): Promise<void> {
+  private startConditional(): void {
     if (this.conditional || !this.passkeyAvailable) return;
     const abort = new AbortController();
-    this.conditional = abort;
+    const renew = setTimeout(() => {
+      if (this.conditional?.abort !== abort) return;
+      void this.stopConditional().then(() => {
+        if (this.view === 'signin' && this.dialog.open) this.startConditional();
+      });
+    }, CONDITIONAL_RENEW_MS);
+    const done = this.waitForPick(abort).finally(() => clearTimeout(renew));
+    this.conditional = { abort, done };
+  }
+
+  private async waitForPick(abort: AbortController): Promise<void> {
     if (!(await Madauth.passkey.conditionalAvailable()) || abort.signal.aborted) return;
     const result = await Madauth.passkey.signIn({ conditional: true, signal: abort.signal });
-    if (abort.signal.aborted || this.conditional !== abort) return;
+    if (abort.signal.aborted || this.conditional?.abort !== abort) return;
     this.conditional = undefined;
     if (!result.isSuccess && result.error.code === 'cancelled') return;
     this.finish('passkey', result);
   }
 
-  private stopConditional(): void {
-    this.conditional?.abort();
+  /** Ends the autofill's wait; resolves once the browser has let go of it, so another passkey request can start. */
+  private stopConditional(): Promise<void> {
+    const conditional = this.conditional;
     this.conditional = undefined;
+    conditional?.abort.abort();
+    return conditional?.done ?? Promise.resolve();
   }
 
   /** The second step with a passkey. */
@@ -1598,7 +1618,7 @@ export class MadauthLogin extends LitElement {
                       <span class="label">${label}</span>
                       ${details.length ? html`<span class="hint">${details.join(' · ')}</span>` : null}
                     </span>
-                    ${removable.includes(m.method) && !lastWayIn(m)
+                    ${m.removable && !lastWayIn(m)
                       ? html`<button class="link" part="link" type="button" data-action="remove" aria-label=${v.removeLabel(label)} ?disabled=${this.busy}
                           @click=${() => this.onRemove(m)}>${v.remove}</button>`
                       : null}

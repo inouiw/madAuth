@@ -5,7 +5,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
-import { isOn, signsIn } from '../settings.js';
+import { isMethodId, isOn, signsIn } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import {
   TOTP_WINDOW,
@@ -271,7 +271,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const account = await users.totpAccount(user.id);
     if (!account) return c.json({});
     // Without the app, nobody could sign in as the user: it is the last of their methods that signs in.
-    if (await users.isLastWayIn(user.id, methods, (a) => a.id === account.id)) {
+    if (await users.isLastWayIn(user.id, (m) => isMethodId(m) && signsIn(m, ctx.configured, methods), (a) => a.id === account.id)) {
       return error(c, 403, 'only_method', 'The authenticator app is the only way you sign in, so it can\'t be removed. Add another way to sign in first, or delete your account.');
     }
     // Removing the app takes a current code: a stolen session alone can't switch the protection off.
