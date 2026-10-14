@@ -170,6 +170,23 @@ describe('<madauth-login> and passkeys', () => {
     expect(await result).toEqual({ isSuccess: true, passkey: { id: 'acc_1', name: 'Passkey', createdAt: 1, lastUsedAt: 0 } });
   });
 
+  it('DP5: the setup names the other methods that can ask for the passkey as in a sentence, not as their buttons', async () => {
+    const server = passkeyServer();
+    server.passkey = { signIn: true, secondFactor: 'optional' };
+    server.policy.google = 'optional';
+    server.policy.password = 'optional';
+    server.user = grace;
+    stubWebAuthn();
+    await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
+
+    void Madauth.setUpPasskey();
+    await settle();
+    // The passkey's own sign-in asks for a second factor too, but not for itself.
+    expect($$('p.hint').map((hint) => hint.textContent.replace(/\s+/g, ' ').trim())).toContain(
+      'From then on, signing in with Google and a password can also ask for your passkey.',
+    );
+  });
+
   it('DP6: Madauth.manageSignInMethods() lists the methods, removes one, and adds a passkey and the e-mail link', async () => {
     const server = passkeyServer();
     server.user = grace;
