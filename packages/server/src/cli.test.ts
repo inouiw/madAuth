@@ -410,6 +410,12 @@ describe('usage', () => {
     for (const text of ['  init  ', '  start  ', '  generate-key  ', '  --env-file <path>  ']) expect(output).toContain(text);
   });
 
+  it('names what replaced a command madAuth before 0.6 had', async () => {
+    const result = await runCli(['set-roles', 'you@example.com', 'admin'], noQuestions, {});
+
+    expect(result).toEqual({ exitCode: 1, output: expect.stringMatching(/^set-roles was removed in madAuth 0\.6: .*Madauth\.admin.*INITIAL_ADMIN_EMAIL/) });
+  });
+
   it('is printed with an unknown option', async () => {
     const result = await runCli(['init', '--nope'], noQuestions);
 

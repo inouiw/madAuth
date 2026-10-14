@@ -37,6 +37,11 @@ const holdsRole = (user: StoredUser | null): boolean => !!user && isAdmin({ clai
 const withAdminRole = (claims: Claims): Claims | null => parseClaims({ ...claims, roles: [...rolesOf({ claims }), ADMIN_ROLE] });
 
 export class Admins {
+  /** The ids this instance knows to be on the list, so a sign-in of an admin it met before reads nothing. */
+  private readonly listed = new Set<string>();
+  /** The INITIAL_ADMIN_EMAIL value this instance knows to be applied: applied stays applied. */
+  private applied: string | undefined;
+
   constructor(
     private readonly settings: Settings,
     private readonly users: Users,
@@ -45,6 +50,12 @@ export class Admins {
   /** Notes that the user holds the role: they got it, or madAuth met an admin it didn't know of yet. Writes only then. */
   async note(userId: string, updatedBy: string | null): Promise<void> {
     await this.settings.change<string[]>(ADMINS_SETTING, (known = []) => (known.includes(userId) ? null : [...known, userId].sort()), updatedBy);
+    this.listed.add(userId);
+  }
+
+  /** {@link note} for an admin met at a sign-in or a call of the admin API: only the first time this instance meets them. */
+  async met(userId: string): Promise<void> {
+    if (!this.listed.has(userId)) await this.note(userId, null);
   }
 
   /**
@@ -63,6 +74,7 @@ export class Admins {
       },
       updatedBy,
     );
+    if (left) this.listed.clear();
     return left !== null;
   }
 
@@ -73,25 +85,34 @@ export class Admins {
    * role since or it comes back after another one. Resolves to the user with their new claims, or null when
    * nothing changed.
    */
-  async applyInitial(user: StoredUser, value: string): Promise<{ user: StoredUser; claims: Claims } | null> {
-    if (user.emailNormalized !== value || !user.emailVerified) return null;
-    if (wasApplied(await this.settings.get(INITIAL_ADMIN_SETTING), value)) return null;
+  async applyInitial(userId: string, value: string): Promise<{ user: StoredUser; claims: Claims } | null> {
+    if (this.applied === value) return null;
+    if (wasApplied(await this.settings.get(INITIAL_ADMIN_SETTING), value)) {
+      this.applied = value;
+      return null;
+    }
+    const user = await this.users.findById(userId);
+    if (!user || user.emailNormalized !== value || !user.emailVerified) return null;
     // Checked before the value counts as applied: claims without room for the role leave it for a later sign-in.
     if (!withAdminRole(claimsFromJson(user.claims))) {
       console.error(`[madauth] INITIAL_ADMIN_EMAIL: the claims of ${value} have no room for the role "${ADMIN_ROLE}" (at most 20 roles, 2048 characters).`);
       return null;
     }
+    const entry: AppliedInitialAdmin = { email: value, userId: user.id };
     const won = await this.settings.change<AppliedInitialAdmin[]>(
       INITIAL_ADMIN_SETTING,
-      (current) => (wasApplied(current, value) ? null : [...(Array.isArray(current) ? current : []), { email: value, userId: user.id }]),
+      (current) => (wasApplied(current, value) ? null : [...(Array.isArray(current) ? current : []), entry]),
       null,
     );
     if (!won) return null;
     const written = holdsRole(user) ? user : await this.users.changeClaims(user, (claims) => withAdminRole(claims) ?? claims);
     if (!written) {
+      // The value counts as applied only with the role in place: taken back, it applies at a later sign-in.
+      await this.settings.change<AppliedInitialAdmin[]>(INITIAL_ADMIN_SETTING, (current = []) => current.filter((applied) => applied.email !== value), null);
       console.error(`[madauth] INITIAL_ADMIN_EMAIL: the role "${ADMIN_ROLE}" could not be added to ${value}: their claims kept changing, or the user is gone.`);
       return null;
     }
+    this.applied = value;
     await this.note(user.id, null);
     return written === user ? null : { user: written, claims: claimsFromJson(written.claims) };
   }

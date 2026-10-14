@@ -18,7 +18,10 @@ const map = (key: string): Record<string, string> => {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`Set ${key} in cdk.json (context) to a map of environment variables, e.g. { "INITIAL_ADMIN_EMAIL": "you@example.com" }.`);
   }
-  return Object.fromEntries(Object.entries(parsed).map(([name, item]) => [name, String(item)]));
+  const entries = Object.entries(parsed);
+  const wrong = entries.find(([, item]) => typeof item !== 'string');
+  if (wrong) throw new Error(`${key}.${wrong[0]} in cdk.json (context) must be a string, as every environment variable is.`);
+  return Object.fromEntries(entries) as Record<string, string>;
 };
 
 const stack = new Stack(app, context('stackName') || 'MadAuth', {

@@ -42,6 +42,9 @@ Options:
   --env-file <path>            Read environment variables from this file, for any command. A variable
                                that is already set in the environment wins.`;
 
+/** Commands of madAuth before 0.6 that the admin API and INITIAL_ADMIN_EMAIL replaced. */
+const REMOVED_COMMANDS = ['create-user', 'set-roles', 'get-roles', 'set-claims', 'get-claims', 'set-methods', 'get-methods', 'set-password-rules', 'get-password-rules'];
+
 export interface CliIo {
   /** Asks a question; an empty answer means `defaultValue`. */
   ask(question: string, defaultValue?: string): Promise<string>;
@@ -184,6 +187,14 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
   }
   const { values: options, positionals } = parsed;
   const [command, ...rest] = positionals;
+  if (command && REMOVED_COMMANDS.includes(command)) {
+    return {
+      output:
+        `${command} was removed in madAuth 0.6: admins manage claims and settings with Madauth.admin from your app, and the first ` +
+        'admin is who signs in with the address in INITIAL_ADMIN_EMAIL. See docs/upgrading.md.',
+      exitCode: 1,
+    };
+  }
   // Few commands take arguments; anywhere else one is likely a mistyped option, e.g. `init .env.local`.
   const argumentLimits: Record<string, number> = {
     'remove-totp': 1,

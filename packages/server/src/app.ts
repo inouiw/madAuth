@@ -252,9 +252,7 @@ export function createApp(config: MadauthConfig): Hono {
   /** INITIAL_ADMIN_EMAIL, for a user who starts a session: their new claims if it gave them the role now, else null. */
   const promoteInitialAdmin = async (user: MadauthUser) => {
     const value = config.initialAdminEmail;
-    if (!value || !user.email || normalizeEmail(user.email) !== value) return null;
-    const stored = await users.findById(user.id);
-    return stored ? admins.applyInitial(stored, value) : null;
+    return value && user.email && normalizeEmail(user.email) === value ? admins.applyInitial(user.id, value) : null;
   };
 
   const ctx: AppContext = {
@@ -278,7 +276,7 @@ export function createApp(config: MadauthConfig): Hono {
       const promoted = await promoteInitialAdmin(signedIn);
       const user = promoted ? { ...signedIn, claims: promoted.claims } : signedIn;
       // An admin madAuth didn't know of yet (e.g. from before 0.6) is noted, so that the last admin keeps the role.
-      if (!promoted && isAdmin(user)) await admins.note(user.id, null);
+      if (!promoted && isAdmin(user)) await admins.met(user.id);
       // Only a user whose first session this is gets the write, before the cookies: if it fails, nobody is
       // signed in. The write decides, so two sign-ins at once send it once.
       const firstSession = signedUpAt === 0 && (await users.markSignedUp(user.id));
@@ -286,8 +284,9 @@ export function createApp(config: MadauthConfig): Hono {
       clearChallenge(c, secure);
       await issueSession(c, user, amr, { ...extra, auth_time: Math.floor(Date.now() / 1000) });
       const result = { ...user, amr };
-      if (promoted) await this.emit('user.claims_changed', { user: result, claims: promoted.claims, by: INITIAL_ADMIN_EMAIL });
+      // A new user is told first: their claims change after.
       if (firstSession) await this.emit('user.signed_up', { user: result, method });
+      if (promoted) await this.emit('user.claims_changed', { user: result, claims: promoted.claims, by: INITIAL_ADMIN_EMAIL });
       return result;
     },
     async secondStep(c, user, amr, method, profile) {
@@ -500,7 +499,7 @@ export function createApp(config: MadauthConfig): Hono {
       return { answer: c.json({ error: 'forbidden', message }, 403) };
     }
     // Admins whose session started before madAuth knew of them (e.g. from before 0.6) count from their first call.
-    await admins.note(user.id, null);
+    await admins.met(user.id);
     return { email };
   };
   const invalidEmail = (c: Context) => c.json({ error: 'invalid_email', message: 'This is not a valid e-mail address.' }, 400);

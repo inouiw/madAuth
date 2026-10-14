@@ -102,6 +102,9 @@ export const MAX_CODE_ATTEMPTS = 5;
  */
 export const MAX_WRONG_CODES = 10;
 
+/** How often a write that compares what it read is tried again when another request changed it in between. */
+const MAX_TRIES = 3;
+
 /** `userId` is null if the code was wrong, expired or used; `locked` if the user's codes no longer work at all. */
 export interface CodeResult {
   userId: string | null;
@@ -586,7 +589,7 @@ export class Users {
    */
   async changeClaims(user: StoredUser, apply: (claims: Claims) => Claims): Promise<StoredUser | null> {
     let current: StoredUser | null = user;
-    for (let attempt = 0; attempt < 3 && current; attempt++) {
+    for (let attempt = 0; attempt < MAX_TRIES && current; attempt++) {
       const next = apply(claimsFromJson(current.claims));
       const claims = Object.keys(next).length ? JSON.stringify(next) : null;
       if ((await this.store.update('user', { id: current.id, claims: current.claims ?? null }, { claims })) === 1) return { ...current, claims };
@@ -687,7 +690,7 @@ export class Users {
   /** Counts a code for the user and resolves to the new count; null if other requests kept changing it. */
   private async countWrongCode(user: StoredUser): Promise<number | null> {
     let current: StoredUser | null = user;
-    for (let attempt = 0; attempt < 3 && current; attempt++) {
+    for (let attempt = 0; attempt < MAX_TRIES && current; attempt++) {
       const wrongCodes = (current.wrongCodes ?? 0) + 1;
       if ((await this.store.update('user', { id: user.id, wrongCodes: current.wrongCodes ?? null }, { wrongCodes })) === 1) {
         return wrongCodes;

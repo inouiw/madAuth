@@ -52,8 +52,8 @@ describe('INITIAL_ADMIN_EMAIL', () => {
     expect(initialAdminCalls(hook)).toEqual([
       { type: 'user.claims_changed', data: { user: { id: user.id, email: 'Grace@Example.com', name: 'Grace Hopper', claims: { roles: ['admin'] } }, claims: { roles: ['admin'] }, by: 'INITIAL_ADMIN_EMAIL' } },
     ]);
-    // Before user.signed_up, which carries the role as well.
-    expect(hook.types().slice(-3)).toEqual(['user.claims_changed', 'user.signed_up', 'user.signed_in']);
+    // After user.signed_up, which carries the role as well: the receiver hears of the user first.
+    expect(hook.types().slice(-3)).toEqual(['user.signed_up', 'user.claims_changed', 'user.signed_in']);
     expect(await new Settings(store).get(INITIAL_ADMIN_SETTING)).toEqual([{ email: GRACE, userId: user.id }]);
     expect(await new Settings(store).get(ADMINS_SETTING)).toEqual([user.id]);
     // The session works for the admin API at once.
