@@ -41,6 +41,8 @@ export interface FakeAccount {
   app?: boolean;
   /** A user of the e-mail link: no password, the link or its code sign in. */
   link?: boolean;
+  /** A sign-up with a passkey alone: no password, the passkey is created after the confirmation. */
+  passkey?: boolean;
 }
 
 export interface FakeServer {
@@ -84,8 +86,8 @@ export interface FakeServer {
   challenge:
     | { email: string; next: 'passkey' | 'totp' | 'totp-setup' | 'sms'; method: 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'passkey'; factors: ('passkey' | 'totp' | 'sms')[] }
     | undefined;
-  /** Passkeys, when the server has them on: whether they sign in on their own, and that sign-in's policy. */
-  passkey: { signIn: boolean; secondFactor: SecondFactorPolicy } | null;
+  /** Passkeys, when the server has them on: whether they sign in on their own (and sign people up), and that sign-in's policy. */
+  passkey: { signIn: boolean; signUp?: boolean; secondFactor: SecondFactorPolicy } | null;
   /** The passkeys, by credential id: whose, their account id and name. */
   passkeys: Map<string, { email: string; id: string; name: string }>;
   /** Google, GitHub and the e-mail link the users added while signed in, by e-mail address. */
@@ -241,7 +243,7 @@ export function fakeServer(): FakeServer {
           email: { verification: server.password },
           emailLink: server.emailLink && server.methods['email-link'] ? { secondFactor: server.policy['email-link'] } : null,
           sms: server.methods.sms,
-          passkey: server.passkey,
+          passkey: server.passkey ? { signUp: false, ...server.passkey } : null,
         });
       // --- Passkeys ---
       case 'POST /auth/passkey/signin/options':
@@ -275,13 +277,28 @@ export function fakeServer(): FakeServer {
         server.passkeys.set(credential, passkey);
         const info = { id: passkey.id, name: passkey.name, createdAt: 1, lastUsedAt: 0 };
         if (!server.user && server.challenge?.next === 'totp-setup') {
+          // A sign-up with a passkey alone: it signs in as a passkey would, its policy may ask for a second factor.
+          const signUp = server.challenge.method === 'passkey';
           server.challenge = undefined;
-          const res = signedIn(who);
+          const res = signUp ? afterPrimary(who, 'passkey') : signedIn(who);
+          if (res.status !== 200) return res;
           const { user } = (await res.json()) as { user: MadauthUser };
           return json({ passkey: info, user });
         }
         return json({ passkey: info });
       }
+      case 'POST /auth/passkey/signup':
+        if (!server.passkey?.signIn || !server.passkey.signUp) return json({ error: 'method_disabled', message: 'off' }, 403);
+        if (server.rejectSignUp) return json({ error: 'signup_rejected', message: server.rejectSignUp }, 403);
+        if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
+        if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
+        if (server.accounts.get(email)?.verified) {
+          server.mails.push({ purpose: 'registered', to: email, redirectTo: body.redirectTo });
+        } else {
+          server.accounts.set(email, { password: '', verified: false, name: body.name, passkey: true });
+          server.mails.push({ purpose: 'verify', to: email, redirectTo: body.redirectTo });
+        }
+        return json({}, 202);
       case 'POST /auth/passkey/verify/options': {
         const challenge = server.challenge;
         if (!challenge?.factors.includes('passkey')) return json({ error: 'challenge_expired', message: 'sign in again' }, 401);
@@ -418,6 +435,11 @@ export function fakeServer(): FakeServer {
           // A sign-up with the app: it is set up now.
           server.challenge = { email: target, next: 'totp-setup', method: 'totp', factors: [] };
           return json({ error: 'totp_setup_required', message: 'set it up', method: 'totp', factors: ['totp'] }, 401);
+        }
+        if (account.passkey) {
+          // A sign-up with a passkey alone: it is created now.
+          server.challenge = { email: target, next: 'totp-setup', method: 'passkey', factors: [] };
+          return json({ error: 'totp_setup_required', message: 'create it', method: 'passkey', factors: ['passkey'] }, 401);
         }
         return afterPrimary(target, 'password');
       }

@@ -1,5 +1,5 @@
-// Confirming an e-mail address, shared by the methods that sign people up with one (password and the
-// authenticator app): the routes are the same, only the scope that offers them differs.
+// Confirming an e-mail address, shared by the methods that sign people up with one (password, the
+// authenticator app and passkeys): the routes are the same, only the scope that offers them differs.
 import type { LoginMethodId } from '../methods.js';
 import { pendingStepOf } from '../providers/provider.js';
 import { ok, type MadauthUser, type Result } from '../result.js';

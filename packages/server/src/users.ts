@@ -25,8 +25,23 @@ export interface StoredUser {
    * from before schema version 7, whose sign-up counts as complete.
    */
   signedUpAt: number | null;
+  /**
+   * The method the user's pending sign-up confirms the address for, see {@link SignUpMethod}. Empty in records
+   * from before schema version 9, and for users who signed up without a confirmation e-mail.
+   */
+  signUpMethod: string | null;
   createdAt: number;
 }
+
+/**
+ * The methods whose sign-up confirms the address by e-mail (`/auth/email/verify`): a password, and the
+ * authenticator app and passkeys, which are set up once the address is confirmed.
+ */
+export const SIGN_UP_METHODS = ['password', 'totp', 'passkey'] as const;
+export type SignUpMethod = (typeof SIGN_UP_METHODS)[number];
+
+/** Whether a stored value is a {@link SignUpMethod}. */
+export const isSignUpMethod = (value: unknown): value is SignUpMethod => (SIGN_UP_METHODS as readonly unknown[]).includes(value);
 
 export interface StoredAccount {
   id: string;
@@ -378,8 +393,9 @@ export class Users {
   /**
    * Creates a user, with their first account if given. Resolves to null if the e-mail address or the
    * account key is taken. `account.key` is `password:<userId>` for a password (its hash as `secret`), or
-   * e.g. `google:<sub>`. A sign-up with the authenticator app creates the user without an account: the app
-   * is set up once the address is confirmed.
+   * e.g. `google:<sub>`. A sign-up with the authenticator app or a passkey creates the user without an
+   * account: it is set up once the address is confirmed. `signUpMethod` is the method a sign-up that sends a
+   * confirmation e-mail confirms the address for.
    */
   async createUser(data: {
     email: string;
@@ -387,6 +403,7 @@ export class Users {
     name: string | null;
     emailVerified: boolean;
     account?: NewAccount | ((userId: string) => NewAccount);
+    signUpMethod?: SignUpMethod;
   }): Promise<StoredUser | null> {
     const user: StoredUser = {
       id: newId('usr'),
@@ -400,6 +417,7 @@ export class Users {
       wrongCodes: 0,
       claims: null,
       signedUpAt: 0,
+      signUpMethod: data.signUpMethod ?? null,
       createdAt: Date.now(),
     };
     if (!(await this.store.create('user', user as unknown as Row))) return null;

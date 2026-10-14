@@ -46,7 +46,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 8,
+  version: 9,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -71,6 +71,12 @@ export const madauthSchema = {
          * complete (since version 7).
          */
         signedUpAt: { type: 'number', nullable: true },
+        /**
+         * The method the user's pending sign-up confirms the address for: `password`, `totp` (the
+         * authenticator app) or `passkey`. Set by each sign-up that sends a confirmation e-mail; the latest
+         * one wins. Empty in records from before version 9 (since version 9).
+         */
+        signUpMethod: { type: 'string', nullable: true },
         createdAt: { type: 'number' },
       },
     },

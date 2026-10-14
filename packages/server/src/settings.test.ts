@@ -297,7 +297,7 @@ describe('switching sign-in methods off and on', () => {
     });
   });
 
-  it('keeps a method on that creates users: the app alone counts only with sign-up by e-mail', () => {
+  it('keeps a method on that creates users: the app or passkeys alone count only with sign-up by e-mail', () => {
     const googleOnly = { google: {}, emailVerification: false };
     expect(anyOn((m) => canSignUp(googleOnly, m), { totp: signIn() })).toBe(false);
     expect(anyOn((m) => canSignUp(googleOnly, m), { google: signIn(), totp: signIn() })).toBe(true);
@@ -306,8 +306,10 @@ describe('switching sign-in methods off and on', () => {
     // Only as a second factor, the app lets nobody in.
     expect(anyOn((m) => canSignUp(emails, m), { totp: factorOnly })).toBe(false);
     expect(anyOn((m) => canSignUp(emails, m), { google: signIn() })).toBe(false);
-    // Nobody signs up with a passkey: a signed-in user adds it.
-    expect(anyOn((m) => canSignUp(emails, m), { passkey: signIn() })).toBe(false);
+    // Passkeys alike: people sign up with one alone only where the address is confirmed by e-mail first.
+    expect(anyOn((m) => canSignUp(emails, m), { passkey: signIn() })).toBe(true);
+    expect(anyOn((m) => canSignUp(emails, m), { passkey: factorOnly })).toBe(false);
+    expect(anyOn((m) => canSignUp(googleOnly, m), { passkey: signIn() })).toBe(false);
   });
 
   it('is for admins only and checks its input', async () => {

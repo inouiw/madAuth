@@ -12,6 +12,7 @@ import {
   passwordApp,
   post,
   recordingWebhook,
+  setMethods,
   testApp,
 } from '../test/helpers.js';
 
@@ -64,6 +65,30 @@ describe('e-mail confirmation', () => {
     // Neither the link nor the code was used up: they work once the method is on again.
     await store.update('setting', { id: 'methods' }, { value: JSON.stringify({ google: {}, password: {} }) });
     expect((await post(app, '/auth/email/verify', { email: 'grace@example.com', code })).status).toBe(200);
+  });
+
+  it('E5: the sign-up records the method it confirms the address for; a record without it is read as before', async () => {
+    const { app, hook, store } = passwordApp();
+    await setMethods(store, { password: {}, totp: {}, passkey: {} });
+    const signUp = async (path: string, email: string, password?: string) => {
+      await post(app, path, { email, password, redirectTo: REDIRECT_TO });
+      const [user] = await store.findMany('user', { emailNormalized: email });
+      return { user, token: linkAndCode(hook.lastEmail()).token };
+    };
+    const passkey = await signUp('/auth/passkey/signup', 'grace@example.com');
+    const withApp = await signUp('/auth/totp/signup', 'ada@example.com');
+    const password = await signUp('/auth/password/signup', 'alan@example.com', 'correct horse battery');
+    expect([passkey, withApp, password].map(({ user }) => user.signUpMethod)).toEqual(['passkey', 'totp', 'password']);
+
+    expect(await (await post(app, '/auth/email/verify', { token: passkey.token })).json()).toMatchObject({ factors: ['passkey'] });
+    expect(await (await post(app, '/auth/email/verify', { token: withApp.token })).json()).toMatchObject({ factors: ['totp'] });
+
+    // A user stored before schema version 9: a password if there is one (else the app), as before.
+    await store.update('user', { id: password.user.id }, { signUpMethod: null });
+    expect((await post(app, '/auth/email/verify', { token: password.token })).status).toBe(200);
+    const older = await signUp('/auth/passkey/signup', 'mary@example.com');
+    await store.update('user', { id: older.user.id }, { signUpMethod: null });
+    expect(await (await post(app, '/auth/email/verify', { token: older.token })).json()).toMatchObject({ error: 'totp_setup_required', factors: ['totp'] });
   });
 
   it('E4: a POST from another origin is refused, like every other', async () => {

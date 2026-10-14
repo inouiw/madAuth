@@ -20,7 +20,7 @@ export interface ServerConfig {
    * address and a code), `signUp` whether people can sign up with it alone.
    */
   totp: { signIn: boolean; signUp: boolean } | null;
-  /** Whether the server confirms addresses by e-mail (sign-ups with a password or the authenticator app). */
+  /** Whether the server confirms addresses by e-mail (sign-ups with a password, the authenticator app or a passkey). */
   email: { verification: boolean };
   /** The passwordless e-mail link, with its policy for the authenticator app as a second factor. */
   emailLink: { secondFactor: SecondFactorPolicy } | null;
@@ -28,10 +28,11 @@ export interface ServerConfig {
   sms: boolean;
   /**
    * Passkeys, when they are on: a signed-in user can add them, and they are a second factor of the methods
-   * that ask for one. `signIn` says whether they sign in on their own, `secondFactor` whether such a sign-in
-   * then asks for a second factor. Absent from servers before madAuth 0.6.
+   * that ask for one. `signIn` says whether they sign in on their own, `signUp` whether people can sign up
+   * with one alone, `secondFactor` whether such a sign-in then asks for a second factor. Absent from servers
+   * before madAuth 0.6.
    */
-  passkey?: { signIn: boolean; secondFactor: SecondFactorPolicy } | null;
+  passkey?: { signIn: boolean; signUp: boolean; secondFactor: SecondFactorPolicy } | null;
 }
 
 /** What a sign-in still needs after its first step, and which sign-in it is. */

@@ -32,7 +32,7 @@ export type NextStep = 'passkey' | 'totp' | 'totp-setup' | 'sms';
 export type SecondFactorVia = 'passkey' | 'totp' | 'recovery_code' | 'sms';
 
 /**
- * The challenge cookie: who passed the first step, how (`amr`, empty for a sign-up with the app), what comes
+ * The challenge cookie: who passed the first step, how (`amr`, empty for a sign-up with the app or a passkey), what comes
  * next, which factors the user can finish with, which they can set up when the setup is next (absent in
  * cookies from before madAuth 0.6: the app or a phone), and what the method knows beyond the record (Google's
  * name and picture), for the session.
@@ -92,12 +92,18 @@ export async function pendingSetup(c: Context, ctx: AppContext, factor: SecondFa
 }
 
 /**
+ * Whether a challenge is the setup step of a sign-up with the app or a passkey alone: it has no first factor
+ * yet (the address was confirmed by e-mail), and sets up the method it signs up with, nothing else.
+ */
+export const isSignUpStep = (challenge: Challenge): boolean => !challenge.amr.length;
+
+/**
  * Who sets `factor` up: the user whose sign-in waits for its setup (the challenge, the latest sign-in at
  * this browser), else the signed-in user; otherwise the answer to send. Starting a session ends the
  * challenge, so an abandoned one can't outlive a later sign-in, and one from before a password reset no
- * longer counts. A sign-up with the app has no first factor yet: it sets the app up, nothing else. A
- * signed-in user for whom `recent` holds (a factor that is a way in of its own) must have signed in within
- * the last ten minutes (`reauth_required`).
+ * longer counts. A sign-up with the app or a passkey has no first factor yet: it sets up its own method,
+ * nothing else. A signed-in user for whom `recent` holds (a factor that is a way in of its own) must have
+ * signed in within the last ten minutes (`reauth_required`).
  */
 export async function whoSetsUp(
   c: Context,
@@ -107,7 +113,7 @@ export async function whoSetsUp(
 ): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | Response> {
   const pending = await pendingSetup(c, ctx, factor);
   if (pending) {
-    if (!pending.challenge.amr.length && factor !== 'totp') return noSession(c);
+    if (isSignUpStep(pending.challenge) && factor !== pending.challenge.method) return noSession(c);
     return (await methodStillOn(c, ctx, pending.challenge)) ? pending : methodOff(c);
   }
   const signedIn = await signedInUser(c, ctx);
@@ -141,6 +147,6 @@ export async function finishSignIn(
 ): Promise<MadauthUser> {
   const result = await ctx.startSession(c, toMadauthUser(user, challenge.profile), [...challenge.amr, amr], { method: challenge.method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
   // For a sign-up with the app, the app is the method itself, not a second factor.
-  await ctx.emit('user.signed_in', { user: result, method: challenge.method, ...(challenge.amr.length ? { secondFactor: via } : {}) });
+  await ctx.emit('user.signed_in', { user: result, method: challenge.method, ...(isSignUpStep(challenge) ? {} : { secondFactor: via }) });
   return result;
 }

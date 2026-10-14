@@ -103,6 +103,11 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
         .map((field) => `ALTER TABLE ${tableName('account')} ADD COLUMN ${columnName(field)} ${columnType(dialect, madauthSchema.models.account.fields[field])};`)
         .join('\n'),
   },
+  {
+    // The method a pending sign-up confirms its address for.
+    version: 9,
+    sql: (dialect) => `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('signUpMethod')} ${columnType(dialect, madauthSchema.models.user.fields.signUpMethod)};`,
+  },
 ];
 
 /**

@@ -215,6 +215,7 @@ export class MadauthLogin extends LitElement {
     error: { state: true },
     usable: { state: true },
     view: { state: true },
+    primary: { state: true },
     busy: { state: true },
     email: { state: true },
     setup: { state: true },
@@ -260,7 +261,7 @@ export class MadauthLogin extends LitElement {
   /** The reset code entered in the check-inbox view, used with the new password. */
   private resetCode?: string;
 
-  /** The method whose sign-in is under way: for the second step, and for a sign-up with the authenticator app. */
+  /** The method whose sign-in is under way: for the second step, and for a sign-up with the authenticator app or a passkey. */
   private primary: LoginMethodId = 'password';
 
   /** The authenticator app's setup in progress: the key to show as QR code and as text. */
@@ -634,6 +635,11 @@ export class MadauthLogin extends LitElement {
     return this.usable && Madauth.passkey.signInAvailable;
   }
 
+  /** Whether people can sign up with a passkey alone here: passkeys sign in on their own, and the server confirms addresses. */
+  private get passkeySignUpAvailable(): boolean {
+    return this.passkeyAvailable && !!Madauth.passkey.policy?.signUp;
+  }
+
   private get passwordAvailable(): boolean {
     return this.usable && !!providerFor('password');
   }
@@ -714,11 +720,13 @@ export class MadauthLogin extends LitElement {
   private async onSignUp(e: Event): Promise<void> {
     const { email = '', password = '', name = '' } = this.fields(e);
     this.email = email.trim();
-    const withApp = this.primary === 'totp';
+    const named = { email, name: name.trim() || undefined };
     const result = await this.run(() =>
-      withApp
-        ? Madauth.totp.signUp({ email, name: name.trim() || undefined })
-        : Madauth.password.signUp({ email, password, name: name.trim() || undefined }),
+      this.primary === 'totp'
+        ? Madauth.totp.signUp(named)
+        : this.primary === 'passkey'
+          ? Madauth.passkey.signUp(named)
+          : Madauth.password.signUp({ ...named, password }),
     );
     if (!result) return;
     if (!result.isSuccess) {
@@ -729,9 +737,9 @@ export class MadauthLogin extends LitElement {
     this.view = 'check-inbox';
   }
 
-  /** The scope that confirms the address of the sign-up under way: the password's, or the authenticator app's. */
+  /** The scope that confirms the address of the sign-up under way: the password's, the authenticator app's or the passkeys'. */
   private get signUpScope() {
-    return this.primary === 'totp' ? Madauth.totp : Madauth.password;
+    return this.primary === 'totp' ? Madauth.totp : this.primary === 'passkey' ? Madauth.passkey : Madauth.password;
   }
 
   private async onForgot(e: Event): Promise<void> {
@@ -977,8 +985,11 @@ export class MadauthLogin extends LitElement {
     const password = offered.find((m) => m.id === 'password');
     const others = offered.filter((m) => !branded.includes(m) && m !== password && m !== passkey);
     const s = this.strings;
+    // Without the password form and its link, the sign-up with a passkey is offered under the buttons.
+    const passkeySignUp = !password && this.passkeySignUpAvailable;
     return html`
       ${buttons.length ? html`<div class="buttons">${buttons}</div>` : null}
+      ${passkeySignUp ? html`<p class="links">${this.questionLink(s.noAccount, 'signup', () => this.startSignUp('passkey'))}</p>` : null}
       ${buttons.length && password ? html`<div class="divider">${s.or}</div>` : null}
       ${password ? this.renderPassword(password) : null}
       ${others.length
@@ -1032,24 +1043,32 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
-  /** To the "Create account" form, with a password or with the authenticator app alone. */
-  private startSignUp(method: 'password' | 'totp'): void {
+  /** To the "Create account" form, with a password, or with the authenticator app or a passkey alone. */
+  private startSignUp(method: 'password' | 'totp' | 'passkey'): void {
     this.primary = method;
     this.goTo('signup');
   }
 
   private renderSignUp() {
     const s = this.strings;
-    const withApp = this.primary === 'totp';
+    const withPassword = this.primary !== 'totp' && this.primary !== 'passkey';
+    const hint = this.primary === 'totp' ? s.totpSignUpHint : this.primary === 'passkey' ? s.passkeySignUpHint : null;
     // A provider (Google, GitHub) signs up a new user as well, so its button is offered here too: this form
-    // makes an account with a password (or the app) only.
+    // makes an account with a password (or the app, or a passkey) only.
     const branded = this.offered.filter((m) => !!providerFor(m.id)?.renderButton);
+    // The switch between a password and a passkey, when both sign people up here.
+    const instead =
+      this.primary === 'password' && this.passkeySignUpAvailable
+        ? html`<button class="link" part="link" type="button" data-action="use-passkey-signup" @click=${() => this.startSignUp('passkey')}>${s.passkeySignUpInstead}</button>`
+        : this.primary === 'passkey' && this.passwordAvailable
+          ? html`<button class="link" part="link" type="button" data-action="use-password-signup" @click=${() => this.startSignUp('password')}>${s.passwordSignUpInstead}</button>`
+          : null;
     return html`
       ${branded.length ? html`<div class="buttons">${branded.map((m) => this.renderButtonSlot(m))}</div><div class="divider">${s.or}</div>` : null}
-      ${withApp ? html`<p class="hint">${s.totpSignUpHint}</p>` : null}
+      ${hint ? html`<p class="hint">${hint}</p>` : null}
       <form part="form" class="signup" @submit=${this.onSignUp}>
-        ${this.emailField({ withPassword: !withApp })}
-        ${withApp ? null : this.passwordField('new-password', s.password)}
+        ${this.emailField({ withPassword })}
+        ${withPassword ? this.passwordField('new-password', s.password) : null}
         <div class="field">
           <label for="name">${s.name} <span class="optional">${s.optional}</span></label>
           <input part="input" id="name" name="name" type="text" autocomplete="name" />
@@ -1058,7 +1077,7 @@ export class MadauthLogin extends LitElement {
           <span class="label">${s.createAccount}</span>
         </button>
       </form>
-      <p class="links">${this.questionLink(s.haveAccount, 'back', () => this.goTo('signin'))}</p>
+      <p class="links">${instead}${this.questionLink(s.haveAccount, 'back', () => this.goTo('signin'))}</p>
     `;
   }
 
@@ -1560,7 +1579,7 @@ export class MadauthLogin extends LitElement {
     const s = this.strings;
     const asks = this.secondFactorAsks('passkey');
     return html`
-      <p class="lead">${this.setupForSignIn ? s.passkeySetup.requiredLead : s.passkeySetup.lead}</p>
+      <p class="lead">${!this.setupForSignIn ? s.passkeySetup.lead : this.primary === 'passkey' ? s.passkeySetup.signUpLead : s.passkeySetup.requiredLead}</p>
       ${!this.setupForSignIn && Madauth.passkey.policy?.signIn ? html`<p class="hint">${s.passkeySetup.signsIn}</p>` : null}
       ${!this.setupForSignIn && asks ? html`<p class="hint">${s.passkeySetup.effect(asks)}</p>` : null}
       <form part="form" class="passkey-setup" @submit=${this.onPasskeyCreate}>
@@ -1587,7 +1606,9 @@ export class MadauthLogin extends LitElement {
     const result = await this.run(() => Madauth.passkey.add(name ? { name } : {}));
     if (!result) return;
     if (!result.isSuccess) {
-      if (result.error.code !== 'cancelled') this.showError(result.error, 'passkey');
+      // A sign-up with a passkey whose policy asks for a second factor goes on with its setup.
+      if (nextStep(result.error)) this.finish(this.primary, result);
+      else if (result.error.code !== 'cancelled') this.showError(result.error, 'passkey');
       return;
     }
     // The setup finished a sign-in: the user is in.

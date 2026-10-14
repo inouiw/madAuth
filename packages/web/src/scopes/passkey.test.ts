@@ -3,7 +3,7 @@ import '../index.js';
 import { Madauth } from '../madauth.js';
 import { Passkey } from '../providers/passkey.js';
 import { Password } from '../providers/password.js';
-import { SERVER, fakeServer, grace, resetAll, stubWebAuthn } from '../test-helpers.js';
+import { CODE, SERVER, VERIFY_TOKEN, fakeServer, grace, resetAll, stubWebAuthn } from '../test-helpers.js';
 
 beforeEach(() => {
   resetAll();
@@ -21,6 +21,15 @@ function passkeyServer(signIn = true) {
   server.passkey = { signIn, secondFactor: 'none' };
   return server;
 }
+
+/** A server where people sign up with a passkey alone. */
+function signUpServer() {
+  const server = fakeServer();
+  server.passkey = { signIn: true, signUp: true, secondFactor: 'none' };
+  return server;
+}
+
+const newUser = { id: 'usr_new', email: 'new@example.com', name: 'New User' };
 
 describe('Madauth.passkey', () => {
   it('PW1: add creates a passkey in the browser and stores it; signIn signs in with it', async () => {
@@ -129,6 +138,65 @@ describe('Madauth.passkey', () => {
     server.staleSignIn = false;
     browser.state.outcome = 'exists';
     expect(await Madauth.passkey.add()).toMatchObject({ isSuccess: false, error: { code: 'already_added' } });
+  });
+});
+
+describe('Madauth.passkey.signUp', () => {
+  it('PW9: signUp creates an account with a passkey alone; confirming the address leads to the passkey, which signs in', async () => {
+    const server = signUpServer();
+    stubWebAuthn({ id: 'cred-new' });
+    await init();
+
+    expect(Madauth.passkey.policy).toEqual({ signIn: true, signUp: true, secondFactor: 'none' });
+    expect(await Madauth.passkey.signUp({ email: 'new@example.com', name: 'New User' })).toEqual({ isSuccess: true });
+    expect(server.requests.at(-1)).toMatchObject({
+      url: `${SERVER}/auth/passkey/signup`,
+      body: { email: 'new@example.com', name: 'New User', redirectTo: 'https://app.example.com/page' },
+    });
+    expect(server.mails.at(-1)).toMatchObject({ purpose: 'verify', to: 'new@example.com' });
+    expect(await Madauth.passkey.sendVerificationEmail({ email: 'new@example.com' })).toEqual({ isSuccess: true });
+    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/email/send-verification` });
+
+    expect(await Madauth.passkey.verifyEmail({ email: 'new@example.com', code: CODE })).toMatchObject({
+      isSuccess: false,
+      error: { code: 'totp_setup_required', method: 'passkey', factors: ['passkey'] },
+    });
+    expect(Madauth.passkey.pendingStep).toEqual({ step: 'setup', method: 'passkey', factors: ['passkey'] });
+    expect(await Madauth.passkey.add()).toMatchObject({ isSuccess: true, user: newUser, passkey: { name: 'Passkey' } });
+    expect(Madauth.currentUser).toEqual(newUser);
+    expect(Madauth.passkey.pendingStep).toBeNull();
+  });
+
+  it('PW10: a policy that asks for a second factor after a passkey: the new passkey leads to its setup', async () => {
+    const server = signUpServer();
+    server.passkey = { signIn: true, signUp: true, secondFactor: 'required' };
+    server.accounts.set('new@example.com', { password: '', verified: false, name: 'New User', passkey: true });
+    server.mails.push({ purpose: 'verify', to: 'new@example.com', redirectTo: 'https://app.example.com/page' });
+    stubWebAuthn({ id: 'cred-new' });
+    history.replaceState(null, '', `/page#madauth_verify=${VERIFY_TOKEN}`);
+    await init([new Password(), new Passkey()]);
+    await Madauth.sessionReady();
+
+    // The link opened the page: the passkey is next.
+    expect(Madauth.passkey.pendingStep).toEqual({ step: 'setup', method: 'passkey', factors: ['passkey'] });
+    const added = await Madauth.passkey.add();
+
+    expect(added).toMatchObject({ isSuccess: false, error: { code: 'totp_setup_required', method: 'passkey', factors: ['totp'] } });
+    expect(Madauth.passkey.pendingStep).toEqual({ step: 'setup', method: 'passkey', factors: ['totp'] });
+    expect(Madauth.currentUser).toBeNull();
+  });
+
+  it('PW11: signing up with a passkey alone needs the Passkey provider and a server that offers it', async () => {
+    signUpServer();
+    await init([new Password()]);
+    expect(await Madauth.passkey.signUp({ email: 'new@example.com' })).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+
+    resetAll();
+    passkeyServer();
+    stubWebAuthn();
+    await init();
+    expect(Madauth.passkey.policy?.signUp).toBe(false);
+    expect(await Madauth.passkey.signUp({ email: 'new@example.com' })).toMatchObject({ isSuccess: false, error: { code: 'method_disabled' } });
   });
 });
 
