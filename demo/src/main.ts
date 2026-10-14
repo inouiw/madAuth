@@ -42,8 +42,9 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('button.info')
 
 const google = flow === 'redirect' ? new GoogleRedirect() : new GoogleFedcm();
 
-// The public demo gives no visitor the role admin: an admin could change every visitor's claims and switch
-// sign-in methods off for everyone. Visitors are told so, and how to try the admin API on their machine.
+// The public demo gives no visitor the role admin: an admin could change every visitor's claims, reset their
+// sign-in and switch sign-in methods off for everyone. Visitors are told so, and how to try the admin API on
+// their machine.
 const { hostname } = location;
 $('[data-hosted]').hidden = !(hostname === 'madauth.com' || hostname.endsWith('.madauth.com'));
 
@@ -368,6 +369,19 @@ const methods: Record<string, ApiMethod> = {
     },
     ({ email, claims }) => Madauth.admin.setClaims(email, claims),
   ),
+  // One click would be too easy: the user loses every way in. The address field starts with the admin's own.
+  resetSignIn: api(
+    (values) => ({ email: values.email.trim() }),
+    async ({ email }) => {
+      if (!confirm(`Reset the sign-in of ${email}? Their sign-in methods and second factors are removed and their sessions end; they sign up again.`)) {
+        return 'Cancelled.';
+      }
+      const result = await Madauth.admin.resetSignIn(email);
+      // Resetting yourself ended your session: the page shows it now rather than at the next session check.
+      if (result.isSuccess && result.userId === Madauth.currentUser?.id) await Madauth.getSession();
+      return result;
+    },
+  ),
   getSettings: api(
     () => undefined,
     () => Madauth.admin.getSettings().then(showSettings),
@@ -407,7 +421,7 @@ for (const row of document.querySelectorAll<HTMLLIElement>('.api-method')) {
     if (!detail.hidden) renderRequest(row);
   });
   // The request follows the parameters as they are typed or picked. The admin calls share the address:
-  // what is typed into one e-mail field is what the other targets too, so a lookup and a change can't drift apart.
+  // what is typed into one e-mail field is what the others target too, so a lookup and a change can't drift apart.
   detail.addEventListener('input', (e) => {
     const field = e.target as HTMLInputElement;
     if (field.dataset.param === 'email') {

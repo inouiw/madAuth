@@ -304,13 +304,6 @@ export class Users {
     return created;
   }
 
-  /** Removes all of the user's passkeys. Resolves to how many there were. */
-  async removePasskeys(userId: string): Promise<number> {
-    let removed = 0;
-    for (const passkey of await this.passkeys(userId)) removed += await this.store.delete('account', { id: passkey.id });
-    return removed;
-  }
-
   /**
    * The user's authenticator app, if they set one up, and whether they signed up with it (as opposed to
    * adding it later). One read: the app and the user's other accounts together.
@@ -446,16 +439,22 @@ export class Users {
     return (await this.store.delete('account', { key })) === 1;
   }
 
-  /** Removes the user's authenticator app and recovery codes. Resolves to false if they had no app. */
-  async removeTotp(userId: string): Promise<boolean> {
-    const removed = await this.unlinkAccount(totpAccountKey(userId));
-    await this.clearRecoveryCodes(userId);
-    return removed;
-  }
-
-  /** Removes the user's phone number for SMS codes. Resolves to false if they had none. */
-  async removeSms(userId: string): Promise<boolean> {
-    return this.unlinkAccount(smsAccountKey(userId));
+  /**
+   * Resets the sign-in of a user who lost every way in: removes all their accounts (sign-in methods and
+   * second factors) with the recovery codes, ends their sessions and the sign-ins that wait for a second step
+   * (a new session version), deletes their pending links and codes, counts wrong codes from zero, and marks
+   * the address unconfirmed, so their next sign-up proves the inbox again. The user keeps their id, address,
+   * name, claims and `signedUpAt`. Resolves to the accounts as they were, e.g. for GitHub's token.
+   */
+  async resetSignIn(user: StoredUser): Promise<StoredAccount[]> {
+    const accounts = await this.accounts(user.id);
+    // The accounts go first: from then on no method finds the user, and the new session version ends what
+    // started before.
+    await this.store.delete('account', { userId: user.id });
+    await this.updateUser(user.id, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0 });
+    await this.clearVerifications(user.id);
+    await this.clearRecoveryCodes(user.id);
+    return accounts;
   }
 
   /**
