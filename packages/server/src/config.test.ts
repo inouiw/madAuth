@@ -239,6 +239,8 @@ describe('loadConfig', () => {
 
   it('refuses to start with TOTP_ISSUER, which is AUTHENTICATOR_ISSUER now', async () => {
     await expect(loadConfig({ ...env, ...hook, TOTP_ISSUER: 'My App' })).rejects.toThrow(/TOTP_ISSUER is now AUTHENTICATOR_ISSUER/);
+    // Empty, as Docker's --env-file keeps it (quotes and all), it is not set.
+    expect((await loadConfig({ ...env, ...hook, TOTP_ISSUER: '""' })).authenticatorIssuer).toBeUndefined();
     expect((await loadConfig({ ...env, ...hook, AUTHENTICATOR_ISSUER: 'My App' })).authenticatorIssuer).toBe('My App');
   });
 

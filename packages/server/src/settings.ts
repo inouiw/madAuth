@@ -124,12 +124,16 @@ export function parseMethodSettings(input: unknown): MethodSettings | null {
 
 /**
  * A stored methods setting with the authenticator app's id of madAuth before 0.6, `totp`, read as
- * `authenticator`, in its place among the others; anything else as it is. Only for what is stored: the
- * settings an admin sets name the app `authenticator`, and `totp` is no method id.
+ * `authenticator`, in its place among the others; anything else as it is. A list with both (madAuth never
+ * writes one) keeps the setting of `authenticator`. Only for what is stored: the settings an admin sets name
+ * the app `authenticator`, and `totp` is no method id.
  */
 export function renameStoredMethods(stored: unknown): unknown {
-  if (!isObject(stored) || !('totp' in stored) || 'authenticator' in stored) return stored;
-  return Object.fromEntries(Object.entries(stored).map(([method, value]) => [method === 'totp' ? 'authenticator' : method, value]));
+  if (!isObject(stored) || !('totp' in stored)) return stored;
+  const both = 'authenticator' in stored;
+  return Object.fromEntries(
+    Object.entries(stored).flatMap(([method, value]) => (method !== 'totp' ? [[method, value]] : both ? [] : [['authenticator', value]])),
+  );
 }
 
 /**

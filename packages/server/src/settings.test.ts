@@ -15,6 +15,7 @@ import {
   parseMethodSettings,
   parsePasswordRules,
   policyOf,
+  renameStoredMethods,
   signsIn,
 } from './settings.js';
 import { APP_ORIGIN, cookies, getNonce, googleIdToken, passwordApp, post, setClaims, signUpVerified, testApp, verify } from './test/helpers.js';
@@ -201,6 +202,8 @@ describe('Settings', () => {
     });
     // Only what is stored: totp is no method id an admin can set.
     expect(parseMethodSettings({ totp: factorOnly })).toBeNull();
+    // A list with both, which no madAuth writes, keeps the setting of authenticator.
+    expect(renameStoredMethods({ totp: signIn(), authenticator: factorOnly, sms: factorOnly })).toEqual({ authenticator: factorOnly, sms: factorOnly });
   });
 
   it('a value nobody can read does not count: it is warned about once, and the initial methods hold', async () => {
