@@ -16,7 +16,7 @@ vi.stubGlobal(
     switch (`${init.method ?? 'GET'} ${new URL(input).pathname}`) {
       case 'GET /auth/config':
         configCalls++;
-        return json({ google: null, password: { minLength: 8, secondFactor: 'none' }, totp: { signIn: false, signUp: false }, email: { verification: true } });
+        return json({ google: null, password: { minLength: 8, secondFactor: 'none' }, authenticator: { signIn: false, signUp: false }, email: { verification: true } });
       case 'GET /auth/session':
         return json({ error: 'no_session' }, 401);
     }

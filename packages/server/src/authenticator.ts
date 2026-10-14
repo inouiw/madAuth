@@ -1,4 +1,5 @@
-// Authenticator app codes (TOTP, RFC 6238), how their secrets are kept, and recovery codes. See docs/totp-security.md.
+// The authenticator app: its codes (TOTP, RFC 6238), how their secrets are kept, and recovery codes. See
+// docs/authenticator-security.md.
 import { createHmac, randomBytes, randomInt } from 'node:crypto';
 import { deriveKey } from './crypto.js';
 import { hashCode, safeEqual } from './password.js';
@@ -102,9 +103,11 @@ export function otpauthUri(options: { issuer: string; account: string; secret: U
 
 /**
  * The key that encrypts the secrets at rest, derived from the signing key like the key for e-mail codes.
- * A secret must be readable to check codes, so a leaked database alone must not give it away.
+ * A secret must be readable to check codes, so a leaked database alone must not give it away. The label
+ * keeps the app's name before madAuth 0.6: another one would derive another key, and no stored secret
+ * could be read.
  */
-export function deriveTotpKey(signingKeyD: string): Buffer {
+export function deriveAuthenticatorKey(signingKeyD: string): Buffer {
   return deriveKey(signingKeyD, 'madauth totp secret');
 }
 

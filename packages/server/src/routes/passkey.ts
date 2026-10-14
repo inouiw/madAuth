@@ -213,7 +213,7 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
     const { user } = who;
     const existing = await users.passkeys(user.id);
     const options = await generateRegistrationOptions({
-      rpName: config.totpIssuer || originHost(ctx, c),
+      rpName: config.authenticatorIssuer || originHost(ctx, c),
       rpID: domain.rpId,
       userName: user.email,
       userDisplayName: user.name ?? user.email,

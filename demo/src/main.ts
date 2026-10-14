@@ -1,4 +1,5 @@
 import {
+  Authenticator,
   EmailLink,
   GitHub,
   GoogleFedcm,
@@ -6,7 +7,6 @@ import {
   Madauth,
   Passkey,
   Password,
-  Totp,
   type DeleteAccountOptions,
   type MadauthUser,
   type MethodsToSet,
@@ -60,7 +60,7 @@ function showNotes(): void {
 // when the server has no OAuth App for it or an admin has it off, the authenticator app when the server has it switched off (no
 // policy asks for it, and it signs in nobody alone), and the e-mail link when the server's webhook doesn't
 // send its e-mails or an admin has it off.
-void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new Passkey(), new Totp(), new EmailLink()] }).then(async (result) => {
+void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new Passkey(), new Authenticator(), new EmailLink()] }).then(async (result) => {
   // Back from adding Google or GitHub in the dialog's list of methods: below "Manage Sign-In Methods".
   if (result.linked) showOutput($('#methods-output'), `Back from linking ${result.linked}`, result);
   // GoogleRedirect is left out when Google is off or has no client secret; GET /auth/config tells which.
@@ -93,11 +93,11 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   if (!user) {
     // Nothing of the previous user stays on the page: the parameters, the responses, the settings, the app, the phone.
     resetExplorer();
-    for (const box of [$('#totp-output'), $('#methods-output')]) {
+    for (const box of [$('#authenticator-output'), $('#methods-output')]) {
       box.hidden = true;
       box.querySelector('pre')!.textContent = '';
     }
-    $<HTMLInputElement>('#totp-code').value = '';
+    $<HTMLInputElement>('#authenticator-code').value = '';
     showAuthenticator(false, false);
     showPhone(false, false);
     settingsLoadedFor = undefined;
@@ -133,10 +133,10 @@ let authenticatorOn = false;
 /** Shows whether the user has the app, and the buttons that apply. */
 async function refreshAuthenticator(): Promise<void> {
   const user = Madauth.currentUser;
-  const status = await Madauth.totp.status();
+  const status = await Madauth.authenticator.status();
   if (Madauth.currentUser?.id !== user?.id) return;
   const offered = status.isSuccess || status.error.code !== 'flow_not_enabled';
-  $('#totp-status').textContent = !status.isSuccess
+  $('#authenticator-status').textContent = !status.isSuccess
     ? status.error.code === 'flow_not_enabled'
       ? 'Not offered by this madAuth server: no sign-in method asks for it, and it signs in nobody on its own.'
       : status.error.message
@@ -159,7 +159,7 @@ function showAuthenticator(on: boolean, offered: boolean): void {
 }
 
 /** A code as typed, next to the buttons or as a parameter: a 6-digit code from the app, or a recovery code (with a dash). */
-function codeOptions(typed = $<HTMLInputElement>('#totp-code').value): { code: string } | { recoveryCode: string } {
+function codeOptions(typed = $<HTMLInputElement>('#authenticator-code').value): { code: string } | { recoveryCode: string } {
   const value = typed.trim();
   return value.includes('-') || value.length > 7 ? { recoveryCode: value } : { code: value.replace(/\s/g, '') };
 }
@@ -190,7 +190,7 @@ function showPhone(on: boolean, offered: boolean): void {
 
 // --- The user's sign-in methods ---
 
-const methodNames: Record<string, string> = { google: 'Google', github: 'GitHub', password: 'password', totp: 'authenticator app', 'email-link': 'e-mail link', passkey: 'passkey' };
+const methodNames: Record<string, string> = { google: 'Google', github: 'GitHub', password: 'password', authenticator: 'authenticator app', 'email-link': 'e-mail link', passkey: 'passkey' };
 
 /** Shows how the signed-in user signs in, and whether passkeys can be added. */
 async function refreshMethods(): Promise<void> {
@@ -220,8 +220,8 @@ const accountCalls: Record<string, () => Promise<unknown>> = {
   setUpPasskey: () => Madauth.setUpPasskey().then(async (result) => (await refreshMethods(), result)),
   // The dialog shows the QR code, asks for the first code and shows the recovery codes.
   setUpAuthenticator: () => Madauth.setUpAuthenticator().then(async (result) => (await refreshAuthenticator(), result)),
-  newRecoveryCodes: () => Madauth.totp.newRecoveryCodes(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
-  removeAuthenticator: () => Madauth.totp.remove(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
+  newRecoveryCodes: () => Madauth.authenticator.newRecoveryCodes(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
+  removeAuthenticator: () => Madauth.authenticator.remove(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
   // The dialog asks for the number, then for the code sent to it (and, replacing one, for a code to the current number first).
   setUpSms: () => Madauth.setUpSms().then(async (result) => (await refreshPhone(), result)),
   // Removing the number takes a code sent to it: send, ask for it, remove.
@@ -242,7 +242,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#account butt
     try {
       const result = await accountCalls[button.dataset.call!]();
       // Labelled with the call: the code of a button that has a name of its own too.
-      const box = button.id === 'manage-methods' ? $('#methods-output') : $('#totp-output');
+      const box = button.id === 'manage-methods' ? $('#methods-output') : $('#authenticator-output');
       if (Madauth.currentUser?.id === user) showOutput(box, (button.querySelector('code') ?? button).textContent, result);
     } finally {
       button.disabled = false;
@@ -272,12 +272,12 @@ function api<A extends Args>(build: (values: Values) => A | string, call: (args:
   return { build, call: (args) => call(args as A) };
 }
 
-type MethodId = 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'passkey' | 'sms';
-const ALL_METHODS = ['google', 'github', 'password', 'email-link', 'passkey', 'totp', 'sms'] as const;
+type MethodId = 'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey' | 'sms';
+const ALL_METHODS = ['google', 'github', 'password', 'email-link', 'passkey', 'authenticator', 'sms'] as const;
 /** The methods whose policy for a second factor can be set: those that sign in. */
 const WITH_POLICY = ['google', 'github', 'password', 'email-link', 'passkey'] as const;
 /** The methods that sign in on their own or are only a second factor, as the admin chooses. */
-const EITHER = ['passkey', 'totp'] as const;
+const EITHER = ['passkey', 'authenticator'] as const;
 type WithPolicy = (typeof WITH_POLICY)[number];
 type Either = (typeof EITHER)[number];
 const methodBox = (method: MethodId) => $<HTMLInputElement>(`#method-${method}`);

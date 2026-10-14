@@ -266,7 +266,7 @@ describe('GitHub sign-in', () => {
     expect(await config()).toEqual({ secondFactor: 'required' });
     const res = await signInWithGitHub(app);
     // Nobody has an app yet: the sign-in goes on with its setup, and the session waits for it.
-    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=totp-setup&madauth_factors=totp&madauth_method=github`);
+    expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=authenticator-setup&madauth_factors=authenticator&madauth_method=github`);
     expect(cookies(res).madauth_session?.value ?? '').toBe('');
     expect(cookies(res).madauth_challenge.value).toBeTruthy();
   });

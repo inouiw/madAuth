@@ -64,7 +64,7 @@ describe('Madauth.admin', () => {
         google: { configured: true, enabled: true, allowAsSignInMethod: true, secondFactor: 'none' },
         github: { configured: false, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
         password: { configured: true, enabled: true, allowAsSignInMethod: true, secondFactor: 'none' },
-        totp: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
+        authenticator: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
         'email-link': { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
         passkey: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
         sms: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
@@ -73,14 +73,14 @@ describe('Madauth.admin', () => {
     // The list replaces what was on: password is left out, Google asks for a second factor, the app signs in alone.
     const methods = {
       google: { allowAsSignInMethod: true, secondFactor: 'optional' },
-      totp: { allowAsSignInMethod: true, secondFactor: 'none' },
+      authenticator: { allowAsSignInMethod: true, secondFactor: 'none' },
     } as const;
     expect(await Madauth.admin.setSettings({ methods })).toMatchObject({
       isSuccess: true,
       methods: {
         google: { enabled: true, secondFactor: 'optional' },
         password: { configured: true, enabled: false },
-        totp: { configured: true, enabled: true },
+        authenticator: { configured: true, enabled: true },
       },
     });
     expect(server.requests.at(-1)).toMatchObject({

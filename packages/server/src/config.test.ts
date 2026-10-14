@@ -22,7 +22,7 @@ describe('loadConfig', () => {
     const refused = loadConfig(env, { store });
 
     await expect(refused).rejects.toThrow(ConfigError);
-    await expect(refused).rejects.toThrow(/"set-methods google password=optional totp=second-factor".*"set-methods google password=optional totp"/s);
+    await expect(refused).rejects.toThrow(/"set-methods google password=optional authenticator=second-factor".*"set-methods google password=optional authenticator"/s);
     // readConfig, which the command line uses to set them, reads it all the same.
     expect((await readConfig(env, { store })).store).toBe(store);
     // A list without the app on its own has one meaning, and starts.
@@ -40,7 +40,7 @@ describe('loadConfig', () => {
       sessionTtlSeconds: 28800,
       renewalTtlSeconds: 2592000,
       cookieDomain: undefined,
-      totpIssuer: undefined,
+      authenticatorIssuer: undefined,
       google: { clientId: CLIENT_ID, clientSecret: undefined },
       store: expect.any(Object),
       password: undefined,
@@ -205,7 +205,7 @@ describe('loadConfig', () => {
       'user.created is gone: user.signed_up tells when a user can sign in',
       'email.verified is now user.email_verified',
       'email.password_reset is now user.password_reset',
-      'totp.enabled is now user.second_factor_enabled (with method "totp")',
+      'totp.enabled is now user.second_factor_enabled (with method "authenticator")',
       'sms.disabled is now user.second_factor_disabled (with method "sms")',
       'totp.recovery_code_used is now user.recovery_code_used',
     ]) {
@@ -235,6 +235,11 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, ...hook, PASSWORD_MIN_LENGTH: '12' })).rejects.toThrow(
       /PASSWORD_MIN_LENGTH was removed.*set-password-rules min-length=12/,
     );
+  });
+
+  it('refuses to start with TOTP_ISSUER, which is AUTHENTICATOR_ISSUER now', async () => {
+    await expect(loadConfig({ ...env, ...hook, TOTP_ISSUER: 'My App' })).rejects.toThrow(/TOTP_ISSUER is now AUTHENTICATOR_ISSUER/);
+    expect((await loadConfig({ ...env, ...hook, AUTHENTICATOR_ISSUER: 'My App' })).authenticatorIssuer).toBe('My App');
   });
 
   it('documents every environment variable in docs/server.md', () => {

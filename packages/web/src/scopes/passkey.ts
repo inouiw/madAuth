@@ -34,13 +34,13 @@ export interface PasskeyApi {
    * Signs in with a passkey alone: the browser shows the user's passkeys for this site. Fails with
    * `cancelled` (the user closed the dialog), `passkey_unknown` (a passkey the server no longer has, which
    * the browser is told to forget), `verification_failed`, `method_disabled` or `passkey_unsupported`; with
-   * `totp_setup_required` and the like the passkey was right and its policy asks for a second factor.
+   * `authenticator_setup_required` and the like the passkey was right and its policy asks for a second factor.
    */
   signIn(options?: PasskeySignInOptions): Promise<Result<{ user: MadauthUser }>>;
   /** Finishes a sign-in that ended with `passkey_required`. Fails with `cancelled`, `verification_failed` or `challenge_expired`. */
   verify(): Promise<Result<{ user: MadauthUser }>>;
   /**
-   * Adds a passkey for the signed-in user, or for a sign-in that ended with `totp_setup_required` and
+   * Adds a passkey for the signed-in user, or for a sign-in that ended with `authenticator_setup_required` and
    * `passkey` among its factors (then it finishes the sign-in, and `user` is set). Only within ten minutes of
    * signing in: later it fails with `reauth_required` (sign in again, then add it). Fails with `cancelled`,
    * `already_added` (this device holds one of the user's passkeys), `verification_failed`, `no_session` or
@@ -57,7 +57,7 @@ export interface PasskeyApi {
   readonly signInAvailable: boolean;
   /** What passkeys do on this server: whether they sign in on their own, and whether that asks for a second factor. Null when off. */
   readonly policy: { signIn: boolean; secondFactor: SecondFactorPolicy } | null;
-  /** What a sign-in under way still needs, see `Madauth.totp.pendingStep`: `step` is `passkey` for a passkey. */
+  /** What a sign-in under way still needs, see `Madauth.authenticator.pendingStep`: `step` is `passkey` for a passkey. */
   readonly pendingStep: PendingStep | null;
 }
 

@@ -38,7 +38,7 @@ export interface PasswordRules {
 }
 
 /** The ids of the methods in the settings. */
-export type MethodId = 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'passkey' | 'sms';
+export type MethodId = 'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey' | 'sms';
 
 export interface Settings {
   methods: Record<MethodId, MethodSetting>;
@@ -47,8 +47,8 @@ export interface Settings {
 
 /**
  * The list of methods to switch on, each with both of its settings. A method left out is off. A second
- * factor a policy asks for must be on too (`totp`, `passkey` or `sms`), e.g.
- * `{ password: { allowAsSignInMethod: true, secondFactor: 'optional' }, totp: { allowAsSignInMethod: false, secondFactor: 'none' } }`.
+ * factor a policy asks for must be on too (`authenticator`, `passkey` or `sms`), e.g.
+ * `{ password: { allowAsSignInMethod: true, secondFactor: 'optional' }, authenticator: { allowAsSignInMethod: false, secondFactor: 'none' } }`.
  */
 export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 
@@ -103,7 +103,7 @@ export function createAdminApi(core: Core): AdminApi {
     setClaims: (email, value) => call('claims/set', { email, claims: value }, claims),
     getSettings: () => call('settings/get', {}, settings),
     setSettings: (value) => call('settings/set', { methods: value.methods, password: value.password }, settings),
-    removeAuthenticator: (email) => call('totp/remove', { email }, (data: { userId: string }) => ({ userId: data.userId })),
+    removeAuthenticator: (email) => call('authenticator/remove', { email }, (data: { userId: string }) => ({ userId: data.userId })),
     removePasskeys: (email) => call('passkey/remove', { email }, (data: { userId: string }) => ({ userId: data.userId })),
   };
 }

@@ -336,7 +336,7 @@ export async function setMethods(store: StoreAdapter, methods: TestMethods): Pro
       Object.entries(methods).map(([method, setting]) => [method, { allowAsSignInMethod: method !== 'sms', secondFactor: setting?.secondFactor ?? 'none' }]),
     );
     const asks = Object.values(settings).some((setting) => setting.secondFactor !== 'none');
-    if (asks && !settings.totp) settings.totp = { allowAsSignInMethod: false, secondFactor: 'none' };
+    if (asks && !settings.authenticator) settings.authenticator = { allowAsSignInMethod: false, secondFactor: 'none' };
     return settings;
   };
   const parsed = full ? parseMethodSettings(methods) : shorthand();

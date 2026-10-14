@@ -9,7 +9,7 @@ export interface SignInMethodInfo {
   method: LoginMethodId;
   /** Whether it signs the user in on its own right now: the server allows it as a sign-in method. */
   signIn: boolean;
-  /** Whether {@link MethodsApi.remove} removes it; the authenticator app takes a code (`Madauth.totp.remove`). */
+  /** Whether {@link MethodsApi.remove} removes it; the authenticator app takes a code (`Madauth.authenticator.remove`). */
   removable: boolean;
   /** When it was added, in milliseconds since 1970. */
   createdAt: number;
@@ -31,9 +31,10 @@ export interface MethodsApi {
   list(): Promise<Result<{ methods: SignInMethodInfo[] }>>;
   /**
    * Removes a password, Google, GitHub, the e-mail link or a passkey (the authenticator app takes a code:
-   * `Madauth.totp.remove`). Only within ten minutes of signing in, else it fails with `reauth_required`. Fails
-   * with `only_method` (the user would have no way left to sign in), `required_by_policy` (the last passkey,
-   * when a policy requires a second factor), `method_not_found` or `no_session`.
+   * `Madauth.authenticator.remove`). Only within ten minutes of signing in, else it fails with
+   * `reauth_required`. Fails with `only_method` (the user would have no way left to sign in),
+   * `required_by_policy` (the last passkey, when a policy requires a second factor), `method_not_found` or
+   * `no_session`.
    */
   remove(id: string): Promise<Result>;
 }

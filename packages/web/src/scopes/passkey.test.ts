@@ -111,7 +111,7 @@ describe('Madauth.passkey', () => {
     stubWebAuthn({ id: 'cred-9' });
     await init();
 
-    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'totp_setup_required', factors: ['passkey', 'totp'] } });
+    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'authenticator_setup_required', factors: ['passkey', 'authenticator'] } });
     const added = await Madauth.passkey.add();
 
     expect(added).toMatchObject({ isSuccess: true, user: grace, passkey: { name: 'Passkey' } });

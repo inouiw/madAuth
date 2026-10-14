@@ -42,9 +42,9 @@ Commands:
                                An answer given as an option is not asked for: --app-url <url>,
                                --google-client-id <id>, --google-client-secret <secret>,
                                --github-client-id <id>, --github-client-secret <secret>, --password or
-                               --no-password, --totp or --no-totp (sign-up with the authenticator app),
-                               --email-link or --no-email-link (passwordless sign-in by e-mail),
-                               --sms or --no-sms (SMS codes as a second factor),
+                               --no-password, --authenticator or --no-authenticator (sign-up with the
+                               authenticator app), --email-link or --no-email-link (passwordless sign-in
+                               by e-mail), --sms or --no-sms (SMS codes as a second factor),
                                --database <url>, --webhook-url <url>. --yes takes the default for the
                                rest. --out <path> writes another file, --force overwrites.
   start                        Start the server on PORT (default ${PORT})
@@ -61,12 +61,12 @@ Commands:
   set-methods [method[=policy]...]
                                Switch methods on and off while the server runs: the listed ones are on,
                                the others off. Methods: google, github, password, email-link (passwordless
-                               sign-in by e-mail), totp (the authenticator app), passkey, and sms (SMS
-                               codes). Listed alone, a method is allowed as a sign-in method (sms: a second
-                               factor). A policy says whether a sign-in with it asks for a second factor:
-                               none (default), optional or required. totp=second-factor and
+                               sign-in by e-mail), authenticator (the authenticator app), passkey, and sms
+                               (SMS codes). Listed alone, a method is allowed as a sign-in method (sms: a
+                               second factor). A policy says whether a sign-in with it asks for a second
+                               factor: none (default), optional or required. authenticator=second-factor and
                                passkey=second-factor are on only as a second factor, e.g.
-                               set-methods google password=required passkey totp=second-factor sms
+                               set-methods google password=required passkey authenticator=second-factor sms
   get-methods                  Print which methods are switched on, with their policies.
   set-password-rules [min-length=<n>] [min-score=<0-4>]
                                Set the rules for new passwords: the minimum length (default 8, at most 128)
@@ -74,7 +74,7 @@ Commands:
                                passwords or simple patterns). What is left out takes its default, e.g.
                                set-password-rules min-length=10 min-score=3. Uses DATABASE_URL.
   get-password-rules           Print the rules for new passwords.
-  remove-totp <email>          Remove a user's authenticator app and recovery codes: the last resort when
+  remove-authenticator <email> Remove a user's authenticator app and recovery codes: the last resort when
                                both are lost. With a required policy, the user sets it up again next time.
   remove-sms <email>           Remove a user's phone number for SMS codes, when they lost the phone.
   remove-passkeys <email>      Remove all passkeys of a user, when they lost them.
@@ -203,7 +203,7 @@ function parseCliArgs(args: string[]) {
       'github-client-id': { type: 'string' },
       'github-client-secret': { type: 'string' },
       password: { type: 'boolean' },
-      totp: { type: 'boolean' },
+      authenticator: { type: 'boolean' },
       'email-link': { type: 'boolean' },
       sms: { type: 'boolean' },
       database: { type: 'string' },
@@ -240,7 +240,7 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     'create-user': 1,
     'get-roles': 1,
     'get-claims': 1,
-    'remove-totp': 1,
+    'remove-authenticator': 1,
     'remove-sms': 1,
     'remove-passkeys': 1,
   };
@@ -290,8 +290,8 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     if (command === 'set-password-rules' || command === 'get-password-rules') {
       return await passwordRules(command, rest, env);
     }
-    if (command === 'remove-totp') {
-      return await removeTotp(rest[0], env);
+    if (command === 'remove-authenticator') {
+      return await removeAuthenticator(rest[0], env);
     }
     if (command === 'remove-sms') {
       return await removeSms(rest[0], env);
@@ -356,11 +356,11 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
 
   const password = options.password ?? /^y/i.test(await answer(undefined, 'E-mail & password sign-in? (yes/no)', 'yes'));
   // The app as a second factor needs no setting here; signing up with it alone needs the confirmation e-mails.
-  const totp = options.totp ?? /^y/i.test(await answer(undefined, 'Sign-up with the authenticator app alone, without a password? (yes/no)', 'no'));
+  const authenticator = options.authenticator ?? /^y/i.test(await answer(undefined, 'Sign-up with the authenticator app alone, without a password? (yes/no)', 'no'));
   const emailLink = options['email-link'] ?? /^y/i.test(await answer(undefined, 'Passwordless sign-in with an e-mail link? (yes/no)', 'no'));
   // SMS codes are a second factor only: they need a method that signs in, and a receiver that sends the SMS.
   const sms = options.sms ?? /^y/i.test(await answer(undefined, 'SMS codes as a second factor, sent by your webhook receiver? (yes/no)', 'no'));
-  const emails = password || totp || emailLink;
+  const emails = password || authenticator || emailLink;
   const webhook = emails || sms;
   if (!webhook && options['webhook-url'] !== undefined) {
     return fail('--webhook-url is for the e-mails of e-mail & password sign-in, of the e-mail link and of sign-up with the authenticator app, and for SMS codes, which are turned off.');
@@ -379,7 +379,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   // The types each chosen method needs, once each.
   const events = [
     ...(password ? ['email.send_verification', 'email.send_password_reset', 'email.send_already_registered', 'email.send_password_reset_no_password'] : []),
-    ...(totp ? ['email.send_verification', 'email.send_already_registered'] : []),
+    ...(authenticator ? ['email.send_verification', 'email.send_already_registered'] : []),
     ...(emailLink ? ['email.send_signin_link', 'email.send_already_registered'] : []),
     ...(sms ? ['sms.send_code', 'user.second_factor_enabled', 'user.second_factor_disabled'] : []),
   ]
@@ -427,7 +427,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   writeFileSync(file, content, { mode: 0o600, flag: 'wx' });
 
   const google = clientSecret ? 'GoogleRedirect' : clientId ? 'GoogleFedcm' : undefined;
-  return { output: `Wrote ${file}.\n\nNext steps:\n\n${nextSteps(file, origin, google, !!githubClientId, password, totp, emailLink, sms)}`, exitCode: 0 };
+  return { output: `Wrote ${file}.\n\nNext steps:\n\n${nextSteps(file, origin, google, !!githubClientId, password, authenticator, emailLink, sms)}`, exitCode: 0 };
 }
 
 /** What to do after `init`, for the chosen sign-in methods: numbered steps with commands and snippets to copy. */
@@ -437,26 +437,26 @@ function nextSteps(
   google: 'GoogleFedcm' | 'GoogleRedirect' | undefined,
   github: boolean,
   password: boolean,
-  totp = false,
+  authenticator = false,
   emailLink = false,
   sms = false,
 ): string {
   const server = `http://localhost:${PORT}`;
   // Quoted when needed, so the command can be pasted as it is.
   const envFile = /[^\w./-]/.test(file) ? `'${file.replaceAll("'", `'\\''`)}'` : file;
-  const providers = [google, github && 'GitHub', password && 'Password', totp && 'Totp', emailLink && 'EmailLink'].filter(Boolean);
-  const methodList = [google && 'google', github && 'github', password && 'password', totp && 'totp', emailLink && 'email-link'].filter(Boolean).join(' ');
+  const providers = [google, github && 'GitHub', password && 'Password', authenticator && 'Authenticator', emailLink && 'EmailLink'].filter(Boolean);
+  const methodList = [google && 'google', github && 'github', password && 'password', authenticator && 'authenticator', emailLink && 'email-link'].filter(Boolean).join(' ');
   // For development, Google wants http://localhost next to the origin with its port.
   const googleOrigins = new Set([origin, ...(new URL(origin).hostname === 'localhost' ? ['http://localhost'] : [])]);
   const steps = [
     ['Start the madAuth server:', '', `  npx @madauth/server start --env-file ${envFile}`],
-    (password || totp || emailLink || sms) && [
+    (password || authenticator || emailLink || sms) && [
       `madAuth hands its ${sms ? 'e-mails and SMS' : 'e-mails'} to your webhook receiver. For development, start the development receiver,`,
       `which prints them, with the same WEBHOOK_URL and WEBHOOK_SECRET as in ${file}:`,
       '',
       `  ${DEV_WEBHOOK_RECEIVER_URL}`,
     ],
-    totp &&
+    authenticator &&
       (google || github || password) && [
         'Signing in with the authenticator app alone is off until an admin lists it. Once the server runs:',
         '',
@@ -566,7 +566,7 @@ async function methods(command: 'set-methods' | 'get-methods', args: string[], e
     for (const arg of args) {
       const [name, value, ...more] = arg.split('=');
       if (!(METHODS as readonly string[]).includes(name) || more.length) {
-        return { output: `Unknown method "${arg}". Methods: ${METHODS.join(', ')}, e.g. set-methods google password=required passkey totp=second-factor sms.`, exitCode: 1 };
+        return { output: `Unknown method "${arg}". Methods: ${METHODS.join(', ')}, e.g. set-methods google password=required passkey authenticator=second-factor sms.`, exitCode: 1 };
       }
       const method = name as MethodId;
       const secondFactorOnly = value === 'second-factor' || method === 'sms';
@@ -621,13 +621,13 @@ async function passwordRules(command: 'set-password-rules' | 'get-password-rules
   return { output: describeRules(await settings.passwordRules()), exitCode: 0 };
 }
 
-async function removeTotp(email: string | undefined, env: Env) {
+async function removeAuthenticator(email: string | undefined, env: Env) {
   if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
   const users = new Users(await loadStore(env));
   const address = normalizeEmail(email);
   const user = await users.findByEmail(address);
   if (!user) return { output: `No user has the e-mail address ${address}.`, exitCode: 1 };
-  const removed = await users.removeTotp(user.id);
+  const removed = await users.removeAuthenticator(user.id);
   return {
     output: removed ? `Removed the authenticator app of ${address}.` : `${address} has no authenticator app.`,
     exitCode: 0,

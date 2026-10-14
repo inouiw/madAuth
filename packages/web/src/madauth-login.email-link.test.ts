@@ -156,7 +156,7 @@ describe('<madauth-login> and the e-mail link', () => {
     expect(text('h2')).toBe('Enter your code');
     expect(Madauth.currentUser).toBeNull();
     fill({ code: CODE });
-    await submit('totp-code');
+    await submit('authenticator-code');
     expect(Madauth.currentUser).toEqual(linda);
     expect($<HTMLDialogElement>('dialog')!.open).toBe(false);
   });

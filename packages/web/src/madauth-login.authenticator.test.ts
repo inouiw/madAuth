@@ -6,7 +6,7 @@ import { GoogleFedcm } from './providers/google-fedcm.js';
 import { GoogleRedirect } from './providers/google-redirect.js';
 import { Password } from './providers/password.js';
 import type { SignInProvider } from './providers/provider.js';
-import { Totp } from './providers/totp.js';
+import { Authenticator } from './providers/authenticator.js';
 import { CODE, RECOVERY_CODES, SERVER, ada, fakeGis, fakeServer, grace, resetAll, settle } from './test-helpers.js';
 
 beforeEach(() => {
@@ -54,7 +54,7 @@ async function click(selector: string): Promise<void> {
 const credentials = { email: 'grace@example.com', password: 'correct horse battery' };
 
 /** Opens the dialog; resolves to the pending signIn() result. */
-async function openDialog(providers: SignInProvider[] = [new Password(), new Totp()]) {
+async function openDialog(providers: SignInProvider[] = [new Password(), new Authenticator()]) {
   await Madauth.initialize({ serverUrl: SERVER, providers });
   const result = Madauth.signIn();
   await settle();
@@ -64,11 +64,11 @@ async function openDialog(providers: SignInProvider[] = [new Password(), new Tot
 describe('<madauth-login> and the authenticator app on its own', () => {
   it('D8: lists the app alone without an "Other ways to sign in" heading', async () => {
     const server = fakeServer();
-    server.methods.totp = true;
-    void openDialog([new Totp()]);
+    server.methods.authenticator = true;
+    void openDialog([new Authenticator()]);
     await settle();
 
-    expect($('[data-method="totp"]')).not.toBeNull();
+    expect($('[data-method="authenticator"]')).not.toBeNull();
     expect($('.others h3')).toBeNull();
     expect($('form.signin')).toBeNull();
   });
@@ -79,38 +79,38 @@ describe('<madauth-login> and the authenticator app on its own', () => {
     // With the provider, but the app as a second factor only: not a way to sign in.
     void openDialog();
     await settle();
-    expect($('[data-method="totp"]')).toBeNull();
+    expect($('[data-method="authenticator"]')).toBeNull();
     login().close();
     // Without the provider as well.
     void openDialog([new Password()]);
     await settle();
-    expect($('[data-method="totp"]')).toBeNull();
+    expect($('[data-method="authenticator"]')).toBeNull();
     login().close();
     await settle();
 
-    server.methods.totp = true;
+    server.methods.authenticator = true;
     void openDialog();
     await settle();
     fill({ email: 'grace@example.com' });
-    await click('[data-method="totp"]');
+    await click('[data-method="authenticator"]');
 
     expect(text('h2')).toBe('Authenticator app');
-    expect($<HTMLInputElement>('form.totp input[name="email"]')!.value).toBe('grace@example.com');
-    const code = $<HTMLInputElement>('form.totp input[name="code"]')!;
+    expect($<HTMLInputElement>('form.authenticator input[name="email"]')!.value).toBe('grace@example.com');
+    const code = $<HTMLInputElement>('form.authenticator input[name="code"]')!;
     expect(code.getAttribute('autocomplete')).toBe('off');
     expect(code.getAttribute('inputmode')).toBe('numeric');
     // The code-autocomplete attribute opts into one-time-code; removing it is back to off.
     login().setAttribute('code-autocomplete', 'one-time-code');
     await settle();
-    expect($('form.totp input[name="code"]')!.getAttribute('autocomplete')).toBe('one-time-code');
+    expect($('form.authenticator input[name="code"]')!.getAttribute('autocomplete')).toBe('one-time-code');
     login().removeAttribute('code-autocomplete');
     await settle();
-    expect($('form.totp input[name="code"]')!.getAttribute('autocomplete')).toBe('off');
-    expect(text('form.totp .hint')).toBe('Enter the 6-digit code from your authenticator app.');
-    expect(text('form.totp .submit')).toBe('Sign in');
+    expect($('form.authenticator input[name="code"]')!.getAttribute('autocomplete')).toBe('off');
+    expect(text('form.authenticator .hint')).toBe('Enter the 6-digit code from your authenticator app.');
+    expect(text('form.authenticator .submit')).toBe('Sign in');
     await click('[data-action="toggle-recovery"]');
-    expect($('form.totp input[name="recoveryCode"]')).not.toBeNull();
-    expect($('form.totp input[name="code"]')).toBeNull();
+    expect($('form.authenticator input[name="recoveryCode"]')).not.toBeNull();
+    expect($('form.authenticator input[name="code"]')).toBeNull();
     expect(text('[data-action="toggle-recovery"]')).toBe('Use the authenticator app instead');
     await click('[data-action="back"]');
     expect(text('h2')).toBe('Sign in');
@@ -119,51 +119,51 @@ describe('<madauth-login> and the authenticator app on its own', () => {
 
   it('D9: signs in with the e-mail address and the code, and shows the errors', async () => {
     const server = fakeServer();
-    server.methods.totp = true;
+    server.methods.authenticator = true;
     server.authenticators.add('grace@example.com');
     server.recoveryCodes.set('grace@example.com', [...RECOVERY_CODES]);
     const result = openDialog();
     const onSignedIn = vi.fn();
     await settle();
     login().addEventListener('madauth-signed-in', (e) => onSignedIn(e.detail));
-    await click('[data-method="totp"]');
+    await click('[data-method="authenticator"]');
 
     fill({ email: 'grace@example.com', code: '000000' });
-    await submit('totp');
+    await submit('authenticator');
     expect($('[part="error"]')!.dataset.code).toBe('invalid_credentials');
     expect(text('[part="error"]')).toContain('Email or code is wrong. To sign in with an authenticator app, set it up first');
     expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
     server.locked = true;
-    await submit('totp');
+    await submit('authenticator');
     expect(text('[part="error"]')).toContain('Try again in 30 seconds');
     server.locked = false;
 
     fill({ email: 'grace@example.com', code: '123 456' });
-    await submit('totp');
+    await submit('authenticator');
 
     expect(await result).toEqual({ isSuccess: true, user: grace });
-    expect(onSignedIn).toHaveBeenCalledWith({ method: 'totp', user: grace });
+    expect(onSignedIn).toHaveBeenCalledWith({ method: 'authenticator', user: grace });
     expect($<HTMLDialogElement>('dialog')!.open).toBe(false);
-    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/totp/signin`, body: { email: 'grace@example.com', code: CODE } });
+    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/authenticator/signin`, body: { email: 'grace@example.com', code: CODE } });
 
     // A recovery code, next time.
     const again = Madauth.signIn();
     await settle();
-    await click('[data-method="totp"]');
+    await click('[data-method="authenticator"]');
     await click('[data-action="toggle-recovery"]');
     fill({ email: 'grace@example.com', recoveryCode: RECOVERY_CODES[0] });
-    await submit('totp');
+    await submit('authenticator');
     expect(await again).toEqual({ isSuccess: true, user: grace });
   });
 
   it('D15: creates an account with the app alone: the address is confirmed, the app set up, the codes shown', async () => {
     const server = fakeServer();
-    server.methods.totp = true;
+    server.methods.authenticator = true;
     const result = openDialog();
     const onSignedIn = vi.fn();
     await settle();
     login().addEventListener('madauth-signed-in', (e) => onSignedIn(e.detail));
-    await click('[data-method="totp"]');
+    await click('[data-method="authenticator"]');
     await click('[data-action="signup"]');
 
     expect(text('h2')).toBe('Create account');
@@ -172,7 +172,7 @@ describe('<madauth-login> and the authenticator app on its own', () => {
     fill({ email: 'new@example.com', name: 'New User' });
     await submit('signup');
     expect(text('h2')).toBe('Check your inbox');
-    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/totp/signup`, body: { email: 'new@example.com', name: 'New User' } });
+    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/authenticator/signup`, body: { email: 'new@example.com', name: 'New User' } });
     await click('[data-action="resend"]');
     expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/email/send-verification` });
     fill({ code: CODE });
@@ -182,7 +182,7 @@ describe('<madauth-login> and the authenticator app on its own', () => {
     expect(text('.lead')).toContain('Signing in requires an authenticator app');
     expect($('[part="qr"]')).not.toBeNull();
     fill({ code: CODE });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
     expect(text('h2')).toBe('Save your recovery codes');
     // A view without a field: the focus moves to its heading.
     expect(login().shadowRoot!.activeElement).toBe($('h2'));
@@ -191,7 +191,7 @@ describe('<madauth-login> and the authenticator app on its own', () => {
 
     const user = { id: 'usr_new', email: 'new@example.com', name: 'New User' };
     expect(await result).toEqual({ isSuccess: true, user });
-    expect(onSignedIn).toHaveBeenCalledWith({ method: 'totp', user });
+    expect(onSignedIn).toHaveBeenCalledWith({ method: 'authenticator', user });
     expect($<HTMLDialogElement>('dialog')!.open).toBe(false);
   });
 });
@@ -212,16 +212,16 @@ describe('<madauth-login> and the second step', () => {
 
     expect(text('h2')).toBe('Enter your code');
     expect(text('.lead')).toBe('Enter the code from your authenticator app to finish signing in.');
-    expect($('form.totp-code input[name="code"]')!.getAttribute('autocomplete')).toBe('off');
+    expect($('form.authenticator-code input[name="code"]')!.getAttribute('autocomplete')).toBe('off');
     expect($('[part="error"]')).toBeNull();
     expect(Madauth.currentUser).toBeNull();
     fill({ code: '000000' });
-    await submit('totp-code');
+    await submit('authenticator-code');
     expect($('[part="error"]')!.dataset.code).toBe('code_invalid');
     expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
     await click('[data-action="toggle-recovery"]');
     fill({ recoveryCode: RECOVERY_CODES[2] });
-    await submit('totp-code');
+    await submit('authenticator-code');
 
     expect(await result).toEqual({ isSuccess: true, user: grace });
     expect(onSignedIn).toHaveBeenCalledWith({ method: 'password', user: grace });
@@ -234,7 +234,7 @@ describe('<madauth-login> and the second step', () => {
     await submit('signin');
     server.challenge = undefined;
     fill({ code: CODE });
-    await submit('totp-code');
+    await submit('authenticator-code');
     expect(text('h2')).toBe('Sign in');
     expect($('[part="error"]')!.dataset.code).toBe('challenge_expired');
     expect(text('[part="error"]')).toBe('The sign-in took too long. Please sign in again.');
@@ -258,16 +258,16 @@ describe('<madauth-login> and the second step', () => {
     expect(qr.querySelector('path')!.getAttribute('d')).toMatch(/^M0 0h1v1h-1z/);
     expect(qr.getAttribute('aria-label')).toBe('QR code for your authenticator app');
     expect(text('.secret')).toBe('JBSW Y3DP EHPK 3PXP');
-    expect(login().shadowRoot!.activeElement).toBe($('form.totp-setup input[name="code"]'));
-    expect($('form.totp-setup input[name="code"]')!.getAttribute('autocomplete')).toBe('off');
-    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/totp/setup` });
+    expect(login().shadowRoot!.activeElement).toBe($('form.authenticator-setup input[name="code"]'));
+    expect($('form.authenticator-setup input[name="code"]')!.getAttribute('autocomplete')).toBe('off');
+    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/authenticator/setup` });
 
     fill({ code: '000000' });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
     expect($('[part="error"]')!.dataset.code).toBe('code_invalid');
     expect($('[part="qr"]')).not.toBeNull();
     fill({ code: CODE });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
 
     expect(text('h2')).toBe('Save your recovery codes');
     expect($$('[part="codes"] li')).toHaveLength(10);
@@ -283,7 +283,7 @@ describe('<madauth-login> and the second step', () => {
     server.policy.google = 'optional';
     server.authenticators.add('ada@example.com');
     const gis = fakeGis();
-    const result = openDialog([new GoogleFedcm({ autoPrompt: false }), new Totp()]);
+    const result = openDialog([new GoogleFedcm({ autoPrompt: false }), new Authenticator()]);
     await settle();
 
     gis.signIn();
@@ -291,13 +291,13 @@ describe('<madauth-login> and the second step', () => {
 
     expect(text('h2')).toBe('Enter your code');
     fill({ code: CODE });
-    await submit('totp-code');
+    await submit('authenticator-code');
     expect(await result).toEqual({ isSuccess: true, user: ada });
 
     // One Tap, outside the dialog: the dialog opens by itself on the code step.
     await Madauth.signOut();
     login().remove();
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm(), new Totp()] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm(), new Authenticator()] });
     await settle();
     gis.signIn();
     await settle();
@@ -305,22 +305,22 @@ describe('<madauth-login> and the second step', () => {
     expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
     expect(text('h2')).toBe('Enter your code');
     fill({ code: CODE });
-    await submit('totp-code');
+    await submit('authenticator-code');
     expect(Madauth.currentUser).toEqual(ada);
 
     // Back from the redirect flow with the first step done.
     await Madauth.signOut();
     login().remove();
     server.codeFlow = true;
-    server.challenge = { email: 'ada@example.com', next: 'totp', method: 'google', factors: ['totp'] };
-    history.replaceState(null, '', '/page?x=1#madauth_next=totp');
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect(), new Totp()] });
+    server.challenge = { email: 'ada@example.com', next: 'authenticator', method: 'google', factors: ['authenticator'] };
+    history.replaceState(null, '', '/page?x=1#madauth_next=authenticator');
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect(), new Authenticator()] });
     await settle();
     expect(location.href).toBe('https://app.example.com/page?x=1');
     expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
     expect(text('h2')).toBe('Enter your code');
     fill({ code: CODE });
-    await submit('totp-code');
+    await submit('authenticator-code');
     expect(Madauth.currentUser).toEqual(ada);
   });
 });
@@ -330,7 +330,7 @@ describe('Madauth.setUpAuthenticator', () => {
     const server = fakeServer();
     server.policy.password = 'optional';
     server.user = grace;
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
     const onEnabled = vi.fn();
     const onCancel = vi.fn();
 
@@ -345,16 +345,16 @@ describe('Madauth.setUpAuthenticator', () => {
     expect(text('.hint')).toBe('From then on, signing in with a password also asks for a code from the app.');
     expect($('[part="qr"] path')).not.toBeNull();
     expect(text('.secret')).toBe('JBSW Y3DP EHPK 3PXP');
-    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/totp/setup` });
+    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/authenticator/setup` });
 
     fill({ code: '000000' });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
     expect($('[part="error"]')!.dataset.code).toBe('code_invalid');
     expect($('[part="qr"]')).not.toBeNull();
     // The setup expired: the key is gone, and "Start again" gets a new one.
-    server.totpSetup = undefined;
+    server.authenticatorSetup = undefined;
     fill({ code: CODE });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
     expect($('[part="error"]')!.dataset.code).toBe('setup_expired');
     expect($('[part="qr"]')).toBeNull();
     await click('[data-action="restart-setup"]');
@@ -362,7 +362,7 @@ describe('Madauth.setUpAuthenticator', () => {
     expect($('[part="qr"]')).not.toBeNull();
 
     fill({ code: CODE });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
     expect(text('h2')).toBe('Save your recovery codes');
     expect($$('[part="codes"] li').map((li) => li.textContent!.trim())).toEqual(RECOVERY_CODES);
     await click('[data-action="saved"]');
@@ -377,9 +377,9 @@ describe('Madauth.setUpAuthenticator', () => {
   it('D12: closing the recovery codes counts as having seen them; the app is on either way', async () => {
     const server = fakeServer();
     server.policy.password = 'optional';
-    server.methods.totp = true;
+    server.methods.authenticator = true;
     server.user = grace;
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
 
     const result = Madauth.setUpAuthenticator();
     await settle();
@@ -387,7 +387,7 @@ describe('Madauth.setUpAuthenticator', () => {
     // The app signs in on its own on this server, but only for people who signed up with it: for Grace it is a step of her password.
     expect($$('.hint').map((hint) => hint.textContent!.trim())).not.toContain('You can then sign in with your email address and a code from the app.');
     fill({ code: CODE });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
     await click('.close');
 
     expect(await result).toEqual({ isSuccess: true, recoveryCodes: RECOVERY_CODES });
@@ -404,7 +404,7 @@ describe('Madauth.setUpAuthenticator', () => {
     server.policy.google = 'optional';
     server.policy.password = 'optional';
     server.user = grace;
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
 
     void Madauth.setUpAuthenticator();
     await settle();
@@ -417,7 +417,7 @@ describe('Madauth.setUpAuthenticator', () => {
   it('D13: is cancelled by the link and the cross, and refuses when it can not open', async () => {
     const server = fakeServer();
     server.policy.password = 'optional';
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
     expect(await Madauth.setUpAuthenticator()).toMatchObject({ isSuccess: false, error: { code: 'no_session' } });
     expect(document.querySelector('madauth-login')).toBeNull();
 
@@ -432,11 +432,11 @@ describe('Madauth.setUpAuthenticator', () => {
     await click('.close');
     expect(await crossed).toMatchObject({ isSuccess: false, error: { code: 'cancelled' } });
 
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()], ui: 'custom' });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()], ui: 'custom' });
     expect(await Madauth.setUpAuthenticator()).toMatchObject({ isSuccess: false, error: { code: 'invalid_options', message: expect.stringContaining('startSetup') } });
     // With the app switched off on the server there is nothing to set up; the provider is not what decides.
     fakeServer();
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
     expect(await Madauth.setUpAuthenticator()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('switched off') } });
   });
 
@@ -444,7 +444,7 @@ describe('Madauth.setUpAuthenticator', () => {
     const server = fakeServer();
     server.policy.password = 'optional';
     server.user = grace;
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
     server.user = null;
 
     const result = Madauth.setUpAuthenticator();
@@ -462,7 +462,7 @@ describe('Madauth.setUpAuthenticator', () => {
     server.policy.password = 'optional';
     server.user = grace;
     server.authenticators.add('grace@example.com');
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
 
     const result = Madauth.setUpAuthenticator();
     await settle();
@@ -471,15 +471,15 @@ describe('Madauth.setUpAuthenticator', () => {
     expect(text('.lead')).toBe('Enter the code from your current authenticator app, or a recovery code, to replace it with a new one.');
     expect($('[part="qr"]')).toBeNull();
     fill({ code: '000000' });
-    await submit('totp-code');
+    await submit('authenticator-code');
     expect($('[part="error"]')!.dataset.code).toBe('code_invalid');
     fill({ code: CODE });
-    await submit('totp-code');
+    await submit('authenticator-code');
     expect(text('h2')).toBe('Set up authenticator app');
     expect($('[part="qr"]')).not.toBeNull();
     expect($('[part="error"]')).toBeNull();
     fill({ code: CODE });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
     await click('.close');
     expect(await result).toEqual({ isSuccess: true, recoveryCodes: RECOVERY_CODES });
   });

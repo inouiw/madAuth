@@ -3,7 +3,7 @@ import type { LoginMethodId } from '../methods.js';
 import type { PendingStep, ServerConfig, SignInProvider } from '../providers/provider.js';
 import { fail, ok, type MadauthError, type MadauthUser, type Result } from '../result.js';
 
-/** What the method scopes (`Madauth.password`, `Madauth.google`, `Madauth.totp`) need from the madAuth core. */
+/** What the method scopes (`Madauth.password`, `Madauth.google`, `Madauth.authenticator`) need from the madAuth core. */
 export interface Core {
   /** Whether `initialize` was called. */
   isConfigured(): boolean;

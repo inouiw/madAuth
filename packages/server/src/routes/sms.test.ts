@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runCli } from '../cli.js';
 import { APP_ORIGIN, WEBHOOK_SECRET, WEBHOOK_URL, cookies, passwordApp, post, setClaims, signUpVerified, setMethods, type TestMethods } from '../test/helpers.js';
-import { base32Decode, stepOf, totp } from '../totp.js';
+import { base32Decode, stepOf, totp } from '../authenticator.js';
 
 type Made = ReturnType<typeof passwordApp>;
 type App = Made['app'];
@@ -40,10 +40,10 @@ async function addPhone(app: App, hook: Hook, session: string, phone = PHONE) {
 
 /** Sets the authenticator app up for the signed-in user; returns its secret. */
 async function addApp(app: App, session: string): Promise<Buffer> {
-  const setup = await post(app, '/auth/totp/setup', {}, withSession(session));
+  const setup = await post(app, '/auth/authenticator/setup', {}, withSession(session));
   const secret = base32Decode(((await setup.json()) as { secret: string }).secret)!;
-  const setupCookie = `madauth_totp_setup=${cookies(setup).madauth_totp_setup.value}`;
-  const confirm = await post(app, '/auth/totp/confirm', { code: totp(secret, stepOf(Date.now())) }, withSession(session, setupCookie));
+  const setupCookie = `madauth_authenticator_setup=${cookies(setup).madauth_authenticator_setup.value}`;
+  const confirm = await post(app, '/auth/authenticator/confirm', { code: totp(secret, stepOf(Date.now())) }, withSession(session, setupCookie));
   expect(confirm.status).toBe(200);
   return secret;
 }
@@ -225,12 +225,12 @@ describe('adding a phone number', () => {
     advance(61_000);
     await post(app, '/auth/sms/send', {}, withSession(session));
     expect((await post(app, '/auth/sms/remove', { code: lastCode(hook) }, withSession(session))).status).toBe(200);
-    const appAlone = await post(app, '/auth/totp/remove', { code: totp(secret, stepOf(Date.now()) + 1) }, withSession(session));
+    const appAlone = await post(app, '/auth/authenticator/remove', { code: totp(secret, stepOf(Date.now()) + 1) }, withSession(session));
     expect(appAlone.status).toBe(403);
     expect(await appAlone.json()).toMatchObject({ error: 'required_by_policy', message: expect.stringContaining('another second factor') });
     advance(61_000);
     await addPhone(app, hook, session);
-    expect((await post(app, '/auth/totp/remove', { code: totp(secret, stepOf(Date.now())) }, withSession(session))).status).toBe(200);
+    expect((await post(app, '/auth/authenticator/remove', { code: totp(secret, stepOf(Date.now())) }, withSession(session))).status).toBe(200);
   });
 });
 
@@ -253,7 +253,7 @@ describe('SMS codes as the second step', () => {
     expect(hook.lastSms()!.data).toMatchObject({ to: PHONE, purpose: 'signin', locale: 'de' });
     expect((await post(app, '/auth/sms/send', {}, withChallenge(first))).status).toBe(429);
     // The app's step is not open: the user has no app.
-    expect(await (await post(app, '/auth/totp/verify', { code: '000000' }, withChallenge(first))).json()).toMatchObject({ error: 'challenge_expired' });
+    expect(await (await post(app, '/auth/authenticator/verify', { code: '000000' }, withChallenge(first))).json()).toMatchObject({ error: 'challenge_expired' });
 
     const wrong = await post(app, '/auth/sms/verify', { code: '000000' }, withChallenge(first));
     expect(wrong.status).toBe(401);
@@ -278,21 +278,21 @@ describe('SMS codes as the second step', () => {
 
     const first = await signIn(app);
 
-    expect(await first.json()).toMatchObject({ error: 'totp_required', method: 'password', factors: ['totp', 'sms'] });
+    expect(await first.json()).toMatchObject({ error: 'authenticator_required', method: 'password', factors: ['authenticator', 'sms'] });
     expect((await post(app, '/auth/sms/send', {}, withChallenge(first))).status).toBe(202);
     const bySms = await post(app, '/auth/sms/verify', { code: lastCode(hook) }, withChallenge(first));
     expect((await bySms.json()).user.amr).toEqual(['pwd', 'sms']);
 
     advance(61_000);
     const second = await signIn(app);
-    const byApp = await post(app, '/auth/totp/verify', { code: totp(secret, stepOf(Date.now())) }, withChallenge(second));
+    const byApp = await post(app, '/auth/authenticator/verify', { code: totp(secret, stepOf(Date.now())) }, withChallenge(second));
     expect((await byApp.json()).user.amr).toEqual(['pwd', 'otp']);
 
     // Without a phone, an optional policy signs in as before, and the step's answer says the app alone.
     await post(app, '/auth/sms/send', {}, withSession(cookies(byApp).madauth_session.value));
     await post(app, '/auth/sms/remove', { code: lastCode(hook) }, withSession(cookies(byApp).madauth_session.value));
     advance(61_000);
-    expect(await (await signIn(app)).json()).toMatchObject({ error: 'totp_required', factors: ['totp'] });
+    expect(await (await signIn(app)).json()).toMatchObject({ error: 'authenticator_required', factors: ['authenticator'] });
   });
 
   it('S7: a required policy with neither factor: the phone can be added during the sign-in instead of the app', async () => {
@@ -306,7 +306,7 @@ describe('SMS codes as the second step', () => {
     const first = await signIn(app);
 
     // `factors` are those the user can set up: the app, or a phone.
-    expect(await first.json()).toMatchObject({ error: 'totp_setup_required', method: 'password', factors: ['totp', 'sms'] });
+    expect(await first.json()).toMatchObject({ error: 'authenticator_setup_required', method: 'password', factors: ['authenticator', 'sms'] });
     // Neither code step is open yet.
     expect((await post(app, '/auth/sms/send', {}, withChallenge(first))).status).toBe(401);
     const setup = await post(app, '/auth/sms/setup', { phone: PHONE }, withChallenge(first));
@@ -330,11 +330,11 @@ describe('SMS codes as the second step', () => {
   it('S8: a sign-up with the app alone sets the app up, never a phone: SMS codes are no first factor', async () => {
     startClock();
     const { app, hook, store } = passwordApp();
-    await setMethods(store, { password: {}, totp: {}, sms: {} });
-    await post(app, '/auth/totp/signup', { email: 'linda@example.com', redirectTo: `${APP_ORIGIN}/account` });
+    await setMethods(store, { password: {}, authenticator: {}, sms: {} });
+    await post(app, '/auth/authenticator/signup', { email: 'linda@example.com', redirectTo: `${APP_ORIGIN}/account` });
     const link = hook.lastEmail()!.data.link as string;
     const first = await post(app, '/auth/email/verify', { token: link.split('=').at(-1) });
-    expect(await first.json()).toMatchObject({ error: 'totp_setup_required', method: 'totp', factors: ['totp'] });
+    expect(await first.json()).toMatchObject({ error: 'authenticator_setup_required', method: 'authenticator', factors: ['authenticator'] });
 
     const refused = await post(app, '/auth/sms/setup', { phone: PHONE }, withChallenge(first));
 

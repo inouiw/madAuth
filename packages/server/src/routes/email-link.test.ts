@@ -1,7 +1,7 @@
 // Behaviour described in docs/email-link-security.md; update the doc when changing it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { REDIRECT_TO, WEBHOOK_SECRET, WEBHOOK_URL, cookies, getNonce, googleIdToken, linkAndCode, passwordApp, post, signUpVerified, verify, setMethods } from '../test/helpers.js';
-import { base32Decode, stepOf, totp } from '../totp.js';
+import { base32Decode, stepOf, totp } from '../authenticator.js';
 
 type Made = ReturnType<typeof passwordApp>;
 
@@ -183,10 +183,10 @@ describe('e-mail link', () => {
 
     // A sign-up with the authenticator app drops the link account as well.
     const withApp = passwordApp();
-    await setMethods(withApp.store, { google: {}, password: {}, totp: {}, 'email-link': { secondFactor: 'none' } });
+    await setMethods(withApp.store, { google: {}, password: {}, authenticator: {}, 'email-link': { secondFactor: 'none' } });
     await send(withApp.app);
     advance(61_000);
-    expect((await post(withApp.app, '/auth/totp/signup', { email: LINDA, redirectTo: REDIRECT_TO })).status).toBe(202);
+    expect((await post(withApp.app, '/auth/authenticator/signup', { email: LINDA, redirectTo: REDIRECT_TO })).status).toBe(202);
     expect(await withApp.store.findMany('account', {})).toEqual([]);
 
     // Google takes over a link sign-up nobody finished, too.
@@ -277,26 +277,26 @@ describe('e-mail link', () => {
     const first = await verifyLink(app, { token: linkAndCode(hook.lastEmail()).token });
 
     expect(first.status).toBe(401);
-    expect(await first.json()).toMatchObject({ error: 'totp_setup_required', method: 'email-link' });
+    expect(await first.json()).toMatchObject({ error: 'authenticator_setup_required', method: 'email-link' });
     expect(cookies(first).madauth_session.value).toBe('');
     const challenge = `madauth_challenge=${cookies(first).madauth_challenge.value}`;
-    const setup = await post(app, '/auth/totp/setup', {}, { Cookie: challenge });
+    const setup = await post(app, '/auth/authenticator/setup', {}, { Cookie: challenge });
     expect(setup.status).toBe(200);
     const secret = base32Decode(((await setup.json()) as { secret: string }).secret)!;
-    const setupCookie = `madauth_totp_setup=${cookies(setup).madauth_totp_setup.value}`;
-    const confirm = await post(app, '/auth/totp/confirm', { code: totp(secret, stepOf(Date.now())) }, { Cookie: `${challenge}; ${setupCookie}` });
+    const setupCookie = `madauth_authenticator_setup=${cookies(setup).madauth_authenticator_setup.value}`;
+    const confirm = await post(app, '/auth/authenticator/confirm', { code: totp(secret, stepOf(Date.now())) }, { Cookie: `${challenge}; ${setupCookie}` });
     expect(confirm.status).toBe(200);
     expect((await confirm.json()).user).toMatchObject({ email: LINDA, amr: ['email', 'otp'] });
-    expect(hook.calls.at(-1)).toMatchObject({ type: 'user.signed_in', data: { method: 'email-link', secondFactor: 'totp' } });
+    expect(hook.calls.at(-1)).toMatchObject({ type: 'user.signed_in', data: { method: 'email-link', secondFactor: 'authenticator' } });
 
     // From then on: the code from the app.
     advance(61_000);
     await send(app);
     const again = await verifyLink(app, { token: linkAndCode(hook.lastEmail()).token });
     expect(again.status).toBe(401);
-    expect(await again.json()).toMatchObject({ error: 'totp_required', method: 'email-link' });
+    expect(await again.json()).toMatchObject({ error: 'authenticator_required', method: 'email-link' });
     advance(30_000);
-    const verify = await post(app, '/auth/totp/verify', { code: totp(secret, stepOf(Date.now())) }, { Cookie: `madauth_challenge=${cookies(again).madauth_challenge.value}` });
+    const verify = await post(app, '/auth/authenticator/verify', { code: totp(secret, stepOf(Date.now())) }, { Cookie: `madauth_challenge=${cookies(again).madauth_challenge.value}` });
     expect(verify.status).toBe(200);
     expect((await verify.json()).user.amr).toEqual(['email', 'otp']);
   });

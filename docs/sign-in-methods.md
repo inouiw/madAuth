@@ -19,7 +19,7 @@ Code: `linkProviderAccount` in [`routes/oauth.ts`](../packages/server/src/routes
 
 Adding a method, and removing one, is refused with `401 reauth_required` more than ten minutes after the user signed in: the session's `auth_time`, which renewals keep. The time is the one of the token the user was read from (the session token, or the renewal token that renewed it), so another user's token in the same request can't make the sign-in look recent. A session someone took over (a stolen cookie, an unlocked computer) must not let them add a way in that outlives it, nor take one away. The user signs in again (`Madauth.manageSignInMethods()` asks them to, and goes back to the methods after), and the change follows.
 
-A first authenticator app needs it too while the app is allowed as a sign-in method, since it is a way in then. Otherwise setting up the app or adding a phone keeps its own rules (a code from the current app or phone to replace them), see [Authenticator app security](totp-security.md#setting-the-app-up) and [SMS code security](sms-security.md).
+A first authenticator app needs it too while the app is allowed as a sign-in method, since it is a way in then. Otherwise setting up the app or adding a phone keeps its own rules (a code from the current app or phone to replace them), see [Authenticator app security](authenticator-security.md#setting-the-app-up) and [SMS code security](sms-security.md).
 
 Code: `recentUser` in [`routes/helpers.ts`](../packages/server/src/routes/helpers.ts), `auth_time` in [`tokens.ts`](../packages/server/src/tokens.ts).
 
@@ -31,7 +31,7 @@ Removing GitHub takes its authorization back at GitHub, with the token kept from
 
 ## Removing a method
 
-`POST /auth/methods/remove` (`Madauth.methods.remove(id)`) removes a password, Google, GitHub, the e-mail link or a passkey. The authenticator app takes a code from it (`Madauth.totp.remove`), and the phone one sent to it.
+`POST /auth/methods/remove` (`Madauth.methods.remove(id)`) removes a password, Google, GitHub, the e-mail link or a passkey. The authenticator app takes a code from it (`Madauth.authenticator.remove`), and the phone one sent to it.
 
 - **Not the last way in.** A method can't go when the user would have no method left that the admin allows as a sign-in method (`403 only_method`): nobody could sign in as them, and a sign-up for their address could take the user over. A method switched off by the admin doesn't count, nor one the server is not configured for (e.g. GitHub without its OAuth App). A user who can't sign in now anyway (every method of theirs is switched off) is not locked out by the removal.
 - **Not the last second factor a policy requires.** See [Passkey security](passkey-security.md#removing-a-passkey).

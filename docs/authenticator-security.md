@@ -10,30 +10,30 @@ Codes follow RFC 6238 (TOTP) on RFC 4226 (HOTP): HMAC-SHA1 of the time step, 6 d
 - The secret is 20 random bytes (160 bits), as RFC 4226 recommends for HMAC-SHA1. It is shown as 32 base32 characters for apps that can't scan the QR code.
 - Codes are compared in constant time, and every candidate step is compared, so the time taken says nothing about which one matched.
 
-Code: [`packages/server/src/totp.ts`](../packages/server/src/totp.ts).
+Code: [`packages/server/src/authenticator.ts`](../packages/server/src/authenticator.ts).
 
 ## A code works once
 
 Once a code was accepted, it and every earlier code are refused: the account remembers the time step of the last accepted code (`account.lastUsedStep`). The write that records it only lands if no other request accepted a code meanwhile, so the same code sent twice at once signs in once. Setting the app up records the step of the first code as well: that code can't sign in afterwards.
 
-Code: `useTotpStep` in [`packages/server/src/users.ts`](../packages/server/src/users.ts), `checkCode` in [`routes/totp.ts`](../packages/server/src/routes/totp.ts).
+Code: `useAuthenticatorStep` in [`packages/server/src/users.ts`](../packages/server/src/users.ts), `checkCode` in [`routes/authenticator.ts`](../packages/server/src/routes/authenticator.ts).
 
 ## Secrets at rest
 
 A TOTP secret must be readable to check codes, so it can't be hashed like a password. It is stored encrypted with AES-256-GCM under a key derived (HKDF) from the server's signing key, with a random IV per secret: a copy of the database alone gives no codes, and a tampered record is refused. The price is that a new `MADAUTH_SIGNING_KEY` makes every enrolled app stop working, with an error in the log; the users set their app up again. Keep the key.
 
-Code: `deriveTotpKey`, `encryptSecret` and `decryptSecret` in [`totp.ts`](../packages/server/src/totp.ts).
+Code: `deriveAuthenticatorKey`, `encryptSecret` and `decryptSecret` in [`authenticator.ts`](../packages/server/src/authenticator.ts).
 
 ## Setting the app up
 
 - Only a signed-in user sets the app up, or a sign-in whose first step is done (a `required` policy, or a sign-up with the app whose address was just confirmed). While the app is allowed as a sign-in method, a signed-in user's first app is a way in of its own, so it needs a sign-in within the last ten minutes (`reauth_required`), like a passkey. Nobody can set an app up for someone else. When both are at one browser (someone is signed in, and another sign-in waits for its setup), the setup is for the sign-in that waits, and any session that starts, or signing out, ends the wait.
 - A user who has an app gives a current code from it (or a recovery code) before a new key is issued: a new app replaces the old one and its recovery codes, and a stolen session alone must not swap them for the thief's. The approval holds for ten minutes in the setup cookie, so starting the setup again costs no second code and no second recovery code.
-- The new secret is not stored until the first code proves that the app has it. Until then it travels in a cookie (`madauth_totp_setup`, HttpOnly, ten minutes, only sent to `/auth/totp`), as a signed token that carries the user's id and the encrypted secret. A setup expires, is bound to its user, and can't be confirmed from another browser or by another user.
+- The new secret is not stored until the first code proves that the app has it. Until then it travels in a cookie (`madauth_authenticator_setup`, HttpOnly, ten minutes, only sent to `/auth/authenticator`), as a signed token that carries the user's id and the encrypted secret. A setup expires, is bound to its user, and can't be confirmed from another browser or by another user.
 - A new setup replaces the earlier app and its recovery codes, and resets the failed attempts. It confirms only the state it started in: the recovery codes are written first, under the setup's id, and the secret only if the account still has the setup it had when this one started (a compare-and-set write). Of two setups confirmed at once, exactly one wins; the other drops its codes and is told to start again. So the app and its recovery codes always belong together, and a code of a replaced app never works.
 - The setup screen says what the app will do: that signing in with the password (or Google, GitHub, or the e-mail link) then asks for a code. Setting it up is the user's consent; an admin's policy can't make an account weaker than what the user agreed to, only ask for more.
 - Whether the app signs in on its own is the admin's setting (`allowAsSignInMethod`), for every user who has one. Only as a second factor, it never signs in alone: a password and a code never become a code alone. Allowed as a sign-in method, it does, also for a user who set it up as the second factor of a password: that makes their account a code alone, which is why it is the admin's explicit choice and not the default. A user who signed up with the app alone needs it allowed to sign in at all. The account records whether the user signed up with it (`primaryUserId`), for the webhook: setting up that app is part of the sign-up, not a second factor.
 
-Code: `/auth/totp/setup` and `/auth/totp/confirm` in [`routes/totp.ts`](../packages/server/src/routes/totp.ts).
+Code: `/auth/authenticator/setup` and `/auth/authenticator/confirm` in [`routes/authenticator.ts`](../packages/server/src/routes/authenticator.ts).
 
 ## Recovery codes
 
@@ -41,9 +41,9 @@ Setting the app up gives the user ten recovery codes, shown once: ten lower-case
 
 - Only a keyed hash of each code is stored (HMAC-SHA256 with the key derived from the signing key), so a copy of the database gives no codes. The delete count decides when a code is used, so the same code sent twice signs in once.
 - Using one tells your webhook how many are left (`user.recovery_code_used`), so your app can remind the user to get new ones. New codes replace the whole set and take a current code.
-- A user who lost both the phone and the codes needs the operator: `npx @madauth/server remove-totp <email>`, or the admin API. Nothing in madAuth hands such a user a way in by e-mail: the inbox is what a password reset proves, and the app exists to ask for more than the inbox.
+- A user who lost both the phone and the codes needs the operator: `npx @madauth/server remove-authenticator <email>`, or the admin API. Nothing in madAuth hands such a user a way in by e-mail: the inbox is what a password reset proves, and the app exists to ask for more than the inbox.
 
-Code: `generateRecoveryCodes`, `hashRecoveryCode` in [`totp.ts`](../packages/server/src/totp.ts); `replaceRecoveryCodes`, `consumeRecoveryCode` in [`users.ts`](../packages/server/src/users.ts).
+Code: `generateRecoveryCodes`, `hashRecoveryCode` in [`authenticator.ts`](../packages/server/src/authenticator.ts); `replaceRecoveryCodes`, `consumeRecoveryCode` in [`users.ts`](../packages/server/src/users.ts).
 
 ## The second step
 
@@ -53,9 +53,9 @@ After Google, GitHub, a password or an e-mail link whose policy asks for a secon
 - It finishes only while its method is still on: an admin who switches Google, GitHub, password or the e-mail link off also ends the sign-ins that were between their two steps.
 - Issuing it clears the session there was at that browser: a sign-in that reaches the second step signs out whoever was signed in until the step is done, so an abandoned step can't be taken for that user's own setup later.
 - A password reset in between ends the challenge (the session version changed), as it ends every session.
-- The session issued afterwards says how it was authenticated: `amr: ["pwd", "otp"]` or `["google", "otp"]`. The web library's `user.amr` and `createSessionVerifier` expose it, so a backend can require `otp` before a sensitive action. A webhook `user.signed_in` carries `secondFactor: "totp"` or `"recovery_code"`.
+- The session issued afterwards says how it was authenticated: `amr: ["pwd", "otp"]` or `["google", "otp"]`. The web library's `user.amr` and `createSessionVerifier` expose it, so a backend can require `otp` before a sensitive action. A webhook `user.signed_in` carries `secondFactor: "authenticator"` or `"recovery_code"`.
 
-Code: `secondStep` in [`packages/server/src/app.ts`](../packages/server/src/app.ts), `/auth/totp/verify` in [`routes/totp.ts`](../packages/server/src/routes/totp.ts).
+Code: `secondStep` in [`packages/server/src/app.ts`](../packages/server/src/app.ts), `/auth/authenticator/verify` in [`routes/authenticator.ts`](../packages/server/src/routes/authenticator.ts).
 
 ## No account enumeration
 
@@ -73,7 +73,7 @@ Code: [`packages/server/src/routes/lockout.ts`](../packages/server/src/routes/lo
 
 ## Removing the app
 
-Removing the app, and new recovery codes, take a current code from the app or a recovery code: a stolen session alone can't switch the protection off. While the policy of any method that is on is `required`, the app can only go if the user keeps another second factor that is on, a passkey or a phone (`403 required_by_policy`); otherwise they can only replace it. Nor can it go as the user's last way to sign in (`403 only_method`): without it nobody could, and the record would be taken over by the next sign-up for the address; they add another [sign-in method](sign-in-methods.md) first, or delete the account. Otherwise the app can go, whatever methods are on. Deleting the whole account takes a code as well once the app is set up, for the same reason; an app that an admin switched off server-wide protects nothing and is not asked for. An admin can remove a user's app without a code: `POST /auth/admin/totp/remove`, which tells the webhook who did it (`user.second_factor_disabled` with `method: "totp"` and `by`; nothing for the app a user signed up with, who then signs up with the app again), or `remove-totp` on the command line, which calls no webhook.
+Removing the app, and new recovery codes, take a current code from the app or a recovery code: a stolen session alone can't switch the protection off. While the policy of any method that is on is `required`, the app can only go if the user keeps another second factor that is on, a passkey or a phone (`403 required_by_policy`); otherwise they can only replace it. Nor can it go as the user's last way to sign in (`403 only_method`): without it nobody could, and the record would be taken over by the next sign-up for the address; they add another [sign-in method](sign-in-methods.md) first, or delete the account. Otherwise the app can go, whatever methods are on. Deleting the whole account takes a code as well once the app is set up, for the same reason; an app that an admin switched off server-wide protects nothing and is not asked for. An admin can remove a user's app without a code: `POST /auth/admin/authenticator/remove`, which tells the webhook who did it (`user.second_factor_disabled` with `method: "authenticator"` and `by`; nothing for the app a user signed up with, who then signs up with the app again), or `remove-authenticator` on the command line, which calls no webhook.
 
 ## A method signs in only users who have it
 
@@ -83,7 +83,7 @@ Code: `resolveProviderUser` in [`packages/server/src/routes/oauth.ts`](../packag
 
 ## Cross-site requests
 
-All `POST` routes of the app are accepted only from an `Origin` in `ALLOWED_ORIGINS`, and CORS requests are answered only for those origins. The challenge and setup cookies are `SameSite=Strict` and sent only to `/auth/totp`.
+All `POST` routes of the app are accepted only from an `Origin` in `ALLOWED_ORIGINS`, and CORS requests are answered only for those origins. The challenge and setup cookies are `SameSite=Strict`; the setup cookie is sent only to `/auth/authenticator`, the challenge cookie to `/auth`.
 
 ## Not covered yet
 

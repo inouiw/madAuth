@@ -31,7 +31,7 @@ export interface StoredUser {
 export interface StoredAccount {
   id: string;
   userId: string;
-  /** `password:<userId>`, `google:<sub>`, `github:<id>`, `totp:<userId>`, `email-link:<userId>`, `sms:<userId>` or `passkey:<hash>`. */
+  /** `password:<userId>`, `google:<sub>`, `github:<id>`, `totp:<userId>` (the authenticator app), `email-link:<userId>`, `sms:<userId>` or `passkey:<hash>`. */
   key: string;
   /**
    * The password hash, the encrypted secret of the authenticator app, GitHub's encrypted access token, or a
@@ -42,7 +42,7 @@ export interface StoredAccount {
   lockedUntil: number;
   /** The address the provider reported at the last sign-in. Empty for password accounts and before schema version 4. */
   email: string | null;
-  /** The time step of the last authenticator code that was accepted (totp accounts). Empty in records from before schema version 5. */
+  /** The time step of the last authenticator code that was accepted (authenticator accounts). Empty in records from before schema version 5. */
   lastUsedStep: number | null;
   /** The setup the authenticator secret came from; its recovery codes carry the same id. Empty for other accounts. */
   setupId: string | null;
@@ -124,8 +124,16 @@ export function githubAccountKey(id: string): string {
   return `github:${id}`;
 }
 
-export function totpAccountKey(userId: string): string {
-  return `totp:${userId}`;
+/**
+ * The start of the authenticator app's account keys: `totp`, the app's name before madAuth 0.6. The key is
+ * internal and nobody sees it, so it was not renamed with the method: a new one would need a migration of
+ * every stored account (DynamoDB tables too). {@link methodOf} reads it as `authenticator`.
+ */
+const AUTHENTICATOR_KEY_PREFIX = 'totp';
+
+/** The account of the user's authenticator app: `totp:<userId>`, see {@link AUTHENTICATOR_KEY_PREFIX}. */
+export function authenticatorAccountKey(userId: string): string {
+  return `${AUTHENTICATOR_KEY_PREFIX}:${userId}`;
 }
 
 /** The account of a user who signs in with the e-mail link; it has no secret, the inbox is the key. */
@@ -146,8 +154,11 @@ export function passkeyAccountKey(credentialId: string): string {
   return `passkey:${createHash('sha256').update(credentialId).digest('base64url')}`;
 }
 
-/** The method of an account: the start of its key, e.g. `password` or `sms`. */
-export const methodOf = (account: Pick<StoredAccount, 'key'>): string => String(account.key).split(':')[0];
+/** The method of an account: the start of its key, e.g. `password` or `sms`, and `authenticator` for the app's `totp:` key. */
+export const methodOf = (account: Pick<StoredAccount, 'key'>): string => {
+  const start = String(account.key).split(':')[0];
+  return start === AUTHENTICATOR_KEY_PREFIX ? 'authenticator' : start;
+};
 
 /** The methods whose accounts a sign-up makes; the authenticator app makes one only for a sign-up with it. */
 const isAlwaysPrimary = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method);
@@ -161,7 +172,7 @@ export function isPrimary(account: StoredAccount, accounts: StoredAccount[]): bo
   if (account.primaryUserId) return true;
   if (account.secondFactor === true) return false;
   const method = methodOf(account);
-  if (method !== 'totp') return isAlwaysPrimary(method);
+  if (method !== 'authenticator') return isAlwaysPrimary(method);
   return !accounts.some((other) => isAlwaysPrimary(methodOf(other)));
 }
 
@@ -172,7 +183,7 @@ export function isPrimary(account: StoredAccount, accounts: StoredAccount[]): bo
 export function factorsAmong(accounts: StoredAccount[], on: readonly SecondFactor[], passkeyUsable: (account: StoredAccount) => boolean = () => true): SecondFactor[] {
   const has: Record<SecondFactor, boolean> = {
     passkey: accounts.some((account) => account.key.startsWith('passkey:') && passkeyUsable(account)),
-    totp: accounts.some((account) => methodOf(account) === 'totp'),
+    authenticator: accounts.some((account) => methodOf(account) === 'authenticator'),
     sms: accounts.some((account) => methodOf(account) === 'sms' && !!account.phone),
   };
   return on.filter((factor) => has[factor]);
@@ -248,8 +259,8 @@ export class Users {
   }
 
   /** The user's authenticator app, if they set one up. */
-  async totpAccount(userId: string): Promise<StoredAccount | null> {
-    return this.findAccountByKey(totpAccountKey(userId));
+  async authenticatorAccount(userId: string): Promise<StoredAccount | null> {
+    return this.findAccountByKey(authenticatorAccountKey(userId));
   }
 
   /** The user's e-mail link account, if they sign in that way. */
@@ -315,9 +326,9 @@ export class Users {
    * The user's authenticator app, if they set one up, and whether they signed up with it (as opposed to
    * adding it later). One read: the app and the user's other accounts together.
    */
-  async totpApp(userId: string): Promise<{ account: StoredAccount; signedUpWith: boolean } | null> {
+  async authenticatorApp(userId: string): Promise<{ account: StoredAccount; signedUpWith: boolean } | null> {
     const accounts = await this.accounts(userId);
-    const account = accounts.find((a) => a.key === totpAccountKey(userId));
+    const account = accounts.find((a) => a.key === authenticatorAccountKey(userId));
     return account ? { account, signedUpWith: isPrimary(account, accounts) } : null;
   }
 
@@ -447,8 +458,8 @@ export class Users {
   }
 
   /** Removes the user's authenticator app and recovery codes. Resolves to false if they had no app. */
-  async removeTotp(userId: string): Promise<boolean> {
-    const removed = await this.unlinkAccount(totpAccountKey(userId));
+  async removeAuthenticator(userId: string): Promise<boolean> {
+    const removed = await this.unlinkAccount(authenticatorAccountKey(userId));
     await this.clearRecoveryCodes(userId);
     return removed;
   }
@@ -493,7 +504,7 @@ export class Users {
    * setup it had when this setup started (`replaces`): the write count decides, so of two setups confirmed
    * at once exactly one wins, and the other is told to start again.
    */
-  async confirmTotpSetup(accountId: string, replaces: string | null, patch: Pick<StoredAccount, 'secret' | 'setupId' | 'failedAttempts' | 'lockedUntil' | 'lastUsedStep'>): Promise<boolean> {
+  async confirmAuthenticatorSetup(accountId: string, replaces: string | null, patch: Pick<StoredAccount, 'secret' | 'setupId' | 'failedAttempts' | 'lockedUntil' | 'lastUsedStep'>): Promise<boolean> {
     return (await this.store.update('account', { id: accountId, setupId: replaces }, patch)) === 1;
   }
 
@@ -502,7 +513,7 @@ export class Users {
    * no other request accepted a code meanwhile: the write count decides, so the same code sent twice signs
    * in once.
    */
-  async useTotpStep(account: StoredAccount, step: number): Promise<boolean> {
+  async useAuthenticatorStep(account: StoredAccount, step: number): Promise<boolean> {
     const changed = await this.store.update(
       'account',
       { id: account.id, lastUsedStep: account.lastUsedStep ?? null },

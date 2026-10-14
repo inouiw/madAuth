@@ -25,7 +25,7 @@ Code: `finish` in [`routes/passkey.ts`](../packages/server/src/routes/passkey.ts
 ## Adding a passkey
 
 - Only a signed-in user adds a passkey, and only within ten minutes of signing in (the session's `auth_time`, which renewals keep): later, the answer is `401 reauth_required`, and the user signs in again first. A session someone took over (a stolen cookie, a browser left open) must not give them a way in of their own that outlives it.
-- Or the sign-in whose policy requires a second factor the user doesn't have yet (`totp_setup_required` with `passkey` among its `factors`): the new passkey finishes that sign-in. A sign-up with the authenticator app alone has no first factor yet, so it sets the app up, never a passkey.
+- Or the sign-in whose policy requires a second factor the user doesn't have yet (`authenticator_setup_required` with `passkey` among its `factors`): the new passkey finishes that sign-in. A sign-up with the authenticator app alone has no first factor yet, so it sets the app up, never a passkey.
 - The options leave out the passkeys the user has (`excludeCredentials`), so an authenticator that holds one says so instead of making another. A passkey is stored by the SHA-256 of its credential id (the id itself can be longer than a key column holds), with its public key, its transports, its counter and a name the user gives it (`Passkey` by default, at most 64 characters, changed with `Madauth.passkey.rename`).
 - madAuth asks for no attestation (`none`): it doesn't check which device made the passkey, only that it was verified and answers for this site.
 
@@ -51,4 +51,4 @@ A passkey belongs to a domain (the WebAuthn relying party id), and the browser o
 - Passkeys in native apps (Capacitor): WebAuthn in a WebView needs the app's associated domains (iOS) or asset links (Android) for the domain, and an origin in `ALLOWED_ORIGINS` for it.
 - Signing up with a passkey alone: a passkey is always added to a user who signed up another way.
 - Attestation, or allowing only certain authenticators (e.g. security keys of one maker).
-- Deleting the account asks for no passkey (the authenticator app protects the deletion, see [Authenticator app security](totp-security.md#removing-the-app)).
+- Deleting the account asks for no passkey (the authenticator app protects the deletion, see [Authenticator app security](authenticator-security.md#removing-the-app)).

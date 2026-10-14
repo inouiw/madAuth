@@ -31,8 +31,9 @@ export type ConfirmResetOptions =
 export interface PasswordApi {
   /**
    * Signs in. Fails with `invalid_credentials`, `email_unverified` or `too_many_attempts`; with
-   * `totp_required` or `totp_setup_required` the password was right and the sign-in goes on with the
-   * authenticator app: `Madauth.totp.verify`, or the setup (`Madauth.totp.startSetup` and `confirmSetup`).
+   * `authenticator_required` or `authenticator_setup_required` the password was right and the sign-in goes on
+   * with the authenticator app: `Madauth.authenticator.verify`, or the setup
+   * (`Madauth.authenticator.startSetup` and `confirmSetup`).
    */
   signIn(options: SignInWithPasswordOptions): Promise<Result<{ user: MadauthUser }>>;
   /**

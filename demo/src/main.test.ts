@@ -25,14 +25,14 @@ let settings = {
   google: method(true),
   github: method(true),
   password: method(false, false, 'optional'),
-  totp: method(false),
+  authenticator: method(false),
   'email-link': method(true),
   passkey: method(false),
   sms: method(true, false),
 };
 /** When set, the fake server answers settings/get only once it resolves. */
 let holdSettings: Promise<void> | undefined;
-/** The same for claims/get and totp/remove: late responses, after the user changed. */
+/** The same for claims/get and authenticator/remove: late responses, after the user changed. */
 let holdClaims: Promise<void> | undefined;
 let holdRemove: Promise<void> | undefined;
 /** Whether the signed-in user has the authenticator app, and their phone number for SMS codes (masked), if any. */
@@ -73,7 +73,7 @@ vi.stubGlobal(
           google: { clientId: 'cid.apps.googleusercontent.com', codeFlow: false, secondFactor: 'none' },
           github: { secondFactor: 'none' },
           password: { minLength: 8, secondFactor: 'optional' },
-          totp: { signIn: false, signUp: false },
+          authenticator: { signIn: false, signUp: false },
           email: { verification: true },
           emailLink: { secondFactor: 'none' },
           sms: true,
@@ -93,9 +93,9 @@ vi.stubGlobal(
         return sessionUser
           ? json({ methods: [{ id: 'acc_google', method: 'google', signIn: true, removable: false, createdAt: 1, email: sessionUser.email }] })
           : json({ error: 'no_session' }, 401);
-      case 'GET /auth/totp/status':
+      case 'GET /auth/authenticator/status':
         return sessionUser ? json({ enabled: authenticator, recoveryCodesLeft: authenticator ? 10 : 0 }) : json({ error: 'no_session' }, 401);
-      case 'POST /auth/totp/remove':
+      case 'POST /auth/authenticator/remove':
         await holdRemove;
         if (body().code !== '123456') return json({ error: 'code_invalid', message: 'wrong' }, 401);
         authenticator = false;
@@ -122,11 +122,11 @@ vi.stubGlobal(
       case 'POST /auth/admin/settings/set': {
         // The list replaces what was on: a method that is not in it is off.
         const { methods } = body() as { methods: Record<string, { allowAsSignInMethod: boolean; secondFactor: string } | undefined> };
-        if (!['google', 'github', 'password', 'totp', 'email-link'].some((id) => methods[id]?.allowAsSignInMethod)) {
+        if (!['google', 'github', 'password', 'authenticator', 'email-link'].some((id) => methods[id]?.allowAsSignInMethod)) {
           return json({ error: 'invalid_settings', message: 'At least one sign-in method must stay on.' }, 400);
         }
         const of = (id: string) => method(!!methods[id], !!methods[id]?.allowAsSignInMethod, methods[id]?.secondFactor ?? 'none');
-        settings = { google: of('google'), github: of('github'), password: of('password'), totp: of('totp'), 'email-link': of('email-link'), passkey: of('passkey'), sms: of('sms') };
+        settings = { google: of('google'), github: of('github'), password: of('password'), authenticator: of('authenticator'), 'email-link': of('email-link'), passkey: of('passkey'), sms: of('sms') };
         return json({ methods: settings });
       }
     }
@@ -231,9 +231,9 @@ describe('demo page', () => {
     expect($<HTMLInputElement>('#method-google').checked).toBe(true);
     expect($<HTMLInputElement>('#method-password').checked).toBe(false);
     expect($<HTMLSelectElement>('#policy-password').value).toBe('optional');
-    expect($<HTMLInputElement>('#method-totp').checked).toBe(false);
+    expect($<HTMLInputElement>('#method-authenticator').checked).toBe(false);
     // The authenticator app: not set up yet, so only the setup is offered.
-    await expect.poll(() => $('#totp-status').textContent).toBe('Not set up.');
+    await expect.poll(() => $('#authenticator-status').textContent).toBe('Not set up.');
     expect($('[data-call="setUpAuthenticator"]').hidden).toBe(false);
     expect($('[data-call="removeAuthenticator"]').hidden).toBe(true);
     expect($('.authenticator .code-field').hidden).toBe(true);
@@ -257,7 +257,7 @@ describe('demo page', () => {
     expect(param('getClaims', 'email').value).toBe('');
     expect(detail('getSession').hidden).toBe(true);
     expect(response('getSession')).toBe('');
-    expect($('#totp-output').hidden).toBe(true);
+    expect($('#authenticator-output').hidden).toBe(true);
     expect($('#output').textContent).toBe('');
     expect(execute('setSettings').disabled).toBe(true);
     expect($<HTMLInputElement>('#method-google').checked).toBe(false);
@@ -295,18 +295,18 @@ describe('demo page', () => {
     changed($('#method-password'));
     $<HTMLSelectElement>('#policy-password').value = 'required';
     changed($('#policy-password'));
-    $<HTMLInputElement>('#method-totp').checked = true;
-    changed($('#method-totp'));
+    $<HTMLInputElement>('#method-authenticator').checked = true;
+    changed($('#method-authenticator'));
     $<HTMLInputElement>('#method-email-link').checked = false;
     changed($('#method-email-link'));
     const on = { allowAsSignInMethod: true, secondFactor: 'none' };
     const factor = { allowAsSignInMethod: false, secondFactor: 'none' };
-    const sent = { methods: { google: on, github: on, password: { allowAsSignInMethod: true, secondFactor: 'required' }, totp: factor, sms: factor } };
+    const sent = { methods: { google: on, github: on, password: { allowAsSignInMethod: true, secondFactor: 'required' }, authenticator: factor, sms: factor } };
     expect(request('setSettings')).toBe(`Madauth.admin.setSettings({ methods })\n${JSON.stringify(sent, null, 2)}`);
     execute('setSettings').click();
     await expect.poll(() => settings.password.enabled).toBe(true);
     expect(settings.password.secondFactor).toBe('required');
-    expect(settings.totp.enabled).toBe(true);
+    expect(settings.authenticator.enabled).toBe(true);
     expect(settings['email-link'].enabled).toBe(false);
     const [, call] = [...vi.mocked(fetch).mock.calls].reverse().find(([url]: [unknown, RequestInit?]) => String(url).endsWith('/auth/admin/settings/set')) as [string, RequestInit];
     expect(JSON.parse(String(call.body))).toEqual(sent);
@@ -354,7 +354,7 @@ describe('demo page', () => {
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     gis.callback!({ credential: 'token' });
 
-    await expect.poll(() => $('#totp-status').textContent).toBe('Set up, 10 recovery codes left.');
+    await expect.poll(() => $('#authenticator-status').textContent).toBe('Set up, 10 recovery codes left.');
     expect($('[data-call="removeAuthenticator"]').hidden).toBe(false);
     expect($('[data-call="newRecoveryCodes"]').hidden).toBe(false);
     expect($('.authenticator .code-field').hidden).toBe(false);
@@ -369,25 +369,25 @@ describe('demo page', () => {
     expect($('[data-needs-authenticator]').hidden).toBe(true);
     expect($('.authenticator .code-field').hidden).toBe(true);
     gis.callback!({ credential: 'token' });
-    await expect.poll(() => $('#totp-status').textContent).toBe('Set up, 10 recovery codes left.');
+    await expect.poll(() => $('#authenticator-status').textContent).toBe('Set up, 10 recovery codes left.');
 
-    $<HTMLInputElement>('#totp-code').value = '000000';
+    $<HTMLInputElement>('#authenticator-code').value = '000000';
     $<HTMLButtonElement>('[data-call="removeAuthenticator"]').click();
     await expect.poll(() => $('#output').textContent).toContain('code_invalid');
-    expect($('#totp-output').hidden).toBe(false);
-    expect($('#totp-status').textContent).toBe('Set up, 10 recovery codes left.');
+    expect($('#authenticator-output').hidden).toBe(false);
+    expect($('#authenticator-status').textContent).toBe('Set up, 10 recovery codes left.');
     // Deleting the account then takes a code as well: the parameter appears.
     expect($('[data-needs-authenticator]').hidden).toBe(false);
 
-    $<HTMLInputElement>('#totp-code').value = '123 456';
+    $<HTMLInputElement>('#authenticator-code').value = '123 456';
     $<HTMLButtonElement>('[data-call="removeAuthenticator"]').click();
-    await expect.poll(() => $('#totp-status').textContent).toBe('Not set up.');
+    await expect.poll(() => $('#authenticator-status').textContent).toBe('Not set up.');
     expect($('[data-call="removeAuthenticator"]').hidden).toBe(true);
     // Without the app, deleteAccount's request follows at once.
     open('deleteAccount');
     expect($('[data-needs-authenticator]').hidden).toBe(true);
     expect(request('deleteAccount')).toBe('Madauth.deleteAccount()\n(no arguments)');
-    const [, sent] = [...vi.mocked(fetch).mock.calls].reverse().find(([url]: [unknown, RequestInit?]) => String(url).endsWith('/auth/totp/remove')) as [string, RequestInit];
+    const [, sent] = [...vi.mocked(fetch).mock.calls].reverse().find(([url]: [unknown, RequestInit?]) => String(url).endsWith('/auth/authenticator/remove')) as [string, RequestInit];
     expect(JSON.parse(String(sent.body))).toEqual({ code: '123456' });
   });
 
@@ -463,7 +463,7 @@ describe('demo page', () => {
     $<HTMLInputElement>('#method-google').checked = false;
     $<HTMLInputElement>('#method-github').checked = false;
     $<HTMLInputElement>('#method-password').checked = false;
-    $<HTMLInputElement>('#method-totp').checked = false;
+    $<HTMLInputElement>('#method-authenticator').checked = false;
     $<HTMLInputElement>('#method-email-link').checked = false;
     execute('setSettings').click();
 
@@ -520,16 +520,16 @@ describe('demo page', () => {
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     signInAs = ada;
     gis.callback!({ credential: 'token' });
-    await expect.poll(() => $('#totp-status').textContent).toBe('Set up, 10 recovery codes left.');
+    await expect.poll(() => $('#authenticator-status').textContent).toBe('Set up, 10 recovery codes left.');
     holdRemove = new Promise((resolve) => (release = resolve));
-    $<HTMLInputElement>('#totp-code').value = '123456';
+    $<HTMLInputElement>('#authenticator-code').value = '123456';
     $<HTMLButtonElement>('[data-call="removeAuthenticator"]').click();
     $<HTMLButtonElement>('#sign-out').click();
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     release();
     holdRemove = undefined;
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect($('#totp-output').hidden).toBe(true);
+    expect($('#authenticator-output').hidden).toBe(true);
     expect($('#output').textContent).toBe('');
     authenticator = false;
   });

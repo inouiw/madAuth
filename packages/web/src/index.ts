@@ -13,7 +13,7 @@ export { GoogleFedcm, type GoogleFedcmOptions } from './providers/google-fedcm.j
 export { GoogleRedirect } from './providers/google-redirect.js';
 export { GitHub } from './providers/github.js';
 export { Password } from './providers/password.js';
-export { Totp } from './providers/totp.js';
+export { Authenticator } from './providers/authenticator.js';
 export { EmailLink } from './providers/email-link.js';
 export { Passkey } from './providers/passkey.js';
 export type { DeletedAccount, PendingStep, SecondFactorPolicy, SignInProvider } from './providers/provider.js';
@@ -26,7 +26,14 @@ export type {
 } from './scopes/password.js';
 export type { GoogleApi, GoogleButtonOptions } from './scopes/google.js';
 export type { GitHubApi, GitHubButtonOptions } from './scopes/github.js';
-export type { CodeOptions, SignInWithTotpOptions, TotpApi, TotpPolicy, TotpSetup, TotpSignUpOptions } from './scopes/totp.js';
+export type {
+  AuthenticatorApi,
+  AuthenticatorPolicy,
+  AuthenticatorSetup,
+  AuthenticatorSignUpOptions,
+  CodeOptions,
+  SignInWithAuthenticatorOptions,
+} from './scopes/authenticator.js';
 export type { EmailLinkApi } from './scopes/email-link.js';
 export type { SmsApi } from './scopes/sms.js';
 export type { PasskeyApi, PasskeyInfo, PasskeySignInOptions } from './scopes/passkey.js';

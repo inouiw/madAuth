@@ -2,7 +2,7 @@
 
 How madAuth handles SMS codes as a second factor, for app developers and for whoever runs the server. Each section links to the code that implements it. The tests that check these rules mention this file, so update it when you change them.
 
-SMS codes are **only a second factor**: a signed-in user adds a phone number, and from then on the sign-in methods whose [policy](server.md#sign-in-methods) asks for a second factor (Google, GitHub, password, the e-mail link) can ask for a code sent to it, next to the [authenticator app](totp-security.md). A phone never signs anyone in by itself, and never creates a user: SMS can be intercepted (SIM swapping, SS7) and a number changes hands, so it protects an account that already has a first factor and is not one. Where that is not enough, the operator leaves SMS codes off, and the app is the only second factor.
+SMS codes are **only a second factor**: a signed-in user adds a phone number, and from then on the sign-in methods whose [policy](server.md#sign-in-methods) asks for a second factor (Google, GitHub, password, the e-mail link) can ask for a code sent to it, next to the [authenticator app](authenticator-security.md). A phone never signs anyone in by itself, and never creates a user: SMS can be intercepted (SIM swapping, SS7) and a number changes hands, so it protects an account that already has a first factor and is not one. Where that is not enough, the operator leaves SMS codes off, and the app is the only second factor.
 
 ## Codes
 
@@ -24,11 +24,11 @@ Code: `setup` and `confirm` in [`packages/server/src/routes/sms.ts`](../packages
 
 ## The second step
 
-After the first step of a method whose policy is `optional` or `required`, the server looks at what the user has: with the app, it asks for a code from the app (`401 totp_required`); with a phone only, for the SMS code (`401 sms_required`); with both, for the app, and the answer's `factors` (`["totp", "sms"]`) lets the dialog offer "send a code by SMS instead". The challenge cookie (see [Authenticator app security](totp-security.md#the-second-step)) carries the factors, so `/auth/sms/verify` and `/auth/totp/verify` each accept it only for a factor the user has.
+After the first step of a method whose policy is `optional` or `required`, the server looks at what the user has: with the app, it asks for a code from the app (`401 authenticator_required`); with a phone only, for the SMS code (`401 sms_required`); with both, for the app, and the answer's `factors` (`["authenticator", "sms"]`) lets the dialog offer "send a code by SMS instead". The challenge cookie (see [Authenticator app security](authenticator-security.md#the-second-step)) carries the factors, so `/auth/sms/verify` and `/auth/authenticator/verify` each accept it only for a factor the user has.
 
 The SMS goes when the client asks for it (`POST /auth/sms/send` with the challenge), not with the first step: a user who has the app as well gets no SMS unless they switch. The session then says `amr: ["pwd", "sms"]` (or `["google", "sms"]`, `["email", "sms"]`), and `user.signed_in` carries `secondFactor: "sms"`. A backend that requires the app can ask for `otp` in `amr`.
 
-With a `required` policy and neither factor, the sign-in goes to the app's setup (`totp_setup_required`); when SMS codes are on, the dialog offers adding a phone instead, in the same pending sign-in. The user decides which factor to set up; an admin can't prescribe one.
+With a `required` policy and neither factor, the sign-in goes to the app's setup (`authenticator_setup_required`); when SMS codes are on, the dialog offers adding a phone instead, in the same pending sign-in. The user decides which factor to set up; an admin can't prescribe one.
 
 Code: `secondStep` in [`packages/server/src/app.ts`](../packages/server/src/app.ts), [`challenge.ts`](../packages/server/src/routes/challenge.ts), `send` and `verify` in [`sms.ts`](../packages/server/src/routes/sms.ts).
 

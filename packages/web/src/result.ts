@@ -17,7 +17,7 @@ export interface MadauthUser {
 }
 
 /** The second factors, in the order a sign-in offers them: a passkey, a code from the authenticator app, one sent by SMS. */
-export const SECOND_FACTORS = ['passkey', 'totp', 'sms'] as const;
+export const SECOND_FACTORS = ['passkey', 'authenticator', 'sms'] as const;
 export type SecondFactor = (typeof SECOND_FACTORS)[number];
 
 export const isSecondFactor = (value: unknown): value is SecondFactor => (SECOND_FACTORS as readonly unknown[]).includes(value);
@@ -46,8 +46,8 @@ const errorCodes = [
   'invalid_claims',
   'user_not_found',
   'invalid_settings',
-  'totp_required',
-  'totp_setup_required',
+  'authenticator_required',
+  'authenticator_setup_required',
   'sms_required',
   'passkey_required',
   'passkey_unknown',
@@ -76,11 +76,11 @@ export interface MadauthError {
   code: MadauthErrorCode;
   /** Human-readable details, e.g. which option is invalid. */
   message: string;
-  /** With `passkey_required`, `totp_required`, `sms_required` and `totp_setup_required`: the method whose sign-in goes on with the second step. */
+  /** With `passkey_required`, `authenticator_required`, `sms_required` and `authenticator_setup_required`: the method whose sign-in goes on with the second step. */
   method?: string;
   /**
-   * With `passkey_required`, `totp_required` and `sms_required`: the second factors the user can finish the
-   * sign-in with, e.g. `['totp', 'sms']`. With `totp_setup_required`: those they can set up.
+   * With `passkey_required`, `authenticator_required` and `sms_required`: the second factors the user can finish the
+   * sign-in with, e.g. `['authenticator', 'sms']`. With `authenticator_setup_required`: those they can set up.
    */
   factors?: SecondFactor[];
   /** With `other_method`: how the address signs in instead, e.g. `['password']`. */

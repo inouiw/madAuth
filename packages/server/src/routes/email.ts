@@ -12,7 +12,7 @@ export function emailRoutes(app: Hono, ctx: AppContext, users: Users, webhook: W
   const emails = createEmails(ctx, users, webhook);
 
   /** The method a user signs up with: a password if they set one, else the authenticator app. */
-  const signUpMethod = async (userId: string) => ((await users.passwordAccount(userId)) ? ('password' as const) : ('totp' as const));
+  const signUpMethod = async (userId: string) => ((await users.passwordAccount(userId)) ? ('password' as const) : ('authenticator' as const));
 
   app.post('/auth/email/send-verification', async (c) => {
     const data = await body(c);

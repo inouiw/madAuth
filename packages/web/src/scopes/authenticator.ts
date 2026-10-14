@@ -1,5 +1,5 @@
+import { Authenticator } from '../providers/authenticator.js';
 import type { PendingStep } from '../providers/provider.js';
-import { Totp } from '../providers/totp.js';
 import { qrSvg } from '../qr.js';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
 import { serverCalls, type Core } from './core.js';
@@ -8,9 +8,9 @@ import { currentPage, emailConfirmation, signedIn, type SendEmailOptions } from 
 /** A code from the authenticator app, or one of the recovery codes. */
 export type CodeOptions = { code: string } | { recoveryCode: string };
 
-export type SignInWithTotpOptions = { email: string } & CodeOptions;
+export type SignInWithAuthenticatorOptions = { email: string } & CodeOptions;
 
-export interface TotpSignUpOptions {
+export interface AuthenticatorSignUpOptions {
   email: string;
   /** Shown to the user and in `MadauthUser.name`. */
   name?: string;
@@ -18,8 +18,8 @@ export interface TotpSignUpOptions {
   redirectTo?: string;
 }
 
-/** A new key for the authenticator app, from {@link TotpApi.startSetup}. */
-export interface TotpSetup {
+/** A new key for the authenticator app, from {@link AuthenticatorApi.startSetup}. */
+export interface AuthenticatorSetup {
   /** The key in base32, to type into the app when the QR code can't be scanned. */
   secret: string;
   /** The `otpauth://totp/...` URI the QR code contains. */
@@ -32,7 +32,7 @@ export interface TotpSetup {
 }
 
 /** What `startSetup` and the dialog tell the user the app will do, from the server's policy. */
-export interface TotpPolicy {
+export interface AuthenticatorPolicy {
   /** The app signs in on its own: the e-mail address and a code. */
   signIn: boolean;
   /** People can sign up with the app alone. */
@@ -44,30 +44,30 @@ export interface TotpPolicy {
 /**
  * The authenticator app (TOTP) for custom login screens. The methods work whenever the server has the app
  * switched on (a policy asks for it, or it signs in on its own); otherwise they fail with `flow_not_enabled`.
- * Signing in or up with the app alone ({@link signIn}, {@link signUp}) also needs `new Totp()` in
+ * Signing in or up with the app alone ({@link signIn}, {@link signUp}) also needs `new Authenticator()` in
  * `Madauth.initialize`.
  */
-export interface TotpApi {
+export interface AuthenticatorApi {
   /**
    * Signs in with the e-mail address and a code from the app (or a recovery code), when the server lets
    * the app sign in on its own. Fails with `invalid_credentials` (an unknown address, one without an app,
    * or a wrong code: all the same), `too_many_attempts` or `method_disabled`.
    */
-  signIn(options: SignInWithTotpOptions): Promise<Result<{ user: MadauthUser }>>;
+  signIn(options: SignInWithAuthenticatorOptions): Promise<Result<{ user: MadauthUser }>>;
   /**
    * Finishes a sign-in that `password.signIn`, `verifyEmail`, `confirmReset`, Google or GitHub ended with
-   * `totp_required`: the code from the app, or a recovery code. Fails with `code_invalid`,
+   * `authenticator_required`: the code from the app, or a recovery code. Fails with `code_invalid`,
    * `too_many_attempts` or `challenge_expired` (more than ten minutes passed: sign in again).
    */
   verify(options: CodeOptions): Promise<Result<{ user: MadauthUser }>>;
   /**
    * Starts setting the app up, for the signed-in user or for a sign-in that ended with
-   * `totp_setup_required`: a new key to scan or type into the app. Confirm it within ten minutes with
+   * `authenticator_setup_required`: a new key to scan or type into the app. Confirm it within ten minutes with
    * {@link confirmSetup}. A user who has an app already gives a current code from it (or a recovery code)
    * in `options`, since the new app replaces it; without one it fails with `code_required`, with a wrong
    * one with `code_invalid`. Fails with `no_session`.
    */
-  startSetup(options?: CodeOptions): Promise<Result<TotpSetup>>;
+  startSetup(options?: CodeOptions): Promise<Result<AuthenticatorSetup>>;
   /**
    * Proves the setup with the first code the app shows and turns the app on; a new app replaces an earlier
    * one. Resolves with the recovery codes, to show once, and with the user when this finished a sign-in.
@@ -86,84 +86,84 @@ export interface TotpApi {
   status(): Promise<Result<{ enabled: boolean; recoveryCodesLeft: number }>>;
   /**
    * Creates an account that signs in with the app alone (no password) and sends an e-mail with a link
-   * and a code to confirm the address; confirming leads to the setup (`totp_setup_required`). Succeeds
+   * and a code to confirm the address; confirming leads to the setup (`authenticator_setup_required`). Succeeds
    * even if the address is registered, so nobody can probe for accounts. Fails with `invalid_email`,
    * `signup_rejected`, `temporarily_unavailable` or `method_disabled`.
    */
-  signUp(options: TotpSignUpOptions): Promise<Result>;
+  signUp(options: AuthenticatorSignUpOptions): Promise<Result>;
   /** Sends the confirmation e-mail again. Fails with `temporarily_unavailable`. */
   sendVerificationEmail(options: SendEmailOptions): Promise<Result>;
   /**
    * Confirms the address with the code from the e-mail. For a sign-up with the app it fails with
-   * `totp_setup_required`: call {@link startSetup} and {@link confirmSetup} next.
+   * `authenticator_setup_required`: call {@link startSetup} and {@link confirmSetup} next.
    */
   verifyEmail(options: { email: string; code: string }): Promise<Result<{ user: MadauthUser }>>;
   /**
    * What a sign-in under way still needs: `code` (call {@link verify}) or `setup` (the setup pair), and
-   * which method's sign-in it is. Set when a sign-in ends with `totp_required` or `totp_setup_required`,
+   * which method's sign-in it is. Set when a sign-in ends with `authenticator_required` or `authenticator_setup_required`,
    * also by the redirect flow or an e-mail link; null otherwise.
    */
   readonly pendingStep: PendingStep | null;
   /** What the app does on this server, for the texts of your setup screen; null until initialized. */
-  readonly policy: TotpPolicy | null;
+  readonly policy: AuthenticatorPolicy | null;
 }
 
-const notRegistered = () => fail('flow_not_enabled', 'Pass new Totp() to Madauth.initialize to sign in or up with the authenticator app alone.');
+const notRegistered = () => fail('flow_not_enabled', 'Pass new Authenticator() to Madauth.initialize to sign in or up with the authenticator app alone.');
 const switchedOff = () =>
   fail('flow_not_enabled', 'The madAuth server has the authenticator app switched off: no sign-in method is set to ask for it, and it does not sign in on its own.');
 
-export function createTotpApi(core: Core): TotpApi {
+export function createAuthenticatorApi(core: Core): AuthenticatorApi {
   /** The app as a method of its own is what the provider adds; the second step and the account calls need none. */
-  const registered = () => core.provider('totp') instanceof Totp;
+  const registered = () => core.provider('authenticator') instanceof Authenticator;
 
-  const call = serverCalls(core, { isOn: (config) => !!config?.totp, switchedOff });
+  const call = serverCalls(core, { isOn: (config) => !!config?.authenticator, switchedOff });
 
   const post = <T extends object>(path: string, body: Record<string, unknown>) => call<T>(path, { body });
-  const confirmation = emailConfirmation(core, 'totp', post);
+  const confirmation = emailConfirmation(core, 'authenticator', post);
 
   return {
     async signIn(options) {
       if (!registered()) return notRegistered();
-      return signedIn(core, 'totp', await post('/auth/totp/signin', { ...options }));
+      return signedIn(core, 'authenticator', await post('/auth/authenticator/signin', { ...options }));
     },
 
     async verify(options) {
-      const result = await post<{ user: MadauthUser }>('/auth/totp/verify', { ...options });
+      const result = await post<{ user: MadauthUser }>('/auth/authenticator/verify', { ...options });
       if (!result.isSuccess) return result;
       core.signedIn(result.user);
       return { isSuccess: true, user: result.user };
     },
 
     async startSetup(options) {
-      const result = await call<{ secret: string; uri: string }>('/auth/totp/setup', { body: { ...options }, session: true });
+      const result = await call<{ secret: string; uri: string }>('/auth/authenticator/setup', { body: { ...options }, session: true });
       return result.isSuccess ? ok({ secret: result.secret, uri: result.uri, qrSvg: qrSvg(result.uri) }) : result;
     },
 
     async confirmSetup({ code }) {
-      const result = await call<{ recoveryCodes: string[]; user?: MadauthUser }>('/auth/totp/confirm', { body: { code }, session: true });
+      const result = await call<{ recoveryCodes: string[]; user?: MadauthUser }>('/auth/authenticator/confirm', { body: { code }, session: true });
       if (!result.isSuccess) return result;
       if (result.user) core.signedIn(result.user);
       return ok(result.user ? { recoveryCodes: result.recoveryCodes, user: result.user } : { recoveryCodes: result.recoveryCodes });
     },
 
     async remove(options) {
-      const result = await call('/auth/totp/remove', { body: { ...options }, session: true });
+      const result = await call('/auth/authenticator/remove', { body: { ...options }, session: true });
       return result.isSuccess ? ok() : result;
     },
 
     async newRecoveryCodes(options) {
-      const result = await call<{ recoveryCodes: string[] }>('/auth/totp/recovery-codes', { body: { ...options }, session: true });
+      const result = await call<{ recoveryCodes: string[] }>('/auth/authenticator/recovery-codes', { body: { ...options }, session: true });
       return result.isSuccess ? ok({ recoveryCodes: result.recoveryCodes }) : result;
     },
 
     async status() {
-      const result = await call<{ enabled: boolean; recoveryCodesLeft: number }>('/auth/totp/status', { method: 'GET', session: true });
+      const result = await call<{ enabled: boolean; recoveryCodesLeft: number }>('/auth/authenticator/status', { method: 'GET', session: true });
       return result.isSuccess ? ok({ enabled: result.enabled, recoveryCodesLeft: result.recoveryCodesLeft }) : result;
     },
 
     async signUp({ email, name, redirectTo }) {
       if (!registered()) return notRegistered();
-      const result = await post('/auth/totp/signup', { email, name, redirectTo: redirectTo ?? currentPage(), locale: core.locale() });
+      const result = await post('/auth/authenticator/signup', { email, name, redirectTo: redirectTo ?? currentPage(), locale: core.locale() });
       return result.isSuccess ? ok() : result;
     },
 
@@ -176,14 +176,14 @@ export function createTotpApi(core: Core): TotpApi {
 
     get policy() {
       const config = core.config();
-      if (!config?.totp) return null;
-      const secondFactorFor: TotpPolicy['secondFactorFor'] = [];
+      if (!config?.authenticator) return null;
+      const secondFactorFor: AuthenticatorPolicy['secondFactorFor'] = [];
       if (config.google && config.google.secondFactor !== 'none') secondFactorFor.push('google');
       if (config.github && config.github.secondFactor !== 'none') secondFactorFor.push('github');
       if (config.password && config.password.secondFactor !== 'none') secondFactorFor.push('password');
       if (config.emailLink && config.emailLink.secondFactor !== 'none') secondFactorFor.push('email-link');
       if (config.passkey?.signIn && config.passkey.secondFactor !== 'none') secondFactorFor.push('passkey');
-      return { signIn: config.totp.signIn, signUp: config.totp.signUp, secondFactorFor };
+      return { signIn: config.authenticator.signIn, signUp: config.authenticator.signUp, secondFactorFor };
     },
   };
 }

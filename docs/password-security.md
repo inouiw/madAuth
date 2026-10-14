@@ -48,7 +48,7 @@ Nobody should be able to find out through madAuth whether an address has an acco
 Two things are still visible:
 
 - After five wrong passwords for an address, the answer becomes `too_many_attempts`, and after ten wrong e-mail codes `codes_locked`. Both only happen for existing accounts. Per-IP limits in front of madAuth (see below) make this slow to use.
-- A Google sign-in with the address of a password user is refused with `other_method`, which says that the address signs in with a password. Google has verified that the person owns the address, so this tells the owner, not a stranger. See [Authenticator app security](totp-security.md#a-method-signs-in-only-users-who-have-it).
+- A Google sign-in with the address of a password user is refused with `other_method`, which says that the address signs in with a password. Google has verified that the person owns the address, so this tells the owner, not a stranger. See [Authenticator app security](authenticator-security.md#a-method-signs-in-only-users-who-have-it).
 - While a sign-up method is switched off, confirming an address with a code answers `method_disabled` for an address with a pending sign-up of that method, instead of using the code up: the link and the code keep working once the method is on again. This shows only while the method is off, and only for addresses nobody has confirmed.
 - While your [webhook](server.md#webhooks) receiver is down, "send a reset e-mail" and "send the confirmation e-mail again" fail with `temporarily_unavailable` for existing accounts, but answer `202` for unknown addresses, which get no e-mail. Answering `202` for existing accounts too would leave users waiting for an e-mail that never comes. Sign-up is not affected: every sign-up sends an e-mail, so it fails the same way for every address.
 
@@ -66,7 +66,7 @@ Code: [`packages/server/src/routes/password.ts`](../packages/server/src/routes/p
 
 **Limit requests per IP address in front of madAuth** too, e.g. in your reverse proxy, load balancer, API Gateway or a WAF. madAuth can't do this reliably itself: it runs stateless on several instances, and only the proxy knows the client's real address.
 
-Code: [`packages/server/src/routes/lockout.ts`](../packages/server/src/routes/lockout.ts), shared with the [authenticator app](totp-security.md#brute-force).
+Code: [`packages/server/src/routes/lockout.ts`](../packages/server/src/routes/lockout.ts), shared with the [authenticator app](authenticator-security.md#brute-force).
 
 ## Links and codes in e-mails
 
@@ -91,7 +91,7 @@ A new account can't sign in until its address is confirmed (`403 email_unverifie
 
 ## Sessions
 
-Password users get the same madAuth session as Google users: a signed JWT in an HttpOnly cookie, with `sub` = `usr_<id>` and `amr: ["pwd"]` (`["pwd", "otp"]` when the [authenticator app](totp-security.md#the-second-step) was the second step). It also carries `sv`, the user's session version.
+Password users get the same madAuth session as Google users: a signed JWT in an HttpOnly cookie, with `sub` = `usr_<id>` and `amr: ["pwd"]` (`["pwd", "otp"]` when the [authenticator app](authenticator-security.md#the-second-step) was the second step). It also carries `sv`, the user's session version.
 
 A password reset increases the session version and deletes the user's unused confirmation link and code. The madAuth server then rejects older sessions when the app checks them (`GET /auth/session`, e.g. on page load), and doesn't [renew](server.md#sessions) them. With a policy that asks for the authenticator app, a reset ends in the app's code step as well: the inbox alone does not sign in.
 
@@ -109,4 +109,4 @@ All password endpoints are `POST` requests. madAuth only accepts them from an `O
 - Changing the password while signed in (use "Forgot password?" meanwhile).
 - Moving users with existing password hashes from another system.
 
-A second factor for the password is covered: the [authenticator app](totp-security.md).
+A second factor for the password is covered: the [authenticator app](authenticator-security.md).

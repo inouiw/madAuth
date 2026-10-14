@@ -222,19 +222,19 @@ describe('signing in with a passkey', () => {
   });
 
   it('PK8: its own policy can ask for a second factor after it, which is never a passkey', async () => {
-    const { app, cookie } = await withGrace({ google: ON, password: ON, passkey: { allowAsSignInMethod: true, secondFactor: 'required' }, totp: FACTOR });
+    const { app, cookie } = await withGrace({ google: ON, password: ON, passkey: { allowAsSignInMethod: true, secondFactor: 'required' }, authenticator: FACTOR });
     const { passkey } = await addPasskey(app, cookie);
 
     const res = await signInWithPasskey(app, passkey);
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toMatchObject({ error: 'totp_setup_required', method: 'passkey', factors: ['totp'] });
+    expect(await res.json()).toMatchObject({ error: 'authenticator_setup_required', method: 'passkey', factors: ['authenticator'] });
     expect(cookies(res).madauth_session?.value ?? '').toBe('');
   });
 });
 
 describe('a passkey as the second factor', () => {
-  const policy: TestMethods = { google: ON, password: { allowAsSignInMethod: true, secondFactor: 'optional' }, passkey: FACTOR, totp: FACTOR };
+  const policy: TestMethods = { google: ON, password: { allowAsSignInMethod: true, secondFactor: 'optional' }, passkey: FACTOR, authenticator: FACTOR };
 
   it('PK9: after the password, the user confirms with their passkey; it comes first of the factors they have', async () => {
     const { app, hook, cookie } = await withGrace(policy);
@@ -272,11 +272,11 @@ describe('a passkey as the second factor', () => {
   });
 
   it('PK11: a required policy lets a user without a second factor add a passkey in the sign-in, which finishes it', async () => {
-    const { app, hook, store } = await withGrace({ google: ON, password: { allowAsSignInMethod: true, secondFactor: 'required' }, passkey: FACTOR, totp: FACTOR });
+    const { app, hook, store } = await withGrace({ google: ON, password: { allowAsSignInMethod: true, secondFactor: 'required' }, passkey: FACTOR, authenticator: FACTOR });
     advance(60_000);
 
     const first = await post(app, '/auth/password/signin', grace);
-    expect(await first.json()).toMatchObject({ error: 'totp_setup_required', factors: ['passkey', 'totp'] });
+    expect(await first.json()).toMatchObject({ error: 'authenticator_setup_required', factors: ['passkey', 'authenticator'] });
 
     const { res } = await addPasskey(app, challengeOf(first));
     expect(res.status).toBe(200);
@@ -290,11 +290,11 @@ describe('a passkey as the second factor', () => {
   it('PK12: a sign-up with the authenticator app sets the app up, never a passkey', async () => {
     startClock();
     const { app, hook, store } = passwordApp();
-    await setMethods(store, { password: ON, totp: ON, passkey: FACTOR });
-    await post(app, '/auth/totp/signup', { email: 'new@example.com', redirectTo: `${APP_ORIGIN}/` });
+    await setMethods(store, { password: ON, authenticator: ON, passkey: FACTOR });
+    await post(app, '/auth/authenticator/signup', { email: 'new@example.com', redirectTo: `${APP_ORIGIN}/` });
     const link = hook.lastEmail()!.data.link as string;
     const first = await post(app, '/auth/email/verify', { token: link.split('=').at(-1) });
-    expect(await first.json()).toMatchObject({ error: 'totp_setup_required', factors: ['totp'] });
+    expect(await first.json()).toMatchObject({ error: 'authenticator_setup_required', factors: ['authenticator'] });
 
     const refused = await post(app, '/auth/passkey/register/options', {}, { Cookie: challengeOf(first) });
     expect(await refused.json()).toMatchObject({ error: 'no_session' });
@@ -344,7 +344,7 @@ describe('the user\'s passkeys', () => {
   });
 
   it('PK17: the passkeys\' own policy doesn\'t keep the last passkey: without it, the user signs in no more with one', async () => {
-    const { app, cookie } = await withGrace({ google: ON, password: ON, passkey: { allowAsSignInMethod: true, secondFactor: 'required' }, totp: FACTOR });
+    const { app, cookie } = await withGrace({ google: ON, password: ON, passkey: { allowAsSignInMethod: true, secondFactor: 'required' }, authenticator: FACTOR });
     const { res } = await addPasskey(app, cookie);
     const { passkey: added } = (await res.json()) as { passkey: { id: string } };
 
@@ -354,7 +354,7 @@ describe('the user\'s passkeys', () => {
   it('PK18: a passkey counts as a second factor only on the domain it was made for', async () => {
     startClock();
     const made = passwordApp({ allowedOrigins: [APP_ORIGIN, 'https://other.test'] });
-    await setMethods(made.store, { google: ON, password: { allowAsSignInMethod: true, secondFactor: 'optional' }, passkey: FACTOR, totp: FACTOR });
+    await setMethods(made.store, { google: ON, password: { allowAsSignInMethod: true, secondFactor: 'optional' }, passkey: FACTOR, authenticator: FACTOR });
     const value = await signUpVerified(made.app, made.hook);
     await addPasskey(made.app, session(value));
     advance(60_000);

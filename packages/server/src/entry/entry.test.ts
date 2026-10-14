@@ -72,7 +72,7 @@ describe('deployment entry points', () => {
       google: { clientId: CLIENT_ID, codeFlow: false, secondFactor: 'none' },
       github: null,
       password: { minLength: 8, minScore: 2, secondFactor: 'none' },
-      totp: null,
+      authenticator: null,
       email: { verification: true },
       emailLink: null,
       sms: false,
@@ -313,10 +313,10 @@ describe('deployment entry points', () => {
 
       const shown = await runCli(['get-methods'], io, env);
       expect(shown.exitCode).toBe(0);
-      expect(shown.output).toContain('totp (second factor only)');
-      expect(shown.output).toContain('"set-methods google password=required totp=second-factor"');
+      expect(shown.output).toContain('authenticator (second factor only)');
+      expect(shown.output).toContain('"set-methods google password=required authenticator=second-factor"');
 
-      expect(await runCli(['set-methods', 'google', 'password=required', 'totp=second-factor'], io, env)).toMatchObject({ exitCode: 0 });
+      expect(await runCli(['set-methods', 'google', 'password=required', 'authenticator=second-factor'], io, env)).toMatchObject({ exitCode: 0 });
       expect((await runCli(['get-methods'], io, env)).output).not.toContain('before 0.6');
       expect((await loadConfig(env)).issuer).toBe('https://auth.example.com');
     } finally {
@@ -340,42 +340,42 @@ describe('deployment entry points', () => {
     const io = { ask: async () => '', askSecret: async () => '' };
 
     // Until set: the configured methods, without the authenticator app and passkeys (which are always configured).
-    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google, password. Switched off: totp, passkey.' });
-    expect(await runCli(['set-methods', 'google'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp, passkey.' });
-    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp, passkey.' });
+    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google, password. Switched off: authenticator, passkey.' });
+    expect(await runCli(['set-methods', 'google'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, authenticator, passkey.' });
+    expect(await runCli(['get-methods'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, authenticator, passkey.' });
     // The list says what is on, with its policy for a second factor; listed alone, a method signs in.
-    expect(await runCli(['set-methods', 'google', 'password=required', 'totp'], io, env)).toEqual({
+    expect(await runCli(['set-methods', 'google', 'password=required', 'authenticator'], io, env)).toEqual({
       exitCode: 0,
-      output: 'Switched on: google, password (second factor required), totp. Switched off: passkey.',
+      output: 'Switched on: google, password (second factor required), authenticator. Switched off: passkey.',
     });
-    expect(await runCli(['set-methods', 'google', 'password=optional', 'totp=second-factor', 'passkey'], io, env)).toEqual({
+    expect(await runCli(['set-methods', 'google', 'password=optional', 'authenticator=second-factor', 'passkey'], io, env)).toEqual({
       exitCode: 0,
-      output: 'Switched on: google, password (second factor optional), totp (second factor only), passkey.',
+      output: 'Switched on: google, password (second factor optional), authenticator (second factor only), passkey.',
     });
     expect(await runCli(['set-methods', 'fax'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('Unknown method "fax"') });
     // Google, GitHub, password and the e-mail link always sign in.
     expect(await runCli(['set-methods', 'google=second-factor'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('always signs in') });
     // The e-mail link and SMS codes are not configured here (no email.send_signin_link, no sms.send_code): listing them changes nothing.
-    expect(await runCli(['set-methods', 'google', 'email-link', 'sms'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, totp, passkey.' });
+    expect(await runCli(['set-methods', 'google', 'email-link', 'sms'], io, env)).toEqual({ exitCode: 0, output: 'Switched on: google. Switched off: password, authenticator, passkey.' });
     // Nor does SMS count as the second factor a policy asks for.
     expect(await runCli(['set-methods', 'google', 'password=optional', 'sms'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('none is on') });
     const withLink = { ...env, WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset,email.send_signin_link,sms.send_code' };
     expect(await runCli(['set-methods', 'google', 'email-link=optional', 'sms'], io, withLink)).toMatchObject({ exitCode: 0 });
     expect(await runCli(['get-methods'], io, withLink)).toEqual({
       exitCode: 0,
-      output: 'Switched on: google, email-link (second factor optional), sms (second factor only). Switched off: password, totp, passkey.',
+      output: 'Switched on: google, email-link (second factor optional), sms (second factor only). Switched off: password, authenticator, passkey.',
     });
     expect(await runCli(['set-methods', 'email-link=required', 'sms'], io, withLink)).toEqual({
       exitCode: 0,
-      output: 'Switched on: email-link (second factor required), sms (second factor only). Switched off: google, password, totp, passkey.',
+      output: 'Switched on: email-link (second factor required), sms (second factor only). Switched off: google, password, authenticator, passkey.',
     });
     expect(await runCli(['set-methods', 'email-link=maybe'], io, withLink)).toMatchObject({ exitCode: 1, output: expect.stringContaining('none, optional, required') });
     expect(await runCli(['set-methods', 'email-link', 'sms=required'], io, withLink)).toMatchObject({ exitCode: 1, output: expect.stringContaining('asks for no second factor') });
     // SMS codes alone sign nobody in.
     expect(await runCli(['set-methods', 'sms'], io, withLink)).toMatchObject({ exitCode: 1, output: expect.stringContaining('At least one') });
-    expect(await runCli(['set-methods', 'google', 'password=required', 'totp'], io, env)).toMatchObject({ exitCode: 0 });
+    expect(await runCli(['set-methods', 'google', 'password=required', 'authenticator'], io, env)).toMatchObject({ exitCode: 0 });
     expect(await runCli(['set-methods', 'password=maybe'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('none, optional, required') });
-    expect(await runCli(['set-methods', 'totp=required'], io, env)).toMatchObject({ exitCode: 1 });
+    expect(await runCli(['set-methods', 'authenticator=required'], io, env)).toMatchObject({ exitCode: 1 });
     // Nothing listed: that would switch everything off.
     expect(await runCli(['set-methods'], io, env)).toMatchObject({ exitCode: 1, output: expect.stringContaining('At least one') });
 
@@ -383,10 +383,10 @@ describe('deployment entry points', () => {
     const passwordOnly = { ...env, GOOGLE_CLIENT_ID: undefined };
     expect(await runCli(['set-methods', 'google'], io, passwordOnly)).toEqual({
       exitCode: 1,
-      output: 'At least one sign-in method that creates users must stay on. On this server these do: password, totp.',
+      output: 'At least one sign-in method that creates users must stay on. On this server these do: password, authenticator.',
     });
     // What was set above holds: Google is simply not configured here.
-    expect(await runCli(['get-methods'], io, passwordOnly)).toEqual({ exitCode: 0, output: 'Switched on: password (second factor required), totp. Switched off: passkey.' });
+    expect(await runCli(['get-methods'], io, passwordOnly)).toEqual({ exitCode: 0, output: 'Switched on: password (second factor required), authenticator. Switched off: passkey.' });
     expect(await runCli(['get-methods'], io, { DATABASE_URL: env.DATABASE_URL })).toMatchObject({ exitCode: 1, output: expect.stringContaining('MADAUTH_ISSUER') });
     rmSync(dir, { recursive: true, force: true });
   });
