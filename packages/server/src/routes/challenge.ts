@@ -92,8 +92,9 @@ export async function pendingSetup(c: Context, ctx: AppContext, factor: SecondFa
 }
 
 /**
- * Whether a challenge is the setup step of a sign-up with the app or a passkey alone: it has no first factor
- * yet (the address was confirmed by e-mail), and sets up the method it signs up with, nothing else.
+ * Whether a challenge belongs to a sign-up with the app or a passkey alone: it has no first factor (the
+ * address was confirmed by e-mail), so its own method is what it sets up (or, for an app that exists
+ * already, asks the code of), nothing else, and that method is no second factor.
  */
 export const isSignUpStep = (challenge: Challenge): boolean => !challenge.amr.length;
 

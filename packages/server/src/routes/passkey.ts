@@ -269,9 +269,10 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
       primary: signUp,
       passkey: { name, credentialId: credential.id, signCount: credential.counter, transports: joinTransports(credential.transports), rpId: ceremony.rpId },
     });
-    // The sign-up's passkey is refused when the user got another method meanwhile (a password confirmed by its own e-mail).
+    // The sign-up's passkey is refused when the sign-up got its method meanwhile: a password confirmed by its
+    // own e-mail, or another passkey of this sign-up (a second tab).
     if (!account && signUp && !(await users.findAccountByKey(key))) {
-      return error(c, 400, 'setup_expired', 'You signed up another way meanwhile. Please sign in.');
+      return error(c, 400, 'setup_expired', 'Your sign-up was finished meanwhile. Please sign in.');
     }
     if (!account) return error(c, 409, 'already_added', 'This passkey is added already.');
     const passkey = toEntry(account);

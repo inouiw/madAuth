@@ -96,13 +96,15 @@ export function emailRoutes(app: Hono, ctx: AppContext, users: Users, webhook: W
     // A link or code whose method is off is refused before it is used up, so it still works once the
     // method is on again. For a code, this tells whoever sends it that the address has a pending sign-up
     // with that method, but only while the method is off (see docs/password-security.md).
-    const waitingId =
-      typeof data.token === 'string' && data.token
-        ? await users.peekLinkToken(data.token, 'verify')
-        : isValidEmail(data.email)
-          ? ((await users.findByEmail(normalizeEmail(data.email)))?.id ?? null)
-          : null;
-    const waiting = waitingId ? await users.findById(waitingId) : null;
+    const token = typeof data.token === 'string' && data.token ? data.token : null;
+    const peeked = token ? await users.peekLinkToken(token, 'verify') : null;
+    const waiting = token
+      ? peeked
+        ? await users.findById(peeked)
+        : null
+      : isValidEmail(data.email)
+        ? await users.findByEmail(normalizeEmail(data.email))
+        : null;
     if (waiting && !(await ctx.enabled(c, await signUpMethodOf(users, waiting)))) return disabled(c);
     const consumed = await emails.consume(data, 'verify');
     const { userId, via } = consumed;

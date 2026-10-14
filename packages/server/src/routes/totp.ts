@@ -20,7 +20,7 @@ import {
   verifyTotp,
 } from '../totp.js';
 import { newId, toMadauthUser, totpAccountKey, type StoredAccount, type StoredUser } from '../users.js';
-import { finishSignIn, pendingFactor, whoSetsUp } from './challenge.js';
+import { finishSignIn, isSignUpStep, pendingFactor, whoSetsUp } from './challenge.js';
 import { reclaimConfirmation, signUpThenSetUp } from './email.js';
 import { createEmails } from './emails.js';
 import { body, error, noSession, originHost, type Body } from './helpers.js';
@@ -194,7 +194,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     // app starts without failed attempts, and the code just used can't sign in.
     // A sign-up with the app sets up the account the user signs up with; every other setup adds the app to a
     // user who has a method already. If a sign-up got another method meanwhile, the sign-up's app is refused.
-    const signUp = challenge?.method === 'totp';
+    const signUp = !!challenge && isSignUpStep(challenge);
     const user = signUp ? await reclaimConfirmation(users, who.user) : who.user;
     const { recoveryCodes, hashes } = newRecoveryCodes();
     await users.addRecoveryCodes(user.id, setup.setup, hashes);

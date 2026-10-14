@@ -264,7 +264,7 @@ onSubmit('#totp-code-form', async ({ code }) => {
 async function startSetup(): Promise<void> {
   const pending = Madauth.totp.pendingStep;
   // Only a passkey can finish the step, e.g. a sign-up with a passkey alone: the browser's dialog needs a click.
-  if (pending?.step === 'setup' && pending.factors?.length && !pending.factors.includes('totp')) {
+  if (pending?.step === 'setup' && pending.factors?.length && pending.factors.every((factor) => factor === 'passkey')) {
     show('passkey-setup');
     return;
   }
