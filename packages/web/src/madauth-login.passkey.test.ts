@@ -183,7 +183,7 @@ describe('<madauth-login> and passkeys', () => {
     await settle();
     // The passkey's own sign-in asks for a second factor too, but not for itself.
     expect($$('p.hint').map((hint) => hint.textContent.replace(/\s+/g, ' ').trim())).toContain(
-      'From then on, signing in with Google and a password can also ask for your passkey.',
+      'From then on, signing in with Google or a password can also ask for your passkey.',
     );
   });
 

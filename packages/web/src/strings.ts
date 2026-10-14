@@ -113,7 +113,7 @@ export const en = {
     cantScan: 'Can’t scan? Enter this key in the app:',
     turnOn: 'Turn on',
     startAgain: 'Start again',
-    /** What the app will do, from the server's policy, so the user knows what they turn on. `methods` is e.g. "Google and a password" (`methodNames`). */
+    /** What the app will do, from the server's policy, so the user knows what they turn on. `methods` is e.g. "Google or a password" (`methodNames`). */
     effects: {
       secondFactor: (methods: string) => `From then on, signing in with ${methods} also asks for a code from the app.`,
     },
@@ -210,7 +210,6 @@ export const en = {
   otherMethod: (how: string, instead?: string) => `This email address signs in with ${how}. Use that instead${instead ? ` of ${instead}` : ''}.`,
   /** A method's name inside a sentence, e.g. after "with" ("mit" in German) in `otherMethod` and in what a second factor will do (`totpSetup.effects`, `smsSetup.effect`, `passkeySetup.effect`). */
   methodNames: { google: 'Google', github: 'GitHub', password: 'a password', totp: 'an authenticator app', 'email-link': 'an email link', passkey: 'a passkey' },
-  and: ' and ',
   /** Between alternatives in a sentence. */
   orList: ' or ',
 
@@ -442,7 +441,6 @@ export const de: Strings = {
 
   otherMethod: (how, instead) => `Diese E-Mail-Adresse meldet sich mit ${how} an. Verwenden Sie das ${instead ? `statt ${instead}` : 'stattdessen'}.`,
   methodNames: { google: 'Google', github: 'GitHub', password: 'einem Passwort', totp: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link', passkey: 'einem Passkey' },
-  and: ' und ',
   orList: ' oder ',
 
   errors: {

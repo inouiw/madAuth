@@ -1060,10 +1060,10 @@ export class MadauthLogin extends LitElement {
     return html`<input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete=${this.codeAutocomplete || 'off'} maxlength="7" />`;
   }
 
-  /** The methods whose sign-in asks for a second factor, but `except`, as a sentence names them: e.g. "Google and a password". */
+  /** The methods whose sign-in asks for a second factor, but `except`, as a sentence names them: e.g. "Google or a password". */
   private secondFactorAsks(except?: LoginMethodId): string {
     const s = this.strings;
-    return (Madauth.totp.policy?.secondFactorFor ?? []).filter((method) => method !== except).map((method) => s.methodNames[method]).join(s.and);
+    return (Madauth.totp.policy?.secondFactorFor ?? []).filter((method) => method !== except).map((method) => s.methodNames[method]).join(s.orList);
   }
 
   /** What was typed into {@link codeField}, as the scope takes it. */

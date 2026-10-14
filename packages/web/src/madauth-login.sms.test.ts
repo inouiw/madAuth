@@ -249,7 +249,7 @@ describe('<madauth-login> and SMS codes', () => {
 
     void Madauth.setUpSms();
     await settle();
-    expect(text('p.hint')).toBe('From then on, signing in with Google and a password can also ask for a code sent to your phone.');
+    expect(text('p.hint')).toBe('From then on, signing in with Google or a password can also ask for a code sent to your phone.');
   });
 
   it('D27: replacing the number asks for a code sent to the current one first', async () => {

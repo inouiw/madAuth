@@ -408,10 +408,10 @@ describe('Madauth.setUpAuthenticator', () => {
 
     void Madauth.setUpAuthenticator();
     await settle();
-    expect(text('.hint')).toBe('From then on, signing in with Google and a password also asks for a code from the app.');
+    expect(text('.hint')).toBe('From then on, signing in with Google or a password also asks for a code from the app.');
     Madauth.setLocale('de');
     await login().updateComplete;
-    expect(text('.hint')).toBe('Die Anmeldung mit Google und einem Passwort fragt dann zusätzlich nach einem Code aus der App.');
+    expect(text('.hint')).toBe('Die Anmeldung mit Google oder einem Passwort fragt dann zusätzlich nach einem Code aus der App.');
   });
 
   it('D13: is cancelled by the link and the cross, and refuses when it can not open', async () => {

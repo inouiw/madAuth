@@ -16,7 +16,7 @@
 - **`loadConfig` reads the stored settings once**, for the check above, so it needs the store to be reachable. Nothing to do: the entry points and your own server with `createApp(await loadConfig(…))` get the check.
 - **Sessions carry `auth_time`**, when the user signed in, kept across renewals. Sessions from before the upgrade have none, so their users sign in again before they change a method.
 - **Schema version 8.** `account.name`, `account.credentialId`, `account.signCount`, `account.transports` and `account.lastUsedAt` for passkeys. SQLite upgrades itself and DynamoDB needs nothing; for your own SQL tables run `npx @madauth/server schema --dialect <yours> --from 7` and apply it before you deploy. `account.primaryUserId` stays unique, but marks only the account a user signed up with.
-- **The dialog's texts:** `only_method` says "This is the only way you sign in" instead of naming the authenticator app, and the setup of a second factor names the methods that ask for it as in a sentence ("signing in with Google and a password also asks for a code from the app") instead of by their buttons ("Continue with Google and Email & password").
+- **The dialog's texts:** `only_method` says "This is the only way you sign in" instead of naming the authenticator app, and the setup of a second factor names the methods that ask for it as in a sentence ("signing in with Google or a password also asks for a code from the app") instead of by their buttons ("Continue with Google and Email & password").
 
 ## To 0.5
 
