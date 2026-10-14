@@ -154,6 +154,8 @@ export const en = {
     effect: (methods: string) => `From then on, signing in with ${methods} can also ask for a code sent to your phone.`,
   },
   // Passkeys
+  /** The button at the top of the sign-in view. */
+  signInWithPasskey: 'Sign in with a passkey',
   usePasskey: 'Use a passkey instead',
   /** The second step with a passkey. */
   passkeyStep: {
@@ -396,6 +398,7 @@ export const de: Strings = {
     useAppInstead: 'Stattdessen eine Authentifizierungs-App einrichten',
     effect: (methods) => `Die Anmeldung mit ${methods} kann dann zusätzlich nach einem Code fragen, der an Ihr Mobiltelefon gesendet wird.`,
   },
+  signInWithPasskey: 'Mit Passkey anmelden',
   usePasskey: 'Stattdessen einen Passkey verwenden',
   passkeyStep: {
     heading: 'Mit Passkey bestätigen',

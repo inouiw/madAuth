@@ -131,10 +131,31 @@ const infoIcon = html`
   </svg>
 `;
 
+/** A passkey's icons: a key and a fingerprint, side by side. */
+const passkeyIcons = html`
+  <span class="icons">
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" />
+      <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />
+    </svg>
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4" />
+      <path d="M14 13.12c0 2.38 0 6.38-1 8.88" />
+      <path d="M17.29 21.02c.12-.6.43-2.3.5-3.02" />
+      <path d="M2 12a10 10 0 0 1 18-6" />
+      <path d="M2 16h.01" />
+      <path d="M21.8 16c.2-2 .131-5.354 0-6" />
+      <path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2" />
+      <path d="M8.65 22c.21-.66.45-1.32.57-2" />
+      <path d="M9 6.8a6 6 0 0 1 9 5.2v2" />
+    </svg>
+  </span>
+`;
+
 /** The scopes that render a provider's button (Google, GitHub), by method: the dialog stays on the public API. */
 const buttonScopes: Partial<Record<LoginMethodId, () => ButtonApi>> = { google: () => Madauth.google, github: () => Madauth.github };
 
-/** Icons of the methods listed under "Other ways to sign in". */
+/** Icons of the methods in the rows: under "Other ways to sign in", and in the list of the user's methods. */
 const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
   totp: html`
     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -156,12 +177,7 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </svg>
   `,
-  passkey: html`
-    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" />
-      <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />
-    </svg>
-  `,
+  passkey: passkeyIcons,
 };
 
 /**
@@ -954,25 +970,37 @@ export class MadauthLogin extends LitElement {
 
   private renderSignInView() {
     const offered = this.offered;
-    // The providers with a button of their own (Google, GitHub) come first, in the order of loginMethods.
+    // The passkey's button comes first, then the providers with a button of their own (Google, GitHub), in the order of loginMethods.
+    const passkey = offered.find((m) => m.id === 'passkey');
     const branded = offered.filter((m) => !!providerFor(m.id)?.renderButton);
+    const buttons = [...(passkey ? [this.renderPasskeyButton(passkey)] : []), ...branded.map((m) => this.renderButtonSlot(m))];
     const password = offered.find((m) => m.id === 'password');
-    const others = offered.filter((m) => !branded.includes(m) && m !== password);
+    const others = offered.filter((m) => !branded.includes(m) && m !== password && m !== passkey);
     const s = this.strings;
     return html`
-      ${branded.length ? html`<div class="buttons">${branded.map((m) => this.renderButtonSlot(m))}</div>` : null}
-      ${branded.length && password ? html`<div class="divider">${s.or}</div>` : null}
+      ${buttons.length ? html`<div class="buttons">${buttons}</div>` : null}
+      ${buttons.length && password ? html`<div class="divider">${s.or}</div>` : null}
       ${password ? this.renderPassword(password) : null}
       ${others.length
         ? html`
             <section class="others">
-              ${branded.length || password ? html`<h3>${s.otherWays}</h3>` : null}
+              ${buttons.length || password ? html`<h3>${s.otherWays}</h3>` : null}
               <ul>
                 ${others.map((m) => html`<li>${this.renderRow(m)}</li>`)}
               </ul>
             </section>
           `
         : null}
+    `;
+  }
+
+  private renderPasskeyButton(m: LoginMethod) {
+    return html`
+      <button part="method" class="passkey" type="button" title=${this.strings.methods.passkey.description} data-method=${m.id}
+        @click=${() => this.onMethodChosen(m)}>
+        ${passkeyIcons}
+        <span class="label">${this.strings.signInWithPasskey}</span>
+      </button>
     `;
   }
 
@@ -1946,6 +1974,9 @@ export class MadauthLogin extends LitElement {
       --_control-radius: max(0px, calc(var(--_radius) - 6px));
       --_group-radius: max(0px, calc(var(--_radius) - 4px));
       --_control-height: 44px;
+      --_icon-size: 18px;
+      /* Between a passkey's two icons. */
+      --_icon-gap: 4px;
       --_surface: light-dark(#fff, #1b1c1f);
       --_text: light-dark(#17181a, #f1f2f3);
       --_muted: light-dark(#5c6066, #a6a9af);
@@ -2031,8 +2062,8 @@ export class MadauthLogin extends LitElement {
 
     .icon {
       flex-shrink: 0;
-      width: 18px;
-      height: 18px;
+      width: var(--_icon-size);
+      height: var(--_icon-size);
       fill: none;
       stroke: currentColor;
       stroke-width: 1.75;
@@ -2099,6 +2130,37 @@ export class MadauthLogin extends LitElement {
       display: flex;
       justify-content: center;
       min-height: var(--_control-height);
+    }
+
+    /* Looks like the providers' buttons below it: as tall, in a slot's height, with their corners at most. */
+    .passkey {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      height: 40px;
+      margin-bottom: calc(var(--_control-height) - 40px);
+      padding: 0 12px;
+      font-weight: 500;
+      border: 1px solid var(--_button-border);
+      border-radius: min(4px, var(--_control-radius));
+      background: var(--_button-bg);
+    }
+
+    .passkey:hover {
+      background: var(--_hover);
+    }
+
+    .icons {
+      display: flex;
+      flex-shrink: 0;
+      gap: var(--_icon-gap);
+    }
+
+    /* In a list with a passkey's two icons, every other row's icon takes as much room, so the labels line up. */
+    ul:has(.icons) :is(.row, .method) > .icon:not(.chevron) {
+      margin-inline-end: calc(var(--_icon-size) + var(--_icon-gap));
     }
 
     .divider {
