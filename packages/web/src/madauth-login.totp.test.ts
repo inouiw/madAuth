@@ -342,7 +342,7 @@ describe('Madauth.setUpAuthenticator', () => {
     expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
     expect(text('h2')).toBe('Set up authenticator app');
     expect(text('.lead')).toBe('Scan this QR code with your authenticator app (e.g. Google Authenticator or 1Password), then enter the code it shows.');
-    expect(text('.hint')).toBe('From then on, signing in with Email & password also asks for a code from the app.');
+    expect(text('.hint')).toBe('From then on, signing in with a password also asks for a code from the app.');
     expect($('[part="qr"] path')).not.toBeNull();
     expect(text('.secret')).toBe('JBSW Y3DP EHPK 3PXP');
     expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/totp/setup` });
@@ -383,7 +383,7 @@ describe('Madauth.setUpAuthenticator', () => {
 
     const result = Madauth.setUpAuthenticator();
     await settle();
-    expect(text('.hint')).toBe('From then on, signing in with Email & password also asks for a code from the app.');
+    expect(text('.hint')).toBe('From then on, signing in with a password also asks for a code from the app.');
     // The app signs in on its own on this server, but only for people who signed up with it: for Grace it is a step of her password.
     expect($$('.hint').map((hint) => hint.textContent!.trim())).not.toContain('You can then sign in with your email address and a code from the app.');
     fill({ code: CODE });
@@ -397,6 +397,21 @@ describe('Madauth.setUpAuthenticator', () => {
     expect(text('h2')).toBe('Sign in');
     expect($('[part="qr"]')).toBeNull();
     expect($('[part="error"]')).toBeNull();
+  });
+
+  it('D12: names the methods that ask for the code as in a sentence, not as their buttons', async () => {
+    const server = fakeServer();
+    server.policy.google = 'optional';
+    server.policy.password = 'optional';
+    server.user = grace;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()] });
+
+    void Madauth.setUpAuthenticator();
+    await settle();
+    expect(text('.hint')).toBe('From then on, signing in with Google or a password also asks for a code from the app.');
+    Madauth.setLocale('de');
+    await login().updateComplete;
+    expect(text('.hint')).toBe('Die Anmeldung mit Google oder einem Passwort fragt dann zusätzlich nach einem Code aus der App.');
   });
 
   it('D13: is cancelled by the link and the cross, and refuses when it can not open', async () => {

@@ -199,7 +199,7 @@ describe('<madauth-login> and SMS codes', () => {
 
     expect(text('h2')).toBe('Add your phone number');
     expect(text('p.lead')).toBe('Enter your mobile number. We will send you a code to confirm it.');
-    expect(text('p.hint')).toContain('signing in with Email & password can also ask for a code sent to your phone');
+    expect(text('p.hint')).toContain('signing in with a password can also ask for a code sent to your phone');
     expect($('[data-action="use-app-setup"]')).toBeNull();
     fill({ phone: 'nope' });
     await submit('sms-setup');
@@ -238,6 +238,18 @@ describe('<madauth-login> and SMS codes', () => {
     await submit('sms-setup');
     expect(await noSession).toMatchObject({ isSuccess: false, error: { code: 'no_session' } });
     expect($('[part="error"]')!.dataset.code).toBe('no_session');
+  });
+
+  it('D26: the setup names the methods that can ask for the code as in a sentence, not as their buttons', async () => {
+    const server = smsServer();
+    server.policy.google = 'optional';
+    server.phones.clear();
+    server.user = grace;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+
+    void Madauth.setUpSms();
+    await settle();
+    expect(text('p.hint')).toBe('From then on, signing in with Google or a password can also ask for a code sent to your phone.');
   });
 
   it('D27: replacing the number asks for a code sent to the current one first', async () => {
