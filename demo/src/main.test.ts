@@ -118,7 +118,7 @@ vi.stubGlobal(
         return json({ email: body().email, userId: ada.id, claims: body().claims });
       case 'POST /auth/admin/sign-in/reset': {
         // The user's sessions end: the admin's own, when they reset themselves.
-        const { email } = body();
+        const email = String(body().email).toLowerCase();
         if (email === sessionUser?.email) sessionUser = null;
         return json({ email, userId: email === ada.email ? ada.id : 'usr_2' });
       }
@@ -453,9 +453,10 @@ describe('demo page', () => {
     expect(vi.mocked(confirm)).toHaveBeenLastCalledWith(expect.stringContaining('bob@example.com'));
     expect($('#sign-in').hidden).toBe(true);
 
-    // Her own reset ends her session: the page signs her out, and the result lands below the sign-in button.
-    type(param('resetSignIn', 'email'), 'ada@example.com');
+    // Her own reset is asked as such, and ends her session: the page signs her out, and the result lands below the sign-in button.
+    type(param('resetSignIn', 'email'), 'Ada@example.com');
     execute('resetSignIn').click();
+    await expect.poll(() => vi.mocked(confirm).mock.lastCall?.[0]).toContain('Reset your own sign-in');
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     await expect.poll(() => $('#last-response').hidden).toBe(false);
     expect($('#last-response').textContent).toContain('Madauth.admin.resetSignIn(email)');

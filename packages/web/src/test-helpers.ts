@@ -371,7 +371,8 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/password/signin': {
         if (server.locked) return json({ error: 'too_many_attempts', message: 'Too many failed attempts. Try again in 30 seconds.' }, 429);
         const account = server.accounts.get(email);
-        if (!account || account.app || account.password !== body.password) return json({ error: 'invalid_credentials', message: 'wrong' }, 401);
+        // A user without a password (one whose sign-in an admin reset) has none to sign in with.
+        if (!account?.password || account.app || account.password !== body.password) return json({ error: 'invalid_credentials', message: 'wrong' }, 401);
         if (!account.verified) return json({ error: 'email_unverified', message: 'unverified' }, 403);
         return afterPrimary(email, 'password');
       }

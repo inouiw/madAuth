@@ -1,6 +1,10 @@
 // Resetting the sign-in of a user who lost every way in: POST /auth/admin/sign-in/reset. Behaviour described in
 // "Resetting a user's sign-in" in docs/server.md; update the doc when changing it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { encrypt } from './crypto.js';
+import { deriveTokenKey } from './github.js';
+import { createSqliteAdapter } from './store/sqlite.js';
+import type { StoreAdapter } from './store/schema.js';
 import {
   APP_ORIGIN,
   GITHUB_CLIENT_ID,
@@ -16,12 +20,14 @@ import {
   setMethods,
   signInWithGitHub,
   signUpVerified,
+  signingKey,
   stubGitHub,
   verify,
   type TestMethods,
 } from './test/helpers.js';
 import { softAuthenticator } from './test/webauthn.js';
 import { base32Decode, stepOf, totp } from './totp.js';
+import { Users } from './users.js';
 
 type Made = ReturnType<typeof passwordApp>;
 type App = Made['app'];
@@ -129,9 +135,9 @@ describe('resetting a user\'s sign-in', () => {
     expect(await store.findMany('recoveryCode', { userId })).toEqual([]);
     expect((await store.findMany('verification', { userId })).filter((record) => record.purpose !== 'passkey')).toEqual([]);
     // The user stays, with her address unconfirmed: her next sign-up proves the inbox again.
-    expect(await store.findMany('user', { id: userId })).toEqual([
-      { ...before, emailVerified: false, sessionVersion: Number(before.sessionVersion) + 1, wrongCodes: 0 },
-    ]);
+    const [after] = await store.findMany('user', { id: userId });
+    expect(after).toEqual({ ...before, emailVerified: false, sessionVersion: expect.any(Number), wrongCodes: 0 });
+    expect(after.sessionVersion).toBeGreaterThan(Number(before.sessionVersion));
     // GitHub's authorization goes with its account; one event tells the webhook, none per method.
     expect(revoked.revocations()).toHaveLength(1);
     expect(hook.calls).toEqual([
@@ -212,5 +218,39 @@ describe('resetting a user\'s sign-in', () => {
     expect(error).toHaveBeenLastCalledWith(expect.stringContaining('did not revoke'));
     expect(await store.findMany('account', { email: 'ada@example.com' })).toEqual([]);
     expect(hook.calls.at(-1)).toMatchObject({ type: 'user.sign_in_reset', data: { user: { email: 'ada@example.com' } } });
+  });
+
+  it('R5: an account another request adds while the reset runs goes too, with its authorization at GitHub', async () => {
+    startClock();
+    const inner = createSqliteAdapter(':memory:');
+    // The first account the reset deletes lets another request link GitHub to the user, as a sign-in under way could.
+    let meanwhile: (() => Promise<unknown>) | undefined;
+    const store: StoreAdapter = {
+      create: (model, data) => inner.create(model, data),
+      findOne: (model, where) => inner.findOne(model, where),
+      findMany: (model, where, opts) => inner.findMany(model, where, opts),
+      update: (model, where, patch) => inner.update(model, where, patch),
+      async delete(model, where) {
+        const deleted = await inner.delete(model, where);
+        const run = model === 'account' ? meanwhile : undefined;
+        meanwhile = undefined;
+        await run?.();
+        return deleted;
+      },
+    };
+    const { app, hook } = passwordApp({ ...github, store });
+    await setMethods(store, everything);
+    const admin = session(await signUpVerified(app, hook, 'admin@example.com', 'the admins own password'));
+    await setClaims(store, 'admin@example.com', { roles: ['admin'] });
+    await signUpVerified(app, hook);
+    const [{ id: userId }] = await store.findMany('user', { emailNormalized: grace.email });
+    const token = encrypt(deriveTokenKey(signingKey.d!), Buffer.from('gho_meanwhile'));
+    meanwhile = () => new Users(inner).linkAccount(String(userId), { key: 'github:7002', email: grace.email, secret: token, primary: false });
+    const revoked = stubGitHub();
+
+    expect((await reset(app, grace.email, admin)).status).toBe(200);
+
+    expect(await store.findMany('account', { userId })).toEqual([]);
+    expect(revoked.revocations().map((call) => JSON.parse(String(call.init.body)))).toEqual([{ access_token: 'gho_meanwhile' }]);
   });
 });

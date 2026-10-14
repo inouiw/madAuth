@@ -369,13 +369,16 @@ const methods: Record<string, ApiMethod> = {
     },
     ({ email, claims }) => Madauth.admin.setClaims(email, claims),
   ),
-  // One click would be too easy: the user loses every way in. The address field starts with the admin's own.
+  // One click would be too easy: the user loses every way in. The address field starts with the admin's own,
+  // so the question says so when it is.
   resetSignIn: api(
     (values) => ({ email: values.email.trim() }),
     async ({ email }) => {
-      if (!confirm(`Reset the sign-in of ${email}? Their sign-in methods and second factors are removed and their sessions end; they sign up again.`)) {
-        return 'Cancelled.';
-      }
+      const own = email.toLowerCase() === Madauth.currentUser?.email?.toLowerCase();
+      const question = own
+        ? `Reset your own sign-in (${email})? Your sign-in methods and second factors are removed and you are signed out; you sign up again.`
+        : `Reset the sign-in of ${email}? Their sign-in methods and second factors are removed and their sessions end; they sign up again.`;
+      if (!confirm(question)) return 'Cancelled.';
       const result = await Madauth.admin.resetSignIn(email);
       // Resetting yourself ended your session: the page shows it now rather than at the next session check.
       if (result.isSuccess && result.userId === Madauth.currentUser?.id) await Madauth.getSession();

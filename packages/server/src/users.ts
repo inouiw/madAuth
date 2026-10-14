@@ -444,17 +444,35 @@ export class Users {
    * second factors) with the recovery codes, ends their sessions and the sign-ins that wait for a second step
    * (a new session version), deletes their pending links and codes, counts wrong codes from zero, and marks
    * the address unconfirmed, so their next sign-up proves the inbox again. The user keeps their id, address,
-   * name, claims and `signedUpAt`. Resolves to the accounts as they were, e.g. for GitHub's token.
+   * name, claims and `signedUpAt`. Resolves to the accounts that were removed, e.g. for GitHub's token.
    */
-  async resetSignIn(user: StoredUser): Promise<StoredAccount[]> {
-    const accounts = await this.accounts(user.id);
-    // The accounts go first: from then on no method finds the user, and the new session version ends what
-    // started before.
-    await this.store.delete('account', { userId: user.id });
-    await this.updateUser(user.id, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0 });
-    await this.clearVerifications(user.id);
-    await this.clearRecoveryCodes(user.id);
-    return accounts;
+  async resetSignIn(userId: string): Promise<StoredAccount[]> {
+    // The sessions end first, so none of them adds a method meanwhile. A sign-in that found one of the accounts
+    // before they went (or a password reset under way) may still start a session with that version: the
+    // second raise ends it. Each raise counts from the user as stored then, not as the request read them.
+    await this.endSignIns(userId);
+    const removed = await this.deleteAccounts(userId);
+    await this.endSignIns(userId);
+    await this.clearVerifications(userId);
+    await this.clearRecoveryCodes(userId);
+    return removed;
+  }
+
+  /** Raises the session version and marks the address unconfirmed, with wrong codes counted from zero. */
+  private async endSignIns(userId: string): Promise<void> {
+    const user = await this.findById(userId);
+    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0 });
+  }
+
+  /**
+   * Deletes the user's accounts until none is left, as another request may add one meanwhile. Resolves to the
+   * accounts this deleted (not those another request deleted at the same time).
+   */
+  private async deleteAccounts(userId: string, rounds = 3): Promise<StoredAccount[]> {
+    const accounts = rounds > 0 ? await this.accounts(userId) : [];
+    if (!accounts.length) return [];
+    const deleted = await Promise.all(accounts.map(async (account) => ((await this.store.delete('account', { id: account.id })) === 1 ? [account] : [])));
+    return [...deleted.flat(), ...(await this.deleteAccounts(userId, rounds - 1))];
   }
 
   /**

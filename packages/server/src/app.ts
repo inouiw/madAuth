@@ -593,7 +593,7 @@ export function createApp(config: MadauthConfig): Hono {
     if (!isValidEmail(data.email)) return invalidEmail(c);
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
-    const removed = await users.resetSignIn(user);
+    const removed = await users.resetSignIn(user.id);
     // GitHub's authorization goes with its account, as when the user removes GitHub or deletes the account.
     const github = config.github;
     if (github) await Promise.all(removed.filter((account) => methodOf(account) === 'github').map((account) => revokeGrant(github, tokenKey, account)));

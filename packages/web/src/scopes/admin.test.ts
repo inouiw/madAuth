@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '../index.js';
 import { Madauth } from '../madauth.js';
+import { Password } from '../providers/password.js';
 import { SERVER, ada, fakeServer, resetAll } from '../test-helpers.js';
 
 beforeEach(() => {
@@ -100,13 +101,16 @@ describe('Madauth.admin', () => {
     const server = fakeServer();
     server.user = admin;
     server.authenticators.add('grace@example.com');
-    await Madauth.initialize({ serverUrl: SERVER, providers: [] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
 
     expect(await Madauth.admin.resetSignIn('grace@example.com')).toEqual({ isSuccess: true, userId: 'usr_grace' });
 
     expect(server.requests.at(-1)).toMatchObject({ method: 'POST', url: `${SERVER}/auth/admin/sign-in/reset`, body: { email: 'grace@example.com' } });
     expect(server.authenticators.has('grace@example.com')).toBe(false);
     expect(server.accounts.get('grace@example.com')).toMatchObject({ verified: false });
+    // Her password is gone with the rest: nothing signs her in.
+    expect(await Madauth.password.signIn({ email: 'grace@example.com', password: '' })).toMatchObject({ isSuccess: false, error: { code: 'invalid_credentials' } });
+    expect(await Madauth.password.signIn({ email: 'grace@example.com', password: 'correct horse battery' })).toMatchObject({ isSuccess: false, error: { code: 'invalid_credentials' } });
     expect(await Madauth.admin.resetSignIn('nobody@example.com')).toMatchObject({ isSuccess: false, error: { code: 'user_not_found' } });
     server.user = ada;
     expect(await Madauth.admin.resetSignIn('grace@example.com')).toMatchObject({ isSuccess: false, error: { code: 'forbidden' } });
