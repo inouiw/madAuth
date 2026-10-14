@@ -13,7 +13,7 @@ export class EmailLink implements SignInProvider {
     if (!ctx.config.emailLink) {
       return fail(
         'flow_not_enabled',
-        'The madAuth server does not offer the e-mail link: its webhook must send email.send_signin_link, and an admin lists the method with set-methods.',
+        'The madAuth server does not offer the e-mail link: its webhook must send email.send_signin_link, and an admin lists the method in the settings (Madauth.admin.setSettings).',
       );
     }
     return ok();

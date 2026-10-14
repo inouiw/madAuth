@@ -44,19 +44,15 @@ const readEnvFile = (file: string) => parseEnv(readFileSync(file, 'utf8'));
 describe('--env-file', () => {
   it('gives any command the variables of the file, before or after the command; the environment wins', async () => {
     const envFile = tempFile();
-    writeFileSync(envFile, `DATABASE_URL=sqlite:${tempFile('madauth.db')}\n`);
-    const io = { ...noQuestions, askSecret: async () => 'correct horse' };
+    writeFileSync(envFile, 'MADAUTH_ISSUER=not a url\n');
 
-    const fromFile = await runCli(['create-user', 'ada@example.com', '--env-file', envFile], io, {});
-    // The same address again, in another database: the one from the environment.
-    const environmentWins = await runCli([`--env-file=${envFile}`, 'create-user', 'ada@example.com'], io, {
-      DATABASE_URL: `sqlite:${tempFile('other.db')}`,
-    });
-    const again = await runCli(['create-user', 'ada@example.com', '--env-file', envFile], io, {});
+    const after = await runCli(['start', '--env-file', envFile], noQuestions, {});
+    const before = await runCli([`--env-file=${envFile}`, 'start'], noQuestions, {});
+    const environmentWins = await runCli(['start', '--env-file', envFile], noQuestions, { MADAUTH_ISSUER: 'https://app.example.com' });
 
-    expect(fromFile).toMatchObject({ exitCode: 0, output: expect.stringContaining('Created user') });
-    expect(environmentWins).toMatchObject({ exitCode: 0, output: expect.stringContaining('Created user') });
-    expect(again).toMatchObject({ exitCode: 1, output: expect.stringContaining('already exists') });
+    expect(after).toEqual({ exitCode: 1, output: 'MADAUTH_ISSUER: "not a url" is not a URL.' });
+    expect(before).toEqual(after);
+    expect(environmentWins).toEqual({ exitCode: 1, output: expect.stringContaining('MADAUTH_SIGNING_KEY is not set') });
   });
 
   it('is an error when the file is missing or not named', async () => {
@@ -182,7 +178,9 @@ describe('init', () => {
       'Passwordless sign-in with an e-mail link? (yes/no)',
       'SMS codes as a second factor, sent by your webhook receiver? (yes/no)',
       'Database for the users',
+      'Your e-mail address, to become the first admin (empty: none)',
     ]);
+    expect(readEnvFile(file)).not.toHaveProperty('INITIAL_ADMIN_EMAIL');
     expect(readEnvFile(file)).toMatchObject({
       MADAUTH_ISSUER: 'http://localhost:3000',
       GOOGLE_CLIENT_ID: CLIENT_ID,
@@ -190,6 +188,40 @@ describe('init', () => {
       DATABASE_URL: 'sqlite:./madauth.db',
       WEBHOOK_URL: 'http://localhost:9999/hook',
     });
+  });
+
+  it('writes the address of the first admin, and tells them to sign up with it', async () => {
+    const file = tempFile();
+    const io = answering({ 'first admin': ' Grace@Example.com ' });
+
+    const { output, exitCode } = await runCli(['init', '--out', file], io);
+
+    expect(exitCode).toBe(0);
+    expect(readEnvFile(file).INITIAL_ADMIN_EMAIL).toBe('Grace@Example.com');
+    expect(output).toContain('5. Sign up with grace@example.com in your app: you get the role admin (INITIAL_ADMIN_EMAIL)');
+    expect(output).toContain('6. Never commit');
+    // As an option, and refused when it is no address.
+    const given = tempFile();
+    expect(await runCli(['init', '--yes', '--initial-admin-email', 'ada@example.com', '--out', given], noQuestions)).toMatchObject({ exitCode: 0 });
+    expect(readEnvFile(given).INITIAL_ADMIN_EMAIL).toBe('ada@example.com');
+    const wrong = tempFile();
+    expect(await runCli(['init', '--yes', '--initial-admin-email', 'ada', '--out', wrong], noQuestions)).toEqual({
+      exitCode: 1,
+      output: 'The admin\'s address must be an e-mail address, e.g. you@example.com, but is "ada".',
+    });
+    expect(existsSync(wrong)).toBe(false);
+  });
+
+  it('tells the admin how to let the authenticator app sign in on its own next to other methods', async () => {
+    const args = ['init', '--yes', '--totp', '--sms', '--initial-admin-email', 'grace@example.com', '--out', tempFile()];
+
+    const { output } = await runCli(args, noQuestions);
+
+    expect(output).toContain('Signing in with the authenticator app alone is off until an admin allows it. Signed in as the admin, in your app:');
+    expect(output).toContain(
+      "await Madauth.admin.setSettings({ methods: { password: signIn, totp: signIn, sms: secondFactorOnly } });",
+    );
+    expect(output).not.toContain('set-methods');
   });
 
   it('needs at least one sign-in method', async () => {
@@ -354,17 +386,6 @@ describe('start', () => {
     const result = await runCli(['start'], noQuestions, {});
 
     expect(result).toEqual({ exitCode: 1, output: 'MADAUTH_ISSUER is not set. See docs/server.md.' });
-  });
-
-  it('reads the configuration from --env-file, under the environment', async () => {
-    const envFile = tempFile();
-    writeFileSync(envFile, 'MADAUTH_ISSUER=not a url\n');
-
-    const fromFile = await runCli(['start', '--env-file', envFile], noQuestions, {});
-    const environmentWins = await runCli(['start', '--env-file', envFile], noQuestions, { MADAUTH_ISSUER: 'https://app.example.com' });
-
-    expect(fromFile).toEqual({ exitCode: 1, output: 'MADAUTH_ISSUER: "not a url" is not a URL.' });
-    expect(environmentWins).toEqual({ exitCode: 1, output: expect.stringContaining('MADAUTH_SIGNING_KEY is not set') });
   });
 
   it('starts the server with that environment and prints nothing itself', async () => {

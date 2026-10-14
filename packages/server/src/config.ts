@@ -1,6 +1,7 @@
 import type { JWK, JWTVerifyGetKey } from 'jose';
 import { assertPrivateSigningJwk, generateSigningKey } from './keys.js';
-import { METHODS_SETTING, Settings, legacyAppProblem, type MethodConfig } from './settings.js';
+import { isValidEmail, normalizeEmail } from './password.js';
+import type { MethodConfig } from './settings.js';
 import type { StoreAdapter } from './store/schema.js';
 import {
   DEV_WEBHOOK_RECEIVER_URL,
@@ -47,6 +48,11 @@ export interface MadauthConfig {
   };
   /** Where the users, their accounts, claims and the settings are kept (DATABASE_URL or the `store` option). */
   store: StoreAdapter;
+  /**
+   * The address whose user gets the role `admin` when they sign in with it, once it is proven
+   * (INITIAL_ADMIN_EMAIL, normalized). Once per value: see `Admins.applyInitial`.
+   */
+  initialAdminEmail?: string;
   /**
    * E-mail & password sign-in; off unless the webhook sends the e-mails (`email.send_verification` and `email.send_password_reset`).
    * Its rules for new passwords are a setting, see `Settings.passwordRules`.
@@ -97,6 +103,7 @@ export const envVars = {
   GITHUB_CLIENT_ID: false,
   GITHUB_CLIENT_SECRET: false,
   DATABASE_URL: true,
+  INITIAL_ADMIN_EMAIL: false,
   TOTP_ISSUER: false,
   PASSKEY_RP_ID: false,
   WEBHOOK_URL: false,
@@ -155,23 +162,10 @@ function readEnv(env: Record<string, string | undefined>, name: keyof typeof env
 }
 
 /**
- * Reads and validates the madAuth configuration from environment variables, and checks that the settings in
- * the store can be used as they are. Throws a {@link ConfigError} naming the variable that is missing or
- * invalid, or the setting an admin has to set again.
+ * Reads and validates the madAuth configuration from environment variables. Throws a {@link ConfigError}
+ * naming the variable that is missing or invalid.
  */
 export async function loadConfig(env: Record<string, string | undefined>, overrides: ConfigOverrides = {}): Promise<MadauthConfig> {
-  const config = await readConfig(env, overrides);
-  // A setting whose meaning changed is not guessed at: the admin chooses (the command line reads the configuration with readConfig).
-  const problem = legacyAppProblem(await new Settings(config.store).get(METHODS_SETTING));
-  if (problem) throw new ConfigError(problem);
-  return config;
-}
-
-/** {@link loadConfig} without the check of the stored settings: for the command line, which sets them. */
-export async function readConfig(
-  env: Record<string, string | undefined>,
-  overrides: ConfigOverrides = {},
-): Promise<MadauthConfig> {
   const read = (name: keyof typeof envVars) => readEnv(env, name);
   const require = (name: keyof typeof envVars) => {
     const value = read(name);
@@ -183,8 +177,8 @@ export async function readConfig(
   if (env.PASSWORD_MIN_LENGTH?.trim()) {
     throw new ConfigError(
       'PASSWORD_MIN_LENGTH was removed: the password rules are a setting now (default: at least 8 characters). ' +
-        'Remove the variable and set the rules with `npx @madauth/server set-password-rules min-length=' +
-        `${env.PASSWORD_MIN_LENGTH.trim()}\` or Madauth.admin.setSettings. See docs/upgrading.md.`,
+        `Remove the variable, and an admin sets the rules with Madauth.admin.setSettings({ password: { minLength: ${env.PASSWORD_MIN_LENGTH.trim()} } }). ` +
+        'See docs/upgrading.md.',
     );
   }
 
@@ -270,6 +264,11 @@ export async function readConfig(
     );
   }
 
+  const initialAdminEmail = read('INITIAL_ADMIN_EMAIL');
+  if (initialAdminEmail && !isValidEmail(initialAdminEmail)) {
+    throw new ConfigError(`INITIAL_ADMIN_EMAIL must be an e-mail address, e.g. you@example.com, but is "${initialAdminEmail}".`);
+  }
+
   const passkeyRpId = read('PASSKEY_RP_ID')?.toLowerCase();
   if (passkeyRpId && !allowedOrigins.some((origin) => isWithin(new URL(origin).hostname, passkeyRpId))) {
     throw new ConfigError(
@@ -289,12 +288,13 @@ export async function readConfig(
     google: clientId ? { clientId, clientSecret: read('GOOGLE_CLIENT_SECRET') } : undefined,
     github: githubClientId && githubClientSecret ? { clientId: githubClientId, clientSecret: githubClientSecret } : undefined,
     store,
+    initialAdminEmail: initialAdminEmail ? normalizeEmail(initialAdminEmail) : undefined,
     password,
     webhook,
   };
 }
 
-/** Only the store from DATABASE_URL, e.g. to manage claims and settings from the command line. */
+/** Only the store from DATABASE_URL, for the command line. */
 export async function loadStore(env: Record<string, string | undefined>): Promise<StoreAdapter> {
   const store = await storeFromDatabaseUrl(readEnv(env, 'DATABASE_URL'));
   if (!store) throw new ConfigError('Set DATABASE_URL to manage users.');

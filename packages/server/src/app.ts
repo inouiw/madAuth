@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
+import { Admins } from './admins.js';
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
 import { importSigningKeys, type SigningKeys } from './keys.js';
@@ -48,6 +49,9 @@ import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type Webho
 
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
+
+/** `by` of the `user.claims_changed` that INITIAL_ADMIN_EMAIL causes: the variable, where an admin's change has their address. */
+const INITIAL_ADMIN_EMAIL = 'INITIAL_ADMIN_EMAIL';
 
 export { REDIRECT_ERROR_PARAM, REDIRECT_FACTORS_PARAM, REDIRECT_METHOD_PARAM, REDIRECT_NEXT_PARAM } from './routes/oauth.js';
 
@@ -137,6 +141,7 @@ export function createApp(config: MadauthConfig): Hono {
   const users = new Users(config.store, codeKey);
   const methods = methodConfig(config);
   const settings = new Settings(config.store, initialMethods(methods));
+  const admins = new Admins(settings, users);
   const configured = (method: MethodId) => isConfigured(methods, method);
   const signsUp = (method: SignInMethod) => canSignUp(methods, method);
   const emailVerification = sendsVerificationEmails(config);
@@ -183,6 +188,8 @@ export function createApp(config: MadauthConfig): Hono {
     deleteCookie(c, RENEWAL_COOKIE, { path: '/auth', secure });
     deleteCookie(c, EXPIRY_COOKIE, { path: '/', domain: cookieDomain, secure });
   };
+  /** A change that would leave nobody with the role `admin`. */
+  const lastAdmin = (c: Context, message: string) => c.json({ error: 'last_admin', message }, 403);
 
   // --- Session ---
 
@@ -242,6 +249,14 @@ export function createApp(config: MadauthConfig): Hono {
   // The settings of a request, read once: every route that needs them shares the read.
   const methodsOf = new WeakMap<Request, Promise<MethodSettings>>();
 
+  /** INITIAL_ADMIN_EMAIL, for a user who starts a session: their new claims if it gave them the role now, else null. */
+  const promoteInitialAdmin = async (user: MadauthUser) => {
+    const value = config.initialAdminEmail;
+    if (!value || !user.email || normalizeEmail(user.email) !== value) return null;
+    const stored = await users.findById(user.id);
+    return stored ? admins.applyInitial(stored, value) : null;
+  };
+
   const ctx: AppContext = {
     config,
     keys,
@@ -258,7 +273,12 @@ export function createApp(config: MadauthConfig): Hono {
       url.hash = '';
       return url;
     },
-    async startSession(c, user, amr, { method, signedUpAt }, extra) {
+    async startSession(c, signedIn, amr, { method, signedUpAt }, extra) {
+      // The user INITIAL_ADMIN_EMAIL names gets the role before the session, which carries it.
+      const promoted = await promoteInitialAdmin(signedIn);
+      const user = promoted ? { ...signedIn, claims: promoted.claims } : signedIn;
+      // An admin madAuth didn't know of yet (e.g. from before 0.6) is noted, so that the last admin keeps the role.
+      if (!promoted && isAdmin(user)) await admins.note(user.id, null);
       // Only a user whose first session this is gets the write, before the cookies: if it fails, nobody is
       // signed in. The write decides, so two sign-ins at once send it once.
       const firstSession = signedUpAt === 0 && (await users.markSignedUp(user.id));
@@ -266,6 +286,7 @@ export function createApp(config: MadauthConfig): Hono {
       clearChallenge(c, secure);
       await issueSession(c, user, amr, { ...extra, auth_time: Math.floor(Date.now() / 1000) });
       const result = { ...user, amr };
+      if (promoted) await this.emit('user.claims_changed', { user: result, claims: promoted.claims, by: INITIAL_ADMIN_EMAIL });
       if (firstSession) await this.emit('user.signed_up', { user: result, method });
       return result;
     },
@@ -448,6 +469,11 @@ export function createApp(config: MadauthConfig): Hono {
       const via = await checkCode(c, ctx, totpKeys, stored, authenticator, data);
       if (via instanceof Response) return via;
     }
+    // Somebody must stay able to manage claims and settings. The list's write decides, so two admins who delete
+    // their accounts at once can't both go.
+    if (isAdmin(user) && !(await admins.release(user.id, user.email ? normalizeEmail(user.email) : null))) {
+      return lastAdmin(c, "You are the last admin, so your account can't be deleted. Give another user the role \"admin\" first.");
+    }
     // Read before the deletion: the web library revokes the app's access to this Google account with it.
     const googleSub = await users.googleSub(user.id);
     // GitHub's authorization goes once the user is gone, with the token kept from the last sign-in.
@@ -473,6 +499,8 @@ export function createApp(config: MadauthConfig): Hono {
       const message = `Only users with the role "${ADMIN_ROLE}" can manage claims and settings.`;
       return { answer: c.json({ error: 'forbidden', message }, 403) };
     }
+    // Admins whose session started before madAuth knew of them (e.g. from before 0.6) count from their first call.
+    await admins.note(user.id, null);
     return { email };
   };
   const invalidEmail = (c: Context) => c.json({ error: 'invalid_email', message: 'This is not a valid e-mail address.' }, 400);
@@ -508,9 +536,15 @@ export function createApp(config: MadauthConfig): Hono {
     }
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
+    // The last admin keeps the role; the list's write decides, so two admins can't take it from each other at once.
+    const losesRole = isAdmin({ claims: claimsFromJson(user.claims) }) && !isAdmin({ claims });
+    if (losesRole && !(await admins.release(user.id, caller.email))) {
+      return lastAdmin(c, `This is the last admin, so the role "${ADMIN_ROLE}" can't be taken away. Give another user the role first.`);
+    }
     // Stored as JSON, and sent with the user as stored: the webhook sees what the next session sees.
     const stored = Object.keys(claims).length ? JSON.stringify(claims) : null;
     await users.updateUser(user.id, { claims: stored });
+    if (isAdmin({ claims })) await admins.note(user.id, caller.email);
     const email = user.emailNormalized;
     await ctx.emit('user.claims_changed', { user: toMadauthUser({ ...user, claims: stored }), claims, by: caller.email });
     return c.json({ email, userId: user.id, claims });

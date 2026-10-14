@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runCli } from '../cli.js';
+import { createSqliteAdapter } from '../store/sqlite.js';
 import { APP_ORIGIN, WEBHOOK_SECRET, WEBHOOK_URL, cookies, passwordApp, post, setClaims, signUpVerified, setMethods, type TestMethods } from '../test/helpers.js';
 import { base32Decode, stepOf, totp } from '../totp.js';
+import { Users } from '../users.js';
 
 type Made = ReturnType<typeof passwordApp>;
 type App = Made['app'];
@@ -403,8 +405,8 @@ describe('SMS codes as the second step', () => {
 
     const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
     const env = { DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}` };
-    const io = { ask: async () => '', askSecret: async () => 'correct horse battery' };
-    await runCli(['create-user', 'ada@example.com'], io, env);
+    const io = { ask: async () => '', askSecret: async () => '' };
+    await new Users(createSqliteAdapter(join(dir, 'madauth.db'))).createUser({ email: 'ada@example.com', emailNormalized: 'ada@example.com', name: null, emailVerified: true });
     expect(await runCli(['remove-sms', 'ada@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com has no phone number for SMS codes.' });
     expect(await runCli(['remove-sms', 'nobody@example.com'], io, env)).toMatchObject({ exitCode: 1 });
     rmSync(dir, { recursive: true, force: true });

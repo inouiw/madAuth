@@ -1,35 +1,12 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 import { parseArgs, parseEnv } from 'node:util';
-import { loadStore, methodConfig, readConfig } from './config.js';
+import { loadConfig, loadStore } from './config.js';
 import { generateSigningKey } from './keys.js';
-import { checkPasswordPolicy, hashPassword, isValidEmail, normalizeEmail } from './password.js';
-import { claimsFromJson, parseClaims, parseRoles, type Claims } from './claims.js';
-import {
-  METHODS,
-  DEFAULT_PASSWORD_RULES,
-  MAX_MIN_LENGTH,
-  SECOND_FACTOR_POLICIES,
-  Settings,
-  canSignUp,
-  checkMethodSettings,
-  initialMethods,
-  legacyAppProblem,
-  METHODS_SETTING,
-  isConfigured,
-  isPasswordScore,
-  isOn,
-  policyOf,
-  signsIn,
-  type MethodId,
-  type MethodSettings,
-  type PasswordRules,
-  type SecondFactorPolicy,
-  type SignInMethod,
-} from './settings.js';
+import { isValidEmail, normalizeEmail } from './password.js';
 import { madauthSchema, type StoreAdapter } from './store/schema.js';
 import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
-import { passwordAccountKey, Users } from './users.js';
+import { Users } from './users.js';
 import { DEV_WEBHOOK_RECEIVER_URL, generateWebhookSecret } from './webhooks.js';
 
 /** The server's default port, which `init` writes as PORT. */
@@ -45,42 +22,17 @@ Commands:
                                --no-password, --totp or --no-totp (sign-up with the authenticator app),
                                --email-link or --no-email-link (passwordless sign-in by e-mail),
                                --sms or --no-sms (SMS codes as a second factor),
-                               --database <url>, --webhook-url <url>. --yes takes the default for the
-                               rest. --out <path> writes another file, --force overwrites.
+                               --database <url>, --webhook-url <url>, --initial-admin-email <address> (who
+                               becomes the first admin). --yes takes the default for the rest. --out <path>
+                               writes another file, --force overwrites.
   start                        Start the server on PORT (default ${PORT})
   generate-key                 Print a new private ES256 key to use as MADAUTH_SIGNING_KEY
   generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
-  create-user <email>          Create a user with a password (asks for it), already verified. The password
-                               must follow the password rules. Uses DATABASE_URL from the environment.
-  set-roles <email> [role...]  Set the roles of a user (the claim "roles"), e.g. to make the first admin:
-                               set-roles you@example.com admin. Without roles, removes them all.
-                               The user must exist: signed in once, or created with create-user.
-  get-roles <email>            Print the roles of a user.
-  set-claims <email> <json>    Replace the claims of a user, e.g. '{"roles":["admin"],"plan":"pro"}'.
-  get-claims <email>           Print the claims of a user as JSON.
-  set-methods [method[=policy]...]
-                               Switch methods on and off while the server runs: the listed ones are on,
-                               the others off. Methods: google, github, password, email-link (passwordless
-                               sign-in by e-mail), totp (the authenticator app), passkey, and sms (SMS
-                               codes). Listed alone, a method is allowed as a sign-in method (sms: a second
-                               factor). A policy says whether a sign-in with it asks for a second factor:
-                               none (default), optional or required. totp=second-factor and
-                               passkey=second-factor are on only as a second factor, e.g.
-                               set-methods google password=required passkey totp=second-factor sms
-  get-methods                  Print which methods are switched on, with their policies.
-  set-password-rules [min-length=<n>] [min-score=<0-4>]
-                               Set the rules for new passwords: the minimum length (default 8, at most 128)
-                               and how hard to guess they must be, 0 (anything) to 4 (default 2: no common
-                               passwords or simple patterns). What is left out takes its default, e.g.
-                               set-password-rules min-length=10 min-score=3. Uses DATABASE_URL.
-  get-password-rules           Print the rules for new passwords.
   remove-totp <email>          Remove a user's authenticator app and recovery codes: the last resort when
                                both are lost. With a required policy, the user sets it up again next time.
   remove-sms <email>           Remove a user's phone number for SMS codes, when they lost the phone.
   remove-passkeys <email>      Remove all passkeys of a user, when they lost them.
-                               The claims commands and the remove commands use DATABASE_URL from the
-                               environment; the methods commands need the server's whole configuration
-                               (e.g. --env-file .env).
+                               The remove commands use DATABASE_URL from the environment.
   schema [--dialect <name>] [--from <version>]
                                Print the SQL that creates madAuth's tables for a custom store adapter.
                                Dialects: postgres (default), mysql, sqlite. With --from, print only the
@@ -208,6 +160,7 @@ function parseCliArgs(args: string[]) {
       sms: { type: 'boolean' },
       database: { type: 'string' },
       'webhook-url': { type: 'string' },
+      'initial-admin-email': { type: 'string' },
       yes: { type: 'boolean' },
       out: { type: 'string' },
       force: { type: 'boolean' },
@@ -233,13 +186,6 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
   const [command, ...rest] = positionals;
   // Few commands take arguments; anywhere else one is likely a mistyped option, e.g. `init .env.local`.
   const argumentLimits: Record<string, number> = {
-    'set-roles': Infinity,
-    'set-methods': Infinity,
-    'set-password-rules': Infinity,
-    'set-claims': 2,
-    'create-user': 1,
-    'get-roles': 1,
-    'get-claims': 1,
     'remove-totp': 1,
     'remove-sms': 1,
     'remove-passkeys': 1,
@@ -277,18 +223,6 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
       const from = Number(options.from);
       if (!Number.isInteger(from) || from < 1 || from > madauthSchema.version) return { output: usage, exitCode: 1 };
       return { output: upgradeTablesSql(dialect, from) || '-- The tables are up to date.', exitCode: 0 };
-    }
-    if (command === 'create-user') {
-      return await createUser(rest[0], io, env);
-    }
-    if (command === 'set-roles' || command === 'get-roles' || command === 'set-claims' || command === 'get-claims') {
-      return await claims(command, rest[0], rest.slice(1), env);
-    }
-    if (command === 'set-methods' || command === 'get-methods') {
-      return await methods(command, rest, env);
-    }
-    if (command === 'set-password-rules' || command === 'get-password-rules') {
-      return await passwordRules(command, rest, env);
     }
     if (command === 'remove-totp') {
       return await removeTotp(rest[0], env);
@@ -376,6 +310,9 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   const webhookUrl = webhook
     ? await answer(options['webhook-url'], `Webhook URL, where madAuth hands over its ${emails ? (sms ? 'e-mails and SMS' : 'e-mails') : 'SMS'}`, 'http://localhost:8790/webhook')
     : '';
+  // Asked here, so that the file never needs the command line to make the first admin.
+  const adminEmail = await answer(options['initial-admin-email'], 'Your e-mail address, to become the first admin (empty: none)');
+  if (adminEmail && !isValidEmail(adminEmail)) return fail(`The admin's address must be an e-mail address, e.g. you@example.com, but is "${adminEmail}".`);
   // The types each chosen method needs, once each.
   const events = [
     ...(password ? ['email.send_verification', 'email.send_password_reset', 'email.send_already_registered', 'email.send_password_reset_no_password'] : []),
@@ -409,6 +346,12 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
     githubClientId && variable('GITHUB_CLIENT_ID', githubClientId, 'GitHub sign-in: the client ID of your OAuth App.'),
     githubClientSecret && variable('GITHUB_CLIENT_SECRET', githubClientSecret, 'Client secret of the same OAuth App.'),
     variable('DATABASE_URL', database, 'Where the users are stored, whichever way they sign in.'),
+    adminEmail &&
+      variable(
+        'INITIAL_ADMIN_EMAIL',
+        adminEmail,
+        'Who signs in with this address, once it is proven, gets the role admin. Once per value: a new one makes another admin.',
+      ),
     webhook && variable('WEBHOOK_URL', webhookUrl, `Your webhook receiver. madAuth hands its ${sms ? 'e-mails and SMS' : 'e-mails'} to it.`),
     webhook && variable('WEBHOOK_SECRET', generateWebhookSecret(), 'Signs every webhook call. Your receiver needs the same one.'),
     webhook &&
@@ -420,14 +363,15 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
 
   // The server's own checks, on the file as it will be read, so that it is ready to use. The database is
   // not opened here: a placeholder stands in for DATABASE_URL.
-  await readConfig({ ...parseEnv(content), DATABASE_URL: undefined }, { store: {} as StoreAdapter });
+  await loadConfig({ ...parseEnv(content), DATABASE_URL: undefined }, { store: {} as StoreAdapter });
 
   // Always a new file, readable by its owner only: it holds secrets, and an overwritten file would keep its mode.
   if (options.force) rmSync(file, { force: true });
   writeFileSync(file, content, { mode: 0o600, flag: 'wx' });
 
   const google = clientSecret ? 'GoogleRedirect' : clientId ? 'GoogleFedcm' : undefined;
-  return { output: `Wrote ${file}.\n\nNext steps:\n\n${nextSteps(file, origin, google, !!githubClientId, password, totp, emailLink, sms)}`, exitCode: 0 };
+  const steps = nextSteps(file, origin, google, !!githubClientId, password, totp, emailLink, sms, normalizeEmail(adminEmail));
+  return { output: `Wrote ${file}.\n\nNext steps:\n\n${steps}`, exitCode: 0 };
 }
 
 /** What to do after `init`, for the chosen sign-in methods: numbered steps with commands and snippets to copy. */
@@ -440,12 +384,18 @@ function nextSteps(
   totp = false,
   emailLink = false,
   sms = false,
+  adminEmail = '',
 ): string {
   const server = `http://localhost:${PORT}`;
   // Quoted when needed, so the command can be pasted as it is.
   const envFile = /[^\w./-]/.test(file) ? `'${file.replaceAll("'", `'\\''`)}'` : file;
   const providers = [google, github && 'GitHub', password && 'Password', totp && 'Totp', emailLink && 'EmailLink'].filter(Boolean);
-  const methodList = [google && 'google', github && 'github', password && 'password', totp && 'totp', emailLink && 'email-link'].filter(Boolean).join(' ');
+  // The methods as the admin lists them to let the app sign in on its own; SMS codes stay a second factor.
+  const methodList = [google && 'google', github && 'github', password && 'password', totp && 'totp', emailLink && "'email-link'"]
+    .filter(Boolean)
+    .map((method) => `${method}: signIn`)
+    .concat(sms ? ['sms: secondFactorOnly'] : [])
+    .join(', ');
   // For development, Google wants http://localhost next to the origin with its port.
   const googleOrigins = new Set([origin, ...(new URL(origin).hostname === 'localhost' ? ['http://localhost'] : [])]);
   const steps = [
@@ -456,12 +406,6 @@ function nextSteps(
       '',
       `  ${DEV_WEBHOOK_RECEIVER_URL}`,
     ],
-    totp &&
-      (google || github || password) && [
-        'Signing in with the authenticator app alone is off until an admin lists it. Once the server runs:',
-        '',
-        `  npx @madauth/server set-methods ${methodList} --env-file ${envFile}`,
-      ],
     [
       'Proxy /auth and /.well-known from your app to the server, so that its cookies are first-party.',
       'With Vite, in vite.config.ts:',
@@ -493,6 +437,18 @@ function nextSteps(
       '',
       `  Authorization callback URL: ${origin}/auth/github/callback`,
     ],
+    adminEmail && [
+      `Sign up with ${adminEmail} in your app: you get the role admin (INITIAL_ADMIN_EMAIL), and manage claims and`,
+      'settings with Madauth.admin. Give a second user the role as well, so that one admin can help the other.',
+    ],
+    totp &&
+      (google || github || password || emailLink) && [
+        `Signing in with the authenticator app alone is off until an admin allows it. ${adminEmail ? 'Signed in as the admin' : 'As an admin (see INITIAL_ADMIN_EMAIL)'}, in your app:`,
+        '',
+        "  const signIn = { allowAsSignInMethod: true, secondFactor: 'none' } as const;",
+        ...(sms ? ["  const secondFactorOnly = { allowAsSignInMethod: false, secondFactor: 'none' } as const;"] : []),
+        `  await Madauth.admin.setSettings({ methods: { ${methodList} } });`,
+      ],
     [
       `Never commit ${file}: it holds the signing key and your secrets. Production needs an https app URL`,
       'and a signing key of its own: run init again for it.',
@@ -500,125 +456,6 @@ function nextSteps(
   ].filter((step) => !!step);
   // The lines after the first are indented under the step's text.
   return steps.map((lines, i) => `${i + 1}. ${lines.map((line, j) => (j && line ? `   ${line}` : line)).join('\n')}`).join('\n\n');
-}
-
-async function claims(
-  command: 'set-roles' | 'get-roles' | 'set-claims' | 'get-claims',
-  email: string | undefined,
-  args: string[],
-  env: Env,
-) {
-  if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const users = new Users(await loadStore(env));
-  const address = normalizeEmail(email);
-  const user = await users.findByEmail(address);
-  if (!user) return { output: `No user has the e-mail address ${address}. Users exist once they signed in, or with create-user.`, exitCode: 1 };
-  let current = claimsFromJson(user.claims);
-  if (command === 'set-roles' || command === 'set-claims') {
-    let next: Claims | null;
-    if (command === 'set-roles') {
-      const roles = parseRoles(args);
-      if (!roles) {
-        return {
-          output: 'Role names consist of lower-case letters, digits, "-" and "_", and start with a letter, e.g. admin.',
-          exitCode: 1,
-        };
-      }
-      const { roles: _, ...rest } = current;
-      next = parseClaims(roles.length ? { ...rest, roles } : rest);
-    } else {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(args[0] ?? '');
-      } catch {
-        return { output: `The claims must be JSON, e.g. '{"roles":["admin"]}'.\n\n${usage}`, exitCode: 1 };
-      }
-      next = parseClaims(parsed);
-    }
-    if (!next) {
-      return {
-        output:
-          'Claims are a JSON object of at most 2048 characters whose keys are names (letters, digits and "_", starting ' +
-          'with a letter); "roles" is a list of role names.',
-        exitCode: 1,
-      };
-    }
-    // Whoever can reach the database decides: this is how the first admin gets the role.
-    await users.updateUser(user.id, { claims: Object.keys(next).length ? JSON.stringify(next) : null });
-    current = next;
-  }
-  if (command === 'set-claims' || command === 'get-claims') {
-    return { output: `${address}: ${JSON.stringify(current)}`, exitCode: 0 };
-  }
-  const roles = Array.isArray(current.roles) ? (current.roles as string[]) : [];
-  return { output: roles.length ? `${address}: ${roles.join(' ')}` : `${address} has no roles.`, exitCode: 0 };
-}
-
-async function methods(command: 'set-methods' | 'get-methods', args: string[], env: Env) {
-  // The whole configuration: only a method the server is configured for can be on, and one must stay on.
-  const config = await readConfig(env);
-  const forMethods = methodConfig(config);
-  const configured = (method: MethodId) => isConfigured(forMethods, method);
-  const signsUp = (method: SignInMethod) => canSignUp(forMethods, method);
-  const settings = new Settings(config.store, initialMethods(forMethods));
-  if (command === 'set-methods') {
-    const next: MethodSettings = {};
-    for (const arg of args) {
-      const [name, value, ...more] = arg.split('=');
-      if (!(METHODS as readonly string[]).includes(name) || more.length) {
-        return { output: `Unknown method "${arg}". Methods: ${METHODS.join(', ')}, e.g. set-methods google password=required passkey totp=second-factor sms.`, exitCode: 1 };
-      }
-      const method = name as MethodId;
-      const secondFactorOnly = value === 'second-factor' || method === 'sms';
-      if (value !== undefined && value !== 'second-factor' && !(SECOND_FACTOR_POLICIES as readonly string[]).includes(value)) {
-        return { output: `"${arg}": the value is a policy for the second factor (${SECOND_FACTOR_POLICIES.join(', ')}), or second-factor.`, exitCode: 1 };
-      }
-      const policy = value === undefined || value === 'second-factor' ? 'none' : (value as SecondFactorPolicy);
-      next[method] = { allowAsSignInMethod: !secondFactorOnly, secondFactor: policy };
-    }
-    const wrong = checkMethodSettings(next, { configured, signsUp });
-    if (wrong) return { output: wrong, exitCode: 1 };
-    await settings.changeMethods(() => next, null);
-  }
-  const current = await settings.methods();
-  const describe = (method: MethodId) => {
-    if (!signsIn(method, configured, current)) return `${method} (second factor only)`;
-    const policy = policyOf(method, current);
-    return policy !== 'none' ? `${method} (second factor ${policy})` : method;
-  };
-  const on = METHODS.filter((method) => isOn(method, configured, current)).map(describe);
-  const off = METHODS.filter((method) => configured(method) && !isOn(method, configured, current));
-  // A list from before 0.6 that the server refuses to start with: say why, and what to run.
-  const problem = legacyAppProblem(await settings.get(METHODS_SETTING));
-  return { output: `Switched on: ${on.join(', ')}.${off.length ? ` Switched off: ${off.join(', ')}.` : ''}${problem ? `\n\n${problem}` : ''}`, exitCode: 0 };
-}
-
-/** The password rules in words. */
-function describeRules(rules: PasswordRules): string {
-  return `New passwords: at least ${rules.minLength} characters, and a strength score of at least ${rules.minScore} (0 to 4).`;
-}
-
-async function passwordRules(command: 'set-password-rules' | 'get-password-rules', args: string[], env: Env) {
-  const settings = new Settings(await loadStore(env));
-  if (command === 'set-password-rules') {
-    const fail = (output: string) => ({ output, exitCode: 1 });
-    const rules: PasswordRules = { ...DEFAULT_PASSWORD_RULES };
-    for (const arg of args) {
-      const [name, value, ...more] = arg.split('=');
-      const number = value !== undefined && /^\d+$/.test(value) && !more.length ? Number(value) : NaN;
-      if (name === 'min-length') {
-        if (!(number >= 1 && number <= MAX_MIN_LENGTH)) return fail(`min-length must be a whole number from 1 to ${MAX_MIN_LENGTH} but is "${value ?? ''}".`);
-        rules.minLength = number;
-      } else if (name === 'min-score') {
-        if (!isPasswordScore(number)) return fail(`min-score must be 0, 1, 2, 3 or 4 but is "${value ?? ''}".`);
-        rules.minScore = number;
-      } else {
-        return fail(`Unknown password rule "${arg}". Rules: min-length=<n>, min-score=<0-4>, e.g. set-password-rules min-length=10 min-score=3.`);
-      }
-    }
-    await settings.setPasswordRules(rules, null);
-  }
-  return { output: describeRules(await settings.passwordRules()), exitCode: 0 };
 }
 
 async function removeTotp(email: string | undefined, env: Env) {
@@ -658,23 +495,4 @@ async function removePasskeys(email: string | undefined, env: Env) {
     output: removed ? `Removed ${removed === 1 ? 'the passkey' : `the ${removed} passkeys`} of ${address}.` : `${address} has no passkeys.`,
     exitCode: 0,
   };
-}
-
-async function createUser(email: string | undefined, io: CliIo, env: Env) {
-  if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const store = await loadStore(env);
-  const password = await io.askSecret(`Password for ${email}: `);
-  const problem = await checkPasswordPolicy(password, await new Settings(store).passwordRules(), [email]);
-  if (problem) return { output: problem.message, exitCode: 1 };
-  const users = new Users(store);
-  const passwordHash = await hashPassword(password);
-  const user = await users.createUser({
-    email: email.trim(),
-    emailNormalized: normalizeEmail(email),
-    name: null,
-    emailVerified: true,
-    account: (userId) => ({ key: passwordAccountKey(userId), secret: passwordHash }),
-  });
-  if (!user) return { output: `A user with the e-mail address ${email} already exists.`, exitCode: 1 };
-  return { output: `Created user ${user.id} (${user.email}).`, exitCode: 0 };
 }

@@ -59,6 +59,7 @@ Set your values in [`cdk.json`](cdk.json) under `context`:
 | `secretsPath` | `/madauth` | Where step 2 stored the secrets |
 | `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: Google and GitHub sign-in only |
 | `webhookEvents` | `email.send_verification,email.send_password_reset,email.send_already_registered` | What the receiver handles. This default turns on e-mail & password sign-in; add `email.send_signin_link` for the e-mail link. |
+| `environment` | `{ "INITIAL_ADMIN_EMAIL": "you@example.com" }` | More environment variables of the server, each under its own name, see [all settings](../../docs/server.md#configuration): `INITIAL_ADMIN_EMAIL` makes you the first admin (madAuth 0.6 or newer, see [Administration](#administration)), others are e.g. `PASSKEY_RP_ID`, `TOTP_ISSUER` or `SESSION_TTL`. |
 
 Then deploy:
 
@@ -104,8 +105,4 @@ const madauth = new MadAuthServer(this, 'MadAuth', {
 
 ## Administration
 
-The [command line](../../docs/server.md#dynamodb) works with the table, e.g. to make yourself an admin. Use the table name from the stack's resources:
-
-```bash
-DATABASE_URL=dynamodb:<table> npx @madauth/server set-roles you@example.com admin
-```
+Set `INITIAL_ADMIN_EMAIL` under `environment` in `cdk.json` to your address and deploy (step 3), then sign in with that address in your app. Once the address is proven, you have the role `admin` and manage claims and sign-in methods from your app with `Madauth.admin`. Give a second user the role as well, so that one admin can help the other. A value applies once: to make another admin later, e.g. when the only admin is locked out, set a new address and deploy again. See [The first admin](../../docs/server.md#the-first-admin).

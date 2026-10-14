@@ -20,7 +20,7 @@ npx @madauth/server init
 npx @madauth/server start --env-file .env
 ```
 
-`init` asks a few questions and writes the configuration to `.env`, with a new signing key, then prints the next steps. `start` runs the server on port 8787. See [Getting started](https://github.com/inouiw/madAuth/blob/main/docs/getting-started.md).
+`init` asks a few questions and writes the configuration to `.env`, with a new signing key, then prints the next steps. Give it your address to become the first admin (`INITIAL_ADMIN_EMAIL`), who manages claims and sign-in methods from your app. `start` runs the server on port 8787. See [Getting started](https://github.com/inouiw/madAuth/blob/main/docs/getting-started.md).
 
 With Docker:
 

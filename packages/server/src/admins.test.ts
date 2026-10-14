@@ -1,0 +1,182 @@
+// The role admin: INITIAL_ADMIN_EMAIL makes the first admin, and the last admin keeps the role. See "The first
+// admin" in docs/server.md.
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ADMINS_SETTING, INITIAL_ADMIN_SETTING } from './admins.js';
+import type { MadauthConfig } from './config.js';
+import { Settings } from './settings.js';
+import {
+  REDIRECT_TO,
+  cookies,
+  linkAndCode,
+  passwordApp,
+  post,
+  setClaims,
+  signInResponse,
+  signUpVerified,
+  testApp,
+  type RecordingWebhook,
+} from './test/helpers.js';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+type App = ReturnType<typeof testApp>;
+const GRACE = 'grace@example.com';
+const ADA = 'ada@example.com';
+const password = 'correct horse battery';
+
+const withSession = (session: string) => ({ Cookie: `madauth_session=${session}` });
+const setClaimsOf = (app: App, session: string, email: string, claims: object) => post(app, '/auth/admin/claims/set', { email, claims }, withSession(session));
+const sessionUser = async (app: App, session: string) => (await (await app.request('/auth/session', { headers: withSession(session) })).json()).user;
+const signInWithPassword = async (app: App, email: string, secret = email === ADA ? 'adas password!' : password) =>
+  cookies(await post(app, '/auth/password/signin', { email, password: secret })).madauth_session.value;
+/** The `user.claims_changed` calls INITIAL_ADMIN_EMAIL caused. */
+const initialAdminCalls = (hook: RecordingWebhook) => hook.calls.filter((call) => call.type === 'user.claims_changed' && call.data.by === 'INITIAL_ADMIN_EMAIL');
+
+/** An app whose INITIAL_ADMIN_EMAIL is Grace's; with `overrides`, on the store of an earlier one. */
+const appFor = (initialAdminEmail: string | undefined, overrides: Partial<MadauthConfig> = {}) => passwordApp({ initialAdminEmail, ...overrides });
+
+describe('INITIAL_ADMIN_EMAIL', () => {
+  it('gives the role to the user who signs up with the address, once it is confirmed, and tells the webhook', async () => {
+    const { app, hook, store } = appFor(GRACE);
+    await post(app, '/auth/password/signup', { email: 'Grace@Example.com', password, name: 'Grace Hopper', redirectTo: REDIRECT_TO });
+
+    // An unfinished sign-up gets nothing: nobody has proven the address yet.
+    expect((await post(app, '/auth/password/signin', { email: GRACE, password })).status).toBe(403);
+    expect(await new Settings(store).get(INITIAL_ADMIN_SETTING)).toBeUndefined();
+    const confirmed = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
+
+    const { user } = await confirmed.json();
+    expect(user.claims).toEqual({ roles: ['admin'] });
+    expect(initialAdminCalls(hook)).toEqual([
+      { type: 'user.claims_changed', data: { user: { id: user.id, email: 'Grace@Example.com', name: 'Grace Hopper', claims: { roles: ['admin'] } }, claims: { roles: ['admin'] }, by: 'INITIAL_ADMIN_EMAIL' } },
+    ]);
+    // Before user.signed_up, which carries the role as well.
+    expect(hook.types().slice(-3)).toEqual(['user.claims_changed', 'user.signed_up', 'user.signed_in']);
+    expect(await new Settings(store).get(INITIAL_ADMIN_SETTING)).toEqual([{ email: GRACE, userId: user.id }]);
+    expect(await new Settings(store).get(ADMINS_SETTING)).toEqual([user.id]);
+    // The session works for the admin API at once.
+    const session = cookies(confirmed).madauth_session.value;
+    expect((await post(app, '/auth/admin/claims/get', { email: GRACE }, withSession(session))).status).toBe(200);
+  });
+
+  it('a Google sign-in with the address gets it too: Google verified it', async () => {
+    const { app, hook } = appFor(ADA);
+
+    const res = await signInResponse(app);
+
+    expect((await res.json()).user.claims).toEqual({ roles: ['admin'] });
+    expect(initialAdminCalls(hook)).toHaveLength(1);
+  });
+
+  it('applies once per value: a role taken away stays away, and a new value applies again, to the claims a user has', async () => {
+    const first = appFor(GRACE);
+    const grace = await signUpVerified(first.app, first.hook);
+    await signUpVerified(first.app, first.hook, ADA, 'adas password!');
+    await setClaimsOf(first.app, grace, ADA, { plan: 'pro', roles: ['editor'] });
+    expect((await sessionUser(first.app, await signInWithPassword(first.app, GRACE))).claims).toEqual({ roles: ['admin'] });
+
+    // The operator names Ada now: the new value applies at her next sign-in, next to the claims she has.
+    const second = appFor(ADA, { store: first.store, webhookFetch: first.hook.fetch });
+    const ada = cookies(await post(second.app, '/auth/password/signin', { email: ADA, password: 'adas password!' })).madauth_session.value;
+    expect((await sessionUser(second.app, ada)).claims).toEqual({ plan: 'pro', roles: ['admin', 'editor'] });
+    // Ada takes Grace's role away. Grace's value was applied, so her next sign-in leaves it away, also on an
+    // instance that still has her value (as while a deployment replaces its instances).
+    expect((await setClaimsOf(second.app, ada, GRACE, {})).status).toBe(200);
+    expect((await sessionUser(first.app, await signInWithPassword(first.app, GRACE))).claims).toBeUndefined();
+
+    expect(initialAdminCalls(first.hook).map((call) => call.data.user.email)).toEqual([GRACE, ADA]);
+  });
+
+  it('of two sign-ins at once, one applies it', async () => {
+    const before = appFor(undefined);
+    await signInResponse(before.app);
+    const { app, hook } = appFor(ADA, { store: before.store });
+
+    const results = await Promise.all([1, 2].map(() => signInResponse(app)));
+
+    expect(results.map((res) => res.status)).toEqual([200, 200]);
+    expect(initialAdminCalls(hook)).toHaveLength(1);
+    expect((await sessionUser(app, cookies(results[0]).madauth_session.value)).claims).toEqual({ roles: ['admin'] });
+  });
+
+  it('does nothing for another address, or without the variable', async () => {
+    const { app, hook } = appFor(ADA);
+
+    const session = await signUpVerified(app, hook);
+
+    expect((await sessionUser(app, session)).claims).toBeUndefined();
+    expect(initialAdminCalls(hook)).toEqual([]);
+  });
+});
+
+describe('the last admin', () => {
+  /** Grace is the admin (by INITIAL_ADMIN_EMAIL), Ada a user; returns both sessions. */
+  async function withAdmin() {
+    const made = appFor(GRACE);
+    const grace = await signUpVerified(made.app, made.hook);
+    const ada = await signUpVerified(made.app, made.hook, ADA, 'adas password!');
+    return { ...made, grace, ada };
+  }
+
+  it('keeps the role: the admin API refuses to take it, until another user has it', async () => {
+    const { app, grace, ada } = await withAdmin();
+
+    const refused = await setClaimsOf(app, grace, GRACE, { plan: 'pro' });
+
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ error: 'last_admin' });
+    expect((await sessionUser(app, grace)).claims).toEqual({ roles: ['admin'] });
+    // With a second admin, either can go.
+    expect((await setClaimsOf(app, grace, ADA, { roles: ['admin'] })).status).toBe(200);
+    expect((await setClaimsOf(app, grace, GRACE, { plan: 'pro' })).status).toBe(200);
+    expect((await sessionUser(app, grace)).claims).toEqual({ plan: 'pro' });
+    expect(await (await setClaimsOf(app, ada, ADA, {})).json()).toMatchObject({ error: 'last_admin' });
+    // Claims without a change of the role are no matter.
+    expect((await setClaimsOf(app, ada, ADA, { roles: ['admin', 'editor'] })).status).toBe(200);
+  });
+
+  it("can't delete their account until another user has the role", async () => {
+    const { app, store, grace } = await withAdmin();
+    const deleteAccount = () => post(app, '/auth/account/delete', {}, withSession(grace));
+
+    const refused = await deleteAccount();
+
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ error: 'last_admin' });
+    expect(await store.findOne('user', { emailNormalized: GRACE })).not.toBeNull();
+    expect((await setClaimsOf(app, grace, ADA, { roles: ['admin'] })).status).toBe(200);
+    expect((await deleteAccount()).status).toBe(204);
+  });
+
+  it('of two admins who take the role from each other at once, one is refused', async () => {
+    const { app, grace, ada } = await withAdmin();
+    await setClaimsOf(app, grace, ADA, { roles: ['admin'] });
+
+    const results = await Promise.all([setClaimsOf(app, grace, ADA, {}), setClaimsOf(app, ada, GRACE, {})]);
+
+    expect(results.map((res) => res.status).sort()).toEqual([200, 403]);
+    const admins = [await sessionUser(app, grace), await sessionUser(app, ada)].filter((user) => user.claims?.roles?.includes('admin'));
+    expect(admins).toHaveLength(1);
+  });
+
+  it('counts an admin whose role was set straight in the store (e.g. before 0.6) once they sign in or call the admin API', async () => {
+    const { app, hook, store } = appFor(undefined);
+    await signUpVerified(app, hook);
+    await signUpVerified(app, hook, ADA, 'adas password!');
+    await setClaims(store, GRACE, { roles: ['admin'] });
+    await setClaims(store, ADA, { roles: ['admin'] });
+    const grace = await signInWithPassword(app, GRACE);
+
+    // madAuth hasn't met Ada as an admin yet, so Grace counts as the last one.
+    expect((await setClaimsOf(app, grace, GRACE, {})).status).toBe(403);
+    await signInWithPassword(app, ADA);
+    expect((await setClaimsOf(app, grace, GRACE, {})).status).toBe(200);
+    // A role taken away straight in the store counts no more either.
+    await setClaims(store, GRACE, { roles: ['admin'] });
+    await post(app, '/auth/admin/claims/get', { email: GRACE }, withSession(grace));
+    await setClaims(store, ADA, null);
+    expect((await setClaimsOf(app, grace, GRACE, {})).status).toBe(403);
+  });
+});

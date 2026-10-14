@@ -1,6 +1,6 @@
 // Everything madAuth stores, written once on top of the StoreAdapter. Routes never call the adapter directly.
 import { createHash, randomBytes } from 'node:crypto';
-import { claimsFromJson } from './claims.js';
+import { claimsFromJson, type Claims } from './claims.js';
 import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
 import { ALWAYS_SIGN_IN, SIGN_IN_METHODS, type SecondFactor, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
@@ -577,6 +577,22 @@ export class Users {
 
   async updateUser(id: string, patch: Partial<Omit<StoredUser, 'id'>>): Promise<void> {
     await this.store.update('user', { id }, patch as Row);
+  }
+
+  /**
+   * Changes the user's claims: `apply` gets them as stored and returns the new ones (in canonical form, see
+   * `parseClaims`). The write lands only if nobody changed them since they were read; otherwise `apply` runs
+   * again with the newer ones. Resolves to the user as written, or null if they are gone or kept changing.
+   */
+  async changeClaims(user: StoredUser, apply: (claims: Claims) => Claims): Promise<StoredUser | null> {
+    let current: StoredUser | null = user;
+    for (let attempt = 0; attempt < 3 && current; attempt++) {
+      const next = apply(claimsFromJson(current.claims));
+      const claims = Object.keys(next).length ? JSON.stringify(next) : null;
+      if ((await this.store.update('user', { id: current.id, claims: current.claims ?? null }, { claims })) === 1) return { ...current, claims };
+      current = await this.findById(user.id);
+    }
+    return null;
   }
 
   /** Changes an account. Resolves to false if it is gone meanwhile. */
