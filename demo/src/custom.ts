@@ -107,8 +107,9 @@ function say(message: string, isError = false): void {
 }
 
 /**
- * Shows a failed result; returns whether it succeeded. A sign-in that goes on with the authenticator app
- * (`authenticator_required`, `authenticator_setup_required`) is not a failure: the next step is shown.
+ * Shows a failed result; returns whether it succeeded. A sign-in that goes on with a second step
+ * (`authenticator_required`, `passkey_required`, `sms_required`, `second_factor_setup_required`, or
+ * `authenticator_setup_required` for a sign-up with the app) is not a failure: the next step is shown.
  */
 function report(result: Result): boolean {
   if (result.isSuccess) return true;
@@ -118,7 +119,8 @@ function report(result: Result): boolean {
   // The user closed the browser's passkey dialog: nothing to say.
   else if (result.error.code === 'cancelled') say('');
   else if (result.error.code === 'sms_required') void startSmsStep();
-  else if (result.error.code === 'authenticator_setup_required') void startSetup();
+  // Either setup starts with the app; the setup view offers a passkey or a phone instead when `factors` allow.
+  else if (result.error.code === 'second_factor_setup_required' || result.error.code === 'authenticator_setup_required') void startSetup();
   else say(messageFor(result.error), true);
   return false;
 }

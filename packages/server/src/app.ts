@@ -12,7 +12,7 @@ import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
 import { body, error } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
-import { clearChallenge, setChallenge, type NextStep } from './routes/challenge.js';
+import { clearChallenge, isSetupStep, setChallenge, type NextStep } from './routes/challenge.js';
 import { appOriginOf } from './routes/oauth.js';
 import { smsRoutes } from './routes/sms.js';
 import { authenticatorRoutes, checkCode, type AuthenticatorKeys } from './routes/authenticator.js';
@@ -288,7 +288,7 @@ export function createApp(config: MadauthConfig): Hono {
           const on = factorsOn(configured, methods, method);
           // A passkey answers only on the domain it was made for: one of another app's is no factor here.
           const has = factorsAmong(await users.accounts(user.id), on, usableOn(passkeyDomain(config, appOriginOf(c))));
-          next = has[0] ?? (policy === 'required' ? 'authenticator-setup' : null);
+          next = has[0] ?? (policy === 'required' ? 'second-factor-setup' : null);
           factors = has.length ? has : on;
         }
       }
@@ -298,7 +298,7 @@ export function createApp(config: MadauthConfig): Hono {
         clearSession(c);
         // Only what the session will show; the cookie is signed, not encrypted.
         const known = { ...(profile?.name ? { name: profile.name } : {}), ...(profile?.picture ? { picture: profile.picture } : {}) };
-        const step = next === 'authenticator-setup' ? { factors: [], setup: factors } : { factors };
+        const step = isSetupStep(next) ? { factors: [], setup: factors } : { factors };
         await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, ...step, ...(Object.keys(known).length ? { profile: known } : {}) });
         return { next, method, factors };
       }

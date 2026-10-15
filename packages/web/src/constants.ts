@@ -1,6 +1,6 @@
 /** Hash parameter the server uses to report a failed redirect sign-in (`#madauth_error=<code>`). */
 export const REDIRECT_ERROR_PARAM = 'madauth_error';
-/** Hash parameter that says what a redirect sign-in still needs (`#madauth_next=authenticator`, `sms` or `authenticator-setup`). */
+/** Hash parameter that says what a redirect sign-in still needs (`#madauth_next=passkey`, `authenticator`, `sms` or `second-factor-setup`). */
 export const REDIRECT_NEXT_PARAM = 'madauth_next';
 /** Next to it: which second factors can finish the step, comma-separated (`madauth_factors=authenticator,sms`). */
 export const REDIRECT_FACTORS_PARAM = 'madauth_factors';

@@ -16,7 +16,7 @@ export interface EmailLinkApi {
   send(options: SendEmailOptions): Promise<Result>;
   /**
    * Signs in with the code from the e-mail. Fails with `code_invalid` or `codes_locked`; with
-   * `authenticator_required` or `authenticator_setup_required` the code was right and the sign-in goes on with
+   * `authenticator_required` or `second_factor_setup_required` the code was right and the sign-in goes on with
    * the authenticator app: `Madauth.authenticator.verify`, or the setup (`Madauth.authenticator.startSetup` and
    * `confirmSetup`). The link in the e-mail is handled by `Madauth.initialize` when the page opens from it.
    */

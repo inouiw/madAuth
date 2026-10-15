@@ -29,6 +29,9 @@ export interface RecordedRequest {
   credentials?: RequestCredentials;
 }
 
+/** Whether a challenge waits for a setup: a second factor a policy requires, or the app a sign-up with it creates. */
+const isSetup = (next: string | undefined) => next === 'second-factor-setup' || next === 'authenticator-setup';
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
@@ -82,7 +85,7 @@ export interface FakeServer {
   recoveryCodes: Map<string, string[]>;
   /** A sign-in whose first step is done, waiting for a second factor or a setup (the challenge cookie), with the factors that can finish it. */
   challenge:
-    | { email: string; next: 'passkey' | 'authenticator' | 'authenticator-setup' | 'sms'; method: 'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey'; factors: ('passkey' | 'authenticator' | 'sms')[] }
+    | { email: string; next: 'passkey' | 'authenticator' | 'sms' | 'second-factor-setup' | 'authenticator-setup'; method: 'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey'; factors: ('passkey' | 'authenticator' | 'sms')[] }
     | undefined;
   /** Passkeys, when the server has them on: whether they sign in on their own, and that sign-in's policy. */
   passkey: { signIn: boolean; secondFactor: SecondFactorPolicy } | null;
@@ -178,15 +181,15 @@ export function fakeServer(): FakeServer {
     const phone = server.methods.sms && server.phones.has(email);
     const passkey = !!server.passkey && method !== 'passkey' && passkeysOf(email).length > 0;
     const factors: ('passkey' | 'authenticator' | 'sms')[] = [...(passkey ? (['passkey'] as const) : []), ...(app ? (['authenticator'] as const) : []), ...(phone ? (['sms'] as const) : [])];
-    const next: 'passkey' | 'authenticator' | 'sms' | 'authenticator-setup' | undefined =
-      policy === 'none' ? undefined : factors.length ? factors[0] : policy === 'required' ? 'authenticator-setup' : undefined;
+    const next: 'passkey' | 'authenticator' | 'sms' | 'second-factor-setup' | undefined =
+      policy === 'none' ? undefined : factors.length ? factors[0] : policy === 'required' ? 'second-factor-setup' : undefined;
     if (!next) return signedIn(email);
     // As the real server: a sign-in that goes on with a second step ends the session there was.
     server.user = null;
     server.challenge = { email, next, method, factors };
-    const error = { passkey: 'passkey_required', authenticator: 'authenticator_required', sms: 'sms_required', 'authenticator-setup': 'authenticator_setup_required' }[next];
+    const error = { passkey: 'passkey_required', authenticator: 'authenticator_required', sms: 'sms_required', 'second-factor-setup': 'second_factor_setup_required' }[next];
     // For the setup, the factors that can be set up: a passkey when they are on, the app, and a phone when SMS codes are on.
-    const named = next === 'authenticator-setup' ? [...(server.passkey && method !== 'passkey' ? ['passkey'] : []), 'authenticator', ...(server.methods.sms ? ['sms'] : [])] : factors;
+    const named = next === 'second-factor-setup' ? [...(server.passkey && method !== 'passkey' ? ['passkey'] : []), 'authenticator', ...(server.methods.sms ? ['sms'] : [])] : factors;
     return json({ error, message: 'the second step is next', method, factors: named }, 401);
   };
   /** Checks a code from the app (`CODE`) or uses up a recovery code. */
@@ -230,7 +233,7 @@ export function fakeServer(): FakeServer {
     const body = (typeof init.body === 'string' ? JSON.parse(init.body) : {}) as Record<string, string>;
     const email = body.email?.trim().toLowerCase();
     /** The user a setup belongs to: the signed-in one, or the one whose sign-in waits for it. */
-    const whoSetsUp = () => server.user?.email ?? (server.challenge?.next === 'authenticator-setup' ? server.challenge.email : undefined);
+    const whoSetsUp = () => server.user?.email ?? (isSetup(server.challenge?.next) ? server.challenge?.email : undefined);
     switch (`${method} ${url.pathname}`) {
       case 'GET /auth/config':
         return json({
@@ -274,7 +277,7 @@ export function fakeServer(): FakeServer {
         const passkey = { email: who, id: `acc_${server.passkeys.size + 1}`, name: (body as { name?: string }).name || 'Passkey' };
         server.passkeys.set(credential, passkey);
         const info = { id: passkey.id, name: passkey.name, createdAt: 1, lastUsedAt: 0 };
-        if (!server.user && server.challenge?.next === 'authenticator-setup') {
+        if (!server.user && isSetup(server.challenge?.next)) {
           server.challenge = undefined;
           const res = signedIn(who);
           const { user } = (await res.json()) as { user: MadauthUser };

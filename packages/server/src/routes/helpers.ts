@@ -90,8 +90,9 @@ export function signInAnswer(c: Context, step: SignInStep): Response {
     if (step.next === 'authenticator') return c.json({ error: 'authenticator_required', message: 'Enter the code from your authenticator app to finish signing in.', ...rest }, 401);
     if (step.next === 'sms') return c.json({ error: 'sms_required', message: 'Enter the code we sent to your phone to finish signing in.', ...rest }, 401);
     if (step.next === 'passkey') return c.json({ error: 'passkey_required', message: 'Confirm with your passkey to finish signing in.', ...rest }, 401);
-    // `factors` are the second factors the user can set up here.
-    return c.json({ error: 'authenticator_setup_required', message: 'Set up a second factor to finish signing in.', ...rest }, 401);
+    // `factors` are what the user can set up here: the app a sign-up with it creates, or the second factors to choose from.
+    if (step.next === 'authenticator-setup') return c.json({ error: 'authenticator_setup_required', message: 'Set up your authenticator app to finish signing up.', ...rest }, 401);
+    return c.json({ error: 'second_factor_setup_required', message: 'Set up a second factor to finish signing in.', ...rest }, 401);
   }
   return c.json({ user: step.user });
 }

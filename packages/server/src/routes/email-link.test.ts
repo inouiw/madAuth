@@ -277,7 +277,7 @@ describe('e-mail link', () => {
     const first = await verifyLink(app, { token: linkAndCode(hook.lastEmail()).token });
 
     expect(first.status).toBe(401);
-    expect(await first.json()).toMatchObject({ error: 'authenticator_setup_required', method: 'email-link' });
+    expect(await first.json()).toMatchObject({ error: 'second_factor_setup_required', method: 'email-link' });
     expect(cookies(first).madauth_session.value).toBe('');
     const challenge = `madauth_challenge=${cookies(first).madauth_challenge.value}`;
     const setup = await post(app, '/auth/authenticator/setup', {}, { Cookie: challenge });

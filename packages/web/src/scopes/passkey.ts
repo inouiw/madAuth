@@ -34,13 +34,13 @@ export interface PasskeyApi {
    * Signs in with a passkey alone: the browser shows the user's passkeys for this site. Fails with
    * `cancelled` (the user closed the dialog), `passkey_unknown` (a passkey the server no longer has, which
    * the browser is told to forget), `verification_failed`, `method_disabled` or `passkey_unsupported`; with
-   * `authenticator_setup_required` and the like the passkey was right and its policy asks for a second factor.
+   * `second_factor_setup_required` and the like the passkey was right and its policy asks for a second factor.
    */
   signIn(options?: PasskeySignInOptions): Promise<Result<{ user: MadauthUser }>>;
   /** Finishes a sign-in that ended with `passkey_required`. Fails with `cancelled`, `verification_failed` or `challenge_expired`. */
   verify(): Promise<Result<{ user: MadauthUser }>>;
   /**
-   * Adds a passkey for the signed-in user, or for a sign-in that ended with `authenticator_setup_required` and
+   * Adds a passkey for the signed-in user, or for a sign-in that ended with `second_factor_setup_required` and
    * `passkey` among its factors (then it finishes the sign-in, and `user` is set). Only within ten minutes of
    * signing in: later it fails with `reauth_required` (sign in again, then add it). Fails with `cancelled`,
    * `already_added` (this device holds one of the user's passkeys), `verification_failed`, `no_session` or

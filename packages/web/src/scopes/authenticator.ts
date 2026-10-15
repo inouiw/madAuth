@@ -62,10 +62,10 @@ export interface AuthenticatorApi {
   verify(options: CodeOptions): Promise<Result<{ user: MadauthUser }>>;
   /**
    * Starts setting the app up, for the signed-in user or for a sign-in that ended with
-   * `authenticator_setup_required`: a new key to scan or type into the app. Confirm it within ten minutes with
-   * {@link confirmSetup}. A user who has an app already gives a current code from it (or a recovery code)
-   * in `options`, since the new app replaces it; without one it fails with `code_required`, with a wrong
-   * one with `code_invalid`. Fails with `no_session`.
+   * `second_factor_setup_required` or `authenticator_setup_required`: a new key to scan or type into the app.
+   * Confirm it within ten minutes with {@link confirmSetup}. A user who has an app already gives a current code
+   * from it (or a recovery code) in `options`, since the new app replaces it; without one it fails with
+   * `code_required`, with a wrong one with `code_invalid`. Fails with `no_session`.
    */
   startSetup(options?: CodeOptions): Promise<Result<AuthenticatorSetup>>;
   /**
@@ -99,9 +99,10 @@ export interface AuthenticatorApi {
    */
   verifyEmail(options: { email: string; code: string }): Promise<Result<{ user: MadauthUser }>>;
   /**
-   * What a sign-in under way still needs: `code` (call {@link verify}) or `setup` (the setup pair), and
-   * which method's sign-in it is. Set when a sign-in ends with `authenticator_required` or `authenticator_setup_required`,
-   * also by the redirect flow or an e-mail link; null otherwise.
+   * What a sign-in under way still needs: `code` (call {@link verify}) or `setup` (the setup pair), and which
+   * method's sign-in it is. Set when a sign-in ends with `authenticator_required`,
+   * `second_factor_setup_required` or `authenticator_setup_required`, also by the redirect flow or an e-mail
+   * link; null otherwise.
    */
   readonly pendingStep: PendingStep | null;
   /** What the app does on this server, for the texts of your setup screen; null until initialized. */

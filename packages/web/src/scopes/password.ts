@@ -31,7 +31,7 @@ export type ConfirmResetOptions =
 export interface PasswordApi {
   /**
    * Signs in. Fails with `invalid_credentials`, `email_unverified` or `too_many_attempts`; with
-   * `authenticator_required` or `authenticator_setup_required` the password was right and the sign-in goes on
+   * `authenticator_required` or `second_factor_setup_required` the password was right and the sign-in goes on
    * with the authenticator app: `Madauth.authenticator.verify`, or the setup
    * (`Madauth.authenticator.startSetup` and `confirmSetup`).
    */

@@ -232,7 +232,7 @@ describe('Madauth.authenticator', () => {
 
     const first = await Madauth.password.signIn(credentials);
 
-    expect(first).toMatchObject({ isSuccess: false, error: { code: 'authenticator_setup_required', method: 'password' } });
+    expect(first).toMatchObject({ isSuccess: false, error: { code: 'second_factor_setup_required', method: 'password' } });
     expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'password', factors: ['authenticator'] });
     expect(await Madauth.authenticator.startSetup()).toMatchObject({ isSuccess: true, secret: TOTP_SECRET });
     const done = await Madauth.authenticator.confirmSetup({ code: CODE });

@@ -23,10 +23,15 @@ const LEGACY_COOKIE_PATH = '/auth/totp';
 
 /**
  * What a sign-in still needs after its first step succeeded: a passkey, a code from the app, a code by SMS,
- * or setting a second factor up (`authenticator-setup`, named after the only one there was at first: the challenge's
- * `setup` says which can be set up).
+ * or a setup, of which the challenge's `setup` names what can be set up. `second-factor-setup`: a policy
+ * requires a second factor the user doesn't have, and they choose one. `<method>-setup`: a sign-up creates
+ * that method now (`authenticator-setup`: the sign-up with the app alone, after the address is confirmed).
  */
-export type NextStep = 'passkey' | 'authenticator' | 'authenticator-setup' | 'sms';
+export type NextStep = 'passkey' | 'authenticator' | 'sms' | 'second-factor-setup' | 'authenticator-setup';
+
+/** The steps that set something up rather than check it: the challenge's `setup` says what. */
+const SETUP_STEPS: readonly NextStep[] = ['second-factor-setup', 'authenticator-setup'];
+export const isSetupStep = (step: unknown): boolean => SETUP_STEPS.includes(step as NextStep);
 
 /** How the second step was passed, for `user.signed_in`. */
 export type SecondFactorVia = 'passkey' | 'authenticator' | 'recovery_code' | 'sms';
@@ -65,14 +70,14 @@ export function clearChallenge(c: Context, secure: boolean): void {
 
 /**
  * The request's challenge for this step, or null if there is none, it expired, or it waits for another
- * step: a factor (`passkey`, `authenticator`, `sms`) needs to be among the challenge's, so a user who has several can
- * switch; the setup needs `next` to be it.
+ * step: a factor (`passkey`, `authenticator`, `sms`) needs to be among the challenge's, so a user who has
+ * several can switch; `setup` needs `next` to be a setup step.
  */
-export async function readChallenge(c: Context, ctx: AppContext, step: NextStep): Promise<ChallengeClaims | null> {
+export async function readChallenge(c: Context, ctx: AppContext, step: SecondFactor | 'setup'): Promise<ChallengeClaims | null> {
   const claims = await readToken<ChallengeClaims>(await ctx.keys, ctx.config.issuer, CHALLENGE_TYP, getCookie(c, CHALLENGE_COOKIE));
   if (!claims || typeof claims.sub !== 'string' || !Array.isArray(claims.amr)) return null;
   const factors = Array.isArray(claims.factors) ? claims.factors : [];
-  const fits = step === 'authenticator-setup' ? claims.next === 'authenticator-setup' : factors.includes(step);
+  const fits = step === 'setup' ? isSetupStep(claims.next) : factors.includes(step);
   return fits ? claims : null;
 }
 
@@ -83,7 +88,7 @@ export const methodOff = (c: Context): Response => error(c, 403, 'method_disable
 
 /** The sign-in that waits for the setup of `factor`, with its user; null if there is none (any more). */
 export async function pendingSetup(c: Context, ctx: AppContext, factor: SecondFactor): Promise<{ user: StoredUser; challenge: ChallengeClaims } | null> {
-  const pending = await readChallenge(c, ctx, 'authenticator-setup');
+  const pending = await readChallenge(c, ctx, 'setup');
   const challenge = pending && Array.isArray(pending.setup) && pending.setup.includes(factor) ? pending : null;
   const waiting = challenge ? await ctx.users.findById(challenge.sub) : null;
   return challenge && waiting && waiting.sessionVersion === challenge.sv ? { user: waiting, challenge } : null;

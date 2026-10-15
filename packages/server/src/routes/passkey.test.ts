@@ -228,7 +228,7 @@ describe('signing in with a passkey', () => {
     const res = await signInWithPasskey(app, passkey);
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toMatchObject({ error: 'authenticator_setup_required', method: 'passkey', factors: ['authenticator'] });
+    expect(await res.json()).toMatchObject({ error: 'second_factor_setup_required', method: 'passkey', factors: ['authenticator'] });
     expect(cookies(res).madauth_session?.value ?? '').toBe('');
   });
 });
@@ -276,7 +276,7 @@ describe('a passkey as the second factor', () => {
     advance(60_000);
 
     const first = await post(app, '/auth/password/signin', grace);
-    expect(await first.json()).toMatchObject({ error: 'authenticator_setup_required', factors: ['passkey', 'authenticator'] });
+    expect(await first.json()).toMatchObject({ error: 'second_factor_setup_required', factors: ['passkey', 'authenticator'] });
 
     const { res } = await addPasskey(app, challengeOf(first));
     expect(res.status).toBe(200);

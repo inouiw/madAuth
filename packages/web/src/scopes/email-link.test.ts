@@ -138,7 +138,7 @@ describe('Madauth.emailLink', () => {
     await Madauth.emailLink.send({ email: 'new@example.com' });
     expect(await Madauth.emailLink.verify({ email: 'new@example.com', code: CODE })).toMatchObject({
       isSuccess: false,
-      error: { code: 'authenticator_setup_required', method: 'email-link' },
+      error: { code: 'second_factor_setup_required', method: 'email-link' },
     });
     expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'email-link', factors: ['authenticator'] });
   });

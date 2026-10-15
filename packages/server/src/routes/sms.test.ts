@@ -306,7 +306,7 @@ describe('SMS codes as the second step', () => {
     const first = await signIn(app);
 
     // `factors` are those the user can set up: the app, or a phone.
-    expect(await first.json()).toMatchObject({ error: 'authenticator_setup_required', method: 'password', factors: ['authenticator', 'sms'] });
+    expect(await first.json()).toMatchObject({ error: 'second_factor_setup_required', method: 'password', factors: ['authenticator', 'sms'] });
     // Neither code step is open yet.
     expect((await post(app, '/auth/sms/send', {}, withChallenge(first))).status).toBe(401);
     const setup = await post(app, '/auth/sms/setup', { phone: PHONE }, withChallenge(first));

@@ -634,11 +634,11 @@ describe('the second step after a password, Google or GitHub', () => {
     await post(app, '/auth/password/signup', { ...grace, name: 'Grace Hopper', redirectTo: REDIRECT_TO });
     const confirmed = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
     expect(confirmed.status).toBe(401);
-    expect(await confirmed.json()).toMatchObject({ error: 'authenticator_setup_required' });
+    expect(await confirmed.json()).toMatchObject({ error: 'second_factor_setup_required' });
 
     const first = await post(app, '/auth/password/signin', grace);
     expect(first.status).toBe(401);
-    expect(await first.json()).toMatchObject({ error: 'authenticator_setup_required' });
+    expect(await first.json()).toMatchObject({ error: 'second_factor_setup_required' });
     const challenge = `madauth_challenge=${cookies(first).madauth_challenge.value}`;
     hook.calls.length = 0;
 
@@ -741,7 +741,7 @@ describe('the second step after a password, Google or GitHub', () => {
     // Ada's sign-up ends in the setup step instead of a session.
     await signUpVerified(app, hook, 'ada@example.com', 'adas password!').catch(() => null);
     const step = await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'adas password!' });
-    expect(await step.json()).toMatchObject({ error: 'authenticator_setup_required' });
+    expect(await step.json()).toMatchObject({ error: 'second_factor_setup_required' });
     await setMethods(store, { google: { secondFactor: 'optional' } });
     const setup = await post(app, '/auth/authenticator/setup', {}, { Cookie: `madauth_challenge=${cookies(step).madauth_challenge.value}` });
     expect(setup.status).toBe(403);
@@ -756,7 +756,7 @@ describe('the second step after a password, Google or GitHub', () => {
     await setMethods(store, { google: { secondFactor: 'none' }, password: { secondFactor: 'required' } });
     // Grace is signed in; Ada signs in at the same browser and has to set the app up.
     const adaStep = await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'adas password!' }, withSession(graceSession));
-    expect(await adaStep.json()).toMatchObject({ error: 'authenticator_setup_required' });
+    expect(await adaStep.json()).toMatchObject({ error: 'second_factor_setup_required' });
     const challenge = `madauth_challenge=${cookies(adaStep).madauth_challenge.value}`;
     // Grace is signed out by Ada's sign-in: the browser drops her session, so an abandoned step can't be
     // taken for her own setup later.
@@ -813,7 +813,7 @@ describe('the operator resets a lost app', () => {
     ]);
     // Grace sets it up again at her next sign-in; her old app is of no use.
     const next = await post(app, '/auth/password/signin', { email: 'grace@example.com', password: 'correct horse battery' });
-    expect(await next.json()).toMatchObject({ error: 'authenticator_setup_required' });
+    expect(await next.json()).toMatchObject({ error: 'second_factor_setup_required' });
     expect(codeFor(secret)).toMatch(/^\d{6}$/);
 
     // The same from the command line, with the store alone.

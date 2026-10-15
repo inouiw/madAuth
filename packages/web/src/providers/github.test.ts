@@ -222,11 +222,11 @@ describe('GitHub', () => {
     server.policy.github = 'required';
     const providers = () => [new GoogleRedirect(), new GitHub(), new Authenticator()];
 
-    history.replaceState(null, '', '/page#madauth_next=authenticator-setup&madauth_method=github');
+    history.replaceState(null, '', '/page#madauth_next=second-factor-setup&madauth_method=github');
     await Madauth.initialize({ serverUrl: SERVER, providers: providers(), ui: 'custom' });
     expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'github' });
 
-    history.replaceState(null, '', '/page#madauth_next=authenticator-setup');
+    history.replaceState(null, '', '/page#madauth_next=second-factor-setup');
     await Madauth.initialize({ serverUrl: SERVER, providers: providers(), ui: 'custom' });
     expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'google' });
   });

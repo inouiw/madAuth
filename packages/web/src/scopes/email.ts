@@ -14,8 +14,9 @@ export interface SendEmailOptions {
 export const currentPage = (): string => location.href.split('#')[0];
 
 /**
- * Marks a sign-in that goes on with a second step, and returns the result as it is: a `authenticator_required`,
- * `sms_required` or `authenticator_setup_required` failure tells the caller what comes next.
+ * Marks a sign-in that goes on with a second step, and returns the result as it is: an `authenticator_required`,
+ * `sms_required`, `second_factor_setup_required` or `authenticator_setup_required` failure tells the caller
+ * what comes next.
  */
 export function noteNextStep<T extends object>(core: Core, method: LoginMethodId, result: Result<T>): Result<T> {
   if (!result.isSuccess) {

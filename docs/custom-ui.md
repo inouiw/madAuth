@@ -28,12 +28,12 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 
 | Method | Result | Errors |
 | --- | --- | --- |
-| `signIn({ email, password })` | `{ user }` | `invalid_credentials`, `email_unverified`, `too_many_attempts`; `passkey_required`, `authenticator_required`, `sms_required` or `authenticator_setup_required` when the sign-in goes on with a [second factor](#the-second-step) |
+| `signIn({ email, password })` | `{ user }` | `invalid_credentials`, `email_unverified`, `too_many_attempts`; `passkey_required`, `authenticator_required`, `sms_required` or `second_factor_setup_required` when the sign-in goes on with a [second factor](#the-second-step) |
 | `signUp({ email, password, name?, redirectTo? })` | — | `invalid_email`, `weak_password`, `signup_rejected`, `temporarily_unavailable` |
 | `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
-| `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `authenticator_required` or `authenticator_setup_required` like `signIn` |
+| `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `authenticator_required` or `second_factor_setup_required` like `signIn` |
 | `sendResetEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
-| `confirmReset({ newPassword, token? })` or `confirmReset({ newPassword, email, code })` | `{ user }` | `link_invalid`, `code_invalid`, `codes_locked`, `weak_password`; `authenticator_required` or `authenticator_setup_required` like `signIn` |
+| `confirmReset({ newPassword, token? })` or `confirmReset({ newPassword, email, code })` | `{ user }` | `link_invalid`, `code_invalid`, `codes_locked`, `weak_password`; `authenticator_required` or `second_factor_setup_required` like `signIn` |
 | `pendingReset` | `boolean` | True when the page was opened from a reset link |
 | `add({ password })` | — | Adds a password to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods): `weak_password`, `already_added`, `reauth_required`, `no_session` |
 | `policy` | `{ minLength, minScore, secondFactor } \| null` | The server's [password rules](server.md#password-rules), for a hint next to the field, and whether the method asks for a second factor (`none`, `optional`, `required`) |
@@ -102,7 +102,7 @@ Needs `new EmailLink()` in `initialize`, and on the server a webhook that sends 
 | Method | Result | Errors |
 | --- | --- | --- |
 | `send({ email, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `method_disabled`, `temporarily_unavailable` |
-| `verify({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`, `method_disabled`; `authenticator_required` or `authenticator_setup_required` when the sign-in goes on with the [authenticator app](#authenticator-app-madauthauthenticator) |
+| `verify({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`, `method_disabled`; `authenticator_required` or `second_factor_setup_required` when the sign-in goes on with the [authenticator app](#authenticator-app-madauthauthenticator) |
 | `add()` | — | Adds the e-mail link to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods): `already_added`, `reauth_required`, `no_session` |
 | `policy` | `{ secondFactor } \| null` | Whether the method asks for a second factor (`none`, `optional`, `required`); null when the server doesn't offer the method |
 
@@ -114,7 +114,7 @@ Call `send`, then show "check your inbox". The e-mail contains a link and a 6-di
 - The link opens `redirectTo` (default: the current page, see [`redirectTo`](#redirectto)). When the page loads, `initialize` signs the user in; your `onAuthStateChanged` listener gets the user, with `amr: ['email']`.
 - For the code, show a field and call `verify({ email, code })`. This also works when the e-mail is read on another device.
 
-With a policy that asks for the authenticator app, both end with `authenticator_required` or `authenticator_setup_required` instead, like a password: see [The second step](#the-second-step). After the link, the step is in `Madauth.authenticator.pendingStep` once `initialize` is done.
+With a policy that asks for the authenticator app, both end with `authenticator_required` or `second_factor_setup_required` instead, like a password: see [The second step](#the-second-step). After the link, the step is in `Madauth.authenticator.pendingStep` once `initialize` is done.
 
 ```ts
 sendForm.onsubmit = async () => {
@@ -150,14 +150,14 @@ The methods work whenever the app is in use on the server: as the second factor 
 
 ### The second step
 
-When the policy of a method asks for a second factor, `password.signIn` (also `verifyEmail` and `confirmReset`), `emailLink.verify`, `passkey.signIn` and the Google button's `onResult` end with `authenticator_required` instead of a user: the first step was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. The error's `factors` says what the user can finish with: with `sms` among them (they have a phone as well, see [SMS codes](#sms-codes-madauthsms)), offer "send a code by SMS instead"; with `passkey`, "use a passkey instead". With `passkey_required` the user has a passkey, which comes first: a button that calls `Madauth.passkey.verify()` (the browser's dialog needs the user's click). With `sms_required` the user has a phone and nothing else: the SMS step. With `authenticator_setup_required` the user has no factor yet and the policy requires one, and `factors` says which they can set up: the app (the setup below), a phone (when `Madauth.sms.available`) or a passkey (`Madauth.passkey.add()`); each signs them in once it is set up and returns `user` as well. A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
+When the policy of a method asks for a second factor, `password.signIn` (also `verifyEmail` and `confirmReset`), `emailLink.verify`, `passkey.signIn` and the Google button's `onResult` end with `authenticator_required` instead of a user: the first step was right, and the sign-in goes on. Ask for the code from the app (or a recovery code) and call `verify`; the user arrives through `onAuthStateChanged`. The error's `factors` says what the user can finish with: with `sms` among them (they have a phone as well, see [SMS codes](#sms-codes-madauthsms)), offer "send a code by SMS instead"; with `passkey`, "use a passkey instead". With `passkey_required` the user has a passkey, which comes first: a button that calls `Madauth.passkey.verify()` (the browser's dialog needs the user's click). With `sms_required` the user has a phone and nothing else: the SMS step. With `second_factor_setup_required` the user has no factor yet and the policy requires one, and `factors` says which they can choose to set up: the app (the setup below), a phone (when `Madauth.sms.available`) or a passkey (`Madauth.passkey.add()`); each signs them in once it is set up and returns `user` as well. (`authenticator_setup_required` is the sign-up with the app alone, which sets up the app and nothing else, see [The app on its own](#the-app-on-its-own).) A step older than ten minutes fails with `challenge_expired`: start the sign-in over.
 
 A sign-in that started outside your screen, i.e. the redirect flow (`#madauth_next=…`) or the link in a confirmation or sign-in e-mail, leaves its step in `pendingStep` after `initialize`: show the matching form.
 
 ```ts
 const result = await Madauth.password.signIn({ email, password });
 if (!result.isSuccess && result.error.code === 'authenticator_required') showCodeForm();
-if (!result.isSuccess && result.error.code === 'authenticator_setup_required') showSetup();
+if (!result.isSuccess && result.error.code === 'second_factor_setup_required') showSetup();
 
 codeForm.onsubmit = async () => {
   const done = await Madauth.authenticator.verify({ code: codeInput.value }); // or { recoveryCode }
@@ -216,7 +216,7 @@ smsForm.onsubmit = async () => {
 
 ### Adding a phone
 
-While the user is signed in, or in the setup step of a sign-in (`authenticator_setup_required` with `Madauth.sms.available`), call `setUp({ phone })` with the number in international form: the server sends a code to it and returns the masked number. Ask for the code and call `confirmSetup({ code })` within ten minutes; it returns `user` when the setup finished a sign-in. A user who has a number already replaces it: `setUp` then fails with `code_required`, so call `send()` (a code to the current number), ask for it, and call `setUp({ phone, code })`. `remove({ code })` takes a code from `send()` as well. Use `autocomplete="tel"` for the number field.
+While the user is signed in, or in the setup step of a sign-in (`second_factor_setup_required` with `Madauth.sms.available`), call `setUp({ phone })` with the number in international form: the server sends a code to it and returns the masked number. Ask for the code and call `confirmSetup({ code })` within ten minutes; it returns `user` when the setup finished a sign-in. A user who has a number already replaces it: `setUp` then fails with `code_required`, so call `send()` (a code to the current number), ask for it, and call `setUp({ phone, code })`. `remove({ code })` takes a code from `send()` as well. Use `autocomplete="tel"` for the number field.
 
 ```ts
 const setup = await Madauth.sms.setUp({ phone: phoneInput.value });
@@ -277,7 +277,7 @@ Signing in with a passkey alone needs `new Passkey()` in `initialize` and a serv
 | --- | --- | --- |
 | `signIn()` or `signIn({ conditional: true, signal })` | `{ user }` | `cancelled` (the user closed the browser's dialog), `passkey_unknown`, `verification_failed`, `method_disabled`, `passkey_unsupported`; the [second step](#the-second-step) when the passkey's policy asks for one |
 | `verify()` | `{ user }` | Finishes a sign-in that ended with `passkey_required`: `cancelled`, `verification_failed`, `challenge_expired` |
-| `add({ name? })` | `{ passkey, user? }` | Adds a passkey for the signed-in user, or as the setup of a sign-in (`authenticator_setup_required` with `passkey` in `factors`; then it signs in, `user`): `cancelled`, `already_added`, `reauth_required`, `verification_failed`, `no_session`, `passkey_unsupported` |
+| `add({ name? })` | `{ passkey, user? }` | Adds a passkey for the signed-in user, or as the setup of a sign-in (`second_factor_setup_required` with `passkey` in `factors`; then it signs in, `user`): `cancelled`, `already_added`, `reauth_required`, `verification_failed`, `no_session`, `passkey_unsupported` |
 | `rename({ id, name })` | `{ passkey }` | `method_not_found`, `invalid_options`, `no_session` |
 | `conditionalAvailable()` | `boolean` | Whether the browser offers passkeys in an e-mail field's autofill |
 | `available`, `signInAvailable` | `boolean` | Whether passkeys are on here (server and browser), and whether they sign in on their own here |

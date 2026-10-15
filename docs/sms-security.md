@@ -28,7 +28,7 @@ After the first step of a method whose policy is `optional` or `required`, the s
 
 The SMS goes when the client asks for it (`POST /auth/sms/send` with the challenge), not with the first step: a user who has the app as well gets no SMS unless they switch. The session then says `amr: ["pwd", "sms"]` (or `["google", "sms"]`, `["email", "sms"]`), and `user.signed_in` carries `secondFactor: "sms"`. A backend that requires the app can ask for `otp` in `amr`.
 
-With a `required` policy and neither factor, the sign-in goes to the app's setup (`authenticator_setup_required`); when SMS codes are on, the dialog offers adding a phone instead, in the same pending sign-in. The user decides which factor to set up; an admin can't prescribe one.
+With a `required` policy and neither factor, the sign-in goes to the setup of a second factor (`second_factor_setup_required`), starting with the app; when SMS codes are on, the dialog offers adding a phone instead, in the same pending sign-in. The user decides which factor to set up; an admin can't prescribe one.
 
 Code: `secondStep` in [`packages/server/src/app.ts`](../packages/server/src/app.ts), [`challenge.ts`](../packages/server/src/routes/challenge.ts), `send` and `verify` in [`sms.ts`](../packages/server/src/routes/sms.ts).
 
