@@ -1887,6 +1887,8 @@ export class MadauthLogin extends LitElement {
     this.goTo('api-key-create');
     const result = await Madauth.apiKeys.scopes();
     if (!result.isSuccess) {
+      // Back to the list, which can start again.
+      this.backToApiKeys();
       this.showError(result.error);
       return;
     }

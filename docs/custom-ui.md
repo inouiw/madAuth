@@ -307,7 +307,7 @@ A user's keys for programs that call your API, or madAuth's admin API, in their 
 
 | Method | Resolves to | Errors |
 | --- | --- | --- |
-| `scopes()` | `{ scopes: [{ name, description, role, endpoints, allowed }] }`: madAuth's and your app's scopes; `allowed` says whether the signed-in user may give a key the scope | |
+| `scopes()` | `{ scopes: [{ name, description, role, endpoints, allowed }] }`: madAuth's and your app's scopes; `allowed` says whether the signed-in user may give a key the scope, by their claims as stored | |
 | `list()` | `{ apiKeys: [{ id, name, scopes, createdAt, expiresAt, lastUsedAt }] }` | `no_session` |
 | `create({ name, scopes, expiresAt? })` | `{ key, apiKey }`: show `key` to the user to copy, it is never shown again | `invalid_options`, `invalid_scopes`, `scope_not_allowed`, `too_many_api_keys`, `reauth_required`, `temporarily_unavailable`, `no_session` |
 | `revoke(id)` | — | `api_key_not_found`, `no_session` |

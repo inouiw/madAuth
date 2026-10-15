@@ -33,8 +33,13 @@ const invalid = (c: Context, message: string) => error(c, 400, 'invalid_options'
 
 export function apiKeyRoutes(app: Hono, ctx: AppContext, apiKeys: ApiKeys, catalog: ScopeCatalog): void {
   // Every scope a key can have, with what it allows and the role its user needs: for people choosing the scopes
-  // of a key, and as the API's documentation. Public: it says nothing about anyone.
-  app.get('/auth/api-keys/scopes', async (c) => c.json({ scopes: (await catalog.all()).scopes }));
+  // of a key, and as the API's documentation. Public: it says nothing about anyone. `allowed` says whether the
+  // signed-in user may give a key the scope, by their claims as stored (without a session: scopes without a role).
+  app.get('/auth/api-keys/scopes', async (c) => {
+    const [{ scopes }, signIn] = await Promise.all([catalog.all(), ctx.currentSignIn(c)]);
+    const claims = claimsFromJson(signIn?.stored.claims ?? null);
+    return c.json({ scopes: scopes.map((scope) => ({ ...scope, allowed: mayHold(scope, claims) })) });
+  });
 
   app.get('/auth/api-keys', async (c) => {
     const signIn = await ctx.currentSignIn(c);
@@ -57,7 +62,7 @@ export function apiKeyRoutes(app: Hono, ctx: AppContext, apiKeys: ApiKeys, catal
     if (expiresAt !== null && (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
       return invalid(c, 'expiresAt must be a time in the future (milliseconds since 1970), or left out for a key that does not expire.');
     }
-    const { scopes, complete } = await catalog.all();
+    const [{ scopes, complete }, existing] = await Promise.all([catalog.all(), apiKeys.list(user.id)]);
     const unknown = requested.filter((name) => !scopes.some((scope) => scope.name === name));
     if (unknown.length && !complete) {
       return error(c, 503, 'temporarily_unavailable', "The app's scopes can not be read right now. Please try again later.");
@@ -67,7 +72,10 @@ export function apiKeyRoutes(app: Hono, ctx: AppContext, apiKeys: ApiKeys, catal
     const claims = claimsFromJson(user.claims);
     const denied = requested.filter((name) => !mayHold(scopes.find((scope) => scope.name === name)!, claims));
     if (denied.length) return error(c, 403, 'scope_not_allowed', `A key can only have scopes you hold yourself, so not: ${denied.join(', ')}.`);
-    if ((await apiKeys.list(user.id)).length >= MAX_API_KEYS) {
+    // Expired keys work no more: they go, and don't count. Two requests at once may pass the limit by one each.
+    const expired = existing.filter((key) => key.expiresAt !== null && key.expiresAt <= Date.now());
+    await Promise.all(expired.map((key) => apiKeys.revoke(user.id, key.id)));
+    if (existing.length - expired.length >= MAX_API_KEYS) {
       return error(c, 409, 'too_many_api_keys', `You have ${MAX_API_KEYS} API keys, the most one can have: revoke one first.`);
     }
     const { key, stored } = await apiKeys.create(user.id, { name, scopes: requested, expiresAt });

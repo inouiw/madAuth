@@ -1,4 +1,4 @@
-import { ok, type MadauthUser, type Result } from '../result.js';
+import { ok, type Result } from '../result.js';
 import { serverCalls, type Core } from './core.js';
 
 /** What an API key may do: which calls it allows, and the role its user needs for it. */
@@ -10,7 +10,7 @@ export interface ApiKeyScope {
   role: string | null;
   /** The calls it allows, e.g. `GET /api/orders`, for people to read. */
   endpoints: string[];
-  /** Whether the signed-in user may give a key this scope: they hold its role. */
+  /** Whether the signed-in user may give a key this scope: they hold its role, by their claims as stored now. */
   allowed: boolean;
 }
 
@@ -61,20 +61,13 @@ export interface ApiKeysApi {
   revoke(id: string): Promise<Result>;
 }
 
-const rolesOf = (user: MadauthUser | null): string[] => {
-  const roles = user?.claims?.roles;
-  return Array.isArray(roles) ? roles.filter((role): role is string => typeof role === 'string') : [];
-};
-
-export function createApiKeysApi(core: Core, currentUser: () => MadauthUser | null): ApiKeysApi {
+export function createApiKeysApi(core: Core): ApiKeysApi {
   const call = serverCalls(core);
 
   return {
     async scopes() {
-      const result = await call<{ scopes: Omit<ApiKeyScope, 'allowed'>[] }>('/auth/api-keys/scopes', { method: 'GET' });
-      if (!result.isSuccess) return result;
-      const roles = rolesOf(currentUser());
-      return ok({ scopes: result.scopes.map((scope) => ({ ...scope, allowed: !scope.role || roles.includes(scope.role) })) });
+      const result = await call<{ scopes: ApiKeyScope[] }>('/auth/api-keys/scopes', { method: 'GET' });
+      return result.isSuccess ? ok({ scopes: result.scopes }) : result;
     },
     async list() {
       const result = await call<{ apiKeys: ApiKeyInfo[] }>('/auth/api-keys', { method: 'GET', session: true });

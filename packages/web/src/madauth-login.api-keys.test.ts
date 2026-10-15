@@ -138,6 +138,18 @@ describe('<madauth-login> and API keys', () => {
     expect($('form.api-key-create')).toBeNull();
   });
 
+  it("DK5: when the scopes can't be loaded, the form goes back to the list with the error", async () => {
+    const { server } = await openApiKeys();
+    server.down = true;
+    await click('[data-action="create-api-key"]');
+
+    expect(text('h2')).toBe('API keys');
+    expect($('.error')!.dataset.code).toBe('network');
+    server.down = false;
+    await click('[data-action="create-api-key"]');
+    expect(text('h2')).toBe('Create an API key');
+  });
+
   it("DK4: needs someone signed in, and madAuth's dialog", async () => {
     fakeServer();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });

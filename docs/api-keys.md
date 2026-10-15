@@ -11,12 +11,12 @@ A signed-in user makes keys, as on GitHub: `Madauth.apiKeys.create()`, or the di
 - **Shown once.** madAuth answers the new key once (`madauth_` and 43 random characters, 256 bits) and keeps only its SHA-256. A lost key is revoked and replaced. The prefix makes a leaked key easy to recognise, e.g. for secret scanning.
 - **Only within ten minutes of signing in**, like adding a sign-in method (`401 reauth_required` otherwise): a key is a way in that outlives the session, so a session someone took over must not be able to make one. See [Several sign-in methods](sign-in-methods.md#only-within-ten-minutes-of-signing-in).
 - **A name, at least one scope, and optionally an expiry.** The name (1 to 64 characters) says what the key is for. Without `expiresAt` the key works until it is revoked.
-- **At most 20 keys per user** (`409 too_many_api_keys`).
+- **At most 20 keys per user** (`409 too_many_api_keys`). Expired keys don't count: making a key removes the user's expired ones. Two requests at the same moment may each pass the limit by one.
 - **A key is no session.** It never signs in, never renews a session, and the routes for the signed-in user (making keys, changing methods) don't take it.
 
 ## Scopes
 
-A scope says which calls a key allows. madAuth's own are fixed; your app lists its own at `API_KEY_SCOPES_URL`. `GET /auth/api-keys/scopes` lists both, each with its description, the role a user needs for it and the calls it allows, and `Madauth.apiKeys.scopes()` adds whether the signed-in user may give a key each one.
+A scope says which calls a key allows. madAuth's own are fixed; your app lists its own at `API_KEY_SCOPES_URL`. `GET /auth/api-keys/scopes` (`Madauth.apiKeys.scopes()`) lists both, each with its description, the role a user needs for it, the calls it allows, and whether the signed-in user may give a key it (`allowed`, by their claims as stored).
 
 madAuth's scopes, one per admin task, need the role `admin`:
 

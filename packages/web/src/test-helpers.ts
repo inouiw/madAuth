@@ -326,8 +326,10 @@ export function fakeServer(): FakeServer {
         return signedIn(challenge.email);
       }
       // --- API keys ---
-      case 'GET /auth/api-keys/scopes':
-        return json({ scopes: server.apiScopes });
+      case 'GET /auth/api-keys/scopes': {
+        const roles = (server.user?.claims?.roles as string[] | undefined) ?? [];
+        return json({ scopes: server.apiScopes.map((scope) => ({ ...scope, allowed: !scope.role || roles.includes(scope.role) })) });
+      }
       case 'GET /auth/api-keys': {
         const user = server.user?.email;
         if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);

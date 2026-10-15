@@ -677,7 +677,7 @@ export const Madauth = {
   methods: createMethodsApi(core),
 
   /** The signed-in user's API keys, for programs that call your app's API or madAuth's admin API: making, listing and revoking them. */
-  apiKeys: createApiKeysApi(core, () => user),
+  apiKeys: createApiKeysApi(core),
 
   /** Reading and setting claims and settings, for users with the role `admin`. */
   admin: createAdminApi(core),

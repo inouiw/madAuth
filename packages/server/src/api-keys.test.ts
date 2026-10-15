@@ -67,7 +67,9 @@ describe('making and using API keys', () => {
   it("AK1: lists madAuth's and the app's scopes; a key is shown once, listed without it, and a backend learns whom it acts for", async () => {
     const { app, hook, cookie } = await withGrace();
 
-    const { scopes } = (await (await app.request('/auth/api-keys/scopes')).json()) as { scopes: { name: string; role: string | null }[] };
+    const { scopes } = (await (await app.request('/auth/api-keys/scopes', { headers: { Cookie: cookie } })).json()) as {
+      scopes: { name: string; role: string | null; allowed: boolean }[];
+    };
     expect(scopes.map((s) => s.name)).toEqual([
       'madauth:claims:read',
       'madauth:claims:write',
@@ -77,7 +79,8 @@ describe('making and using API keys', () => {
       'orders:read',
       'orders:refund',
     ]);
-    expect(scopes.find((s) => s.name === 'orders:refund')?.role).toBe('staff');
+    expect(scopes.find((s) => s.name === 'orders:refund')).toMatchObject({ role: 'staff', allowed: false });
+    expect(scopes.filter((s) => s.allowed).map((s) => s.name)).toEqual(['orders:read']);
 
     const made = await createKey(app, cookie, { name: ' CI deploy ', scopes: ['orders:read'] });
     expect(made.key).toMatch(/^madauth_[A-Za-z0-9_-]{43}$/);
@@ -165,12 +168,17 @@ describe('making and using API keys', () => {
     expect(await granted()).toEqual(['orders:refund']);
   });
 
-  it(`AK6: at most ${MAX_API_KEYS} keys per user`, async () => {
+  it(`AK6: at most ${MAX_API_KEYS} keys per user; expired ones don't count and go`, async () => {
     const { app, cookie } = await withGrace();
-    for (let i = 0; i < MAX_API_KEYS; i++) await createKey(app, cookie, { name: `key ${i}`, scopes: ['orders:read'] });
+    await createKey(app, cookie, { name: 'expiring', scopes: ['orders:read'], expiresAt: START + 60_000 });
+    for (let i = 1; i < MAX_API_KEYS; i++) await createKey(app, cookie, { name: `key ${i}`, scopes: ['orders:read'] });
     const refused = await create(app, cookie, { name: 'one more', scopes: ['orders:read'] });
     expect(refused.status).toBe(409);
     expect(await refused.json()).toMatchObject({ error: 'too_many_api_keys' });
+
+    advance(60_000);
+    expect((await create(app, cookie, { name: 'one more', scopes: ['orders:read'] })).status).toBe(200);
+    expect((await list(app, cookie)).map((k) => k.name)).not.toContain('expiring');
   });
 });
 

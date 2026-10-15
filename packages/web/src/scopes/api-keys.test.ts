@@ -28,8 +28,8 @@ describe('Madauth.apiKeys', () => {
       scopes: expect.arrayContaining([{ name: 'madauth:claims:read', description: "Read a user's claims and roles", role: 'admin', endpoints: ['POST /auth/admin/claims/get'], allowed: false }]),
     });
 
+    // The server decides, with the claims as stored: no new session needed.
     server.user = { ...grace, claims: { roles: ['staff'] } };
-    await Madauth.getSession();
     expect(await allowed()).toEqual({ 'madauth:claims:read': false, 'orders:read': true, 'orders:refund': true });
   });
 
