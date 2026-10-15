@@ -8,12 +8,29 @@
       name="description"
       content="madAuth is a self-hostable alternative to Cognito and Auth0: Google and GitHub sign-in, e-mail & password, passwordless e-mail links, passkeys and an authenticator app, with a login UI that works in any framework."
     />
+    <meta name="robots" content="max-image-preview:large" />
+    <link rel="canonical" href="https://madauth.com/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="madAuth" />
+    <meta property="og:title" content="madAuth – self-hostable authentication" />
+    <meta property="og:description" content="An open-source alternative to Cognito and Auth0: run the server in your own cloud account and add a ready-made login dialog to any web app." />
+    <meta property="og:url" content="https://madauth.com/" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content="https://madauth.com/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="madAuth: self-hostable authentication for any web app" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <!-- structured-data -->
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <header>
       <span class="logo">madAuth</span>
       <nav>
+        <a href="/posts/">Blog</a>
         <a href="https://github.com/inouiw/madAuth/tree/main/docs">Docs</a>
         <a href="https://github.com/inouiw/madAuth">GitHub</a>
       </nav>
@@ -44,6 +61,7 @@
           <p>Docker, AWS Lambda with DynamoDB, or Azure Functions. Your users stay in your database.</p>
         </article>
       </section>
+      <!-- latest-posts -->
       <section class="install">
         <h2>Add it to your app</h2>
         <pre><code>npm install @madauth/web @madauth/server</code></pre>

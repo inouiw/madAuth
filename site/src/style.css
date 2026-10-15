@@ -138,3 +138,38 @@ footer {
   color: var(--muted);
   font-size: 0.9rem;
 }
+
+.latest {
+  padding: 48px 0 0;
+}
+
+.latest ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.latest li {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.latest li a {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.latest li a:hover {
+  text-decoration: underline;
+}
+
+.latest li p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
