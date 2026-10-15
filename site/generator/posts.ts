@@ -25,6 +25,8 @@ export interface LanguageStrings {
   published: string;
   updated: string;
   language: string;
+  /** The heading of a post's table of contents. */
+  contents: string;
   docs: string;
   ctaText: string;
   ctaDemo: string;
@@ -45,6 +47,7 @@ export const LANGUAGES = {
     published: 'Published',
     updated: 'updated',
     language: 'Language',
+    contents: 'Contents',
     docs: 'Docs',
     ctaText:
       'madAuth is an open-source, self-hostable alternative to Cognito and Auth0: run the server in your own cloud account and add a ready-made login dialog to any web app.',
@@ -64,6 +67,7 @@ export const LANGUAGES = {
     published: 'Veröffentlicht am',
     updated: 'aktualisiert am',
     language: 'Sprache',
+    contents: 'Inhalt',
     docs: 'Doku',
     ctaText:
       'madAuth ist eine quelloffene Alternative zu Cognito und Auth0, die Sie selbst betreiben: Der Server läuft in Ihrem eigenen Cloud-Konto, und jede Web-App bekommt einen fertigen Anmeldedialog.',
@@ -83,14 +87,19 @@ export interface Post {
   id: string;
   language: Language;
   slug: string;
+  /** The page's heading. */
   title: string;
+  /** The title in search results and the browser tab, when `title` is too long for them. */
+  seoTitle?: string;
   description: string;
   /** YYYY-MM-DD */
   published: string;
   /** YYYY-MM-DD, when the post was changed after it was published. */
   updated?: string;
-  /** The rendered Markdown body. */
+  /** The rendered Markdown body; its h2 and h3 headings have ids. */
   html: string;
+  /** The h2 headings, for the table of contents: their ids and their HTML. */
+  headings: { id: string; html: string }[];
 }
 
 /** A Markdown file of content/posts: `<id>/<language>.md`. */
@@ -116,13 +125,16 @@ export interface Page {
 const RESERVED_SLUGS = new Set(Object.keys(LANGUAGES));
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** About what search results show before they cut a title or a description off. */
+export const MAX_SEARCH_TITLE = 60;
+export const MAX_DESCRIPTION = 160;
 
 /** Splits `---`-delimited `key: value` lines from the Markdown that follows them. */
 export function parseFrontMatter(text: string): Result<{ fields: Record<string, string>; body: string }> {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (!match) return { isSuccess: false, errors: ['missing front matter (--- lines at the top)'] };
   const lines = match[1].split(/\r?\n/).filter((line) => line.trim() !== '');
-  const malformed = lines.filter((line) => !/^[a-z]+:\s/.test(line));
+  const malformed = lines.filter((line) => !/^[a-zA-Z]+:\s/.test(line));
   if (malformed.length > 0) return { isSuccess: false, errors: malformed.map((line) => `not "key: value": ${line}`) };
   const fields = Object.fromEntries(
     lines.map((line) => {
@@ -140,7 +152,8 @@ function parsePost(file: SourceFile): Result<Post> {
   const parsed = parseFrontMatter(file.text);
   if (!parsed.isSuccess) return fail(parsed.errors);
   const { fields, body } = parsed.value;
-  const known = new Set(['slug', 'title', 'description', 'published', 'updated']);
+  const known = new Set(['slug', 'title', 'seoTitle', 'description', 'published', 'updated']);
+  const searchTitle = fields.seoTitle || fields.title;
   const errors = [
     ...['slug', 'title', 'description', 'published'].filter((key) => !fields[key]).map((key) => `"${key}" is missing`),
     ...Object.keys(fields).filter((key) => !known.has(key)).map((key) => `unknown field "${key}"`),
@@ -150,8 +163,19 @@ function parsePost(file: SourceFile): Result<Post> {
     ...['published', 'updated']
       .filter((key) => fields[key] && !DATE.test(fields[key]))
       .map((key) => `"${key}" must be YYYY-MM-DD`),
+    ...(searchTitle && searchTitle.length > MAX_SEARCH_TITLE
+      ? [
+          `the title in search results has ${searchTitle.length} characters, more than the ${MAX_SEARCH_TITLE} they show: ${
+            fields.seoTitle ? 'shorten "seoTitle"' : 'add a shorter "seoTitle"'
+          }`,
+        ]
+      : []),
+    ...(fields.description && fields.description.length > MAX_DESCRIPTION
+      ? [`"description" has ${fields.description.length} characters, more than the ${MAX_DESCRIPTION} search results show`]
+      : []),
   ];
   if (errors.length > 0) return fail(errors);
+  const { html, headings } = withHeadingIds(marked.parse(body, { async: false }));
   return {
     isSuccess: true,
     value: {
@@ -159,12 +183,42 @@ function parsePost(file: SourceFile): Result<Post> {
       language: file.language,
       slug: fields.slug,
       title: fields.title,
+      seoTitle: fields.seoTitle || undefined,
       description: fields.description,
       published: fields.published,
       updated: fields.updated,
-      html: marked.parse(body, { async: false }),
+      html,
+      headings,
     },
   };
+}
+
+/** An anchor id from a heading's HTML: "Warum Phishing scheitert" → "warum-phishing-scheitert". */
+export function headingId(html: string): string {
+  const umlauts: Record<string, string> = { ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss' };
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&[a-z0-9#]+;/gi, '')
+    .toLowerCase()
+    .replace(/[äöüß]/g, (c) => umlauts[c])
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+/** Gives every h2 and h3 an id (unique within the post), so sections can be linked, and lists the h2s. */
+function withHeadingIds(html: string): { html: string; headings: { id: string; html: string }[] } {
+  const used = new Map<string, number>();
+  const headings: { id: string; html: string }[] = [];
+  const result = html.replace(/<h([23])>([\s\S]*?)<\/h\1>/g, (_match, level: string, inner: string) => {
+    const base = headingId(inner) || 'section';
+    const count = (used.get(base) ?? 0) + 1;
+    used.set(base, count);
+    const id = count === 1 ? base : `${base}-${count}`;
+    if (level === '2') headings.push({ id, html: inner });
+    return `<h${level} id="${id}">${inner}</h${level}>`;
+  });
+  return { html: result, headings };
 }
 
 /** Parses every file, and checks that no two posts share a slug and that links to /posts/ lead to a page. */
@@ -238,7 +292,10 @@ function languageSelect(language: Language, versions: Versions): string {
 
 interface Layout {
   language: Language;
+  /** The browser tab's and search results' title, at most MAX_SEARCH_TITLE characters. */
   title: string;
+  /** The title for link previews, which show more of it. */
+  socialTitle: string;
   description: string;
   path: string;
   versions: Versions;
@@ -262,10 +319,12 @@ function layout(page: Layout): string {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>${escape(page.title)}</title>
     <meta name="description" content="${escape(page.description)}" />
+    <meta name="robots" content="max-image-preview:large" />
+    ${ICON_LINKS}
     <link rel="canonical" href="${ORIGIN}${page.path}" />
     ${alternateLinks(page.versions)}
     <meta property="og:site_name" content="madAuth" />
-    <meta property="og:title" content="${escape(page.title)}" />
+    <meta property="og:title" content="${escape(page.socialTitle)}" />
     <meta property="og:description" content="${escape(page.description)}" />
     <meta property="og:url" content="${ORIGIN}${page.path}" />
     <meta property="og:locale" content="${strings.ogLocale}" />
@@ -273,7 +332,7 @@ function layout(page: Layout): string {
     <meta property="og:image" content="${ORIGIN}/${page.image}" />
     <meta property="og:image:width" content="${OG_WIDTH}" />
     <meta property="og:image:height" content="${OG_HEIGHT}" />
-    <meta property="og:image:alt" content="${escape(page.title)}" />
+    <meta property="og:image:alt" content="${escape(page.socialTitle)}" />
     <meta name="twitter:card" content="summary_large_image" />
     <script type="application/ld+json">${jsonLd(page.jsonLd)}</script>
     <link rel="stylesheet" href="/src/posts.css" />
@@ -300,7 +359,32 @@ ${page.main}
 `;
 }
 
-const organization = { '@type': 'Organization', '@id': `${ORIGIN}/#organization`, name: 'madAuth', url: `${ORIGIN}/` };
+/** The site's icons: favicon.svg is in public/, the PNGs are drawn from it (see plugin.ts). */
+export const ICONS = { svg: 'favicon.svg', appleTouch: 'apple-touch-icon.png', logo: 'icon-512.png' };
+
+const ICON_LINKS = [
+  `<link rel="icon" href="/${ICONS.svg}" type="image/svg+xml" />`,
+  `<link rel="apple-touch-icon" href="/${ICONS.appleTouch}" />`,
+].join('\n    ');
+
+const organization = {
+  '@type': 'Organization',
+  '@id': `${ORIGIN}/#organization`,
+  name: 'madAuth',
+  url: `${ORIGIN}/`,
+  logo: { '@type': 'ImageObject', url: `${ORIGIN}/${ICONS.logo}`, width: 512, height: 512 },
+};
+
+/** The title with the site's name, when both fit into search results. */
+const withSiteName = (title: string): string =>
+  `${title} | madAuth`.length <= MAX_SEARCH_TITLE ? `${title} | madAuth` : title;
+
+/** The post's sections, linked; only for posts long enough to need it. */
+function tableOfContents(post: Post): string {
+  if (post.headings.length < 3) return '';
+  const items = post.headings.map((h) => `<li><a href="#${h.id}">${h.html}</a></li>`).join('');
+  return `        <nav class="toc" aria-labelledby="toc-heading"><p id="toc-heading">${LANGUAGES[post.language].contents}</p><ol>${items}</ol></nav>\n`;
+}
 
 function postPage(post: Post, posts: Post[]): Page {
   const strings = LANGUAGES[post.language];
@@ -315,7 +399,7 @@ function postPage(post: Post, posts: Post[]): Page {
       <article>
         <h1>${escape(post.title)}</h1>
         <p class="meta">${strings.by} ${AUTHOR} · ${dates}</p>
-${post.html}
+${tableOfContents(post)}${post.html}
         <aside class="cta">
           <p>${strings.ctaText}</p>
           <p class="actions"><a class="button primary" href="/demo/">${strings.ctaDemo}</a> <a class="button" href="https://github.com/inouiw/madAuth/blob/main/docs/getting-started.md">${strings.ctaStart}</a></p>
@@ -329,7 +413,8 @@ ${post.html}
     },
     html: layout({
       language: post.language,
-      title: `${post.title} | madAuth`,
+      title: withSiteName(post.seoTitle ?? post.title),
+      socialTitle: post.title,
       description: post.description,
       path: postPath(post),
       image,
@@ -398,6 +483,7 @@ function indexPage(language: Language, posts: Post[]): Page {
     html: layout({
       language,
       title: strings.indexTitle,
+      socialTitle: strings.indexTitle,
       description: strings.indexDescription,
       path: strings.indexPath,
       image,
@@ -470,3 +556,32 @@ export const ROBOTS = `User-agent: *
 Disallow: /auth/
 Sitemap: ${ORIGIN}/sitemap.xml
 `;
+
+/** The landing page's link-preview image. */
+export const LANDING_IMAGE: Page['image'] = {
+  file: 'og.png',
+  card: {
+    kicker: 'Open source',
+    title: 'Self-hostable authentication for any web app',
+    byline: 'An alternative to Cognito and Auth0',
+  },
+};
+
+/** The landing page's list of the newest English posts, in place of its `<!-- latest-posts -->` comment. */
+export function renderLatestPosts(posts: Post[], count = 3): string {
+  const newest = posts.filter((p) => p.language === 'en').sort(newestFirst).slice(0, count);
+  if (newest.length === 0) return '';
+  const items = newest
+    .map(
+      (post) =>
+        `<li><a href="${postPath(post)}">${escape(post.title)}</a><p>${escape(post.description)}</p></li>`,
+    )
+    .join('\n          ');
+  return `<section class="latest">
+        <h2>From the blog</h2>
+        <ul>
+          ${items}
+        </ul>
+        <p><a href="${LANGUAGES.en.indexPath}">All posts</a> · <a href="${LANGUAGES.de.indexPath}" hreflang="de" lang="de">Artikel auf Deutsch</a></p>
+      </section>`;
+}

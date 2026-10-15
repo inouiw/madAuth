@@ -1,7 +1,8 @@
 ---
 slug: passkeys-erklaert
 title: Passkeys erklärt: So funktioniert WebAuthn – und deshalb scheitert Phishing
-description: Was ein Passkey ist, was bei einer WebAuthn-Anmeldung passiert, warum eine gefälschte Seite leer ausgeht und worauf der Server achten muss, wenn Sie Passkeys in Ihre Web-App einbauen.
+seoTitle: Passkeys erklärt: So funktioniert WebAuthn
+description: Was ein Passkey ist, was bei der WebAuthn-Anmeldung passiert, warum Phishing-Seiten leer ausgehen und worauf Ihr Server beim Einbau von Passkeys achten muss.
 published: 2026-10-15
 ---
 

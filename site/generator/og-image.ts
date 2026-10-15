@@ -91,3 +91,7 @@ export async function renderOgImage(card: OgCard, fonts: OgFonts): Promise<Buffe
   });
   return new Resvg(svg, { fitTo: { mode: 'width', value: OG_WIDTH } }).render().asPng();
 }
+
+/** An SVG icon as a square PNG of `size` pixels. */
+export const renderIcon = (svg: string, size: number): Buffer =>
+  new Resvg(svg, { fitTo: { mode: 'width', value: size } }).render().asPng();

@@ -103,6 +103,40 @@ article blockquote {
   color: var(--muted);
 }
 
+/* A nav, which style.css lays out as a row. */
+.toc {
+  display: block;
+  margin: 24px 0 8px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 0.95rem;
+}
+
+.toc p {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.toc ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.toc a {
+  text-decoration: none;
+}
+
+.toc a:hover {
+  text-decoration: underline;
+}
+
+article h2,
+article h3 {
+  scroll-margin-top: 16px;
+}
+
 .cta {
   margin-top: 48px;
   padding: 20px;

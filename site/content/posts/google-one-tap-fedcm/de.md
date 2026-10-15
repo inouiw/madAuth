@@ -1,7 +1,8 @@
 ---
 slug: google-one-tap-und-fedcm
 title: Google One Tap und FedCM 2026: Was sich geändert hat – und was nicht
-description: Google One Tap läuft heute über die FedCM-API des Browsers. Was das bedeutet, nachdem Chrome die Drittanbieter-Cookies behält, was sich für Entwickler ändert und was Ihr Server am ID-Token prüfen muss.
+seoTitle: Google One Tap & FedCM 2026: Was sich ändert
+description: Google One Tap läuft über die FedCM-API des Browsers. Was das bedeutet, seit Chrome Drittanbieter-Cookies behält, und was Ihr Server am ID-Token prüfen muss.
 published: 2026-10-15
 ---
 

@@ -2,14 +2,27 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { createRequire } from 'node:module';
 import { dirname, join, relative } from 'node:path';
 import type { Plugin } from 'vite';
-import { renderOgImage, type OgFonts } from './og-image';
-import { parsePosts, renderPages, renderSitemap, ROBOTS, type Page, type Post, type Result, type SourceFile } from './posts';
+import { renderIcon, renderOgImage, type OgFonts } from './og-image';
+import {
+  ICONS,
+  LANDING_IMAGE,
+  parsePosts,
+  renderLatestPosts,
+  renderPages,
+  renderSitemap,
+  ROBOTS,
+  type Page,
+  type Post,
+  type Result,
+  type SourceFile,
+} from './posts';
 
 /**
  * Builds the blog: reads content/posts/<id>/<language>.md, writes the pages to posts/ (generated, git-ignored)
  * and hands them to Vite as entries, so their CSS and scripts are bundled like the landing page's. The build
- * adds every page's link-preview image (og.png next to its index.html), sitemap.xml and robots.txt. In dev, a
- * changed Markdown file rewrites the pages, and the images are drawn when they are asked for.
+ * adds every page's link-preview image (og.png next to its index.html, and the landing page's), the PNG icons
+ * drawn from public/favicon.svg, sitemap.xml and robots.txt, and puts the newest posts on the landing page. In
+ * dev, a changed Markdown file rewrites the pages, and the images are drawn when they are asked for.
  */
 export function posts(siteRoot: string): Plugin {
   const contentDir = join(siteRoot, 'content/posts');
@@ -29,6 +42,20 @@ export function posts(siteRoot: string): Plugin {
       writeFileSync(file, page.html);
     }
     return { isSuccess: true, value: pages.map((page) => page.file) };
+  };
+
+  /** The images drawn rather than copied: each one's path under the site root, and how to draw it. */
+  const drawn = (): { file: string; draw: () => Promise<Buffer> }[] => {
+    const fonts = loadFonts();
+    const icon = readFileSync(join(siteRoot, 'public', ICONS.svg), 'utf8');
+    return [
+      ...[...pages.map((page) => page.image), LANDING_IMAGE].map((image) => ({
+        file: image.file,
+        draw: () => renderOgImage(image.card, fonts),
+      })),
+      { file: ICONS.appleTouch, draw: async () => renderIcon(icon, 180) },
+      { file: ICONS.logo, draw: async () => renderIcon(icon, 512) },
+    ];
   };
 
   return {
@@ -55,18 +82,25 @@ export function posts(siteRoot: string): Plugin {
         res.end(renderSitemap(current));
       });
       server.middlewares.use((req, res, next) => {
-        const page = pages.find((p) => `/${p.image.file}` === req.url?.split('?')[0]);
-        if (!page) return next();
-        renderOgImage(page.image.card, loadFonts()).then((png) => {
+        const image = drawn().find((d) => `/${d.file}` === req.url?.split('?')[0]);
+        if (!image) return next();
+        image.draw().then((png) => {
           res.setHeader('Content-Type', 'image/png');
           res.end(png);
         }, next);
       });
     },
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html, ctx) {
+        return ctx.filename === join(siteRoot, 'index.html')
+          ? html.replace('<!-- latest-posts -->', renderLatestPosts(current))
+          : html;
+      },
+    },
     async generateBundle() {
-      const fonts = loadFonts();
-      const images = await Promise.all(pages.map(async (page) => ({ page, png: await renderOgImage(page.image.card, fonts) })));
-      for (const { page, png } of images) this.emitFile({ type: 'asset', fileName: page.image.file, source: png });
+      const images = await Promise.all(drawn().map(async (d) => ({ file: d.file, png: await d.draw() })));
+      for (const { file, png } of images) this.emitFile({ type: 'asset', fileName: file, source: png });
       this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: renderSitemap(current) });
       this.emitFile({ type: 'asset', fileName: 'robots.txt', source: ROBOTS });
     },

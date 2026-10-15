@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFrontMatter, parsePosts, renderPages, renderSitemap, type Post, type SourceFile } from './posts';
+import { headingId, parseFrontMatter, parsePosts, renderLatestPosts, renderPages, renderSitemap, type Post, type SourceFile } from './posts';
 
 const source = (id: string, language: string, fields: Record<string, string>, body = 'Text.'): SourceFile => ({
   id,
@@ -31,10 +31,32 @@ describe('parseFrontMatter', () => {
 });
 
 describe('parsePosts', () => {
-  it('renders the Markdown', () => {
-    expect(parsed([source('p', 'en', fields('p-en'), '## Head\n\n`code`')])[0].html).toBe(
-      '<h2>Head</h2>\n<p><code>code</code></p>\n',
+  it('renders the Markdown, with an id on every h2 and h3', () => {
+    const [post] = parsed([source('p', 'en', fields('p-en'), '## Head\n\n`code`\n\n### Head\n\n## Über `uns` & Co')]);
+    expect(post.html).toBe(
+      '<h2 id="head">Head</h2>\n<p><code>code</code></p>\n<h3 id="head-2">Head</h3>\n<h2 id="ueber-uns-co">Über <code>uns</code> &amp; Co</h2>\n',
     );
+    expect(post.headings).toEqual([
+      { id: 'head', html: 'Head' },
+      { id: 'ueber-uns-co', html: 'Über <code>uns</code> &amp; Co' },
+    ]);
+  });
+
+  it('makes ids of German and accented headings', () => {
+    expect(headingId('Warum ein Datenleck viel weniger kostet')).toBe('warum-ein-datenleck-viel-weniger-kostet');
+    expect(headingId('Größe &amp; Café')).toBe('groesse-cafe');
+  });
+
+  it('refuses a title or description too long for search results', () => {
+    const long = 'A title that is much too long to be shown in full in the search results';
+    expect(parsePosts([source('a', 'en', { ...fields('a'), title: long, description: 'd'.repeat(161) })])).toEqual({
+      isSuccess: false,
+      errors: [
+        'content/posts/a/en.md: the title in search results has 71 characters, more than the 60 they show: add a shorter "seoTitle"',
+        'content/posts/a/en.md: "description" has 161 characters, more than the 160 search results show',
+      ],
+    });
+    expect(parsePosts([source('a', 'en', { ...fields('a'), title: long, seoTitle: 'Short' })]).isSuccess).toBe(true);
   });
 
   it('names every error of every file', () => {
@@ -123,8 +145,41 @@ describe('renderPages', () => {
     expect(pages[3].image.card).toEqual({ kicker: 'Blog', title: 'Passkeys <erklärt>', byline: 'David Neuy · 15. Oktober 2026' });
     const html = page('posts/passkeys-erklaert/index.html');
     expect(html).toContain('<meta property="og:image" content="https://madauth.com/posts/passkeys-erklaert/og.png" />');
-    expect(html).toContain('<meta property="og:image:alt" content="Passkeys &lt;erklärt&gt; | madAuth" />');
+    expect(html).toContain('<meta property="og:image:alt" content="Passkeys &lt;erklärt&gt;" />');
     expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
+  });
+
+  it('uses the seoTitle in the title, with the site name when it fits, and the title in link previews', () => {
+    const [post] = renderPages(
+      parsed([source('a', 'en', { ...fields('a'), title: 'A long heading for the page', seoTitle: 'Short title' })]),
+    ).slice(1);
+    expect(post.html).toContain('<title>Short title | madAuth</title>');
+    expect(post.html).toContain('<meta property="og:title" content="A long heading for the page" />');
+    expect(post.html).toContain('<h1>A long heading for the page</h1>');
+    const exact = renderPages(parsed([source('b', 'en', { ...fields('b'), title: 'x'.repeat(55) })]))[1];
+    expect(exact.html).toContain(`<title>${'x'.repeat(55)}</title>`);
+  });
+
+  it('gives a post with three sections and more a table of contents', () => {
+    const body = '## One\n\n## Two\n\n## Three';
+    const [, withToc] = renderPages(parsed([source('a', 'de', fields('a'), body)]));
+    expect(withToc.html).toContain('<p id="toc-heading">Inhalt</p><ol><li><a href="#one">One</a></li>');
+    const [, without] = renderPages(parsed([source('a', 'de', fields('a'), '## One\n\n## Two')]));
+    expect(without.html).not.toContain('class="toc"');
+  });
+
+  it('names the icons and the publisher logo', () => {
+    const html = page('posts/passkeys-explained/index.html');
+    expect(html).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml" />');
+    expect(html).toContain('<meta name="robots" content="max-image-preview:large" />');
+    expect(html).toContain('"logo":{"@type":"ImageObject","url":"https://madauth.com/icon-512.png"');
+  });
+
+  it('lists the newest English posts for the landing page', () => {
+    const html = renderLatestPosts(posts, 1);
+    expect(html).toContain('<a href="/posts/only-english/">Title only-english</a>');
+    expect(html).not.toContain('/posts/passkeys-explained/');
+    expect(renderLatestPosts([])).toBe('');
   });
 
   it('shows no language select for a post in one language', () => {
