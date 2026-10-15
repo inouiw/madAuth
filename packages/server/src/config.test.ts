@@ -29,6 +29,15 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, INITIAL_ADMIN_EMAIL: 'grace' })).rejects.toThrow(new ConfigError('INITIAL_ADMIN_EMAIL must be an e-mail address, e.g. you@example.com, but is "grace".'));
   });
 
+  it('API_KEY_SCOPES_URL is an https URL, or http on the local machine', async () => {
+    for (const url of ['https://app.example.com/api/scopes', 'http://localhost:3000/api-scopes.json']) {
+      expect((await loadConfig({ ...env, API_KEY_SCOPES_URL: url })).apiKeyScopesUrl).toBe(url);
+    }
+    for (const url of ['http://app.example.com/api/scopes', 'scopes.json']) {
+      await expect(loadConfig({ ...env, API_KEY_SCOPES_URL: url })).rejects.toThrow(new ConfigError(`API_KEY_SCOPES_URL must be an https URL (http only for localhost) but is "${url}".`));
+    }
+  });
+
   it('reads a valid configuration with defaults', async () => {
     const config = await loadConfig(env);
 

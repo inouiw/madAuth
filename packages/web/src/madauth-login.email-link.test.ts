@@ -50,7 +50,7 @@ const linda = { id: 'usr_linda', email: 'linda@example.com' };
 /** Opens the dialog; resolves to the pending signIn() result. */
 async function openDialog(providers: SignInProvider[] = [new Password(), new EmailLink()]) {
   await Madauth.initialize({ serverUrl: SERVER, providers });
-  const result = Madauth.signIn();
+  const result = Madauth.showSignInDialog();
   await settle();
   return result;
 }

@@ -105,6 +105,7 @@ main {
 #sign-in:focus-visible,
 #sign-out:focus-visible,
 #manage-methods:focus-visible,
+#manage-api-keys:focus-visible,
 #theme-toggle:focus-visible,
 #flow a:focus-visible,
 .info:focus-visible {
@@ -531,8 +532,9 @@ pre {
   background: light-dark(#f5f5f4, #101113);
 }
 
-/* The way into the dialog's list of the user's sign-in methods: its name, and the call below it. */
-#manage-methods {
+/* The ways into the dialog's lists of the user's sign-in methods and API keys: the name, and the call below it. */
+#manage-methods,
+#manage-api-keys {
   display: grid;
   gap: 2px;
   width: min(360px, 100%);
@@ -546,15 +548,36 @@ pre {
   cursor: pointer;
 }
 
-#manage-methods:hover {
+#manage-methods:hover,
+#manage-api-keys:hover {
   background: light-dark(#f3f4f5, #2c2d32);
 }
 
-#manage-methods code {
+#manage-methods code,
+#manage-api-keys code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8125rem;
   font-weight: 400;
   color: light-dark(#5c6066, #a6a9af);
+}
+
+/* Under "API Keys": where the demo's scopes come from, and how a backend checks a key. Running text, not a grid. */
+#account .api-keys-hint {
+  display: block;
+  width: min(360px, 100%);
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  text-align: left;
+  color: light-dark(#5c6066, #a6a9af);
+}
+
+.api-keys-hint code {
+  overflow-wrap: anywhere;
+}
+
+.api-keys-hint a {
+  color: inherit;
 }
 
 /* The authenticator app in the account section. */

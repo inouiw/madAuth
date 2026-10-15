@@ -1,5 +1,6 @@
 import type { SecondFactorPolicy } from '../providers/provider.js';
 import type { Result } from '../result.js';
+import type { ApiKeyInfo } from './api-keys.js';
 import type { Core } from './core.js';
 
 /** What admins attach to a user, e.g. `{ roles: ['admin'], plan: 'pro' }`. See "Claims" in docs/server.md. */
@@ -53,7 +54,7 @@ export interface Settings {
 export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 
 /**
- * Managing claims and settings, and resetting a user's sign-in, for users with the role `admin`
+ * Managing claims, settings and users' API keys, and resetting a user's sign-in, for users with the role `admin`
  * (`claims.roles`). The first admin is the user who signs in with the address in the server's
  * `INITIAL_ADMIN_EMAIL`.
  */
@@ -88,6 +89,13 @@ export interface AdminApi {
    * signed out at the next session check. Fails with `forbidden`, `invalid_email` or `user_not_found`.
    */
   resetSignIn(email: string): Promise<Result<{ userId: string }>>;
+  /**
+   * The API keys of the user with this e-mail address, e.g. to find one that leaked. Only with a session: an
+   * API key never manages keys. Fails with `forbidden`, `invalid_email` or `user_not_found`.
+   */
+  listApiKeys(email: string): Promise<Result<{ userId: string; apiKeys: ApiKeyInfo[] }>>;
+  /** Revokes an API key of the user with this e-mail address. Fails with `forbidden`, `invalid_email`, `user_not_found` or `api_key_not_found`. */
+  revokeApiKey(email: string, id: string): Promise<Result<{ userId: string }>>;
 }
 
 export function createAdminApi(core: Core): AdminApi {
@@ -106,5 +114,7 @@ export function createAdminApi(core: Core): AdminApi {
     getSettings: () => call('settings/get', {}, settings),
     setSettings: (value) => call('settings/set', { methods: value.methods, password: value.password }, settings),
     resetSignIn: (email) => call('sign-in/reset', { email }, (data: { userId: string }) => ({ userId: data.userId })),
+    listApiKeys: (email) => call('api-keys/list', { email }, (data: { userId: string; apiKeys: ApiKeyInfo[] }) => ({ userId: data.userId, apiKeys: data.apiKeys })),
+    revokeApiKey: (email, id) => call('api-keys/revoke', { email, id }, (data: { userId: string }) => ({ userId: data.userId })),
   };
 }

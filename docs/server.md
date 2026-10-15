@@ -40,6 +40,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.send_verification` and `email.send_password_reset`, the e-mail link when they include `email.send_signin_link`, SMS codes when they include `sms.send_code`, e.g. `email.send_verification,email.send_password_reset,email.send_signin_link,email.send_already_registered,email.send_password_reset_no_password,sms.send_code`. |
 | `AUTHENTICATOR_ISSUER` | no | The name authenticator apps show next to the account, e.g. `My App`; the browser's passkey dialog shows it too (the WebAuthn relying party's name). Default: the host of the app that asked for the setup, e.g. `app.example.com`. See [Authenticator app](#authenticator-app). |
 | `PASSKEY_RP_ID` | no | The domain [passkeys](#passkeys) belong to, e.g. `example.com` so that they work on `app.example.com` and `www.example.com` alike. It must be the host of an app in `ALLOWED_ORIGINS` or a domain above it. Default: the host of the app that adds or uses the passkey, so a passkey works on that host only. Changing it later makes existing passkeys stop working, and locks out the users who sign in with passkeys alone until an admin [resets their sign-in](#resetting-a-users-sign-in) and they sign up again. |
+| `API_KEY_SCOPES_URL` | no | Where your app lists the scopes of its API as JSON, which users can give their [API keys](api-keys.md) next to madAuth's own, e.g. `https://app.example.com/api/scopes`. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. madAuth reads it again every five minutes. Without it, keys only have madAuth's scopes, for the admin API. |
 | `SESSION_TTL` | no | Lifetime of a session token in seconds: how long your backends accept it. Default `28800` (8 hours). The web library renews it when needed, see [Sessions](#sessions). |
 | `SESSION_RENEWAL_TTL` | no | How long a user stays signed in without opening your app, in seconds: a session can be renewed this long after its last renewal. Default `2592000` (30 days). Not less than `SESSION_TTL`. |
 | `COOKIE_DOMAIN` | no | Cookie domain, e.g. `.example.com`, so backends on sibling subdomains receive the session cookie. By default the cookie belongs to the server's host only. |
@@ -244,13 +245,15 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `user.password_reset` | A password was reset (older sessions end) | `user` | the same | the same |
 | `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `github`, `authenticator`, `email-link` or `passkey`), `secondFactor` (`passkey`, `authenticator`, `recovery_code` or `sms`, when there was a second step) | the same | the same |
 | `user.deleted` | A user deleted their account | `user` | the same | the same |
-| `user.claims_changed` | An admin set the claims of a user, or [`INITIAL_ADMIN_EMAIL`](#the-first-admin) gave a user the role `admin` | `user` (with the new claims), `claims`, `by` (the admin's address, or `INITIAL_ADMIN_EMAIL`) | the same | the same |
+| `user.claims_changed` | An admin set the claims of a user, or [`INITIAL_ADMIN_EMAIL`](#the-first-admin) gave a user the role `admin` | `user` (with the new claims), `claims`, `by` (the admin's address, or `INITIAL_ADMIN_EMAIL`), `byApiKey { id, name }` (when the admin used an [API key](api-keys.md)) | the same | the same |
 | `user.second_factor_enabled` | A user set up or replaced a second factor: the authenticator app as the second step of their sign-in method, or a phone number for SMS codes | `user`, `method` (`authenticator` or `sms`), `phone` (for `sms`) | the same | the same |
 | `user.second_factor_disabled` | A user removed a second factor | `user`, `method` (`authenticator` or `sms`) | the same | the same |
 | `user.recovery_code_used` | A recovery code was used instead of the app | `user`, `remaining` (recovery codes left) | the same | the same |
 | `user.method_added` | A signed-in user added a [sign-in method](sign-in-methods.md): a password, the e-mail link, Google, GitHub or a passkey | `user`, `method`, `email` (Google's or GitHub's address), `passkey { id, name }` (for a passkey) | the same | the same |
 | `user.method_removed` | A user removed one | `user`, `method`, `passkey { id, name }` (for a passkey) | the same | the same |
-| `user.sign_in_reset` | An admin [reset the sign-in](#resetting-a-users-sign-in) of a user: their methods and second factors are gone, and they sign up again | `user`, `by` (the admin's address) | the same | the same |
+| `user.sign_in_reset` | An admin [reset the sign-in](#resetting-a-users-sign-in) of a user: their methods and second factors are gone, and they sign up again | `user`, `by` (the admin's address), `byApiKey { id, name }` (when the admin used an API key) | the same | the same |
+| `user.api_key_created` | A user made an [API key](api-keys.md) | `user`, `apiKey { id, name, scopes, createdAt, expiresAt, lastUsedAt }` (never the key itself) | the same | the same |
+| `user.api_key_revoked` | A user or an admin revoked one | `user`, `apiKey { id, name }`, `by` (the admin's address, when an admin revoked it) | the same | the same |
 
 - The prefix says what a call is: `email.send_*` and `sms.send_*` hand over a message for you to send, `user.signing_up` asks you to decide, and the other `user.*` types tell you what happened.
 - A user signs up with one method and can [add more](sign-in-methods.md) while signed in (`user.method_added`). The authenticator app and SMS codes are told as second factors (`user.second_factor_*`), whether or not the app also signs in on its own; setting up or replacing the app a user signed up with is part of their sign-up (`user.signed_up`), so no `user.second_factor_*` is sent for it, nor `user.method_added` for the passkey a user signs up with.
@@ -319,6 +322,8 @@ const result = await Madauth.admin.getClaims('ada@example.com'); // { isSuccess:
 
 Whether the caller is an admin is asked from the store each time, not read from their session, so a removed `admin` role stops counting at once.
 
+A program calls the admin API with an admin's [API key](api-keys.md#on-madauths-admin-api) instead of a session (`Authorization: Bearer madauth_…`), limited to the key's scopes, one per admin task, e.g. `madauth:claims:read`.
+
 **When a change shows.** The claims of a session token are from the moment it was issued. The madAuth server reads them again whenever the app checks the session (`GET /auth/session`, e.g. on page load) and at every [renewal](#sessions), and issues a new session token if they changed. Your own backends, which verify the token offline, see the change from that moment, and after `SESSION_TTL` at the latest.
 
 ### The first admin
@@ -339,9 +344,9 @@ madAuth has these methods, named by these ids in the settings:
 | `github` | [GitHub sign-in](github-security.md) (the redirect flow) | `GitHub`, `Madauth.github` |
 | `password` | E-mail & password | `Password`, `Madauth.password` |
 | `email-link` | The passwordless [e-mail link](email-link-security.md) (the address, then the link or the code from the e-mail) | `EmailLink`, `Madauth.emailLink` |
-| `passkey` | [Passkeys](#passkeys) (WebAuthn): on their own, and as a second factor | `Passkey`, `Madauth.passkey`, `Madauth.setUpPasskey()` |
-| `authenticator` | The [authenticator app](#authenticator-app): on its own (the e-mail address and a code from the app), and as a second factor | `Authenticator`, `Madauth.authenticator`, `Madauth.setUpAuthenticator()` |
-| `sms` | [SMS codes](sms-security.md): a second factor only | `Madauth.sms`, `Madauth.setUpSms()` |
+| `passkey` | [Passkeys](#passkeys) (WebAuthn): on their own, and as a second factor | `Passkey`, `Madauth.passkey`, `Madauth.showSetUpPasskeyDialog()` |
+| `authenticator` | The [authenticator app](#authenticator-app): on its own (the e-mail address and a code from the app), and as a second factor | `Authenticator`, `Madauth.authenticator`, `Madauth.showSetUpAuthenticatorDialog()` |
+| `sms` | [SMS codes](sms-security.md): a second factor only | `Madauth.sms`, `Madauth.showSetUpSmsDialog()` |
 
 Which methods the server can offer is configured at start: `GOOGLE_CLIENT_ID` for Google, `GITHUB_CLIENT_ID` with its secret for GitHub, the webhook that sends the e-mails for password sign-in, for the e-mail link and for sign-up with the app or a passkey alone, and `sms.send_code` for SMS codes; the app and passkeys need nothing but the store. Which of them are on is a setting in the database that admins change while the server runs, at once and for every instance: the list of the methods that are on, each with two settings, both always given. A method that is not in the list is off.
 
@@ -401,7 +406,7 @@ The web library gets the rules with the configuration, as `Madauth.password.poli
 
 The authenticator app (TOTP, RFC 6238: Google Authenticator, 1Password, Microsoft Authenticator and the like) needs no configuration beyond the store; `AUTHENTICATOR_ISSUER` only sets the name the app shows next to the account (and the one the browser shows for a new passkey). What it does is the [sign-in policy](#sign-in-methods) above.
 
-**Setting it up.** A signed-in user calls `Madauth.setUpAuthenticator()` (while the app is allowed as a sign-in method, a first app needs a sign-in within the last ten minutes, like any [new sign-in method](sign-in-methods.md)) (a custom screen: `Madauth.authenticator.startSetup()` and `confirmSetup()`). The server makes a new secret and the web library shows it as a QR code (an `otpauth://` URI) and as text; the first code from the app proves the setup. The user then gets ten recovery codes to save, each good for one sign-in without the app. A new setup replaces an earlier app and its recovery codes, so it takes a current code from the old app (or a recovery code) first, like removing it. With a `required` policy, a user without the app is taken into the setup at their next sign-in, before they are in. A sign-up with the app alone (`Madauth.authenticator.signUp`; the server must confirm addresses by e-mail) confirms the address first and then sets the app up.
+**Setting it up.** A signed-in user calls `Madauth.showSetUpAuthenticatorDialog()` (while the app is allowed as a sign-in method, a first app needs a sign-in within the last ten minutes, like any [new sign-in method](sign-in-methods.md)) (a custom screen: `Madauth.authenticator.startSetup()` and `confirmSetup()`). The server makes a new secret and the web library shows it as a QR code (an `otpauth://` URI) and as text; the first code from the app proves the setup. The user then gets ten recovery codes to save, each good for one sign-in without the app. A new setup replaces an earlier app and its recovery codes, so it takes a current code from the old app (or a recovery code) first, like removing it. With a `required` policy, a user without the app is taken into the setup at their next sign-in, before they are in. A sign-up with the app alone (`Madauth.authenticator.signUp`; the server must confirm addresses by e-mail) confirms the address first and then sets the app up.
 
 **Signing in.** After a method whose policy asks for it, the server answers `401 authenticator_required` (or `second_factor_setup_required`, with the `factors` the user can set up) instead of a session and sets a ten-minute challenge cookie; the dialog asks for the code, and `POST /auth/authenticator/verify` finishes the sign-in. With the app allowed as a sign-in method, `POST /auth/authenticator/signin` takes the e-mail address and a code, for every user who has the app. A recovery code works wherever a code does, once; `user.recovery_code_used` tells your webhook how many are left.
 
@@ -415,7 +420,7 @@ The secrets are stored encrypted with a key derived from `MADAUTH_SIGNING_KEY`: 
 
 With `sms` among the [sign-in methods](#sign-in-methods) and a webhook that sends `sms.send_code`, a code sent to the user's phone is a second factor next to the app, for the methods whose policy asks for one. It is never a sign-in method of its own: a phone is added to an account that has a first factor.
 
-**Setting it up.** A signed-in user calls `Madauth.setUpSms()` (a custom screen: `Madauth.sms.setUp({ phone })` and `confirmSetup({ code })`): the server sends a code to the number, and the code confirms it; nothing is stored before. The number must be given with the country code and is kept in E.164 form; madAuth shows only its beginning and last two digits. Replacing the number takes a code sent to the current one first (`Madauth.sms.send()`, then `setUp({ phone, code })`), like removing it. With a `required` policy, a user without any factor can add a phone at their next sign-in instead of the app.
+**Setting it up.** A signed-in user calls `Madauth.showSetUpSmsDialog()` (a custom screen: `Madauth.sms.setUp({ phone })` and `confirmSetup({ code })`): the server sends a code to the number, and the code confirms it; nothing is stored before. The number must be given with the country code and is kept in E.164 form; madAuth shows only its beginning and last two digits. Replacing the number takes a code sent to the current one first (`Madauth.sms.send()`, then `setUp({ phone, code })`), like removing it. With a `required` policy, a user without any factor can add a phone at their next sign-in instead of the app.
 
 **Signing in.** After the first step, a user with only a phone gets `401 sms_required`; one with the app and a phone gets `authenticator_required` with `factors: ["authenticator", "sms"]` and can switch (a passkey comes first: `passkey_required`). The SMS goes when the client asks for it (`POST /auth/sms/send` with the challenge cookie), and `POST /auth/sms/verify` finishes the sign-in with `amr` ending in `sms`. One SMS per minute goes to a user (`429 too_soon`); a code lives ten minutes.
 
@@ -427,7 +432,7 @@ A passkey (WebAuthn) signs in with the device's screen lock: a fingerprint, the 
 
 - `PASSKEY_RP_ID` (optional): the domain of the passkeys, e.g. `example.com` for apps on `example.com` and its subdomains. Without it, a passkey belongs to the host of the app that made it and works there only. Changing it later makes existing passkeys stop working: set it before users add any. **Users who signed up with a passkey alone and have no other method are locked out by a change** until an admin [resets their sign-in](#resetting-a-users-sign-in) and they sign up again.
 
-**Adding one.** A signed-in user calls `Madauth.setUpPasskey()` (a custom screen: `Madauth.passkey.add({ name })`), within ten minutes of signing in: later, `401 reauth_required` asks them to sign in again first, so a session someone took over gives them no passkey of their own. The browser shows its passkey dialog; the passkey is stored with its public key and a name the user can change. With a `required` policy and passkeys on, a user without a second factor can add one at their next sign-in instead of the app or a phone. Every user can have several passkeys: a phone, a laptop, a security key.
+**Adding one.** A signed-in user calls `Madauth.showSetUpPasskeyDialog()` (a custom screen: `Madauth.passkey.add({ name })`), within ten minutes of signing in: later, `401 reauth_required` asks them to sign in again first, so a session someone took over gives them no passkey of their own. The browser shows its passkey dialog; the passkey is stored with its public key and a name the user can change. With a `required` policy and passkeys on, a user without a second factor can add one at their next sign-in instead of the app or a phone. Every user can have several passkeys: a phone, a laptop, a security key.
 
 **Signing up with one.** With passkeys allowed as a sign-in method and a webhook that confirms addresses (`email.send_verification`), people can sign up with a passkey alone, like with the [authenticator app](#authenticator-app) alone: `Madauth.passkey.signUp({ email, name? })` (`POST /auth/passkey/signup`) sends the confirmation e-mail, and the link or the code (`/auth/email/verify`) leads to the creation of the passkey (`401 passkey_setup_required`, see [The second step](#the-second-step)); the new passkey is the user's sign-in method and signs them in. In the dialog, "Create account" offers it as "Use a passkey instead of a password" (and under the passkey button when there is no password form). With a `passkey` policy that asks for a second factor, the sign-up goes on with its setup. `GET /auth/config` says whether the server offers it (`passkey.signUp`).
 
@@ -437,7 +442,7 @@ A passkey (WebAuthn) signs in with the device's screen lock: a fingerprint, the 
 
 ## A user's sign-in methods
 
-A user signs up with one method and can add more while signed in: a passkey, a password (`Madauth.password.add`), the e-mail link (`Madauth.emailLink.add`), Google or GitHub (their buttons with `purpose: 'link'`), the authenticator app. `Madauth.manageSignInMethods()` opens all of this in the dialog: the user's methods, buttons to add another and to remove one. See [Several sign-in methods](sign-in-methods.md) for the rules.
+A user signs up with one method and can add more while signed in: a passkey, a password (`Madauth.password.add`), the e-mail link (`Madauth.emailLink.add`), Google or GitHub (their buttons with `purpose: 'link'`), the authenticator app. `Madauth.showManageSignInMethodsDialog()` opens all of this in the dialog: the user's methods, buttons to add another and to remove one. See [Several sign-in methods](sign-in-methods.md) for the rules.
 
 ## Resetting a user's sign-in
 
@@ -508,6 +513,7 @@ npx @madauth/server schema --dialect postgres --from 1
 | 7 | One sign-in method per user, and when a sign-up was complete: `account.primaryUserId` (the user's id on the account they sign in with, empty for a second factor; **unique**, so an adapter must refuse a second record with the same value while allowing many empty ones), `account.secondFactor` (true for an authenticator app that is a step of the user's method and for SMS codes, false for a sign-in method) and `user.signedUpAt` (when the user's first session started, 0 until then; it makes [`user.signed_up`](#webhooks) go once). |
 | 8 | [Passkeys](#passkeys) and [several sign-in methods per user](sign-in-methods.md): `account.name`, `account.credentialId`, `account.signCount`, `account.transports`, `account.lastUsedAt` and `account.rpId` (the domain the passkey belongs to; all empty for other accounts). `account.primaryUserId` now marks the account a user signed up with (unique still), and the accounts they added later have none. |
 | 9 | [Sign-up with a passkey alone](#passkeys): `user.signUpMethod`, the method the user's pending sign-up confirms the address for (`password`, `authenticator` or `passkey`; string, empty before; `totp`, the app's id before it was named `authenticator`, is read as `authenticator`). Each sign-up that sends a confirmation e-mail sets it, and the confirmation reads it. |
+| 10 | New model `apiKey`: the users' [API keys](api-keys.md), each with its `userId` (indexed), `hash` (the SHA-256 of the key; **unique**), `name`, `scopes` (separated by spaces), `createdAt`, `expiresAt` (empty: never) and `lastUsedAt` (0: never). A new table; existing ones don't change. |
 
 Stores without fixed columns need no change: madAuth reads a missing `wrongCodes`, `lastUsedStep` or `lastSmsAt` as 0, and a missing `claims`, `email` or `phone` as empty. Records from before version 9 keep working without being changed: without `signUpMethod`, a pending sign-up is one with a password when the user has a password, else one with the authenticator app, as before. Records from before version 7 keep working without being changed: with both `primaryUserId` and `secondFactor` missing, a password, Google or e-mail link account is the user's sign-in method and an authenticator app is one when the user has none of those (they signed up with it), and a missing `signedUpAt` means the sign-up was complete long ago, so no `user.signed_up` is sent for it. A sign-up from then that was never finished gets `signedUpAt` 0 when it is finished or started again, so its `user.signed_up` comes. Records of the `role` model are simply not read any more.
 
@@ -634,6 +640,21 @@ Other languages can verify the JWT with any JOSE library:
 
 The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the session was authenticated: `pwd`, `google`, `github`, `email`, `passkey`, `otp`, `sms`), `auth_time` (when the user signed in, kept across renewals) and `claims` (what admins attached, see [Claims](#claims)).
 
+## Verifying an API key in your backend
+
+A program that calls your API in a user's name sends one of the user's [API keys](api-keys.md) (`Authorization: Bearer madauth_…`). `createApiKeyVerifier` asks the madAuth server whom it acts for and which of its scopes count now, and reuses the answer for a minute:
+
+```ts
+import { createApiKeyVerifier } from '@madauth/server/verify';
+
+const verifyApiKey = createApiKeyVerifier({ issuer: 'https://auth.example.com' });
+
+const caller = await verifyApiKey(request); // { user, apiKey: { id, name, scopes } } or null
+if (!caller?.apiKey.scopes.includes('orders:read')) return new Response('Forbidden', { status: 403 });
+```
+
+Your app lists the scopes of its API at `API_KEY_SCOPES_URL`; see [API keys](api-keys.md#your-apps-scopes).
+
 ## HTTP API
 
 | Method & path | Description |
@@ -680,6 +701,11 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/passkey/rename` | `{ id, name }`, signed in → `{ passkey }`; 400 `invalid_options`, 404 `method_not_found` |
 | `GET /auth/methods` | `{ methods: [{ id, method, signIn, removable, createdAt, email?, name?, lastUsedAt? }] }`: the signed-in user's [sign-in methods](sign-in-methods.md), the authenticator app among them (`signIn`: whether it signs in on its own now; `removable`: whether `/auth/methods/remove` takes it); 401 `no_session` |
 | `POST /auth/methods/remove` | `{ id }`, signed in within ten minutes → `{}`: removes a password, Google, GitHub (its authorization at GitHub too), the e-mail link or a passkey; 400 `invalid_options` (the app: `/auth/authenticator/remove`), 401 `reauth_required`, 403 `only_method` or `required_by_policy`, 404 `method_not_found` |
+| `GET /auth/api-keys/scopes` | `{ scopes: [{ name, description, role, endpoints }] }`: every scope an [API key](api-keys.md) can have, madAuth's and your app's (`role`: the role a user needs for it, or null). Public. |
+| `GET /auth/api-keys` | `{ apiKeys: [{ id, name, scopes, createdAt, expiresAt, lastUsedAt }] }`: the signed-in user's keys; 401 `no_session` |
+| `POST /auth/api-keys/create` | `{ name, scopes, expiresAt? }`, signed in within ten minutes → `{ key, apiKey }` (the key, shown this once); 400 `invalid_options` or `invalid_scopes`, 401 `reauth_required` or `no_session`, 403 `scope_not_allowed` (a scope whose role the user doesn't hold), 409 `too_many_api_keys`, 503 `temporarily_unavailable` (your app's scopes can't be read) |
+| `POST /auth/api-keys/revoke` | `{ id }`, signed in → `{}`; 404 `api_key_not_found` |
+| `POST /auth/api-keys/verify` | With `Authorization: Bearer madauth_…`, for your backend → `{ user, apiKey: { id, name, scopes } }` (the scopes that count now); 401 `invalid_api_key` |
 | `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
 | `POST /auth/logout` | Clears the cookies of the session |
 | `POST /auth/admin/claims/get` | `{ email }` → `{ email, userId, claims }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`, 404 `user_not_found`. See [Claims](#claims). |
@@ -687,11 +713,13 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, allowAsSignInMethod, secondFactor }, github: { … }, password: { … }, authenticator: { … }, 'email-link': { … }, passkey: { … }, sms: { … } }, password: { minLength, minScore } }`, for admins. See [Sign-in methods](#sign-in-methods) and [Password rules](#password-rules). |
 | `POST /auth/admin/settings/set` | `{ methods?: { <id>: { allowAsSignInMethod, secondFactor } }, password?: { minLength?, minScore? } }`, one or both (`methods` is the list of the methods that are on, each with both settings; what `password` leaves out takes its default) → the same; 400 `invalid_settings` when a setting doesn't fit its method, a policy has no second factor that is on, or no method that creates users would stay on, and then nothing is changed |
 | `POST /auth/admin/sign-in/reset` | `{ email }` → `{ email, userId }`: removes all of the user's sign-in methods and second factors, ends their sessions and marks the address unconfirmed, for admins; they sign up again. See [Resetting a user's sign-in](#resetting-a-users-sign-in). |
+| `POST /auth/admin/api-keys/list` | `{ email }` → `{ email, userId, apiKeys }`: the user's [API keys](api-keys.md), for admins with a session (an API key gets 403 `forbidden`) |
+| `POST /auth/admin/api-keys/revoke` | `{ email, id }` → `{ email, userId }`; 404 `api_key_not_found` |
 | `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`, 403 `own_admin_role` (the user has the role `admin`). See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
 | `GET /health` | `ok` |
 
-POST requests must come from an origin in `ALLOWED_ORIGINS`. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The routes of Google, of GitHub, of e-mail & password, of the e-mail link and of SMS codes return 404 when the method is not configured; the routes that change a signed-in user's methods need a sign-in within the last ten minutes (renewals don't count) and answer `401 reauth_required` otherwise; every method's routes return 403 `method_disabled` when it is not on, except the redirect flows' `start` and `callback`, which send the browser back to `return_to` with `madauth_error=method_disabled`.
+POST requests must come from an origin in `ALLOWED_ORIGINS`, except those with an `Authorization` header (a program's [API key](api-keys.md)). The admin routes take an admin's API key with the route's scope instead of a session, except those that manage keys. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The routes of Google, of GitHub, of e-mail & password, of the e-mail link and of SMS codes return 404 when the method is not configured; the routes that change a signed-in user's methods need a sign-in within the last ten minutes (renewals don't count) and answer `401 reauth_required` otherwise; every method's routes return 403 `method_disabled` when it is not on, except the redirect flows' `start` and `callback`, which send the browser back to `return_to` with `madauth_error=method_disabled`.
 
 ### The second step
 

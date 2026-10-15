@@ -143,16 +143,16 @@ describe('Madauth.sms', () => {
       expect(result).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
     }
     expect(server.requests.filter((r) => r.path.startsWith('/auth/sms'))).toHaveLength(0);
-    expect(await Madauth.setUpSms()).toMatchObject({ isSuccess: false, error: { code: 'invalid_options' } });
+    expect(await Madauth.showSetUpSmsDialog()).toMatchObject({ isSuccess: false, error: { code: 'invalid_options' } });
 
     server.methods.sms = true;
     await init();
     expect(Madauth.sms.available).toBe(true);
     server.user = null;
     await Madauth.signOut();
-    expect(await Madauth.setUpSms()).toMatchObject({ isSuccess: false, error: { code: 'no_session' } });
+    expect(await Madauth.showSetUpSmsDialog()).toMatchObject({ isSuccess: false, error: { code: 'no_session' } });
     server.methods.sms = false;
     await init();
-    expect(await Madauth.setUpSms()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+    expect(await Madauth.showSetUpSmsDialog()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
   });
 });

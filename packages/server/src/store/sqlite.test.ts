@@ -61,7 +61,7 @@ describe('SQLite adapter', () => {
     // and there were no settings and no recovery codes.
     const { wrongCodes: _, claims: __, lastSmsAt: _________, signedUpAt: __________, signUpMethod: _g, ...v1Fields } = madauthSchema.models.user.fields;
     const { email: ___, lastUsedStep: _____, setupId: _______, phone: ________, primaryUserId: ___________, secondFactor: ____________, name: _a, credentialId: _b, signCount: _c, transports: _d, lastUsedAt: _e, rpId: _f, ...v1AccountFields } = madauthSchema.models.account.fields;
-    const { setting: ____, recoveryCode: ______, ...v1Models } = madauthSchema.models;
+    const { setting: ____, recoveryCode: ______, apiKey: _h, ...v1Models } = madauthSchema.models;
     const v1 = { version: 1, models: { ...v1Models, user: { fields: v1Fields }, account: { fields: v1AccountFields } } };
     const db = new DatabaseSync(path);
     db.exec(createTablesSql('sqlite', v1));
@@ -75,6 +75,7 @@ describe('SQLite adapter', () => {
     expect(await store.findOne('user', { id: 'usr_1' })).toEqual(user);
     expect(await store.update('user', { id: 'usr_1', wrongCodes: 0 }, { wrongCodes: 1 })).toBe(1);
     expect(await store.create('setting', { id: 'methods', value: '{}', updatedAt: 1, updatedBy: null })).toBe(true);
+    expect(await store.create('apiKey', { id: 'key_1', userId: 'usr_1', hash: 'h', name: 'k', scopes: 'orders:read', createdAt: 1, expiresAt: null, lastUsedAt: 0 })).toBe(true);
     // An account from before version 5 reads as if no authenticator code was ever used, before 6 has no phone,
     // and before 7 doesn't say whether it is the user's sign-in method.
     expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ email: null, lastUsedStep: 0, setupId: null, phone: null, primaryUserId: null, secondFactor: null, name: null, credentialId: null });
@@ -130,7 +131,8 @@ describe('createTablesSql', () => {
   });
 
   it('upgradeTablesSql lists what newer schema versions added, per dialect', () => {
-    const V9 = 'ALTER TABLE madauth_user ADD COLUMN sign_up_method TEXT;';
+    const V10 = 'CREATE TABLE madauth_api_key (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  hash TEXT NOT NULL UNIQUE,\n  name TEXT NOT NULL,\n  scopes TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION,\n  last_used_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_api_key_user_id ON madauth_api_key (user_id);';
+    const V9 = 'ALTER TABLE madauth_user ADD COLUMN sign_up_method TEXT;\n' + V10;
     const V8 =
       'ALTER TABLE madauth_account ADD COLUMN name TEXT;\n' +
       'ALTER TABLE madauth_account ADD COLUMN credential_id TEXT;\n' +
@@ -176,7 +178,10 @@ describe('createTablesSql', () => {
     expect(upgradeTablesSql('postgres', 7)).toBe(V8);
     // Version 9 added the method a pending sign-up confirms its address for.
     expect(upgradeTablesSql('postgres', 8)).toBe(V9);
-    expect(upgradeTablesSql('mysql', 8)).toBe(V9);
+    expect(upgradeTablesSql('mysql', 8).split('\n')[0]).toBe('ALTER TABLE madauth_user ADD COLUMN sign_up_method TEXT;');
+    // Version 10 added API keys.
+    expect(upgradeTablesSql('postgres', 9)).toBe(V10);
+    expect(upgradeTablesSql('mysql', 9).split('\n')[1]).toBe('  id VARCHAR(255) PRIMARY KEY,');
     expect(upgradeTablesSql('sqlite', madauthSchema.version)).toBe('');
   });
 
@@ -185,6 +190,6 @@ describe('createTablesSql', () => {
     db.exec(createTablesSql('sqlite'));
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((r) => r.name);
-    expect(tables).toEqual(['madauth_account', 'madauth_recovery_code', 'madauth_setting', 'madauth_user', 'madauth_verification']);
+    expect(tables).toEqual(['madauth_account', 'madauth_api_key', 'madauth_recovery_code', 'madauth_setting', 'madauth_user', 'madauth_verification']);
   });
 });

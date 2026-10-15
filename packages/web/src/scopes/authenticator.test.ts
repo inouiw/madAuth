@@ -313,6 +313,6 @@ describe('Madauth.authenticator', () => {
 
   it('H24: waits for initialize, and reports when madAuth is not set up', async () => {
     expect(await Madauth.authenticator.status()).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });
-    expect(await Madauth.setUpAuthenticator()).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });
+    expect(await Madauth.showSetUpAuthenticatorDialog()).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });
   });
 });

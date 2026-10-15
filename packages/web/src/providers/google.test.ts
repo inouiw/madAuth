@@ -112,7 +112,7 @@ describe('GoogleFedcm', () => {
     gis.id.prompt.mockImplementation(() => {}); // Chrome's cooldown: nothing is shown.
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
 
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
 
     expect(gis.id.cancel).toHaveBeenCalled();
@@ -131,13 +131,13 @@ describe('GoogleFedcm', () => {
     vi.spyOn(window, 'getComputedStyle').mockImplementation(() => ({ colorScheme: scheme }) as CSSStyleDeclaration);
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm({ autoPrompt: false })] });
 
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     expect(gis.id.renderButton.mock.lastCall![1].theme).toBe('filled_black');
 
     dialogElement().close();
     scheme = 'light';
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     expect(gis.id.renderButton.mock.lastCall![1].theme).toBe('outline');
   });
@@ -146,7 +146,7 @@ describe('GoogleFedcm', () => {
     fakeServer();
     const gis = fakeGis();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm({ autoPrompt: false })] });
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     const onSignedIn = vi.fn();
     dialogElement().addEventListener('madauth-signed-in', (e) => onSignedIn(e.detail));
@@ -162,7 +162,7 @@ describe('GoogleFedcm', () => {
     const server = fakeServer();
     const gis = fakeGis();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm({ autoPrompt: false })] });
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     const onError = vi.fn();
     const onSignedIn = vi.fn();
@@ -186,10 +186,10 @@ describe('GoogleFedcm', () => {
     fakeGis();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
 
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     dialogElement().close();
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
 
     expect(gisScripts()).toHaveLength(1);
@@ -257,7 +257,7 @@ describe('GoogleRedirect', () => {
     expect(errorLog).not.toHaveBeenCalled();
     // The page behaves as if GoogleRedirect had not been passed.
     expect(Madauth.google.renderButton(document.createElement('div'))).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     expect(shadow('.google-slot')).toBeNull();
     expect(shadow('form.signin')).not.toBeNull();
@@ -278,7 +278,7 @@ describe('GoogleRedirect', () => {
     history.replaceState(null, '', '/page?x=1#top');
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
 
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     shadow<HTMLButtonElement>('.google-slot button')!.click();
 
@@ -305,7 +305,7 @@ describe('GoogleRedirect', () => {
   it('D3: leaves the dialog closed after a failed redirect sign-in with ui: custom', async () => {
     fakeServer().codeFlow = true;
     history.replaceState(null, '', '/page#madauth_error=verification_failed');
-    const signIn = vi.spyOn(Madauth, 'signIn');
+    const signIn = vi.spyOn(Madauth, 'showSignInDialog');
 
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()], ui: 'custom' });
     await settle();
@@ -316,7 +316,7 @@ describe('GoogleRedirect', () => {
   it('D3: opened from a reset link as well, the dialog opens once, on the reset form, with the error', async () => {
     fakeServer().codeFlow = true;
     history.replaceState(null, '', '/page#madauth_reset=reset-token&madauth_error=verification_failed');
-    const signIn = vi.spyOn(Madauth, 'signIn');
+    const signIn = vi.spyOn(Madauth, 'showSignInDialog');
 
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect(), new Password()] });
     await settle();
@@ -330,7 +330,7 @@ describe('GoogleRedirect', () => {
     fakeServer().codeFlow = true;
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()], locale: 'de' });
 
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     const button = shadow<HTMLButtonElement>('.google-slot button')!;
     expect(button.textContent).toBe('Weiter mit Google');
@@ -352,7 +352,7 @@ describe('GoogleRedirect', () => {
       error: { code: 'verification_failed', message: 'Die Anmeldung mit Google konnte nicht überprüft werden. Bitte versuchen Sie es erneut.' },
       leftOut: [],
     });
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     expect(shadow('.error')!.textContent).toContain('Die Anmeldung konnte nicht überprüft werden. Bitte versuchen Sie es erneut.');
 
@@ -385,7 +385,7 @@ describe('GoogleRedirect', () => {
     fakeServer().codeFlow = true;
 
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
 
     expect(gisScripts()).toHaveLength(0);

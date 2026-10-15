@@ -1,0 +1,6 @@
+{
+  "scopes": [
+    { "name": "notes:read", "description": "Read your notes", "endpoints": ["GET /api/notes"] },
+    { "name": "notes:write", "description": "Write and delete your notes", "endpoints": ["POST /api/notes", "DELETE /api/notes/{id}"] }
+  ]
+}

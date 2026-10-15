@@ -52,7 +52,7 @@ const sends = (server: ReturnType<typeof fakeServer>) => server.requests.filter(
 /** Opens the dialog; resolves to the pending signIn() result. */
 async function openDialog(providers: SignInProvider[] = [new Password(), new Authenticator()]) {
   await Madauth.initialize({ serverUrl: SERVER, providers });
-  const result = Madauth.signIn();
+  const result = Madauth.showSignInDialog();
   await settle();
   return result;
 }
@@ -184,7 +184,7 @@ describe('<madauth-login> and SMS codes', () => {
     expect($('[data-action="use-phone"]')).toBeNull();
   });
 
-  it('D26: setUpSms() adds a phone for the signed-in user and resolves with the number', async () => {
+  it('D26: showSetUpSmsDialog() adds a phone for the signed-in user and resolves with the number', async () => {
     const server = smsServer();
     server.phones.clear();
     server.user = grace;
@@ -192,7 +192,7 @@ describe('<madauth-login> and SMS codes', () => {
     const onEnabled = vi.fn();
     const onCancel = vi.fn();
 
-    const result = Madauth.setUpSms();
+    const result = Madauth.showSetUpSmsDialog();
     await settle();
     login().addEventListener('madauth-sms-enabled', (e) => onEnabled(e.detail));
     login().addEventListener('madauth-cancel', onCancel);
@@ -227,12 +227,12 @@ describe('<madauth-login> and SMS codes', () => {
     expect(server.phones.get(grace.email!)).toBe('+41791234567');
 
     // Closing the dialog cancels; a session that ended fails it.
-    const cancelled = Madauth.setUpSms();
+    const cancelled = Madauth.showSetUpSmsDialog();
     await settle();
     await click('[data-action="cancel"]');
     expect(await cancelled).toMatchObject({ isSuccess: false, error: { code: 'cancelled' } });
     server.user = null;
-    const noSession = Madauth.setUpSms();
+    const noSession = Madauth.showSetUpSmsDialog();
     await settle();
     fill({ phone: PHONE });
     await submit('sms-setup');
@@ -247,7 +247,7 @@ describe('<madauth-login> and SMS codes', () => {
     server.user = grace;
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
 
-    void Madauth.setUpSms();
+    void Madauth.showSetUpSmsDialog();
     await settle();
     expect(text('p.hint')).toBe('From then on, signing in with Google or a password can also ask for a code sent to your phone.');
   });
@@ -257,7 +257,7 @@ describe('<madauth-login> and SMS codes', () => {
     server.user = grace;
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
 
-    const result = Madauth.setUpSms();
+    const result = Madauth.showSetUpSmsDialog();
     await settle();
     fill({ phone: '+41 79 000 00 99' });
     await submit('sms-setup');

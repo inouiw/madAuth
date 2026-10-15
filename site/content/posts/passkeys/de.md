@@ -105,8 +105,8 @@ import { Madauth, Password, Passkey } from '@madauth/web';
 
 Madauth.initialize({ providers: [new Password(), new Passkey()] });
 
-signInButton.onclick = () => Madauth.signIn(); // der Dialog, mit Passkeys im Autofill des E-Mail-Felds
-addPasskeyButton.onclick = () => Madauth.setUpPasskey(); // für angemeldete Nutzer
+signInButton.onclick = () => Madauth.showSignInDialog(); // der Dialog, mit Passkeys im Autofill des E-Mail-Felds
+addPasskeyButton.onclick = () => Madauth.showSetUpPasskeyDialog(); // für angemeldete Nutzer
 ```
 
 Ob Passkeys allein anmelden oder nur zweiter Faktor sind, legt ein Admin im laufenden Betrieb fest; `PASSKEY_RP_ID` bestimmt die Domain, zu der die Passkeys gehören. Nutzer können sich auch allein mit einem Passkey registrieren: madAuth bestätigt zuerst ihre Adresse per E-Mail, dann wird der Passkey angelegt. Die Details stehen in den [Sicherheitshinweisen zu Passkeys](https://github.com/inouiw/madAuth/blob/main/docs/passkey-security.md) (englisch), und in der [Demo](/demo/) können Sie einen Passkey anlegen und sich damit anmelden.

@@ -43,7 +43,7 @@ The package also contains self-contained bundles for AWS Lambda (`dist/standalon
 | Import | Contents |
 | --- | --- |
 | `@madauth/server` | `createApp`, `loadConfig`, the store adapter types and the SQL schema |
-| `@madauth/server/verify` | verify a madAuth session in your own backend |
+| `@madauth/server/verify` | verify a madAuth session, or a user's [API key](../../docs/api-keys.md), in your own backend |
 | `@madauth/server/webhook` | verify webhook calls in your receiver |
 | `@madauth/server/sqlite` | the SQLite store |
 | `@madauth/server/dynamodb` | the Amazon DynamoDB store |

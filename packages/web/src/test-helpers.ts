@@ -109,6 +109,10 @@ export interface FakeServer {
   smsTooSoon: boolean;
   /** Lifetime of a session in seconds; the server's expiry cookie is set from it. */
   sessionTtl: number;
+  /** The scopes API keys can have: one of madAuth's and the app's. */
+  apiScopes: { name: string; description: string; role: string | null; endpoints: string[] }[];
+  /** The API keys the users made, with the key and whose it is. */
+  apiKeys: { id: string; email: string; key: string; name: string; scopes: string[]; createdAt: number; expiresAt: number | null; lastUsedAt: number }[];
 }
 
 /** Sets or clears the cookie in which the real server tells when the session expires. */
@@ -155,6 +159,12 @@ export function fakeServer(): FakeServer {
     passkeys: new Map(),
     linked: new Map(),
     staleSignIn: false,
+    apiScopes: [
+      { name: 'madauth:claims:read', description: "Read a user's claims and roles", role: 'admin', endpoints: ['POST /auth/admin/claims/get'] },
+      { name: 'orders:read', description: 'Read your orders', role: null, endpoints: ['GET /api/orders'] },
+      { name: 'orders:refund', description: 'Refund orders', role: 'staff', endpoints: [] },
+    ],
+    apiKeys: [],
   };
   const mask = (phone: string) => `${phone.slice(0, 3)} ${'•'.repeat(Math.max(0, phone.length - 5))} ${phone.slice(-2)}`;
   const normalizePhone = (value: unknown) => {
@@ -314,6 +324,39 @@ export function fakeServer(): FakeServer {
         if (server.passkeys.get(id)?.email !== challenge.email) return json({ error: 'verification_failed', message: 'wrong passkey' }, 401);
         server.challenge = undefined;
         return signedIn(challenge.email);
+      }
+      // --- API keys ---
+      case 'GET /auth/api-keys/scopes':
+        return json({ scopes: server.apiScopes });
+      case 'GET /auth/api-keys': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        return json({ apiKeys: server.apiKeys.filter((k) => k.email === user).map(({ key: _, email: __, ...info }) => info) });
+      }
+      case 'POST /auth/api-keys/create': {
+        const user = server.user;
+        if (!user?.email) return json({ error: 'no_session', message: 'sign in' }, 401);
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        const { name, scopes, expiresAt = null } = body as unknown as { name: string; scopes: string[]; expiresAt?: number };
+        if (!scopes.every((scope) => server.apiScopes.some((s) => s.name === scope))) return json({ error: 'invalid_scopes', message: 'unknown' }, 400);
+        const roles = (user.claims?.roles as string[] | undefined) ?? [];
+        const allowed = (scope: string) => {
+          const role = server.apiScopes.find((s) => s.name === scope)!.role;
+          return !role || roles.includes(role);
+        };
+        if (!scopes.every(allowed)) return json({ error: 'scope_not_allowed', message: 'not yours' }, 403);
+        const made = { id: `key_${server.apiKeys.length + 1}`, email: user.email, key: `madauth_secret${server.apiKeys.length + 1}`, name, scopes, createdAt: 1, expiresAt, lastUsedAt: 0 };
+        server.apiKeys.push(made);
+        const { key, email: _, ...apiKey } = made;
+        return json({ key, apiKey });
+      }
+      case 'POST /auth/api-keys/revoke': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        const index = server.apiKeys.findIndex((k) => k.id === (body as { id?: string }).id && k.email === user);
+        if (index < 0) return json({ error: 'api_key_not_found', message: 'gone' }, 404);
+        server.apiKeys.splice(index, 1);
+        return json({});
       }
       // --- The user's methods ---
       case 'GET /auth/methods': {
@@ -667,6 +710,21 @@ export function fakeServer(): FakeServer {
             sms: setting(true, server.methods.sms, false, 'none'),
           },
         });
+      }
+      case 'POST /auth/admin/api-keys/list':
+      case 'POST /auth/admin/api-keys/revoke': {
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
+        if (!server.accounts.has(email)) return json({ error: 'user_not_found', message: 'no user' }, 404);
+        const userId = userFor(email).id;
+        if (url.pathname.endsWith('/list')) {
+          return json({ email, userId, apiKeys: server.apiKeys.filter((k) => k.email === email).map(({ key: _, email: __, ...info }) => info) });
+        }
+        const index = server.apiKeys.findIndex((k) => k.id === (body as { id?: string }).id && k.email === email);
+        if (index < 0) return json({ error: 'api_key_not_found', message: 'gone' }, 404);
+        server.apiKeys.splice(index, 1);
+        return json({ email, userId });
       }
       case 'POST /auth/admin/sign-in/reset': {
         if (!server.user) return json({ error: 'no_session' }, 401);

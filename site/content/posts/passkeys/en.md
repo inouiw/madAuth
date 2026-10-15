@@ -105,8 +105,8 @@ import { Madauth, Password, Passkey } from '@madauth/web';
 
 Madauth.initialize({ providers: [new Password(), new Passkey()] });
 
-signInButton.onclick = () => Madauth.signIn(); // the dialog, with passkeys in the e-mail field's autofill
-addPasskeyButton.onclick = () => Madauth.setUpPasskey(); // for a signed-in user
+signInButton.onclick = () => Madauth.showSignInDialog(); // the dialog, with passkeys in the e-mail field's autofill
+addPasskeyButton.onclick = () => Madauth.showSetUpPasskeyDialog(); // for a signed-in user
 ```
 
 An admin decides while the server runs whether passkeys sign in on their own or are only a second factor, and `PASSKEY_RP_ID` sets the domain the passkeys belong to. Users can sign up with a passkey alone: madAuth confirms their address by e-mail first, then the passkey is created. The details are in the [passkey security notes](https://github.com/inouiw/madAuth/blob/main/docs/passkey-security.md), and the [demo](/demo/) lets you add a passkey and sign in with it.

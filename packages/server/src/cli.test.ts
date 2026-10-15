@@ -309,7 +309,7 @@ Next steps:
 
      Madauth.initialize({ providers: [new Password()] });
      Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
-     signInButton.onclick = () => Madauth.signIn();
+     signInButton.onclick = () => Madauth.showSignInDialog();
 
 5. Never commit ${file}: it holds the signing key and your secrets. Production needs an https app URL
    and a signing key of its own: run init again for it.`);

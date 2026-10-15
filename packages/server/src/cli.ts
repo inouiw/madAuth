@@ -423,7 +423,7 @@ function nextSteps(
       '',
       `  Madauth.initialize({ providers: [${providers.map((provider) => `new ${provider}()`).join(', ')}] });`,
       '  Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null',
-      '  signInButton.onclick = () => Madauth.signIn();',
+      '  signInButton.onclick = () => Madauth.showSignInDialog();',
     ],
     google && [
       'In the Google Cloud Console (https://console.cloud.google.com/apis/credentials), add to your OAuth client:',

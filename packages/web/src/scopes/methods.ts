@@ -23,7 +23,7 @@ export interface SignInMethodInfo {
 /**
  * The signed-in user's sign-in methods: which they have, and removing one. A user adds one with the method's
  * own call: `Madauth.passkey.add()`, `Madauth.password.add()`, `Madauth.emailLink.add()`, the Google or GitHub
- * button with `purpose: 'link'`, or `Madauth.setUpAuthenticator()`. `Madauth.manageSignInMethods()` opens
+ * button with `purpose: 'link'`, or `Madauth.showSetUpAuthenticatorDialog()`. `Madauth.showManageSignInMethodsDialog()` opens
  * all of this in madAuth's dialog.
  */
 export interface MethodsApi {

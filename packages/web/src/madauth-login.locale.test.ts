@@ -45,7 +45,7 @@ async function click(selector: string): Promise<void> {
 /** Opens the dialog with the password provider. */
 async function openDialog(options: Partial<MadauthOptions> = {}): Promise<void> {
   await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()], ...options });
-  void Madauth.signIn();
+  void Madauth.showSignInDialog();
   await settle();
 }
 
@@ -290,7 +290,7 @@ describe('<madauth-login> in German', () => {
     // Setting the app up while signed in: Grace has one, so the current one has to agree first.
     server.user = grace;
     await Madauth.getSession();
-    void Madauth.setUpAuthenticator();
+    void Madauth.showSetUpAuthenticatorDialog();
     await settle();
     expect(text('h2')).toBe('Code eingeben');
     expect(text('.lead')).toBe(
@@ -480,7 +480,7 @@ describe('Madauth.setLocale', () => {
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()], locale: 'en' });
 
     Madauth.setLocale('de');
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
 
     expect(text('h2')).toBe('Anmelden');

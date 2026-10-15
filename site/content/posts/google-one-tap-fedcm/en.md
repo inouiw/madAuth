@@ -95,7 +95,7 @@ import { Madauth, GoogleFedcm, Passkey } from '@madauth/web';
 
 // One Tap on page load when nobody is signed in; Google's button in the sign-in dialog as the fallback.
 Madauth.initialize({ providers: [new GoogleFedcm(), new Passkey()] });
-signInButton.onclick = () => Madauth.signIn();
+signInButton.onclick = () => Madauth.showSignInDialog();
 ```
 
 The server needs `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET` as well for the redirect flow. Pass `new GoogleFedcm({ autoPrompt: false })` to show Google only in the dialog. The setup is in the [server docs](https://github.com/inouiw/madAuth/blob/main/docs/server.md#google-cloud-console-setup), and the [demo](/demo/) switches between both flows.

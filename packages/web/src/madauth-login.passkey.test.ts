@@ -66,7 +66,7 @@ function passkeyServer() {
 
 async function openDialog() {
   await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
-  const result = Madauth.signIn();
+  const result = Madauth.showSignInDialog();
   await settle();
   return result;
 }
@@ -150,13 +150,13 @@ describe('<madauth-login> and passkeys', () => {
     expect(server.passkeys.get('cred-7')).toMatchObject({ email: grace.email, name: 'Phone' });
   });
 
-  it('DP5: Madauth.setUpPasskey() adds one for the signed-in user; long after signing in, the user signs in again first', async () => {
+  it('DP5: Madauth.showSetUpPasskeyDialog() adds one for the signed-in user; long after signing in, the user signs in again first', async () => {
     const server = passkeyServer();
     server.user = grace;
     server.staleSignIn = true;
     stubWebAuthn({ id: 'cred-3' });
     await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
-    const result = Madauth.setUpPasskey();
+    const result = Madauth.showSetUpPasskeyDialog();
     await settle();
 
     expect(text('h2')).toBe('Create a passkey');
@@ -183,7 +183,7 @@ describe('<madauth-login> and passkeys', () => {
     stubWebAuthn();
     await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
 
-    void Madauth.setUpPasskey();
+    void Madauth.showSetUpPasskeyDialog();
     await settle();
     // The passkey's own sign-in asks for a second factor too, but not for itself.
     expect($$('p.hint').map((hint) => hint.textContent.replace(/\s+/g, ' ').trim())).toContain(
@@ -191,13 +191,13 @@ describe('<madauth-login> and passkeys', () => {
     );
   });
 
-  it('DP6: Madauth.manageSignInMethods() lists the methods, removes one, and adds a passkey and the e-mail link', async () => {
+  it('DP6: Madauth.showManageSignInMethodsDialog() lists the methods, removes one, and adds a passkey and the e-mail link', async () => {
     const server = passkeyServer();
     server.user = grace;
     server.passkeys.set('cred-1', { email: grace.email!, id: 'acc_1', name: 'Laptop' });
     stubWebAuthn({ id: 'cred-2' });
     await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
-    const result = Madauth.manageSignInMethods();
+    const result = Madauth.showManageSignInMethodsDialog();
     await settle();
 
     expect(text('h2')).toBe('Sign-in methods');
@@ -234,7 +234,7 @@ describe('<madauth-login> and passkeys', () => {
     const server = passkeyServer();
     server.user = { id: 'usr_ada', email: 'ada@example.com', name: 'Ada' };
     await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
-    void Madauth.manageSignInMethods();
+    void Madauth.showManageSignInMethodsDialog();
     await settle();
 
     await click('[data-add="password"]');
@@ -253,7 +253,7 @@ describe('<madauth-login> and passkeys', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
-      void Madauth.signIn();
+      void Madauth.showSignInDialog();
       await vi.advanceTimersByTimeAsync(50);
       const conditional = () => browser.credentials.get.mock.calls.filter(([request]) => request.mediation === 'conditional').map(([request]) => request.signal!);
       expect(conditional()).toHaveLength(1);
@@ -298,7 +298,7 @@ describe('<madauth-login> and passkeys', () => {
     await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
     // The server switched passkeys off since initialize: the autofill's request fails.
     server.passkey = { signIn: false, secondFactor: 'none' };
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     await settle();
     const asked = () => server.requests.filter((r) => r.path === '/auth/passkey/signin/options').length;
@@ -333,7 +333,7 @@ describe('<madauth-login> and passkeys', () => {
     void result;
   });
 
-  it('DP10: signing in again through the app\'s setup goes back to the methods, and manageSignInMethods() resolves only when the dialog closes', async () => {
+  it('DP10: signing in again through the app\'s setup goes back to the methods, and showManageSignInMethodsDialog() resolves only when the dialog closes', async () => {
     const server = passkeyServer();
     server.user = grace;
     server.staleSignIn = true;
@@ -342,7 +342,7 @@ describe('<madauth-login> and passkeys', () => {
     server.policy.password = 'required';
     await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
     let resolved = false;
-    const result = Madauth.manageSignInMethods().then((r) => ((resolved = true), r));
+    const result = Madauth.showManageSignInMethodsDialog().then((r) => ((resolved = true), r));
     await settle();
 
     await click('.method[data-method="email-link"] [data-action="remove"]');
@@ -412,7 +412,7 @@ describe('<madauth-login> and the sign-up with a passkey alone', () => {
     signUpServer();
     stubWebAuthn();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Passkey()] });
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
 
     await click('[data-action="signup"]');
@@ -425,7 +425,7 @@ describe('<madauth-login> and the sign-up with a passkey alone', () => {
     passkeyServer();
     stubWebAuthn();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Passkey()] });
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     expect($('[data-action="signup"]')).toBeNull();
   });

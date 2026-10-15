@@ -56,7 +56,7 @@ const credentials = { email: 'grace@example.com', password: 'correct horse batte
 /** Opens the dialog; resolves to the pending signIn() result. */
 async function openDialog(providers: SignInProvider[] = [new Password(), new Authenticator()]) {
   await Madauth.initialize({ serverUrl: SERVER, providers });
-  const result = Madauth.signIn();
+  const result = Madauth.showSignInDialog();
   await settle();
   return result;
 }
@@ -147,7 +147,7 @@ describe('<madauth-login> and the authenticator app on its own', () => {
     expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/authenticator/signin`, body: { email: 'grace@example.com', code: CODE } });
 
     // A recovery code, next time.
-    const again = Madauth.signIn();
+    const again = Madauth.showSignInDialog();
     await settle();
     await click('[data-method="authenticator"]');
     await click('[data-action="toggle-recovery"]');
@@ -228,7 +228,7 @@ describe('<madauth-login> and the second step', () => {
     expect($<HTMLDialogElement>('dialog')!.open).toBe(false);
 
     // The sign-in expired meanwhile: back to the start, with the reason.
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     fill(credentials);
     await submit('signin');
@@ -325,7 +325,7 @@ describe('<madauth-login> and the second step', () => {
   });
 });
 
-describe('Madauth.setUpAuthenticator', () => {
+describe('Madauth.showSetUpAuthenticatorDialog', () => {
   it('D12: shows the QR code and the key, turns the app on with the first code, and shows the recovery codes once', async () => {
     const server = fakeServer();
     server.policy.password = 'optional';
@@ -334,7 +334,7 @@ describe('Madauth.setUpAuthenticator', () => {
     const onEnabled = vi.fn();
     const onCancel = vi.fn();
 
-    const result = Madauth.setUpAuthenticator();
+    const result = Madauth.showSetUpAuthenticatorDialog();
     await settle();
     login().addEventListener('madauth-authenticator-enabled', (e) => onEnabled(e.detail));
     login().addEventListener('madauth-cancel', onCancel);
@@ -381,7 +381,7 @@ describe('Madauth.setUpAuthenticator', () => {
     server.user = grace;
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
 
-    const result = Madauth.setUpAuthenticator();
+    const result = Madauth.showSetUpAuthenticatorDialog();
     await settle();
     expect(text('.hint')).toBe('From then on, signing in with a password also asks for a code from the app.');
     // The app signs in on its own on this server, but only for people who signed up with it: for Grace it is a step of her password.
@@ -392,7 +392,7 @@ describe('Madauth.setUpAuthenticator', () => {
 
     expect(await result).toEqual({ isSuccess: true, recoveryCodes: RECOVERY_CODES });
     // A later sign-in starts clean.
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     expect(text('h2')).toBe('Sign in');
     expect($('[part="qr"]')).toBeNull();
@@ -406,7 +406,7 @@ describe('Madauth.setUpAuthenticator', () => {
     server.user = grace;
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
 
-    void Madauth.setUpAuthenticator();
+    void Madauth.showSetUpAuthenticatorDialog();
     await settle();
     expect(text('.hint')).toBe('From then on, signing in with Google or a password also asks for a code from the app.');
     Madauth.setLocale('de');
@@ -418,26 +418,26 @@ describe('Madauth.setUpAuthenticator', () => {
     const server = fakeServer();
     server.policy.password = 'optional';
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
-    expect(await Madauth.setUpAuthenticator()).toMatchObject({ isSuccess: false, error: { code: 'no_session' } });
+    expect(await Madauth.showSetUpAuthenticatorDialog()).toMatchObject({ isSuccess: false, error: { code: 'no_session' } });
     expect(document.querySelector('madauth-login')).toBeNull();
 
     server.user = grace;
     await Madauth.getSession();
-    const cancelled = Madauth.setUpAuthenticator();
+    const cancelled = Madauth.showSetUpAuthenticatorDialog();
     await settle();
     await click('[data-action="cancel"]');
     expect(await cancelled).toMatchObject({ isSuccess: false, error: { code: 'cancelled' } });
-    const crossed = Madauth.setUpAuthenticator();
+    const crossed = Madauth.showSetUpAuthenticatorDialog();
     await settle();
     await click('.close');
     expect(await crossed).toMatchObject({ isSuccess: false, error: { code: 'cancelled' } });
 
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()], ui: 'custom' });
-    expect(await Madauth.setUpAuthenticator()).toMatchObject({ isSuccess: false, error: { code: 'invalid_options', message: expect.stringContaining('startSetup') } });
+    expect(await Madauth.showSetUpAuthenticatorDialog()).toMatchObject({ isSuccess: false, error: { code: 'invalid_options', message: expect.stringContaining('startSetup') } });
     // With the app switched off on the server there is nothing to set up; the provider is not what decides.
     fakeServer();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
-    expect(await Madauth.setUpAuthenticator()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('switched off') } });
+    expect(await Madauth.showSetUpAuthenticatorDialog()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled', message: expect.stringContaining('switched off') } });
   });
 
   it('D14: a session that ended meanwhile is reported in the dialog', async () => {
@@ -447,7 +447,7 @@ describe('Madauth.setUpAuthenticator', () => {
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
     server.user = null;
 
-    const result = Madauth.setUpAuthenticator();
+    const result = Madauth.showSetUpAuthenticatorDialog();
     await settle();
 
     expect($('[part="error"]')!.dataset.code).toBe('no_session');
@@ -464,7 +464,7 @@ describe('Madauth.setUpAuthenticator', () => {
     server.authenticators.add('grace@example.com');
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
 
-    const result = Madauth.setUpAuthenticator();
+    const result = Madauth.showSetUpAuthenticatorDialog();
     await settle();
 
     expect(text('h2')).toBe('Enter your code');

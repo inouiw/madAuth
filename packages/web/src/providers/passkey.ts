@@ -8,7 +8,7 @@ import type { ProviderContext, SignInProvider } from './provider.js';
  * field's autofill, when the server lets passkeys sign in on their own and the browser has them.
  *
  * Not needed for passkeys as a second factor, nor to add one: `Madauth.passkey.verify`, `add` and
- * `Madauth.setUpPasskey()` work whenever the server has passkeys on.
+ * `Madauth.showSetUpPasskeyDialog()` work whenever the server has passkeys on.
  */
 export class Passkey implements SignInProvider {
   readonly method = 'passkey' as const;

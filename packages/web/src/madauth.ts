@@ -19,6 +19,7 @@ import { createEmailLinkApi } from './scopes/email-link.js';
 import { createGitHubApi } from './scopes/github.js';
 import { createGoogleApi } from './scopes/google.js';
 import { createMethodsApi } from './scopes/methods.js';
+import { createApiKeysApi } from './scopes/api-keys.js';
 import { createPasskeyApi, type PasskeyInfo } from './scopes/passkey.js';
 import { createPasswordApi } from './scopes/password.js';
 import { createSmsApi } from './scopes/sms.js';
@@ -31,7 +32,7 @@ export interface MadauthOptions {
   /** The sign-in methods to offer, e.g. `[new GoogleFedcm(), new Password(), new Authenticator()]`. */
   providers: SignInProvider[];
   /**
-   * `'dialog'` (default): madAuth's sign-in dialog, opened with `Madauth.signIn()`; it also opens by itself
+   * `'dialog'` (default): madAuth's sign-in dialog, opened with `Madauth.showSignInDialog()`; it also opens by itself
    * when the page was opened from a password reset link, when a sign-in goes on with a second step, or with
    * the error of a sign-in that failed outside it (a redirect, a link, One Tap) while nobody is signed in.
    * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.github`,
@@ -160,7 +161,7 @@ function openDialogSoon(): void {
   dialogQueued = true;
   void whenReady().then(() => {
     dialogQueued = false;
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
   });
 }
 
@@ -456,8 +457,8 @@ export const Madauth = {
    * navigates to Google; the user then arrives through {@link Madauth.onAuthStateChanged}.
    * `email` fills the e-mail field, so the user only has to type the password.
    */
-  async signIn(options: SignInOptions = {}): Promise<Result<{ user: MadauthUser }>> {
-    const ready = await dialogReady('signIn');
+  async showSignInDialog(options: SignInOptions = {}): Promise<Result<{ user: MadauthUser }>> {
+    const ready = await dialogReady('showSignInDialog');
     if (!ready.isSuccess) return ready;
     return dialogFlow<Result<{ user: MadauthUser }>>(
       (element) => element.open(options),
@@ -474,8 +475,8 @@ export const Madauth = {
    * nobody is signed in, and `flow_not_enabled` when the server has the app switched off (no `new Authenticator()`
    * is needed). With `ui: 'custom'` use `Madauth.authenticator.startSetup()` and `confirmSetup()`.
    */
-  async setUpAuthenticator(): Promise<Result<{ recoveryCodes: string[] }>> {
-    const ready = await dialogReady('setUpAuthenticator', 'Madauth.authenticator.startSetup() and confirmSetup()');
+  async showSetUpAuthenticatorDialog(): Promise<Result<{ recoveryCodes: string[] }>> {
+    const ready = await dialogReady('showSetUpAuthenticatorDialog', 'Madauth.authenticator.startSetup() and confirmSetup()');
     if (!ready.isSuccess) return ready;
     if (!state!.config?.authenticator) {
       return fail('flow_not_enabled', 'The madAuth server has the authenticator app switched off: no sign-in method is set to ask for it, and it does not sign in on its own.');
@@ -500,8 +501,8 @@ export const Madauth = {
    * `flow_not_enabled` when the server has SMS codes switched off. With `ui: 'custom'` use
    * `Madauth.sms.setUp()` and `confirmSetup()`.
    */
-  async setUpSms(): Promise<Result<{ phone: string }>> {
-    const ready = await dialogReady('setUpSms', 'Madauth.sms.setUp() and confirmSetup()');
+  async showSetUpSmsDialog(): Promise<Result<{ phone: string }>> {
+    const ready = await dialogReady('showSetUpSmsDialog', 'Madauth.sms.setUp() and confirmSetup()');
     if (!ready.isSuccess) return ready;
     if (!state!.config?.sms) return fail('flow_not_enabled', 'The madAuth server has SMS codes switched off.');
     if (!user) return fail('no_session', 'Nobody is signed in.');
@@ -522,8 +523,8 @@ export const Madauth = {
    * is closed before, `no_session` when nobody is signed in, and `flow_not_enabled` when the server has
    * passkeys switched off or the browser has none. With `ui: 'custom'` use `Madauth.passkey.add()`.
    */
-  async setUpPasskey(): Promise<Result<{ passkey: PasskeyInfo }>> {
-    const ready = await dialogReady('setUpPasskey', 'Madauth.passkey.add()');
+  async showSetUpPasskeyDialog(): Promise<Result<{ passkey: PasskeyInfo }>> {
+    const ready = await dialogReady('showSetUpPasskeyDialog', 'Madauth.passkey.add()');
     if (!ready.isSuccess) return ready;
     if (!Madauth.passkey.available) return fail('flow_not_enabled', 'The madAuth server has passkeys switched off, or this browser has none.');
     if (!user) return fail('no_session', 'Nobody is signed in.');
@@ -541,11 +542,25 @@ export const Madauth = {
    * ten minutes: the dialog asks the user to sign in again when needed. Fails with `no_session` when nobody is
    * signed in. With `ui: 'custom'` use `Madauth.methods` and the methods' own calls.
    */
-  async manageSignInMethods(): Promise<Result> {
-    const ready = await dialogReady('manageSignInMethods', 'Madauth.methods');
+  async showManageSignInMethodsDialog(): Promise<Result> {
+    const ready = await dialogReady('showManageSignInMethodsDialog', 'Madauth.methods');
     if (!ready.isSuccess) return ready;
     if (!user) return fail('no_session', 'Nobody is signed in.');
     return dialogFlow<Result>((element) => element.openMethods(), {}, ok());
+  },
+
+  /**
+   * Opens the dialog on the signed-in user's API keys: which they have, each with a button to revoke it, and
+   * a form to make one (its name, its scopes, when it expires) that shows the new key once, to copy. Resolves
+   * when the dialog is closed. Making a key takes a sign-in within the last ten minutes: the dialog asks the
+   * user to sign in again when needed. Fails with `no_session` when nobody is signed in. With `ui: 'custom'`
+   * use `Madauth.apiKeys`.
+   */
+  async showManageApiKeysDialog(): Promise<Result> {
+    const ready = await dialogReady('showManageApiKeysDialog', 'Madauth.apiKeys');
+    if (!ready.isSuccess) return ready;
+    if (!user) return fail('no_session', 'Nobody is signed in.');
+    return dialogFlow<Result>((element) => element.openApiKeys(), {}, ok());
   },
 
   /**
@@ -660,6 +675,9 @@ export const Madauth = {
 
   /** The signed-in user's sign-in methods: listing and removing them. */
   methods: createMethodsApi(core),
+
+  /** The signed-in user's API keys, for programs that call your app's API or madAuth's admin API: making, listing and revoking them. */
+  apiKeys: createApiKeysApi(core, () => user),
 
   /** Reading and setting claims and settings, for users with the role `admin`. */
   admin: createAdminApi(core),
