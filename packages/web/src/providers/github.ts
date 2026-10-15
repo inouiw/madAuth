@@ -27,7 +27,7 @@ export class GitHub implements SignInProvider {
     if (!ctx.config.github) {
       return fail(
         'flow_not_enabled',
-        'The madAuth server does not offer GitHub sign-in: set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET there, and an admin lists the method with set-methods.',
+        'The madAuth server does not offer GitHub sign-in: set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET there, and an admin lists the method in the settings (Madauth.admin.setSettings).',
       );
     }
     return ok();

@@ -15,7 +15,7 @@ export class Passkey implements SignInProvider {
 
   async setup(ctx: ProviderContext): Promise<Result> {
     if (!ctx.config.passkey?.signIn) {
-      return fail('flow_not_enabled', 'The madAuth server does not let passkeys sign in on their own (an admin allows them with set-methods passkey).');
+      return fail('flow_not_enabled', 'The madAuth server does not let passkeys sign in on their own (an admin allows them in the settings, Madauth.admin.setSettings).');
     }
     if (!webauthnSupported()) return fail('flow_not_enabled', 'This browser does not support passkeys.');
     return ok();

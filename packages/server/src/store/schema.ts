@@ -148,13 +148,16 @@ export const madauthSchema = {
         expiresAt: { type: 'number' },
       },
     },
-    /** A setting admins change at runtime, as JSON (since version 4), e.g. `methods`: which sign-in methods are on. */
+    /**
+     * A setting, as JSON (since version 4): e.g. `methods`, which sign-in methods are on, which admins change at
+     * runtime, or `initialAdmin`, the values of INITIAL_ADMIN_EMAIL that madAuth applied (see admins.ts).
+     */
     setting: {
       fields: {
         id: { type: 'string', primaryKey: true },
         value: { type: 'string' },
         updatedAt: { type: 'number' },
-        /** The address of the admin who set it; empty when set from the command line. */
+        /** The address of the admin who set it; empty when madAuth set it by itself, or a command line before 0.6 did. */
         updatedBy: { type: 'string', nullable: true },
       },
     },

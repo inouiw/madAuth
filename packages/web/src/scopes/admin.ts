@@ -54,7 +54,8 @@ export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 
 /**
  * Managing claims and settings, and resetting a user's sign-in, for users with the role `admin`
- * (`claims.roles`). The first admin is made on the server: `npx @madauth/server set-roles you@example.com admin`.
+ * (`claims.roles`). The first admin is the user who signs in with the address in the server's
+ * `INITIAL_ADMIN_EMAIL`.
  */
 export interface AdminApi {
   /**
@@ -66,7 +67,8 @@ export interface AdminApi {
    * Replaces the claims of the user with this e-mail address; an empty object removes them. The user sees
    * the change the next time their app checks the session (`Madauth.getSession`, or the next page load),
    * and backends when that session token reaches them. Fails with `forbidden`, `invalid_email`,
-   * `user_not_found` or `invalid_claims`.
+   * `user_not_found`, `invalid_claims`, or `own_admin_role` when it would take the role `admin` from the admin
+   * who calls it: another admin has to.
    */
   setClaims(email: string, claims: Claims): Promise<Result<{ userId: string; claims: Claims }>>;
   /** Which sign-in methods the server is configured for, which are on, and their policies. Fails with `forbidden`. */

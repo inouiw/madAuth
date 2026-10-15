@@ -83,7 +83,7 @@
             Claims are what admins attached to this user, e.g. their roles. They are stored in the session token, so
             your own backends read them from the token without asking madAuth. Users with the role
             <code>admin</code> set them through the API, <code>Madauth.admin.setClaims(email, claims)</code>, see the
-            Admin section below; the first admin gets the role on the server's command line.
+            Admin section below; the first admin gets the role from the server's <code>INITIAL_ADMIN_EMAIL</code>.
           </p>
         </div>
         <!-- How this session was authenticated (Madauth.currentUser.amr), e.g. pwd and otp, or email for the e-mail link. -->
@@ -171,8 +171,8 @@
 
         <h3>Admin</h3>
         <p>
-          For users with the role <code>admin</code>, which is given on the server:
-          <code>npx @madauth/server set-roles you@example.com admin</code>
+          For users with the role <code>admin</code>. The first admin is the user who signs in with the server's
+          <code>INITIAL_ADMIN_EMAIL</code>; admins give the role to others with <code>setClaims</code>.
         </p>
         <!-- Shown to a signed-in user without the role. madauth.com gives it to no visitor: see src/main.ts. -->
         <p id="admin-note" class="note" hidden>
@@ -182,7 +182,8 @@
             and switch sign-in methods off for everyone.
           </span>
           To try the admin API, <a href="https://github.com/inouiw/madAuth#getting-started">run the demo on your machine</a>
-          and give yourself the role: <code>npm run cli -w packages/server -- set-roles you@example.com admin</code>
+          and give yourself the role: set <code>INITIAL_ADMIN_EMAIL</code> in <code>packages/server/.env</code> to your
+          address, and sign in with it.
         </p>
         <ul class="api-list">
           <li class="api-method" data-call="getClaims">

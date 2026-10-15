@@ -573,7 +573,8 @@ export const Madauth = {
    * sign-in methods, whichever way they signed in. Delete the user's data in your own backend first, while
    * they are still signed in. Once the user has an authenticator app, a current code from it (or a recovery
    * code) is needed: without one it fails with `code_required`, with a wrong one with `code_invalid`.
-   * Fails with `no_session` when nobody is signed in. With `GoogleFedcm`, the app's access to the user's
+   * Fails with `no_session` when nobody is signed in, and with `own_admin_role` for a user with the role
+   * `admin`: another admin takes it from them first. With `GoogleFedcm`, the app's access to the user's
    * Google account is revoked as well, so Google no longer lists it among their connected apps.
    */
   async deleteAccount(options?: DeleteAccountOptions): Promise<Result> {

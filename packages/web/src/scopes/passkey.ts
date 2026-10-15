@@ -61,7 +61,7 @@ export interface PasskeyApi {
   readonly pendingStep: PendingStep | null;
 }
 
-const switchedOff = () => fail('flow_not_enabled', 'The madAuth server has passkeys switched off: an admin lists them with set-methods passkey.');
+const switchedOff = () => fail('flow_not_enabled', 'The madAuth server has passkeys switched off: an admin lists them in the settings (Madauth.admin.setSettings).');
 const notRegistered = () => fail('flow_not_enabled', 'Pass new Passkey() to Madauth.initialize to sign in with a passkey alone.');
 
 export function createPasskeyApi(core: Core): PasskeyApi {

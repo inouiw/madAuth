@@ -17,7 +17,7 @@ export class Totp implements SignInProvider {
     if (!ctx.config.totp?.signIn) {
       return fail(
         'flow_not_enabled',
-        'The madAuth server does not let the authenticator app sign in on its own (an admin lists it with set-methods). As a second factor it works without this provider.',
+        'The madAuth server does not let the authenticator app sign in on its own (an admin allows it in the settings, Madauth.admin.setSettings). As a second factor it works without this provider.',
       );
     }
     return ok();
