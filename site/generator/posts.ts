@@ -162,7 +162,7 @@ function parsePost(file: SourceFile): Result<Post> {
   };
 }
 
-/** Parses every file and checks that no two posts share a slug. */
+/** Parses every file, and checks that no two posts share a slug and that links to /posts/ lead to a page. */
 export function parsePosts(files: SourceFile[]): Result<Post[]> {
   const results = files.map(parsePost);
   const errors = results.flatMap((r) => (r.isSuccess ? [] : r.errors));
@@ -170,8 +170,20 @@ export function parsePosts(files: SourceFile[]): Result<Post[]> {
   const posts = results.flatMap((r) => (r.isSuccess ? [r.value] : []));
   const duplicates = [...new Set(posts.map((p) => p.slug))].filter((slug) => posts.filter((p) => p.slug === slug).length > 1);
   if (duplicates.length > 0) return { isSuccess: false, errors: duplicates.map((slug) => `slug "${slug}" is used twice`) };
+  const pages = new Set([...posts.map(postPath), ...languagesOf(posts).map((lang) => LANGUAGES[lang].indexPath)]);
+  const broken = posts.flatMap((post) =>
+    [...post.html.matchAll(/href="(\/posts\/[^"#?]*)/g)]
+      .map((match) => match[1])
+      .filter((path) => !pages.has(path))
+      .map((path) => `content/posts/${post.id}/${post.language}.md: the link to ${path} leads to no page`),
+  );
+  if (broken.length > 0) return { isSuccess: false, errors: broken };
   return { isSuccess: true, value: posts };
 }
+
+/** The languages that have posts, in the order of LANGUAGES: only they get a post list. */
+const languagesOf = (posts: Post[]): Language[] =>
+  (Object.keys(LANGUAGES) as Language[]).filter((lang) => posts.some((p) => p.language === lang));
 
 export const postPath = (post: Post): string => `/posts/${post.slug}/`;
 
@@ -186,6 +198,14 @@ const formatDate = (date: string, language: Language): string =>
 
 /** The language versions of one page: language → path. The first is the default (English when there is one). */
 type Versions = Partial<Record<Language, string>>;
+
+/** The language versions of a post. */
+const postVersions = (post: Post, posts: Post[]): Versions =>
+  Object.fromEntries(posts.filter((p) => p.id === post.id).sort(byLanguage).map((p) => [p.language, postPath(p)]));
+
+/** The post lists of the languages that have posts. */
+const indexVersions = (posts: Post[]): Versions =>
+  Object.fromEntries(languagesOf(posts).map((lang) => [lang, LANGUAGES[lang].indexPath]));
 
 function defaultPath(versions: Versions): string {
   return versions.en ?? Object.values(versions)[0]!;
@@ -271,11 +291,9 @@ ${page.main}
 
 const organization = { '@type': 'Organization', '@id': `${ORIGIN}/#organization`, name: 'madAuth', url: `${ORIGIN}/` };
 
-function postPage(post: Post, translations: Post[]): Page {
+function postPage(post: Post, posts: Post[]): Page {
   const strings = LANGUAGES[post.language];
-  const versions: Versions = Object.fromEntries(
-    [...translations].sort(byLanguage).map((p) => [p.language, postPath(p)]),
-  );
+  const versions = postVersions(post, posts);
   const url = `${ORIGIN}${postPath(post)}`;
   const modified = post.updated ?? post.published;
   const dates = `${strings.published} <time datetime="${post.published}">${formatDate(post.published, post.language)}</time>${
@@ -344,9 +362,7 @@ const newestFirst = (a: Post, b: Post): number => b.published.localeCompare(a.pu
 function indexPage(language: Language, posts: Post[]): Page {
   const strings = LANGUAGES[language];
   const own = posts.filter((p) => p.language === language).sort(newestFirst);
-  const versions: Versions = Object.fromEntries(
-    (Object.keys(LANGUAGES) as Language[]).map((lang) => [lang, LANGUAGES[lang].indexPath]),
-  );
+  const versions = indexVersions(posts);
   const teasers = own
     .map(
       (post) => `        <li>
@@ -391,12 +407,11 @@ ${teasers}
   };
 }
 
-/** Every page of the blog: one per post and language, and a post list per language. */
+/** Every page of the blog: one per post and language, and a post list per language that has posts. */
 export function renderPages(posts: Post[]): Page[] {
-  const translationsOf = (post: Post) => posts.filter((p) => p.id === post.id);
   return [
-    ...(Object.keys(LANGUAGES) as Language[]).map((language) => indexPage(language, posts)),
-    ...posts.map((post) => postPage(post, translationsOf(post))),
+    ...languagesOf(posts).map((language) => indexPage(language, posts)),
+    ...posts.map((post) => postPage(post, posts)),
   ];
 }
 
@@ -411,9 +426,6 @@ export function renderSitemap(posts: Post[]): string {
         : '';
     return `  <url>\n    <loc>${ORIGIN}${path}</loc>${lastmod ? `\n    <lastmod>${lastmod}</lastmod>` : ''}${alternates}\n  </url>`;
   };
-  const indexVersions: Versions = Object.fromEntries(
-    (Object.keys(LANGUAGES) as Language[]).map((lang) => [lang, LANGUAGES[lang].indexPath]),
-  );
   const newest = (language: Language) =>
     posts
       .filter((p) => p.language === language)
@@ -423,14 +435,8 @@ export function renderSitemap(posts: Post[]): string {
   const entries = [
     entry('/'),
     entry('/demo/'),
-    ...(Object.keys(LANGUAGES) as Language[]).map((lang) => entry(LANGUAGES[lang].indexPath, newest(lang), indexVersions)),
-    ...[...posts].sort(newestFirst).map((post) =>
-      entry(
-        postPath(post),
-        post.updated ?? post.published,
-        Object.fromEntries(posts.filter((p) => p.id === post.id).sort(byLanguage).map((p) => [p.language, postPath(p)])),
-      ),
-    ),
+    ...languagesOf(posts).map((lang) => entry(LANGUAGES[lang].indexPath, newest(lang), indexVersions(posts))),
+    ...[...posts].sort(newestFirst).map((post) => entry(postPath(post), post.updated ?? post.published, postVersions(post, posts))),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">

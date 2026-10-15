@@ -61,6 +61,24 @@ describe('parsePosts', () => {
   });
 });
 
+describe('links between posts', () => {
+  it('must lead to a page', () => {
+    const files = [
+      source('a', 'en', fields('a'), 'See [b](/posts/b/), [the list](/posts/) and [c](/posts/c/#part).'),
+      source('b', 'en', fields('b')),
+    ];
+    expect(parsePosts(files)).toEqual({
+      isSuccess: false,
+      errors: ['content/posts/a/en.md: the link to /posts/c/ leads to no page'],
+    });
+    expect(parsePosts(files.slice(0, 1).concat(source('b', 'en', fields('b')), source('c', 'en', fields('c')))).isSuccess).toBe(true);
+  });
+
+  it('cannot lead to the list of a language without posts', () => {
+    expect(parsePosts([source('a', 'en', fields('a'), '[German](/posts/de/)')]).isSuccess).toBe(false);
+  });
+});
+
 describe('renderPages', () => {
   const posts = parsed([
     source('passkeys', 'en', fields('passkeys-explained')),

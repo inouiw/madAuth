@@ -6,7 +6,7 @@ import { parsePosts, renderPages, renderSitemap, ROBOTS, type Post, type Result,
 /**
  * Builds the blog: reads content/posts/<id>/<language>.md, writes the pages to posts/ (generated, git-ignored)
  * and hands them to Vite as entries, so their CSS and scripts are bundled like the landing page's. The build
- * adds sitemap.xml and robots.txt. In dev, a changed Markdown file rewrites the pages and reloads the browser.
+ * adds sitemap.xml and robots.txt. In dev, a changed Markdown file rewrites the pages.
  */
 export function posts(siteRoot: string): Plugin {
   const contentDir = join(siteRoot, 'content/posts');
@@ -41,9 +41,9 @@ export function posts(siteRoot: string): Plugin {
       server.watcher.add(contentDir);
       server.watcher.on('all', (_event, file) => {
         if (relative(contentDir, file).startsWith('..')) return;
+        // The rewritten pages reload the browser like any changed HTML file.
         const generated = generate();
-        if (generated.isSuccess) server.ws.send({ type: 'full-reload' });
-        else server.config.logger.error(`The blog has errors:\n${generated.errors.join('\n')}`);
+        if (!generated.isSuccess) server.config.logger.error(`The blog has errors:\n${generated.errors.join('\n')}`);
       });
       // The dev server has no sitemap.xml of its own to serve.
       server.middlewares.use('/sitemap.xml', (_req, res) => {

@@ -27,11 +27,11 @@ The text, in Markdown. Start with a paragraph; the title is the page's only h1, 
 
 - **`slug`** is the page's address, and every language has its own, in its own language: search engines rank a German address for German searches. Lowercase words joined by `-`; not a language code (`/posts/de/` is the German post list).
 - **`updated`** is optional: the date of a change that matters to readers.
-- A post in one language only is fine: it has no language select, and only that language's list shows it.
+- A post in one language only is fine: it has no language select, and only that language's list shows it. A language gets its post list once it has a post.
 
 The folder name ties the language versions together: each page names the others with `hreflang` links and a language select, and `sitemap.xml` lists them all. Link other posts by their slug in the same language (`/posts/passkeys-erklaert/` from a German post).
 
-`npm run build -w site` checks the files (missing or unknown fields, a slug used twice) and fails with the list of problems. The generated pages are written to `posts/` (git-ignored): edit the Markdown, not them.
+`npm run build -w site` checks the files (missing or unknown fields, a slug used twice, a link to a `/posts/` page that doesn't exist) and fails with the list of problems. The generated pages are written to `posts/` (git-ignored): edit the Markdown, not them.
 
 ## Adding a language
 
