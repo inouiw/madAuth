@@ -1,4 +1,5 @@
 import { marked } from 'marked';
+import { OG_HEIGHT, OG_WIDTH, type OgCard } from './og-image';
 
 /**
  * The blog at madauth.com/posts/: every post is a folder in content/posts with one Markdown file per language
@@ -101,10 +102,14 @@ export interface SourceFile {
 
 export type Result<T> = { isSuccess: true; value: T } | { isSuccess: false; errors: string[] };
 
-/** A page to write: its path under the site root (e.g. `posts/passkeys-explained/index.html`) and its HTML. */
+/**
+ * A page to write: its path under the site root (e.g. `posts/passkeys-explained/index.html`), its HTML, and its
+ * link-preview image (`posts/passkeys-explained/og.png`) with the card it shows.
+ */
 export interface Page {
   file: string;
   html: string;
+  image: { file: string; card: OgCard };
 }
 
 /** Slugs that are paths of their own under /posts/. */
@@ -237,6 +242,8 @@ interface Layout {
   description: string;
   path: string;
   versions: Versions;
+  /** The link-preview image's path under the site root, e.g. `posts/passkeys-explained/og.png`. */
+  image: string;
   /** Extra <head> elements. */
   head: string;
   jsonLd: unknown;
@@ -263,7 +270,11 @@ function layout(page: Layout): string {
     <meta property="og:url" content="${ORIGIN}${page.path}" />
     <meta property="og:locale" content="${strings.ogLocale}" />
     ${[...otherLocales, page.head].filter(Boolean).join('\n    ')}
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:image" content="${ORIGIN}/${page.image}" />
+    <meta property="og:image:width" content="${OG_WIDTH}" />
+    <meta property="og:image:height" content="${OG_HEIGHT}" />
+    <meta property="og:image:alt" content="${escape(page.title)}" />
+    <meta name="twitter:card" content="summary_large_image" />
     <script type="application/ld+json">${jsonLd(page.jsonLd)}</script>
     <link rel="stylesheet" href="/src/posts.css" />
     <script type="module" src="/src/language-select.ts"></script>
@@ -295,6 +306,7 @@ function postPage(post: Post, posts: Post[]): Page {
   const strings = LANGUAGES[post.language];
   const versions = postVersions(post, posts);
   const url = `${ORIGIN}${postPath(post)}`;
+  const image = `posts/${post.slug}/og.png`;
   const modified = post.updated ?? post.published;
   const dates = `${strings.published} <time datetime="${post.published}">${formatDate(post.published, post.language)}</time>${
     post.updated ? `, ${strings.updated} <time datetime="${post.updated}">${formatDate(post.updated, post.language)}</time>` : ''
@@ -311,11 +323,16 @@ ${post.html}
       </article>`;
   return {
     file: `posts/${post.slug}/index.html`,
+    image: {
+      file: image,
+      card: { kicker: strings.blog, title: post.title, byline: `${AUTHOR} · ${formatDate(post.published, post.language)}` },
+    },
     html: layout({
       language: post.language,
       title: `${post.title} | madAuth`,
       description: post.description,
       path: postPath(post),
+      image,
       versions,
       head: [
         '<meta property="og:type" content="article" />',
@@ -337,6 +354,7 @@ ${post.html}
             dateModified: modified,
             author: { '@type': 'Person', name: AUTHOR },
             publisher: { '@id': organization['@id'] },
+            image: [`${ORIGIN}/${image}`],
           },
           organization,
           {
@@ -373,13 +391,16 @@ function indexPage(language: Language, posts: Post[]): Page {
     )
     .join('\n');
   const url = `${ORIGIN}${strings.indexPath}`;
+  const image = `${strings.indexPath.slice(1)}og.png`;
   return {
     file: `${strings.indexPath.slice(1)}index.html`,
+    image: { file: image, card: { kicker: strings.blog, title: strings.indexTitle, byline: '' } },
     html: layout({
       language,
       title: strings.indexTitle,
       description: strings.indexDescription,
       path: strings.indexPath,
+      image,
       versions,
       head: '<meta property="og:type" content="website" />',
       jsonLd: {

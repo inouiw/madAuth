@@ -112,6 +112,21 @@ describe('renderPages', () => {
     expect(html).toContain('15. Oktober 2026');
   });
 
+  it('names the link-preview image of every page', () => {
+    expect(pages.map((p) => p.image.file)).toEqual([
+      'posts/og.png',
+      'posts/de/og.png',
+      'posts/passkeys-explained/og.png',
+      'posts/passkeys-erklaert/og.png',
+      'posts/only-english/og.png',
+    ]);
+    expect(pages[3].image.card).toEqual({ kicker: 'Blog', title: 'Passkeys <erklärt>', byline: 'David Neuy · 15. Oktober 2026' });
+    const html = page('posts/passkeys-erklaert/index.html');
+    expect(html).toContain('<meta property="og:image" content="https://madauth.com/posts/passkeys-erklaert/og.png" />');
+    expect(html).toContain('<meta property="og:image:alt" content="Passkeys &lt;erklärt&gt; | madAuth" />');
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
+  });
+
   it('shows no language select for a post in one language', () => {
     const html = page('posts/only-english/index.html');
     expect(html).not.toContain('<select');
