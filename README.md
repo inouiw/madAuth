@@ -64,11 +64,7 @@ In a third terminal, start the demo at http://localhost:3000 (it proxies `/auth`
 npm run dev
 ```
 
-The admin API needs the role `admin`, which the public demo at madauth.com gives to nobody. Here you give it to yourself, after signing in once:
-
-```bash
-npm run cli -w packages/server -- set-roles you@example.com admin
-```
+The admin API needs the role `admin`, which the public demo at madauth.com gives to nobody: an admin could change every visitor's claims and switch sign-in methods off for everyone. Here you give it to yourself: set `INITIAL_ADMIN_EMAIL` in `packages/server/.env` to your address, start the server again, and sign in with that address (see [The first admin](docs/server.md#the-first-admin)).
 
 Build the server, the library and the demo:
 

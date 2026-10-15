@@ -181,7 +181,7 @@ export function recordingWebhook() {
 
 export type RecordingWebhook = ReturnType<typeof recordingWebhook>;
 
-/** Sets a user's claims straight in the store, as the command line does; the user must exist. */
+/** Sets a user's claims straight in the store, as madAuth before 0.6 did from the command line; the user must exist. */
 export async function setClaims(store: StoreAdapter, email: string, claims: Record<string, unknown> | null): Promise<void> {
   const users = new Users(store);
   const user = await users.findByEmail(email.toLowerCase());

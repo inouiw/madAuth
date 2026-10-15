@@ -34,6 +34,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `GITHUB_CLIENT_ID` | for GitHub | Client ID of an OAuth App, see [GitHub OAuth App setup](#github-oauth-app-setup). Turns on GitHub sign-in, together with the secret. |
 | `GITHUB_CLIENT_SECRET` | for GitHub | Client secret of the same OAuth App. GitHub only has the server-side redirect flow, so it is needed. |
 | `DATABASE_URL` | yes | Where the users are stored: `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). For other databases pass your own [store adapter](#custom-store-adapter) instead. |
+| `INITIAL_ADMIN_EMAIL` | no | Who signs in with this address gets the role `admin`, once the address is proven: confirmed by e-mail, or verified by Google or GitHub. Once per value; see [The first admin](#the-first-admin). |
 | `WEBHOOK_URL` | for the e-mail methods | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
 | `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.send_verification` and `email.send_password_reset`, the e-mail link when they include `email.send_signin_link`, SMS codes when they include `sms.send_code`, e.g. `email.send_verification,email.send_password_reset,email.send_signin_link,email.send_already_registered,email.send_password_reset_no_password,sms.send_code`. |
@@ -80,14 +81,6 @@ Ready-made receivers are in the [madAuth-webhooks](https://github.com/inouiw/mad
 - [`dev-receiver`](https://github.com/inouiw/madAuth-webhooks/tree/main/dev-receiver) prints the e-mails in the terminal, for development.
 - [`aws-ses-mailer`](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer) sends them with Amazon SES from an AWS Lambda function, with a step-by-step AWS setup.
 
-To create a user without e-mail, e.g. the first admin or for testing, run on a machine with the same environment variables (or add `--env-file .env`):
-
-```bash
-npx @madauth/server create-user admin@example.com
-```
-
-In this repository, `npm run cli -w packages/server -- create-user you@example.com` does the same with the settings from `packages/server/.env`.
-
 Brute-force protection is per account. Limit requests per IP address in your reverse proxy, load balancer or WAF as well. See [Password security](password-security.md) for all rules.
 
 ### DynamoDB
@@ -112,12 +105,6 @@ The adapter needs the `@aws-sdk/client-dynamodb` package. AWS Lambda's Node.js r
 
 ```bash
 npm install @aws-sdk/client-dynamodb
-```
-
-The command line works with the table as well, e.g. to create the first user. Run it in a project where `@madauth/server` and `@aws-sdk/client-dynamodb` are installed:
-
-```bash
-DATABASE_URL=dynamodb:madauth npx @madauth/server create-user admin@example.com
 ```
 
 In your own entry file, create the adapter yourself, e.g. to pass a configured client:
@@ -257,7 +244,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `user.password_reset` | A password was reset (older sessions end) | `user` | the same | the same |
 | `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `github`, `totp`, `email-link` or `passkey`), `secondFactor` (`passkey`, `totp`, `recovery_code` or `sms`, when there was a second step) | the same | the same |
 | `user.deleted` | A user deleted their account | `user` | the same | the same |
-| `user.claims_changed` | An admin set the claims of a user | `user` (with the new claims), `claims`, `by` (the admin's address) | the same | the same |
+| `user.claims_changed` | An admin set the claims of a user, or [`INITIAL_ADMIN_EMAIL`](#the-first-admin) gave a user the role `admin` | `user` (with the new claims), `claims`, `by` (the admin's address, or `INITIAL_ADMIN_EMAIL`) | the same | the same |
 | `user.second_factor_enabled` | A user set up or replaced a second factor: the authenticator app as the second step of their sign-in method, or a phone number for SMS codes | `user`, `method` (`totp` or `sms`), `phone` (for `sms`) | the same | the same |
 | `user.second_factor_disabled` | A user removed a second factor | `user`, `method` (`totp` or `sms`) | the same | the same |
 | `user.recovery_code_used` | A recovery code was used instead of the app | `user`, `remaining` (recovery codes left) | the same | the same |
@@ -323,14 +310,6 @@ Claims are what admins attach to a user, as a JSON object, e.g. `{ "roles": ["ad
 - The session carries them as `claims` (a `claims` claim in the JWT). `createSessionVerifier` returns them as `user.claims`, and the web library as `Madauth.currentUser.claims`. A user without claims has no `claims` field.
 - A claims object has at most 2048 characters as JSON. Its keys are names: letters, digits and `_`, starting with a letter, at most 64 characters. `roles`, if present, is a list of role names: lower-case letters, digits, `-` and `_`, starting with a letter, at most 32 characters, at most 20 of them. Other values can be anything JSON carries.
 
-**The first admin** is made on the command line, by someone who can reach the database, after that person has signed in once (or was created with `create-user`). Run it where the server's settings are available:
-
-```bash
-npx @madauth/server set-roles you@example.com admin
-```
-
-`set-roles <email> [role...]` replaces the roles of the user, leaving their other claims alone (without roles: removes them), and `get-roles <email>` prints them. `set-claims <email> '<json>'` replaces all claims, and `get-claims <email>` prints them. This is also the way back in if the last admin removed their own role.
-
 **Admins manage claims** from your app with the web library, or with the HTTP API:
 
 ```ts
@@ -342,9 +321,17 @@ Whether the caller is an admin is asked from the store each time, not read from 
 
 **When a change shows.** The claims of a session token are from the moment it was issued. The madAuth server reads them again whenever the app checks the session (`GET /auth/session`, e.g. on page load) and at every [renewal](#sessions), and issues a new session token if they changed. Your own backends, which verify the token offline, see the change from that moment, and after `SESSION_TTL` at the latest.
 
+### The first admin
+
+Set `INITIAL_ADMIN_EMAIL` to your address, like every other variable: in `.env` (`init` asks for it), in the container's environment, or on AWS in `cdk.json` (see [`deploy/aws`](../deploy/aws/README.md#3-configure-and-deploy)). When the user with that address signs in and the address is proven (confirmed by e-mail, or verified by Google or GitHub; a sign-up nobody finished gets nothing), madAuth adds `admin` to their `roles`, keeps their other claims, and tells your webhook: `user.claims_changed` with `by: "INITIAL_ADMIN_EMAIL"`. Their session carries the role from that sign-in on; a user who is signed in already when you set the variable gets it at their next sign-in. See [`admins.ts`](../packages/server/src/admins.ts).
+
+- **Once per value.** madAuth records in the settings which values it applied, and the write decides, so two sign-ins at once apply a value once. A value that was applied does nothing afterwards, also when it names someone who is no longer an admin, or no longer a user: from then on, roles are managed through the admin API only. A new value applies again: that is the way back in when no admin is left, or the only one is locked out.
+- **Existing admins keep their role**: it is stored in their claims. A deployment without an admin sets the variable.
+- **No admin takes the role from themselves.** The admin API refuses to take `admin` from the admin who calls it, and an admin can't delete their own account while they have the role (`403 own_admin_role`): another admin has to. So a lone admin keeps the role. Give a second user the role, so that one admin can help the other, e.g. [reset their sign-in](#resetting-a-users-sign-in). Two admins who take the role from each other at the same moment can still leave no admin; then set a new `INITIAL_ADMIN_EMAIL` value.
+
 ## Sign-in methods
 
-madAuth has these methods, named by these ids in the settings and on the command line:
+madAuth has these methods, named by these ids in the settings:
 
 | Id | Method | In the web library |
 | --- | --- | --- |
@@ -373,7 +360,7 @@ The second factors are passkeys, the app and SMS codes: each one is a second fac
 
 A user can have [several sign-in methods](sign-in-methods.md): the one they signed up with, and those they added while signed in. Each of them signs the user in while the settings allow it as a sign-in method. So allowing the app or passkeys as a sign-in method lets every user who has one sign in with it alone, also those who set it up as a second factor: that is the admin's decision, and a policy (`totp` takes none; `passkey=required`) keeps asking for more.
 
-Until an admin sets the list, a server runs its configured methods Google, GitHub, password and/or the e-mail link, without a second factor, and SMS codes when the webhook sends them; a server that only has the webhook runs the authenticator app alone. Passkeys and the app are off until they are listed. A list stored by madAuth before 0.6 keeps its meaning, except for the app on its own, with which the server refuses to start until an admin chooses: see [Upgrading](upgrading.md#to-06).
+Until an admin sets the list, a server runs its configured methods Google, GitHub, password and/or the e-mail link, without a second factor, and SMS codes when the webhook sends them; a server that only has the webhook runs the authenticator app alone. Passkeys and the app are off until they are listed. A list stored by madAuth before 0.6 keeps its meaning, except for the app on its own next to other methods: it is a second factor only until an admin saves the methods again, see [Upgrading](upgrading.md#to-06).
 
 A method that is off is not shown by the web library (`GET /auth/config` reports it as `null`), and its routes answer `403 method_disabled` (the `start` and `callback` routes of the redirect flows send the browser back to the app with `madauth_error=method_disabled` instead, since it is on its way there); a sign-in that was between its two steps ends too. Existing sessions continue. At least one method that creates users stays on: Google, GitHub, e-mail & password, the e-mail link, or the app or passkeys allowed as a sign-in method on a server whose webhook confirms addresses (on another server, the app or passkeys alone would let in only the users who have one).
 
@@ -390,11 +377,9 @@ const result = await Madauth.admin.getSettings();
 // { isSuccess: true, methods: { google: { configured, enabled, allowAsSignInMethod, secondFactor }, github: { … }, … } }
 ```
 
-On the command line, `set-methods google github=optional password=required email-link passkey totp=second-factor sms` switches on the listed methods and off the others. Listed alone, a method is allowed as a sign-in method (`sms`: a second factor); `=` sets its policy (`none` without one), and `totp=second-factor` or `passkey=second-factor` keeps it to a second factor. `get-methods` prints them.
-
 ## Password rules
 
-The rules for new passwords, at sign-up, reset and `create-user`, are a setting too, so admins change them while the server runs and the ready-made bundles need no code for them:
+The rules for new passwords, at sign-up, at a reset and when a user adds a password, are a setting too, so admins change them while the server runs and the ready-made bundles need no code for them:
 
 | Rule | Default | |
 | --- | --- | --- |
@@ -410,7 +395,7 @@ const result = await Madauth.admin.getSettings();
 // { isSuccess: true, methods: { … }, password: { minLength: 10, minScore: 3 } }
 ```
 
-On the command line: `set-password-rules min-length=10 min-score=3` (it needs only `DATABASE_URL`) and `get-password-rules`. The web library gets the rules with the configuration, as `Madauth.password.policy`, for the hint under the field. The dialog shows a strength meter under a new password, rated with the same zxcvbn-ts options, so it says before sending whether the server will accept the password; it loads zxcvbn-ts (about 220 kB compressed) only when the user starts typing one. A password that breaks them is answered `400 weak_password`, with `minLength` (too short) or `minScore` (too easy to guess) next to the English `message`, so the dialog can say it in the user's language. The rules apply to new passwords only: existing ones keep working.
+The web library gets the rules with the configuration, as `Madauth.password.policy`, for the hint under the field. The dialog shows a strength meter under a new password, rated with the same zxcvbn-ts options, so it says before sending whether the server will accept the password; it loads zxcvbn-ts (about 220 kB compressed) only when the user starts typing one. A password that breaks them is answered `400 weak_password`, with `minLength` (too short) or `minScore` (too easy to guess) next to the English `message`, so the dialog can say it in the user's language. The rules apply to new passwords only: existing ones keep working.
 
 ## Authenticator app
 
@@ -463,7 +448,7 @@ A user who lost every way in, or a second factor they can't sign in without (the
 - The address counts as unconfirmed, so the next sign-up proves the inbox again.
 - The user stays: their id (`usr_…`), address, name, claims and roles. Their sign-up stays complete: no second `user.signed_up`.
 
-The user then signs up again with any method that is on, and gets the same id. The rules for a sign-up nobody finished apply: until one proves the address, the latest sign-up wins, and a Google or GitHub sign-in with the address takes the user over. `user.sign_in_reset` tells your webhook, with the admin's address as `by`. There is no command for it: an admin calls it from your app. An admin who resets themselves is signed out. An admin who lost their own way in is reset by another admin; without one, give another user the role on the command line first (`set-roles`, see [Claims](#claims)).
+The user then signs up again with any method that is on, and gets the same id. The rules for a sign-up nobody finished apply: until one proves the address, the latest sign-up wins, and a Google or GitHub sign-in with the address takes the user over. `user.sign_in_reset` tells your webhook, with the admin's address as `by`. There is no command for it: an admin calls it from your app. An admin who resets themselves is signed out. An admin who lost their own way in is reset by another admin. With no admin who can sign in, set a new `INITIAL_ADMIN_EMAIL` value (see [The first admin](#the-first-admin)): the new admin then resets the old one.
 
 **Check who is asking before a reset.** Afterwards the address is all it takes: whoever proves it next (with the e-mail, or a Google or GitHub account with the address) gets the account, with its id, your app's data under that id, and its roles, `admin` too. Someone who took over the user's mailbox and asks for a reset gets past the app, the phone and the passkeys that protected it. Confirm that the request comes from the user in a way that doesn't rest on the mailbox alone.
 
@@ -478,6 +463,7 @@ Code: `resetSignIn` in [`users.ts`](../packages/server/src/users.ts), `/auth/adm
 - If the user had a Google account, the answer is `200 { googleSub }` (otherwise `204`). With `GoogleFedcm`, the web library revokes the app's access to that Google account by its id (`google.accounts.id.revoke`): the app leaves their connected apps at Google, and the Google button says "Sign in with Google" again instead of "Continue as …". A user without a Google account is never sent to Google.
 - If the user had a GitHub account, the server revokes the OAuth App's authorization at GitHub with the access token it kept from their last sign-in (`DELETE /applications/{client_id}/grant`): madAuth leaves their authorized apps. This is best effort: when GitHub can't be reached or refuses, the deletion goes ahead and the server's log says so; the user can then remove the app under GitHub → Settings → Applications.
 - The session cookie is cleared, and `user.deleted` is sent to the webhook if it is in `WEBHOOK_EVENTS`, with the user as the session held them.
+- A user with the role `admin` can't delete their account (`403 own_admin_role`): another admin takes the role from them first, see [The first admin](#the-first-admin).
 
 Delete the user's data in your own backend first, while the user is still signed in. Sessions on other devices end when the app next checks them; your own backends accept them until they expire (see [Password security](password-security.md#sessions)).
 
@@ -516,7 +502,7 @@ npx @madauth/server schema --dialect postgres --from 1
 | --- | --- |
 | 2 | `user.wrongCodes`: wrong e-mail codes in a row, see [Password security](password-security.md#links-and-codes-in-e-mails). Number, starts at 0. |
 | 3 | New model `role`: the roles of an e-mail address. A new table; existing ones don't change. |
-| 4 | Every user is stored, with their [claims](#claims): `user.claims` (JSON string, empty without claims) and `account.email` (the address the provider reported, e.g. Google's; empty for passwords). New model `setting` (the [sign-in methods](#sign-in-methods)). The `role` table is dropped: roles are a claim now, set them again with `set-roles`. |
+| 4 | Every user is stored, with their [claims](#claims): `user.claims` (JSON string, empty without claims) and `account.email` (the address the provider reported, e.g. Google's; empty for passwords). New model `setting` (the [sign-in methods](#sign-in-methods)). The `role` table is dropped: roles are a claim now, set them again (the first admin with [`INITIAL_ADMIN_EMAIL`](#the-first-admin), the others with the admin API). |
 | 5 | The [authenticator app](#authenticator-app): `account.lastUsedStep` (the time step of the last accepted code, so a code works once; number, starts at 0), `account.setupId` (the setup the secret came from; empty for other accounts) and the new model `recoveryCode` (a user's recovery codes, by their keyed hash, each with the `setupId` it belongs to; a record goes when its code is used). |
 | 6 | [SMS codes](#sms-codes): `account.phone` (the number of an `sms:` account in E.164 form; empty for other accounts) and `user.lastSmsAt` (when the last SMS went to the user, so at most one per minute goes; empty before the first). |
 | 7 | One sign-in method per user, and when a sign-up was complete: `account.primaryUserId` (the user's id on the account they sign in with, empty for a second factor; **unique**, so an adapter must refuse a second record with the same value while allowing many empty ones), `account.secondFactor` (true for an authenticator app that is a step of the user's method and for SMS codes, false for a sign-in method) and `user.signedUpAt` (when the user's first session started, 0 until then; it makes [`user.signed_up`](#webhooks) go once). |
@@ -697,11 +683,11 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
 | `POST /auth/logout` | Clears the cookies of the session |
 | `POST /auth/admin/claims/get` | `{ email }` → `{ email, userId, claims }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`, 404 `user_not_found`. See [Claims](#claims). |
-| `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims` |
+| `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims`, 403 `own_admin_role` (it would take the role `admin` from the caller, see [The first admin](#the-first-admin)) |
 | `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, allowAsSignInMethod, secondFactor }, github: { … }, password: { … }, totp: { … }, 'email-link': { … }, passkey: { … }, sms: { … } }, password: { minLength, minScore } }`, for admins. See [Sign-in methods](#sign-in-methods) and [Password rules](#password-rules). |
 | `POST /auth/admin/settings/set` | `{ methods?: { <id>: { allowAsSignInMethod, secondFactor } }, password?: { minLength?, minScore? } }`, one or both (`methods` is the list of the methods that are on, each with both settings; what `password` leaves out takes its default) → the same; 400 `invalid_settings` when a setting doesn't fit its method, a policy has no second factor that is on, or no method that creates users would stay on, and then nothing is changed |
 | `POST /auth/admin/sign-in/reset` | `{ email }` → `{ email, userId }`: removes all of the user's sign-in methods and second factors, ends their sessions and marks the address unconfirmed, for admins; they sign up again. See [Resetting a user's sign-in](#resetting-a-users-sign-in). |
-| `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`. See [Deleting an account](#deleting-an-account). |
+| `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`, 403 `own_admin_role` (the user has the role `admin`). See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
 | `GET /health` | `ok` |
 
