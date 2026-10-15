@@ -266,7 +266,8 @@ function handleRedirectReturn(ctx: ProviderContext): 'google' | 'github' | undef
     return undefined;
   }
   if (isSecondFactor(next)) ctx.signInContinues({ step: FACTOR_STEPS[next], method, factors: named.length ? named : [next] });
-  else if (next === 'second-factor-setup' || next === 'authenticator-setup') ctx.signInContinues(named.length ? { step: 'setup', method, factors: named } : { step: 'setup', method });
+  else if (next === 'second-factor-setup') ctx.signInContinues(named.length ? { step: 'setup', method, factors: named } : { step: 'setup', method });
+  else if (next === 'authenticator-setup') ctx.signInContinues({ step: 'setup', method, factors: ['authenticator'] });
   else if (next === 'passkey-setup') ctx.signInContinues({ step: 'setup', method, factors: ['passkey'] });
   return undefined;
 }

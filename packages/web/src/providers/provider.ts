@@ -76,8 +76,9 @@ export function secondStepOf(error: MadauthError): PendingStep['step'] | undefin
 export function pendingStepOf(error: MadauthError, method: LoginMethodId): PendingStep | undefined {
   const step = secondStepOf(error);
   if (!step) return undefined;
-  // The passkey of a sign-up with one is its only factor, also when the answer doesn't name it.
+  // The method a sign-up with the app or a passkey alone creates is its only factor, also when the answer doesn't name it.
   if (error.code === 'passkey_setup_required') return { step, method, factors: ['passkey'] };
+  if (error.code === 'authenticator_setup_required') return { step, method, factors: ['authenticator'] };
   if (step === 'setup') return error.factors?.length ? { step, method, factors: error.factors } : { step, method };
   const factor = SECOND_FACTORS.find((f) => FACTOR_STEPS[f] === step)!;
   return { step, method, factors: error.factors?.length ? error.factors : [factor] };

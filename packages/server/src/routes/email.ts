@@ -3,6 +3,7 @@
 import type { Context, Hono } from 'hono';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
+import { FORMER_AUTHENTICATOR_ID } from '../settings.js';
 import { isSignUpMethod, toMadauthUser, type SignUpMethod, type StoredUser, type Users } from '../users.js';
 import { localeOf, type WebhookClient } from '../webhooks.js';
 import { MAIL_INTERVAL_MS, createEmails, type Emails } from './emails.js';
@@ -16,7 +17,7 @@ import { accepted, body, error, nameOf, redirectTarget, signInAnswer, unavailabl
  * authenticator app.
  */
 export async function signUpMethodOf(users: Users, user: StoredUser): Promise<SignUpMethod> {
-  const stored = user.signUpMethod === 'totp' ? 'authenticator' : user.signUpMethod;
+  const stored = user.signUpMethod === FORMER_AUTHENTICATOR_ID ? 'authenticator' : user.signUpMethod;
   const recorded = isSignUpMethod(stored) ? stored : null;
   if (recorded && recorded !== 'password') return recorded;
   return (await users.passwordAccount(user.id)) ? 'password' : 'authenticator';

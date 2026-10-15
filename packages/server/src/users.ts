@@ -2,7 +2,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { claimsFromJson, type Claims } from './claims.js';
 import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
-import { ALWAYS_SIGN_IN, SIGN_IN_METHODS, type SecondFactor, type SignInMethod } from './settings.js';
+import { ALWAYS_SIGN_IN, FORMER_AUTHENTICATOR_ID, SIGN_IN_METHODS, type SecondFactor, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 import type { MadauthUser } from './user.js';
 
@@ -143,11 +143,11 @@ export function githubAccountKey(id: string): string {
 }
 
 /**
- * The start of the authenticator app's account keys: `totp`, the app's name before madAuth 0.6. The key is
+ * The start of the authenticator app's account keys: `totp`, the app's id before madAuth 0.6. The key is
  * internal and nobody sees it, so it was not renamed with the method: a new one would need a migration of
  * every stored account (DynamoDB tables too). {@link methodOf} reads it as `authenticator`.
  */
-const AUTHENTICATOR_KEY_PREFIX = 'totp';
+const AUTHENTICATOR_KEY_PREFIX = FORMER_AUTHENTICATOR_ID;
 
 /** The account of the user's authenticator app: `totp:<userId>`, see {@link AUTHENTICATOR_KEY_PREFIX}. */
 export function authenticatorAccountKey(userId: string): string {

@@ -229,6 +229,11 @@ describe('GitHub', () => {
     history.replaceState(null, '', '/page#madauth_next=second-factor-setup');
     await Madauth.initialize({ serverUrl: SERVER, providers: providers(), ui: 'custom' });
     expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'google' });
+
+    // The setup of a method a sign-up creates names that method, should a redirect ever reach one.
+    history.replaceState(null, '', '/page#madauth_next=authenticator-setup');
+    await Madauth.initialize({ serverUrl: SERVER, providers: providers(), ui: 'custom' });
+    expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'google', factors: ['authenticator'] });
   });
 
   it('B8: GitHub takes a policy for the second factor, and its users are told they have no password to reset', async () => {

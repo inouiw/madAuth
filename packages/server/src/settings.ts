@@ -125,16 +125,22 @@ export function parseMethodSettings(input: unknown): MethodSettings | null {
 const signsInOnlyWithApp = (stored: Record<string, unknown>) => !Object.keys(stored).some((method) => method !== 'authenticator' && method !== 'sms');
 
 /**
- * A stored methods setting with the authenticator app's id of madAuth before 0.6, `totp`, read as
- * `authenticator`, in its place among the others; anything else as it is. A list with both (madAuth never
- * writes one) keeps the setting of `authenticator`. Only for what is stored: the settings an admin sets name
- * the app `authenticator`, and `totp` is no method id.
+ * The authenticator app's id before madAuth 0.6. Stored data keeps it, and it is read as `authenticator`:
+ * the start of the app's account keys (`totp:<userId>`, see `authenticatorAccountKey`), a saved methods list
+ * ({@link renameStoredMethods}) and the method of a pending sign-up (`signUpMethodOf`). It is no method id.
+ */
+export const FORMER_AUTHENTICATOR_ID = 'totp';
+
+/**
+ * A stored methods setting with {@link FORMER_AUTHENTICATOR_ID} read as `authenticator`, in its place among the
+ * others; anything else as it is. A list with both (madAuth never writes one) keeps the setting of
+ * `authenticator`. Only for what is stored: the settings an admin sets name the app `authenticator`.
  */
 export function renameStoredMethods(stored: unknown): unknown {
-  if (!isObject(stored) || !('totp' in stored)) return stored;
+  if (!isObject(stored) || !(FORMER_AUTHENTICATOR_ID in stored)) return stored;
   const both = 'authenticator' in stored;
   return Object.fromEntries(
-    Object.entries(stored).flatMap(([method, value]) => (method !== 'totp' ? [[method, value]] : both ? [] : [['authenticator', value]])),
+    Object.entries(stored).flatMap(([method, value]) => (method !== FORMER_AUTHENTICATOR_ID ? [[method, value]] : both ? [] : [['authenticator', value]])),
   );
 }
 
