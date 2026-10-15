@@ -149,9 +149,14 @@ function parseOrigin(name: string, value: string): string {
   return url.origin;
 }
 
-/** Docker's --env-file keeps quotes around values (NAME='value'); Node's --env-file removes them. */
-function readEnv(env: Record<string, string | undefined>, name: keyof typeof envVars | 'TOTP_ISSUER'): string | undefined {
-  return env[name]?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
+/**
+ * A variable's value, or undefined if it is empty. Docker's --env-file keeps quotes around values
+ * (NAME='value'); Node's --env-file removes them.
+ */
+const unquote = (value: string | undefined): string | undefined => value?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
+
+function readEnv(env: Record<string, string | undefined>, name: keyof typeof envVars): string | undefined {
+  return unquote(env[name]);
 }
 
 /**
@@ -188,7 +193,7 @@ export async function readConfig(
     );
   }
   // Renamed in 0.6. Ignored, it would change the name new authenticator apps show without a word.
-  if (readEnv(env, 'TOTP_ISSUER')) {
+  if (unquote(env.TOTP_ISSUER)) {
     throw new ConfigError('TOTP_ISSUER is now AUTHENTICATOR_ISSUER: rename the variable. See docs/upgrading.md.');
   }
 

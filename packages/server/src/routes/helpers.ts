@@ -2,6 +2,7 @@
 import type { Context } from 'hono';
 import type { AppContext, SignInStep } from '../app.js';
 import type { StoredUser } from '../users.js';
+import type { NextStep } from './challenge.js';
 
 export type Body = Record<string, unknown>;
 
@@ -78,6 +79,18 @@ export function nameOf(value: unknown, maxLength = MAX_NAME_LENGTH): string | nu
 }
 
 /**
+ * The error that names each next step. A setup is `<method>_setup_required` when one method is being created
+ * (`factors` is just that method), `second_factor_setup_required` when the user chooses one of `factors`.
+ */
+const NEXT_STEP_ERRORS: Record<NextStep, { error: string; message: string }> = {
+  passkey: { error: 'passkey_required', message: 'Confirm with your passkey to finish signing in.' },
+  authenticator: { error: 'authenticator_required', message: 'Enter the code from your authenticator app to finish signing in.' },
+  sms: { error: 'sms_required', message: 'Enter the code we sent to your phone to finish signing in.' },
+  'second-factor-setup': { error: 'second_factor_setup_required', message: 'Set up a second factor to finish signing in.' },
+  'authenticator-setup': { error: 'authenticator_setup_required', message: 'Set up your authenticator app to finish signing up.' },
+};
+
+/**
  * The answer after a primary sign-in method succeeded: the user with their session, or what the sign-in
  * still needs (a 401 whose error names the next step; the challenge cookie is set already).
  */
@@ -86,13 +99,8 @@ export function signInAnswer(c: Context, step: SignInStep): Response {
   if ('next' in step) {
     // `method` says which sign-in goes on, for a client that learns of the step later (e.g. after a redirect);
     // `factors` which second factors the user can finish it with, so the client can offer a switch.
-    const rest = { method: step.method, factors: step.factors };
-    if (step.next === 'authenticator') return c.json({ error: 'authenticator_required', message: 'Enter the code from your authenticator app to finish signing in.', ...rest }, 401);
-    if (step.next === 'sms') return c.json({ error: 'sms_required', message: 'Enter the code we sent to your phone to finish signing in.', ...rest }, 401);
-    if (step.next === 'passkey') return c.json({ error: 'passkey_required', message: 'Confirm with your passkey to finish signing in.', ...rest }, 401);
-    // `factors` are what the user can set up here: the app a sign-up with it creates, or the second factors to choose from.
-    if (step.next === 'authenticator-setup') return c.json({ error: 'authenticator_setup_required', message: 'Set up your authenticator app to finish signing up.', ...rest }, 401);
-    return c.json({ error: 'second_factor_setup_required', message: 'Set up a second factor to finish signing in.', ...rest }, 401);
+    // For a setup, `factors` are what the user can set up.
+    return c.json({ ...NEXT_STEP_ERRORS[step.next], method: step.method, factors: step.factors }, 401);
   }
   return c.json({ user: step.user });
 }

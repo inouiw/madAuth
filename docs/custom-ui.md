@@ -102,7 +102,7 @@ Needs `new EmailLink()` in `initialize`, and on the server a webhook that sends 
 | Method | Result | Errors |
 | --- | --- | --- |
 | `send({ email, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `method_disabled`, `temporarily_unavailable` |
-| `verify({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`, `method_disabled`; `authenticator_required` or `second_factor_setup_required` when the sign-in goes on with the [authenticator app](#authenticator-app-madauthauthenticator) |
+| `verify({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`, `method_disabled`; `passkey_required`, `authenticator_required`, `sms_required` or `second_factor_setup_required` when the sign-in goes on with a [second factor](#the-second-step) |
 | `add()` | — | Adds the e-mail link to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods): `already_added`, `reauth_required`, `no_session` |
 | `policy` | `{ secondFactor } \| null` | Whether the method asks for a second factor (`none`, `optional`, `required`); null when the server doesn't offer the method |
 
@@ -114,7 +114,7 @@ Call `send`, then show "check your inbox". The e-mail contains a link and a 6-di
 - The link opens `redirectTo` (default: the current page, see [`redirectTo`](#redirectto)). When the page loads, `initialize` signs the user in; your `onAuthStateChanged` listener gets the user, with `amr: ['email']`.
 - For the code, show a field and call `verify({ email, code })`. This also works when the e-mail is read on another device.
 
-With a policy that asks for the authenticator app, both end with `authenticator_required` or `second_factor_setup_required` instead, like a password: see [The second step](#the-second-step). After the link, the step is in `Madauth.authenticator.pendingStep` once `initialize` is done.
+With a policy that asks for a second factor, both end with `passkey_required`, `authenticator_required`, `sms_required` or `second_factor_setup_required` instead, like a password: see [The second step](#the-second-step). After the link, the step is in `Madauth.authenticator.pendingStep` once `initialize` is done.
 
 ```ts
 sendForm.onsubmit = async () => {
