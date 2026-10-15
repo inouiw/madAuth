@@ -20,7 +20,7 @@ export interface ServerConfig {
    * address and a code), `signUp` whether people can sign up with it alone.
    */
   authenticator: { signIn: boolean; signUp: boolean } | null;
-  /** Whether the server confirms addresses by e-mail (sign-ups with a password or the authenticator app). */
+  /** Whether the server confirms addresses by e-mail (sign-ups with a password, the authenticator app or a passkey). */
   email: { verification: boolean };
   /** The passwordless e-mail link, with its policy for the authenticator app as a second factor. */
   emailLink: { secondFactor: SecondFactorPolicy } | null;
@@ -28,10 +28,11 @@ export interface ServerConfig {
   sms: boolean;
   /**
    * Passkeys, when they are on: a signed-in user can add them, and they are a second factor of the methods
-   * that ask for one. `signIn` says whether they sign in on their own, `secondFactor` whether such a sign-in
-   * then asks for a second factor. Absent from servers before madAuth 0.6.
+   * that ask for one. `signIn` says whether they sign in on their own, `signUp` whether people can sign up
+   * with one alone, `secondFactor` whether such a sign-in then asks for a second factor. Absent from servers
+   * before madAuth 0.6.
    */
-  passkey?: { signIn: boolean; secondFactor: SecondFactorPolicy } | null;
+  passkey?: { signIn: boolean; signUp: boolean; secondFactor: SecondFactorPolicy } | null;
 }
 
 /** What a sign-in still needs after its first step, and which sign-in it is. */
@@ -54,7 +55,9 @@ const STEPS: Partial<Record<string, PendingStep['step']>> = {
   authenticator_required: 'code',
   sms_required: 'sms',
   second_factor_setup_required: 'setup',
+  // A sign-up with the app or a passkey alone: the method it signs up with is set up next, as a second factor would be.
   authenticator_setup_required: 'setup',
+  passkey_setup_required: 'setup',
 };
 
 /** The step that asks for each factor. */
@@ -62,7 +65,8 @@ export const FACTOR_STEPS: Record<SecondFactor, Exclude<PendingStep['step'], 'se
 
 /**
  * The step an error stands for: `passkey_required`, `authenticator_required`, `sms_required`, or a setup
- * (`second_factor_setup_required`, `authenticator_setup_required`); undefined for any other.
+ * (`second_factor_setup_required`, `authenticator_setup_required`, `passkey_setup_required`); undefined for
+ * any other.
  */
 export function secondStepOf(error: MadauthError): PendingStep['step'] | undefined {
   return STEPS[error.code];
@@ -72,6 +76,8 @@ export function secondStepOf(error: MadauthError): PendingStep['step'] | undefin
 export function pendingStepOf(error: MadauthError, method: LoginMethodId): PendingStep | undefined {
   const step = secondStepOf(error);
   if (!step) return undefined;
+  // The passkey of a sign-up with one is its only factor, also when the answer doesn't name it.
+  if (error.code === 'passkey_setup_required') return { step, method, factors: ['passkey'] };
   if (step === 'setup') return error.factors?.length ? { step, method, factors: error.factors } : { step, method };
   const factor = SECOND_FACTORS.find((f) => FACTOR_STEPS[f] === step)!;
   return { step, method, factors: error.factors?.length ? error.factors : [factor] };
@@ -94,9 +100,9 @@ export interface ProviderContext {
   /**
    * A sign-in failed outside the dialog (e.g. after the redirect flow): with `ui: 'dialog'` and nobody signed
    * in, the dialog opens by itself and shows it; otherwise it is shown the next time the dialog opens. A
-   * `passkey_required`, `authenticator_required`, `sms_required`, `second_factor_setup_required` or
-   * `authenticator_setup_required` error is not a failure: the sign-in goes on with its next step, see
-   * {@link signInContinues}.
+   * `passkey_required`, `authenticator_required`, `sms_required`, `second_factor_setup_required`,
+   * `authenticator_setup_required` or `passkey_setup_required` error is not a failure: the sign-in goes on with
+   * its next step, see {@link signInContinues}.
    */
   signInFailed(error: MadauthError): void;
   /** A sign-in outside the dialog needs its second step next: the dialog opens on that step. */

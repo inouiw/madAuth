@@ -36,7 +36,7 @@ export type {
 } from './scopes/authenticator.js';
 export type { EmailLinkApi } from './scopes/email-link.js';
 export type { SmsApi } from './scopes/sms.js';
-export type { PasskeyApi, PasskeyInfo, PasskeySignInOptions } from './scopes/passkey.js';
+export type { PasskeyApi, PasskeyInfo, PasskeySignInOptions, PasskeySignUpOptions } from './scopes/passkey.js';
 export type { MethodsApi, SignInMethodInfo } from './scopes/methods.js';
 export type { ButtonRenderOptions } from './scopes/button.js';
 export type { AdminApi, Claims, MethodId, MethodSetting, MethodToSet, MethodsToSet, PasswordRules, Settings } from './scopes/admin.js';

@@ -16,6 +16,8 @@ type View =
   | 'sms-code'
   | 'sms-setup'
   | 'sms-setup-code'
+  | 'passkey-signup'
+  | 'passkey-setup'
   | 'passkey-step';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
@@ -35,6 +37,8 @@ const titles: Record<View, string> = {
   'sms-code': 'Enter the code from the SMS',
   'sms-setup': 'Add your phone number',
   'sms-setup-code': 'Add your phone number',
+  'passkey-signup': 'Create account',
+  'passkey-setup': 'Create a passkey',
   'passkey-step': 'Confirm with your passkey',
 };
 
@@ -43,8 +47,8 @@ let factors: SecondFactor[] = [];
 /** The number typed into the phone setup, for the setup after the current number agreed. */
 let pendingPhone = '';
 
-/** The address the e-mail went to, and what it was for; `app` for a sign-up with the authenticator app alone. */
-let pending: { email: string; purpose: 'verify' | 'reset' | 'signin'; code?: string; app?: boolean } | undefined;
+/** The address the e-mail went to, and what it was for; `alone` for a sign-up with the authenticator app or a passkey alone. */
+let pending: { email: string; purpose: 'verify' | 'reset' | 'signin'; code?: string; alone?: 'authenticator' | 'passkey' } | undefined;
 /** The recovery codes are on the screen: the login card stays although the user is signed in. */
 let showingCodes = false;
 
@@ -62,6 +66,7 @@ void Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Passw
   $('#go-authenticator').hidden = !Madauth.authenticator.policy?.signIn;
   $('#go-passkey').hidden = !Madauth.passkey.signInAvailable;
   $('#go-authenticator-signup').hidden = !Madauth.authenticator.policy?.signUp;
+  $('#go-passkey-signup').hidden = !(Madauth.passkey.signInAvailable && Madauth.passkey.policy?.signUp);
   // The e-mail link, only when the server offers it (its link is handled by initialize, like the confirmation links).
   $('#go-email-link').hidden = !Madauth.emailLink.policy;
   // A sign-in that goes on with a second step: after the redirect flow, or a link from an e-mail.
@@ -108,8 +113,9 @@ function say(message: string, isError = false): void {
 
 /**
  * Shows a failed result; returns whether it succeeded. A sign-in that goes on with a second step
- * (`authenticator_required`, `passkey_required`, `sms_required`, `second_factor_setup_required`, or
- * `authenticator_setup_required` for a sign-up with the app) is not a failure: the next step is shown.
+ * (`authenticator_required`, `passkey_required`, `sms_required`, `second_factor_setup_required`), or a
+ * sign-up with the app or a passkey alone whose method is set up next (`authenticator_setup_required`,
+ * `passkey_setup_required`), is not a failure: the next step is shown.
  */
 function report(result: Result): boolean {
   if (result.isSuccess) return true;
@@ -119,8 +125,9 @@ function report(result: Result): boolean {
   // The user closed the browser's passkey dialog: nothing to say.
   else if (result.error.code === 'cancelled') say('');
   else if (result.error.code === 'sms_required') void startSmsStep();
-  // Either setup starts with the app; the setup view offers a passkey or a phone instead when `factors` allow.
-  else if (result.error.code === 'second_factor_setup_required' || result.error.code === 'authenticator_setup_required') void startSetup();
+  // A setup starts with the app, or with the passkey when only a passkey can finish it; the setup view offers a
+  // passkey or a phone instead when `factors` allow.
+  else if (['second_factor_setup_required', 'authenticator_setup_required', 'passkey_setup_required'].includes(result.error.code)) void startSetup();
   else say(messageFor(result.error), true);
   return false;
 }
@@ -187,8 +194,8 @@ function onSubmit(selector: string, handler: (values: Record<string, string>) =>
   });
 }
 
-function checkInbox(email: string, purpose: 'verify' | 'reset' | 'signin', app = false): void {
-  pending = { email, purpose, app };
+function checkInbox(email: string, purpose: 'verify' | 'reset' | 'signin', alone?: 'authenticator' | 'passkey'): void {
+  pending = { email, purpose, alone };
   $('#code-email').textContent = email;
   show('code');
 }
@@ -222,8 +229,8 @@ onSubmit('#code-form', async ({ code }) => {
     report(await Madauth.emailLink.verify({ email: pending.email, code }));
     return;
   }
-  // The same confirmation for both sign-ups; one with the app alone goes on with its setup.
-  const scope = pending.app ? Madauth.authenticator : Madauth.password;
+  // The same confirmation for every sign-up; one with the app or a passkey alone goes on with its setup.
+  const scope = pending.alone === 'authenticator' ? Madauth.authenticator : pending.alone === 'passkey' ? Madauth.passkey : Madauth.password;
   report(await scope.verifyEmail({ email: pending.email, code }));
 });
 
@@ -247,7 +254,7 @@ onSubmit('#authenticator-form', async ({ email, code }) => {
 });
 
 onSubmit('#authenticator-signup-form', async ({ name, email }) => {
-  if (report(await Madauth.authenticator.signUp({ email, name: name || undefined }))) checkInbox(email, 'verify', true);
+  if (report(await Madauth.authenticator.signUp({ email, name: name || undefined }))) checkInbox(email, 'verify', 'authenticator');
 });
 
 onSubmit('#authenticator-code-form', async ({ code }) => {
@@ -259,10 +266,15 @@ onSubmit('#authenticator-code-form', async ({ code }) => {
 
 /** Asks the server for a new key and shows it as a QR code (an SVG from the library) and as text. */
 async function startSetup(): Promise<void> {
+  const pending = Madauth.authenticator.pendingStep;
+  // Only a passkey can finish the step, e.g. a sign-up with a passkey alone: the browser's dialog needs a click.
+  if (pending?.step === 'setup' && pending.factors?.length && pending.factors.every((factor) => factor === 'passkey')) {
+    show('passkey-setup');
+    return;
+  }
   show('authenticator-setup');
   // During a sign-in, a phone can be added instead of the app when the server has SMS codes on; a sign-up
   // with the app sets the app up, never a phone.
-  const pending = Madauth.authenticator.pendingStep;
   $('#use-phone').hidden = !(pending?.step === 'setup' && pending.method !== 'authenticator' && Madauth.sms.available);
   $('#use-passkey-setup').hidden = !(pending?.step === 'setup' && pending.factors?.includes('passkey') && Madauth.passkey.available);
   $('#qr').innerHTML = '';
@@ -469,6 +481,11 @@ $('#passkey-verify').addEventListener('click', async () => {
 });
 // The setup step of a sign-in: a new passkey finishes it.
 $('#use-passkey-setup').addEventListener('click', async () => report(await Madauth.passkey.add()));
+$('#passkey-create').addEventListener('click', async () => report(await Madauth.passkey.add()));
+
+onSubmit('#passkey-signup-form', async ({ name, email }) => {
+  if (report(await Madauth.passkey.signUp({ email, name: name || undefined }))) checkInbox(email, 'verify', 'passkey');
+});
 $('#passkey-add').addEventListener('click', async () => {
   const result = await Madauth.passkey.add();
   if (result.isSuccess) alert(`Added the passkey "${result.passkey.name}".`);

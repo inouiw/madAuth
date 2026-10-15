@@ -119,7 +119,7 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
         return accepted(c);
       }
       await users.reopenSignUp(existing);
-      await users.updateUser(existing.id, { name });
+      await users.updateUser(existing.id, { name, signUpMethod: 'password' });
       return (await emails.sendLinkEmail({ ...existing, name }, 'verify', target, locale)) ? accepted(c) : unavailable(c);
     }
 
@@ -129,6 +129,7 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
       name,
       emailVerified: false,
       account: (userId) => ({ key: passwordAccountKey(userId), secret: passwordHash }),
+      signUpMethod: 'password',
     });
     if (!user) return accepted(c);
     // If this fails, signing up again is allowed: the account is not confirmed yet.

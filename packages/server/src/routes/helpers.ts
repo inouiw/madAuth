@@ -88,6 +88,7 @@ const NEXT_STEP_ERRORS: Record<NextStep, { error: string; message: string }> = {
   sms: { error: 'sms_required', message: 'Enter the code we sent to your phone to finish signing in.' },
   'second-factor-setup': { error: 'second_factor_setup_required', message: 'Set up a second factor to finish signing in.' },
   'authenticator-setup': { error: 'authenticator_setup_required', message: 'Set up your authenticator app to finish signing up.' },
+  'passkey-setup': { error: 'passkey_setup_required', message: 'Create your passkey to finish signing up.' },
 };
 
 /**

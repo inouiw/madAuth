@@ -271,19 +271,26 @@ With `purpose: 'link'` it says "Connect GitHub" and adds GitHub to the signed-in
 
 ## Passkeys: `Madauth.passkey`
 
-Signing in with a passkey alone needs `new Passkey()` in `initialize` and a server that allows it; the second step, adding and renaming work whenever the server has passkeys on (`available`).
+Signing in or up with a passkey alone needs `new Passkey()` in `initialize` and a server that allows it; the second step, adding and renaming work whenever the server has passkeys on (`available`).
 
 | Method | Resolves to | Errors |
 | --- | --- | --- |
 | `signIn()` or `signIn({ conditional: true, signal })` | `{ user }` | `cancelled` (the user closed the browser's dialog), `passkey_unknown`, `verification_failed`, `method_disabled`, `passkey_unsupported`; the [second step](#the-second-step) when the passkey's policy asks for one |
 | `verify()` | `{ user }` | Finishes a sign-in that ended with `passkey_required`: `cancelled`, `verification_failed`, `challenge_expired` |
-| `add({ name? })` | `{ passkey, user? }` | Adds a passkey for the signed-in user, or as the setup of a sign-in (`second_factor_setup_required` with `passkey` in `factors`; then it signs in, `user`): `cancelled`, `already_added`, `reauth_required`, `verification_failed`, `no_session`, `passkey_unsupported` |
+| `add({ name? })` | `{ passkey, user? }` | Adds a passkey for the signed-in user, or as the setup of a sign-in (`second_factor_setup_required` with `passkey` in `factors`) or of a sign-up with a passkey (`passkey_setup_required`); then it signs in (`user`): `cancelled`, `already_added`, `reauth_required`, `verification_failed`, `no_session`, `setup_expired`, `passkey_unsupported`; in a sign-up whose policy asks for a second factor, `second_factor_setup_required` (the passkey is created, set the factor up next) |
+| `signUp({ email, name?, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `temporarily_unavailable`, `method_disabled`, `forbidden_origin`; `flow_not_enabled` without `policy.signUp` or the Passkey provider (which is left out in a browser without passkeys) |
+| `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
+| `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `passkey_setup_required` for a sign-up with a passkey |
 | `rename({ id, name })` | `{ passkey }` | `method_not_found`, `invalid_options`, `no_session` |
 | `conditionalAvailable()` | `boolean` | Whether the browser offers passkeys in an e-mail field's autofill |
 | `available`, `signInAvailable` | `boolean` | Whether passkeys are on here (server and browser), and whether they sign in on their own here |
-| `policy` | `{ signIn, secondFactor } \| null` | What passkeys do on this server |
+| `policy` | `{ signIn, signUp, secondFactor } \| null` | What passkeys do on this server: whether they sign in on their own, whether people can sign up with one alone, and whether such a sign-in asks for a second factor |
 
 A passkey button calls `signIn()`. For the autofill, give the e-mail field `autocomplete="username webauthn"` and start `signIn({ conditional: true, signal })` when the screen shows: the browser offers the user's passkeys in the field's suggestions, and the call resolves when the user picks one. Abort it (`signal`) before another sign-in starts, and when the screen goes. `cancelled` is no error to show: the user closed the dialog.
+
+### Signing up with a passkey alone
+
+With `policy.signUp`, `signUp({ email, name? })` creates an account that signs in with a passkey alone, like the [app on its own](#the-app-on-its-own): it sends the confirmation e-mail, and `verifyEmail` (or the link, after which the step is in `pendingStep` once `initialize` is done) ends with `passkey_setup_required` (`pendingStep` is `{ step: 'setup', method: 'passkey', factors: ['passkey'] }`). Show a "Create passkey" button that calls `add()`: the browser's dialog needs the user's click. The new passkey signs the user in; with a policy that asks for a second factor after a passkey, `add()` ends with `second_factor_setup_required` again, with the factors to set up next. A user without another method who loses their passkeys signs up again once an admin [reset their sign-in](server.md#resetting-a-users-sign-in): see [Passkey security](passkey-security.md#signing-up-with-a-passkey).
 
 ## A user's sign-in methods: `Madauth.methods`
 

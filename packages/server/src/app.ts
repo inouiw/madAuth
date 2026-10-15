@@ -298,6 +298,11 @@ export function createApp(config: MadauthConfig): Hono {
         const app = await users.authenticatorAccount(user.id);
         next = app ? 'authenticator' : 'authenticator-setup';
         factors = ['authenticator'];
+      } else if (method === 'passkey' && !amr.length) {
+        // A sign-up with a passkey alone, whose address is confirmed: the passkey is created now, and then
+        // the passkey's policy applies (see routes/passkey.ts).
+        next = 'passkey-setup';
+        factors = ['passkey'];
       } else {
         const policy = policyOf(method, methods);
         if (policy !== 'none') {
@@ -412,9 +417,10 @@ export function createApp(config: MadauthConfig): Hono {
       emailLink: on('email-link') ? { secondFactor: policyOf('email-link', current) } : null,
       // SMS codes as a second factor: a signed-in user can add a phone, and the dialog offers it in the second step.
       sms: on('sms'),
-      // Passkeys: a signed-in user can add them; `signIn` says whether they sign in on their own, `secondFactor`
-      // whether such a sign-in then asks for a code. On, they are a second factor of the methods that ask for one.
-      passkey: on('passkey') ? { signIn: signIn('passkey'), secondFactor: policyOf('passkey', current) } : null,
+      // Passkeys: a signed-in user can add them; `signIn` says whether they sign in on their own, `signUp` whether
+      // people can sign up with one alone, `secondFactor` whether such a sign-in then asks for a second factor.
+      // On, they are a second factor of the methods that ask for one.
+      passkey: on('passkey') ? { signIn: signIn('passkey'), signUp: signIn('passkey') && emailVerification, secondFactor: policyOf('passkey', current) } : null,
     });
   });
 

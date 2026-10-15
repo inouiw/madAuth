@@ -7,7 +7,7 @@ import { Passkey } from './providers/passkey.js';
 import { Password } from './providers/password.js';
 import type { SignInProvider } from './providers/provider.js';
 import { Authenticator } from './providers/authenticator.js';
-import { CODE, SERVER, fakeServer, grace, resetAll, settle, stubWebAuthn } from './test-helpers.js';
+import { CODE, SERVER, VERIFY_TOKEN, fakeServer, grace, resetAll, settle, stubWebAuthn } from './test-helpers.js';
 
 beforeEach(() => {
   resetAll();
@@ -361,5 +361,90 @@ describe('<madauth-login> and passkeys', () => {
     expect(resolved).toBe(false);
     await click('[data-action="done"]');
     expect(await result).toEqual({ isSuccess: true });
+  });
+});
+
+describe('<madauth-login> and the sign-up with a passkey alone', () => {
+  /** A server where people sign up with a passkey alone. */
+  function signUpServer() {
+    const server = passkeyServer();
+    server.passkey = { signIn: true, signUp: true, secondFactor: 'none' };
+    return server;
+  }
+  const newUser = { id: 'usr_new', email: 'new@example.com', name: 'New User' };
+
+  it('DP13: "Create account" offers a passkey instead of a password: the address is confirmed, then the passkey is created and signs in', async () => {
+    const server = signUpServer();
+    stubWebAuthn({ id: 'cred-new' });
+    const result = openDialog();
+    const onSignedIn = vi.fn();
+    await settle();
+    login().addEventListener('madauth-signed-in', (e) => onSignedIn(e.detail));
+    await click('[data-action="signup"]');
+    expect($('form.signup input[name="password"]')).not.toBeNull();
+    await click('[data-action="use-passkey-signup"]');
+
+    expect(text('h2')).toBe('Create account');
+    expect($('form.signup input[name="password"]')).toBeNull();
+    expect(text('.hint')).toContain('You will create your passkey after confirming your email address.');
+    expect($('[data-action="use-password-signup"]')).not.toBeNull();
+    fill({ email: 'new@example.com', name: 'New User' });
+    await submit('signup');
+    expect(text('h2')).toBe('Check your inbox');
+    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/passkey/signup`, body: { email: 'new@example.com', name: 'New User' } });
+    await click('[data-action="resend"]');
+    expect(server.requests.at(-1)).toMatchObject({ url: `${SERVER}/auth/email/send-verification` });
+    fill({ code: CODE });
+    await submit('code');
+
+    expect(text('h2')).toBe('Create a passkey');
+    expect(text('p.lead')).toContain('Your email address is confirmed');
+    // Only a passkey: no switch to another factor.
+    expect($('[data-action="use-app-setup"]')).toBeNull();
+    await submit('passkey-setup');
+
+    expect(await result).toEqual({ isSuccess: true, user: newUser });
+    expect(onSignedIn).toHaveBeenCalledWith({ method: 'passkey', user: newUser });
+    expect(server.passkeys.get('cred-new')).toMatchObject({ email: 'new@example.com' });
+  });
+
+  it('DP14: without the password form, the sign-in view offers the sign-up with a passkey under the buttons', async () => {
+    signUpServer();
+    stubWebAuthn();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Passkey()] });
+    void Madauth.signIn();
+    await settle();
+
+    await click('[data-action="signup"]');
+
+    expect(text('h2')).toBe('Create account');
+    expect($('form.signup input[name="password"]')).toBeNull();
+    expect($('[data-action="use-password-signup"]')).toBeNull();
+    // Only where the server lets people sign up with a passkey.
+    resetAll();
+    passkeyServer();
+    stubWebAuthn();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Passkey()] });
+    void Madauth.signIn();
+    await settle();
+    expect($('[data-action="signup"]')).toBeNull();
+  });
+
+  it('DP15: the link in the e-mail opens the dialog on the passkey; a policy that asks for a second factor sets it up next', async () => {
+    const server = signUpServer();
+    server.passkey = { signIn: true, signUp: true, secondFactor: 'required' };
+    server.accounts.set('new@example.com', { password: '', verified: false, name: 'New User', passkey: true });
+    server.mails.push({ purpose: 'verify', to: 'new@example.com', redirectTo: 'https://app.example.com/page' });
+    stubWebAuthn({ id: 'cred-new' });
+    history.replaceState(null, '', `/page#madauth_verify=${VERIFY_TOKEN}`);
+    await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
+    await settle();
+
+    expect(text('h2')).toBe('Create a passkey');
+    expect(text('p.lead')).toContain('Your email address is confirmed');
+    await submit('passkey-setup');
+
+    expect(text('h2')).toBe('Set up authenticator app');
+    expect(server.passkeys.get('cred-new')).toMatchObject({ email: 'new@example.com' });
   });
 });

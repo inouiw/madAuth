@@ -110,6 +110,7 @@ const user = {
   wrongCodes: 0,
   claims: null,
   signedUpAt: null,
+  signUpMethod: null,
   createdAt: 1,
 };
 
@@ -127,6 +128,7 @@ const userItem = {
   wrongCodes: { N: '0' },
   claims: { NULL: true },
   signedUpAt: { NULL: true },
+  signUpMethod: { NULL: true },
   createdAt: { N: '1' },
 };
 

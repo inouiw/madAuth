@@ -6,8 +6,7 @@ import type { Row, StoreAdapter } from './store/schema.js';
 /**
  * The sign-in methods madAuth has: Google, GitHub, e-mail & password, the authenticator app on its own
  * (`authenticator`: the e-mail address and a code from the app), the passwordless e-mail link (`email-link`: the
- * address, then the link or the code from an e-mail) and passkeys (`passkey`: WebAuthn, added by a user who
- * signed in another way).
+ * address, then the link or the code from an e-mail) and passkeys (`passkey`: WebAuthn).
  */
 export const SIGN_IN_METHODS = ['google', 'github', 'password', 'authenticator', 'email-link', 'passkey'] as const;
 export type SignInMethod = (typeof SIGN_IN_METHODS)[number];
@@ -208,13 +207,12 @@ export function isConfigured(config: MethodConfig, method: MethodId): boolean {
 }
 
 /**
- * Whether a method creates users on this server: Google, GitHub, password and the e-mail link when configured, the
- * authenticator app only when the webhook sends the confirmation e-mails (sign-up with it). An app that
- * existing users set up is no way in for anyone new, and neither is a passkey: only a signed-in user adds one.
+ * Whether a method creates users on this server: Google, GitHub, password and the e-mail link when configured,
+ * the authenticator app and passkeys only when the webhook sends the confirmation e-mails (sign-up with them).
+ * Without it, an app or a passkey that existing users set up is no way in for anyone new.
  */
 export function canSignUp(config: MethodConfig, method: SignInMethod): boolean {
-  if (method === 'passkey') return false;
-  return method === 'authenticator' ? !!config.emailVerification : isConfigured(config, method);
+  return method === 'authenticator' || method === 'passkey' ? !!config.emailVerification : isConfigured(config, method);
 }
 
 /**
@@ -380,8 +378,8 @@ export function requiringSecondFactor(configured: (method: MethodId) => boolean,
 
 /**
  * Whether the settings leave on at least one method that creates users, so that nobody is locked out:
- * `signsUp` is {@link canSignUp} for the server. The app alone, on a server where nobody can sign up with
- * it, would let in only the users who already have an app.
+ * `signsUp` is {@link canSignUp} for the server. The app or passkeys alone, on a server where nobody can sign
+ * up with them, would let in only the users who already have one.
  */
 export function anyOn(signsUp: (method: SignInMethod) => boolean, methods: MethodSettings): boolean {
   return SIGN_IN_METHODS.some((method) => signsUp(method) && methods[method]?.allowAsSignInMethod === true);

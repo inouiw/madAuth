@@ -54,7 +54,7 @@ describe('@madauth/web', () => {
       ['confirmSetup', 'newRecoveryCodes', 'pendingStep', 'policy', 'remove', 'sendVerificationEmail', 'signIn', 'signUp', 'startSetup', 'status', 'verify', 'verifyEmail'].sort(),
     );
     expect(Object.keys(madauth.Madauth.emailLink).sort()).toEqual(['add', 'policy', 'send', 'verify']);
-    expect(Object.keys(madauth.Madauth.passkey).sort()).toEqual(['add', 'available', 'conditionalAvailable', 'pendingStep', 'policy', 'rename', 'signIn', 'signInAvailable', 'verify']);
+    expect(Object.keys(madauth.Madauth.passkey).sort()).toEqual(['add', 'available', 'conditionalAvailable', 'pendingStep', 'policy', 'rename', 'sendVerificationEmail', 'signIn', 'signInAvailable', 'signUp', 'verify', 'verifyEmail']);
     expect(Object.keys(madauth.Madauth.methods).sort()).toEqual(['list', 'remove']);
     expectTypeOf(madauth.Madauth.passkey).toEqualTypeOf<madauth.PasskeyApi>();
     expectTypeOf(madauth.Madauth.methods).toEqualTypeOf<madauth.MethodsApi>();

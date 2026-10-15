@@ -49,6 +49,7 @@ const errorCodes = [
   'authenticator_required',
   'authenticator_setup_required',
   'second_factor_setup_required',
+  'passkey_setup_required',
   'sms_required',
   'passkey_required',
   'passkey_unknown',
@@ -78,12 +79,17 @@ export interface MadauthError {
   code: MadauthErrorCode;
   /** Human-readable details, e.g. which option is invalid. */
   message: string;
-  /** With `passkey_required`, `authenticator_required`, `sms_required`, `second_factor_setup_required` and `authenticator_setup_required`: the method whose sign-in goes on with the next step. */
+  /**
+   * With `passkey_required`, `authenticator_required`, `sms_required`, `second_factor_setup_required`,
+   * `authenticator_setup_required` and `passkey_setup_required`: the method whose sign-in goes on with the next
+   * step (`authenticator` or `passkey` for a sign-up with the app or a passkey alone).
+   */
   method?: string;
   /**
    * With `passkey_required`, `authenticator_required` and `sms_required`: the second factors the user can finish the
    * sign-in with, e.g. `['authenticator', 'sms']`. With `second_factor_setup_required`: those they can choose to set
-   * up. With `authenticator_setup_required` (the sign-up with the app alone): `['authenticator']`.
+   * up. With `authenticator_setup_required` or `passkey_setup_required` (a sign-up with the app or a passkey alone,
+   * its address confirmed): `['authenticator']` or `['passkey']`.
    */
   factors?: SecondFactor[];
   /** With `other_method`: how the address signs in instead, e.g. `['password']`. */

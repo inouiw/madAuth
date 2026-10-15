@@ -25,8 +25,23 @@ export interface StoredUser {
    * from before schema version 7, whose sign-up counts as complete.
    */
   signedUpAt: number | null;
+  /**
+   * The method the user's pending sign-up confirms the address for, see {@link SignUpMethod}. Empty in records
+   * from before schema version 9, and for users who signed up without a confirmation e-mail.
+   */
+  signUpMethod: string | null;
   createdAt: number;
 }
+
+/**
+ * The methods whose sign-up confirms the address by e-mail (`/auth/email/verify`): a password, and the
+ * authenticator app and passkeys, which are set up once the address is confirmed.
+ */
+export const SIGN_UP_METHODS = ['password', 'authenticator', 'passkey'] as const;
+export type SignUpMethod = (typeof SIGN_UP_METHODS)[number];
+
+/** Whether a stored value is a {@link SignUpMethod}. */
+export const isSignUpMethod = (value: unknown): value is SignUpMethod => (SIGN_UP_METHODS as readonly unknown[]).includes(value);
 
 export interface StoredAccount {
   id: string;
@@ -385,8 +400,9 @@ export class Users {
   /**
    * Creates a user, with their first account if given. Resolves to null if the e-mail address or the
    * account key is taken. `account.key` is `password:<userId>` for a password (its hash as `secret`), or
-   * e.g. `google:<sub>`. A sign-up with the authenticator app creates the user without an account: the app
-   * is set up once the address is confirmed.
+   * e.g. `google:<sub>`. A sign-up with the authenticator app or a passkey creates the user without an
+   * account: it is set up once the address is confirmed. `signUpMethod` is the method a sign-up that sends a
+   * confirmation e-mail confirms the address for.
    */
   async createUser(data: {
     email: string;
@@ -394,6 +410,7 @@ export class Users {
     name: string | null;
     emailVerified: boolean;
     account?: NewAccount | ((userId: string) => NewAccount);
+    signUpMethod?: SignUpMethod;
   }): Promise<StoredUser | null> {
     const user: StoredUser = {
       id: newId('usr'),
@@ -407,6 +424,7 @@ export class Users {
       wrongCodes: 0,
       claims: null,
       signedUpAt: 0,
+      signUpMethod: data.signUpMethod ?? null,
       createdAt: Date.now(),
     };
     if (!(await this.store.create('user', user as unknown as Row))) return null;
@@ -457,8 +475,9 @@ export class Users {
    * Resets the sign-in of a user who lost every way in: removes all their accounts (sign-in methods and
    * second factors) with the recovery codes, ends their sessions and the sign-ins that wait for a second step
    * (a new session version), deletes their pending links and codes, counts wrong codes from zero, and marks
-   * the address unconfirmed, so their next sign-up proves the inbox again. The user keeps their id, address,
-   * name, claims and `signedUpAt`. Resolves to the accounts that were removed, e.g. for GitHub's token.
+   * the address unconfirmed, so their next sign-up proves the inbox again; it records its own method
+   * (`signUpMethod`, cleared here with the sign-up it was for). The user keeps their id, address, name, claims
+   * and `signedUpAt`. Resolves to the accounts that were removed, e.g. for GitHub's token.
    */
   async resetSignIn(userId: string): Promise<StoredAccount[]> {
     // The sessions end first, so none of them adds a method meanwhile. A sign-in that found one of the accounts
@@ -472,10 +491,13 @@ export class Users {
     return removed;
   }
 
-  /** Raises the session version and marks the address unconfirmed, with wrong codes counted from zero. */
+  /**
+   * Raises the session version and marks the address unconfirmed, with wrong codes counted from zero and no
+   * pending sign-up's method.
+   */
   private async endSignIns(userId: string): Promise<void> {
     const user = await this.findById(userId);
-    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0 });
+    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0, signUpMethod: null });
   }
 
   /**

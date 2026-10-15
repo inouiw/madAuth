@@ -10,6 +10,7 @@ const expected: Record<string, Record<string, string>> = {
   'reset-form': { password: 'new-password' },
   'authenticator-form': { email: 'email', code: 'off' },
   'authenticator-signup-form': { name: 'name', email: 'email' },
+  'passkey-signup-form': { name: 'name', email: 'email' },
   'authenticator-code-form': { code: 'off' },
   'authenticator-setup-form': { code: 'off' },
 };

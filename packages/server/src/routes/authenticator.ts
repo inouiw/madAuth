@@ -20,10 +20,10 @@ import {
   verifyTotp,
 } from '../authenticator.js';
 import { authenticatorAccountKey, newId, toMadauthUser, type StoredAccount, type StoredUser } from '../users.js';
-import { localeOf } from '../webhooks.js';
-import { finishSignIn, pendingFactor, whoSetsUp } from './challenge.js';
-import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
-import { accepted, body, error, nameOf, noSession, originHost, redirectTarget, unavailable, type Body } from './helpers.js';
+import { finishSignIn, isSignUpStep, pendingFactor, whoSetsUp } from './challenge.js';
+import { reclaimConfirmation, signUpThenSetUp } from './email.js';
+import { createEmails } from './emails.js';
+import { body, error, noSession, originHost, type Body } from './helpers.js';
 import { removeAccount, removalRefused } from './methods.js';
 import { countSignInAttempt } from './lockout.js';
 
@@ -179,11 +179,10 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
     const who = await whoSetsUp(c, ctx, 'authenticator');
     if (who instanceof Response) return who;
     const { challenge } = who;
-    let { user } = who;
     const data = await body(c);
     const setup = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
     const secret =
-      setup && setup.sub === user.id && typeof setup.secret === 'string' && typeof setup.setup === 'string' ? decryptSecret(keys.secretKey, setup.secret) : null;
+      setup && setup.sub === who.user.id && typeof setup.secret === 'string' && typeof setup.setup === 'string' ? decryptSecret(keys.secretKey, setup.secret) : null;
     if (!setup || !secret) return error(c, 400, 'setup_expired', 'The setup has expired or was started in another browser. Please start again.');
     const step = typeof data.code === 'string' ? verifyTotp(secret, data.code, Date.now(), TOTP_WINDOW) : null;
     // The setup cookie stays, so a mistyped code can be tried again.
@@ -195,16 +194,8 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
     // app starts without failed attempts, and the code just used can't sign in.
     // A sign-up with the app sets up the account the user signs up with; every other setup adds the app to a
     // user who has a method already. If a sign-up got another method meanwhile, the sign-up's app is refused.
-    const signUp = challenge?.method === 'authenticator';
-    // The challenge of a sign-up with the app comes from a used confirmation link. A password sign-up for the
-    // address meanwhile took the confirmation back until its own e-mail is used; nobody has, so the app wins
-    // and the password goes, as for any unconfirmed sign-up.
-    // Read again: a password confirmed by its own e-mail meanwhile stays.
-    const fresh = signUp && !user.emailVerified ? await users.findById(user.id) : null;
-    if (fresh && !fresh.emailVerified) {
-      await users.verifyByProvider(fresh);
-      user = { ...user, emailVerified: true, wrongCodes: 0 };
-    }
+    const signUp = !!challenge && isSignUpStep(challenge);
+    const user = signUp ? await reclaimConfirmation(users, who.user) : who.user;
     const { recoveryCodes, hashes } = newRecoveryCodes();
     await users.addRecoveryCodes(user.id, setup.setup, hashes);
     const patch = { secret: setup.secret, setupId: setup.setup, failedAttempts: 0, lockedUntil: 0, lastUsedStep: step };
@@ -301,38 +292,6 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
 
   if (ctx.webhook && ctx.emailVerification) {
     const emails = createEmails(ctx, users, ctx.webhook);
-
-    app.post(`${COOKIE_PATH}/signup`, async (c) => {
-      if (!(await standalone(c))) return notStandalone(c);
-      const data = await body(c);
-      const target = redirectTarget(ctx, c, data.redirectTo);
-      if (target instanceof Response) return target;
-      if (!isValidEmail(data.email)) return error(c, 400, 'invalid_email', 'This is not a valid e-mail address.');
-      const name = nameOf(data.name);
-      const email = data.email.trim();
-      const locale = localeOf(data.locale);
-
-      const check = await ctx.checkSignup({ email, name: name ?? undefined, locale, method: 'authenticator' });
-      if (!check.ok) return check.reason === 'rejected' ? error(c, 403, 'signup_rejected', check.message) : unavailable(c);
-
-      const existing = await users.findByEmail(normalizeEmail(email));
-      if (existing?.emailVerified && (await users.hasSignInMethod(existing.id))) {
-        return (await emails.sendAccountEmail(existing, 'email.send_already_registered', target, locale)) ? accepted(c) : unavailable(c);
-      }
-      if (existing) {
-        // Nobody has proven this address yet, or nobody can sign in with it: the sign-up starts afresh. A
-        // password or an e-mail link an earlier, unconfirmed sign-up set (perhaps by someone else) goes with it.
-        if (Date.now() - existing.lastMailAt < MAIL_INTERVAL_MS) return accepted(c);
-        if (!existing.emailVerified) await users.dropUnprovenAccounts(existing.id);
-        await users.reopenSignUp(existing);
-        await users.updateUser(existing.id, { name });
-        return (await emails.sendLinkEmail({ ...existing, name }, 'verify', target, locale)) ? accepted(c) : unavailable(c);
-      }
-
-      // Without an account: the app is set up once the address is confirmed.
-      const user = await users.createUser({ email, emailNormalized: normalizeEmail(email), name, emailVerified: false });
-      if (!user) return accepted(c);
-      return (await emails.sendLinkEmail(user, 'verify', target, locale)) ? accepted(c) : unavailable(c);
-    });
+    app.post(`${COOKIE_PATH}/signup`, async (c) => ((await standalone(c)) ? signUpThenSetUp(c, ctx, emails, 'authenticator') : notStandalone(c)));
   }
 }

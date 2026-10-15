@@ -214,7 +214,8 @@ function validate(
 
 /**
  * Opened from the link in a confirmation e-mail: confirms the address and signs the user in, or goes on
- * with the authenticator app. The same for a sign-up with a password and one with the app.
+ * with the next step: a second factor, or setting up the app or the passkey the user signs up with. The
+ * same for a sign-up with a password, one with the app and one with a passkey.
  */
 async function handleVerifyLink(ctx: ProviderContext): Promise<void> {
   // The token is a secret: it leaves the address bar (and so the history) right away.
@@ -266,6 +267,7 @@ function handleRedirectReturn(ctx: ProviderContext): 'google' | 'github' | undef
   }
   if (isSecondFactor(next)) ctx.signInContinues({ step: FACTOR_STEPS[next], method, factors: named.length ? named : [next] });
   else if (next === 'second-factor-setup' || next === 'authenticator-setup') ctx.signInContinues(named.length ? { step: 'setup', method, factors: named } : { step: 'setup', method });
+  else if (next === 'passkey-setup') ctx.signInContinues({ step: 'setup', method, factors: ['passkey'] });
   return undefined;
 }
 

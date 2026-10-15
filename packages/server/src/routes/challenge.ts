@@ -25,21 +25,22 @@ const LEGACY_COOKIE_PATH = '/auth/totp';
  * What a sign-in still needs after its first step succeeded: a passkey, a code from the app, a code by SMS,
  * or a setup, of which the challenge's `setup` names what can be set up. `second-factor-setup`: a policy
  * requires a second factor the user doesn't have, and they choose one. `<method>-setup`: a sign-up creates
- * that method now (`authenticator-setup`: the sign-up with the app alone, after the address is confirmed).
+ * that method now, after the address is confirmed (`authenticator-setup`: the sign-up with the app alone,
+ * `passkey-setup`: the sign-up with a passkey alone).
  */
-export type NextStep = 'passkey' | 'authenticator' | 'sms' | 'second-factor-setup' | 'authenticator-setup';
+export type NextStep = 'passkey' | 'authenticator' | 'sms' | 'second-factor-setup' | 'authenticator-setup' | 'passkey-setup';
 
 /** The steps that set something up rather than check it: the challenge's `setup` says what. */
-const SETUP_STEPS: readonly NextStep[] = ['second-factor-setup', 'authenticator-setup'];
+const SETUP_STEPS: readonly NextStep[] = ['second-factor-setup', 'authenticator-setup', 'passkey-setup'];
 export const isSetupStep = (step: unknown): boolean => SETUP_STEPS.includes(step as NextStep);
 
 /** How the second step was passed, for `user.signed_in`. */
 export type SecondFactorVia = 'passkey' | 'authenticator' | 'recovery_code' | 'sms';
 
 /**
- * The challenge cookie: who passed the first step, how (`amr`, empty for a sign-up with the app), what comes
- * next, which factors the user can finish with, which they can set up when the setup is next, and what the
- * method knows beyond the record (Google's name and picture), for the session.
+ * The challenge cookie: who passed the first step, how (`amr`, empty for a sign-up with the app or a
+ * passkey), what comes next, which factors the user can finish with, which they can set up when the setup is
+ * next, and what the method knows beyond the record (Google's name and picture), for the session.
  */
 export interface Challenge {
   sub: string;
@@ -95,12 +96,19 @@ export async function pendingSetup(c: Context, ctx: AppContext, factor: SecondFa
 }
 
 /**
+ * Whether a challenge belongs to a sign-up with the app or a passkey alone: it has no first factor (the
+ * address was confirmed by e-mail), so its own method is what it sets up (or, for an app that exists
+ * already, asks the code of), nothing else, and that method is no second factor.
+ */
+export const isSignUpStep = (challenge: Challenge): boolean => !challenge.amr.length;
+
+/**
  * Who sets `factor` up: the user whose sign-in waits for its setup (the challenge, the latest sign-in at
  * this browser), else the signed-in user; otherwise the answer to send. Starting a session ends the
  * challenge, so an abandoned one can't outlive a later sign-in, and one from before a password reset no
- * longer counts. A sign-up with the app has no first factor yet: it sets the app up, nothing else. A
- * signed-in user for whom `recent` holds (a factor that is a way in of its own) must have signed in within
- * the last ten minutes (`reauth_required`).
+ * longer counts. A sign-up with the app or a passkey has no first factor yet: it sets up its own method,
+ * nothing else. A signed-in user for whom `recent` holds (a factor that is a way in of its own) must have
+ * signed in within the last ten minutes (`reauth_required`).
  */
 export async function whoSetsUp(
   c: Context,
@@ -110,7 +118,7 @@ export async function whoSetsUp(
 ): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | Response> {
   const pending = await pendingSetup(c, ctx, factor);
   if (pending) {
-    if (!pending.challenge.amr.length && factor !== 'authenticator') return noSession(c);
+    if (isSignUpStep(pending.challenge) && factor !== pending.challenge.method) return noSession(c);
     return (await methodStillOn(c, ctx, pending.challenge)) ? pending : methodOff(c);
   }
   const signedIn = await signedInUser(c, ctx);
@@ -144,6 +152,6 @@ export async function finishSignIn(
 ): Promise<MadauthUser> {
   const result = await ctx.startSession(c, toMadauthUser(user, challenge.profile), [...challenge.amr, amr], { method: challenge.method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
   // For a sign-up with the app, the app is the method itself, not a second factor.
-  await ctx.emit('user.signed_in', { user: result, method: challenge.method, ...(challenge.amr.length ? { secondFactor: via } : {}) });
+  await ctx.emit('user.signed_in', { user: result, method: challenge.method, ...(isSignUpStep(challenge) ? {} : { secondFactor: via }) });
   return result;
 }

@@ -8,9 +8,11 @@ import { Users } from '../users.js';
 import {
   APP_ORIGIN,
   ISSUER,
+  REDIRECT_TO,
   WEBHOOK_SECRET,
   WEBHOOK_URL,
   cookies,
+  linkAndCode,
   passwordApp,
   post,
   setMethods,
@@ -292,6 +294,189 @@ describe('a passkey as the second factor', () => {
 
     const refused = await post(app, '/auth/passkey/register/options', {}, { Cookie: challengeOf(first) });
     expect(await refused.json()).toMatchObject({ error: 'no_session' });
+  });
+});
+
+describe('signing up with a passkey alone', () => {
+  const signUp = (app: App, email = grace.email) => post(app, '/auth/passkey/signup', { email, name: 'Grace Hopper', redirectTo: REDIRECT_TO, locale: 'de' });
+  /** Confirms the address with the link of the last e-mail: the answer, and its challenge cookie. */
+  const confirm = async (made: Made) => {
+    const res = await post(made.app, '/auth/email/verify', { token: linkAndCode(made.hook.lastEmail()).token });
+    return { res, challenge: cookies(res).madauth_challenge?.value ? challengeOf(res) : '' };
+  };
+  const onlyPasskeys: TestMethods = { password: ON, passkey: ON };
+
+  it('PK19: the address is confirmed by e-mail, then the passkey is created, and the user is in with it as their method', async () => {
+    startClock();
+    const made = passwordApp();
+    const { app, hook, store } = made;
+    await setMethods(store, { ...onlyPasskeys, authenticator: FACTOR });
+    expect(await (await app.request('/auth/config')).json()).toMatchObject({ passkey: { signIn: true, signUp: true, secondFactor: 'none' } });
+
+    expect((await signUp(app)).status).toBe(202);
+    const [user] = await store.findMany('user', {});
+    expect(user).toMatchObject({ email: grace.email, name: 'Grace Hopper', emailVerified: false, signUpMethod: 'passkey' });
+    expect(await store.findMany('account', {})).toEqual([]);
+    expect(hook.types()).toEqual(['user.signing_up', 'email.send_verification']);
+    expect(hook.calls[0].data).toEqual({ email: grace.email, name: 'Grace Hopper', locale: 'de', method: 'passkey' });
+
+    // Confirming does not sign in yet: the passkey has to be created first, and nothing else can be set up.
+    const { res: confirmed, challenge } = await confirm(made);
+    expect(confirmed.status).toBe(401);
+    expect(await confirmed.json()).toMatchObject({ error: 'passkey_setup_required', method: 'passkey', factors: ['passkey'] });
+    expect(cookies(confirmed).madauth_session?.value ?? '').toBe('');
+    expect(hook.calls.at(-1)).toMatchObject({ type: 'user.email_verified', data: { method: 'passkey', via: 'link' } });
+    expect(await (await post(app, '/auth/authenticator/setup', {}, { Cookie: challenge })).json()).toMatchObject({ error: 'no_session' });
+    hook.calls.length = 0;
+
+    const { passkey, res } = await addPasskey(app, challenge);
+    expect(passkey.userHandle).toBe(Buffer.from(user.id as string).toString('base64url'));
+
+    expect(res.status).toBe(200);
+    const graceUser = { id: user.id, email: grace.email, name: 'Grace Hopper' };
+    expect(await res.json()).toEqual({ passkey: expect.objectContaining({ name: 'Laptop' }), user: { ...graceUser, amr: ['passkey'] } });
+    expect((await sessionClaims(res))?.amr).toEqual(['passkey']);
+    // The passkey is how she signs up, not a method she added: her sign-up is complete, and she is in.
+    expect(hook.calls).toEqual([
+      { type: 'user.signed_up', data: { user: graceUser, method: 'passkey' } },
+      { type: 'user.signed_in', data: { user: graceUser, method: 'passkey' } },
+    ]);
+    expect(await store.findMany('account', { userId: user.id })).toEqual([expect.objectContaining({ primaryUserId: user.id, credentialId: passkey.id })]);
+    // It is her only way in: it can't be removed.
+    const [{ id: accountId }] = await store.findMany('account', { userId: user.id });
+    const removal = await post(app, '/auth/methods/remove', { id: accountId }, { Cookie: session(cookies(res).madauth_session.value) });
+    expect(await removal.json()).toMatchObject({ error: 'only_method' });
+    advance(60_000);
+    expect((await signInWithPasskey(app, passkey)).status).toBe(200);
+    // A sign-up with the address afterwards only tells her she is registered, with a passkey.
+    advance(60_000);
+    await post(app, '/auth/password/signup', { ...grace, redirectTo: REDIRECT_TO });
+    expect(hook.lastEmail()).toMatchObject({ type: 'email.send_already_registered', data: { methods: ['passkey'] } });
+  });
+
+  it('PK20: the code confirms like the link; an unfinished sign-up starts over, and the latest unproven sign-up wins', async () => {
+    startClock();
+    const made = passwordApp();
+    const { app, hook, store } = made;
+    await setMethods(store, { password: ON, passkey: ON, authenticator: ON });
+    // Someone (perhaps not Grace) signed the address up with a password; nobody confirmed it.
+    await post(app, '/auth/password/signup', { ...grace, redirectTo: REDIRECT_TO });
+    advance(61_000);
+
+    await signUp(app);
+    expect(await store.findMany('account', {})).toEqual([]);
+    const byCode = await post(app, '/auth/email/verify', { email: grace.email, code: linkAndCode(hook.lastEmail()).code });
+    expect(await byCode.json()).toMatchObject({ error: 'passkey_setup_required', factors: ['passkey'] });
+    expect((await post(app, '/auth/password/signin', grace)).status).toBe(401);
+
+    // Confirmed, but no passkey was created: a sign-up with the app for the address starts over and wins. It
+    // hasn't proven the inbox, so the address is unconfirmed again, and its e-mail can be sent again.
+    advance(61_000);
+    await post(app, '/auth/authenticator/signup', { email: grace.email, redirectTo: REDIRECT_TO });
+    expect(await store.findMany('user', {})).toMatchObject([{ signUpMethod: 'authenticator', emailVerified: false }]);
+    advance(61_000);
+    hook.calls.length = 0;
+    await post(app, '/auth/email/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
+    expect(hook.types()).toEqual(['email.send_verification']);
+    // And a passkey sign-up after it wins again.
+    advance(61_000);
+    await signUp(app);
+    const { res } = await confirm(made);
+    expect(await res.json()).toMatchObject({ error: 'passkey_setup_required', factors: ['passkey'] });
+  });
+
+  it('PK21: a password sign-up meanwhile needs its own e-mail; until it is used, the passkey wins, afterwards it is refused', async () => {
+    startClock();
+    const made = passwordApp();
+    const { app, store } = made;
+    await setMethods(store, onlyPasskeys);
+    await signUp(app);
+    const { challenge } = await confirm(made);
+    // Before the passkey is created, someone signs the address up with their own password.
+    advance(61_000);
+    await post(app, '/auth/password/signup', { ...grace, redirectTo: REDIRECT_TO });
+    const passwordLink = linkAndCode(made.hook.lastEmail()).token;
+    const [{ id: userId }] = await store.findMany('user', {});
+
+    const { res } = await addPasskey(app, challenge);
+    expect(res.status).toBe(200);
+    expect(await store.findMany('account', { userId })).toEqual([expect.objectContaining({ primaryUserId: userId, name: 'Laptop' })]);
+    expect((await post(app, '/auth/email/verify', { token: passwordLink })).status).toBe(400);
+
+    // Another address: the password's e-mail is used first, so the password is the user's method.
+    const other = passwordApp();
+    await setMethods(other.store, onlyPasskeys);
+    await signUp(other.app);
+    const first = await confirm(other);
+    advance(61_000);
+    await post(other.app, '/auth/password/signup', { ...grace, redirectTo: REDIRECT_TO });
+    expect((await confirm(other)).res.status).toBe(200);
+    const late = await addPasskey(other.app, first.challenge);
+    expect(late.res.status).toBe(400);
+    expect(await late.res.json()).toMatchObject({ error: 'setup_expired' });
+    expect((await other.store.findMany('account', {})).map((a) => a.key)).toEqual([expect.stringMatching(/^password:/)]);
+  });
+
+  it('PK22: with a policy that asks for a second factor after a passkey, the sign-up sets that up next; never a second passkey', async () => {
+    startClock();
+    const made = passwordApp();
+    const { app, hook, store } = made;
+    await setMethods(store, { password: ON, passkey: { allowAsSignInMethod: true, secondFactor: 'required' }, authenticator: FACTOR });
+    await signUp(app);
+    const { challenge } = await confirm(made);
+    hook.calls.length = 0;
+
+    const { res } = await addPasskey(app, challenge);
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: 'second_factor_setup_required', method: 'passkey', factors: ['authenticator'] });
+    expect(cookies(res).madauth_session?.value ?? '').toBe('');
+    expect(hook.calls).toEqual([]);
+    const next = challengeOf(res);
+    // The setup of the policy's factor is no sign-up step: it takes no passkey.
+    expect(await (await post(app, '/auth/passkey/register/options', {}, { Cookie: next })).json()).toMatchObject({ error: 'no_session' });
+    const setup = await post(app, '/auth/authenticator/setup', {}, { Cookie: next });
+    expect(setup.status).toBe(200);
+  });
+
+  it('PK23: only while passkeys sign in on their own and the server confirms addresses; a link waits while they are off', async () => {
+    startClock();
+    const made = passwordApp();
+    const { app, hook, store } = made;
+    await setMethods(store, { password: ON, passkey: FACTOR });
+    expect(await (await app.request('/auth/config')).json()).toMatchObject({ passkey: { signIn: false, signUp: false } });
+    expect(await (await signUp(app)).json()).toMatchObject({ error: 'method_disabled' });
+    await setMethods(store, { password: ON });
+    expect(await (await signUp(app)).json()).toMatchObject({ error: 'method_disabled' });
+
+    await setMethods(store, onlyPasskeys);
+    await signUp(app);
+    const { token } = linkAndCode(hook.lastEmail());
+    await setMethods(store, { password: ON, passkey: FACTOR });
+    expect(await (await post(app, '/auth/email/verify', { token })).json()).toMatchObject({ error: 'method_disabled' });
+    // Nor is the e-mail sent again: the sign-up recorded its method, and it is off.
+    advance(61_000);
+    await post(app, '/auth/email/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
+    expect(hook.emails()).toHaveLength(1);
+    expect((await store.findMany('user', {}))[0]).toMatchObject({ emailVerified: false });
+    await setMethods(store, onlyPasskeys);
+    expect(await (await post(app, '/auth/email/verify', { token })).json()).toMatchObject({ error: 'passkey_setup_required', factors: ['passkey'] });
+
+    // An app outside PASSKEY_RP_ID can't use the passkeys, so it signs nobody up with one either.
+    const shared = passwordApp({ passkeyRpId: 'example.com', allowedOrigins: [APP_ORIGIN, 'https://other.test'] });
+    await setMethods(shared.store, onlyPasskeys);
+    const outside = await post(shared.app, '/auth/passkey/signup', { email: grace.email, redirectTo: 'https://other.test/' }, { Origin: 'https://other.test' });
+    expect(await outside.json()).toMatchObject({ error: 'forbidden_origin' });
+    // Nor does a link to such an app, from one within the domain.
+    const linkOutside = await post(shared.app, '/auth/passkey/signup', { email: grace.email, redirectTo: 'https://other.test/' });
+    expect(await linkOutside.json()).toMatchObject({ error: 'forbidden_origin' });
+    expect(shared.hook.emails()).toEqual([]);
+
+    // Without the confirmation e-mails there is no sign-up route.
+    const noEmails = passwordApp({ password: undefined, webhook: undefined });
+    await setMethods(noEmails.store, { google: ON, passkey: ON });
+    expect(await (await noEmails.app.request('/auth/config')).json()).toMatchObject({ passkey: { signIn: true, signUp: false } });
+    expect((await signUp(noEmails.app)).status).toBe(404);
   });
 });
 
