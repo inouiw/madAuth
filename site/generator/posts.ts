@@ -8,7 +8,7 @@ import { marked } from 'marked';
  */
 
 export const ORIGIN = 'https://madauth.com';
-export const AUTHOR = 'Jan David Neuy';
+export const AUTHOR = 'David Neuy';
 
 export interface LanguageStrings {
   /** The language's own name, as the language select shows it. */
