@@ -463,6 +463,13 @@ describe('signing up with a passkey alone', () => {
     await setMethods(store, onlyPasskeys);
     expect(await (await post(app, '/auth/email/verify', { token })).json()).toMatchObject({ error: 'passkey_setup_required', factors: ['passkey'] });
 
+    // An app outside PASSKEY_RP_ID can't use the passkeys, so it signs nobody up with one either.
+    const shared = passwordApp({ passkeyRpId: 'example.com', allowedOrigins: [APP_ORIGIN, 'https://other.test'] });
+    await setMethods(shared.store, onlyPasskeys);
+    const outside = await post(shared.app, '/auth/passkey/signup', { email: grace.email, redirectTo: 'https://other.test/' }, { Origin: 'https://other.test' });
+    expect(await outside.json()).toMatchObject({ error: 'forbidden_origin' });
+    expect(shared.hook.emails()).toEqual([]);
+
     // Without the confirmation e-mails there is no sign-up route.
     const noEmails = passwordApp({ password: undefined, webhook: undefined });
     await setMethods(noEmails.store, { google: ON, passkey: ON });

@@ -13,7 +13,7 @@ import { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js
 import type { ButtonApi } from './scopes/button.js';
 import type { SignInMethodInfo } from './scopes/methods.js';
 import type { PasskeyInfo } from './scopes/passkey.js';
-import { secondStepOf, type PendingStep } from './providers/provider.js';
+import { pendingStepOf, secondStepOf, type PendingStep } from './providers/provider.js';
 import type { CodeOptions } from './scopes/totp.js';
 import { qrModules, qrViewBox, type QrModules } from './qr.js';
 import { SECOND_FACTORS, type MadauthError, type MadauthErrorCode, type MadauthUser, type Result, type SecondFactor } from './result.js';
@@ -562,11 +562,11 @@ export class MadauthLogin extends LitElement {
    */
   private finish(method: LoginMethodId, result: Result<{ user: MadauthUser }>): void {
     if (!result.isSuccess) {
-      const step = nextStep(result.error);
-      if (step) {
+      const pending = pendingStepOf(result.error, method);
+      if (pending) {
         this.notice = undefined;
         this.error = null;
-        this.continueWith({ step, method, factors: result.error.factors });
+        this.continueWith(pending);
         return;
       }
       this.showError(result.error, method);

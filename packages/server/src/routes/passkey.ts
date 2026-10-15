@@ -292,9 +292,11 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
 
   if (ctx.webhook && ctx.emailVerification) {
     const emails = createEmails(ctx, users, ctx.webhook);
-    app.post(`${ROUTE_PATH}/signup`, async (c) =>
-      (await ctx.enabled(c, 'passkey')) ? signUpThenSetUp(c, ctx, emails, 'passkey') : error(c, 403, 'method_disabled', 'Signing up with a passkey is switched off.'),
-    );
+    app.post(`${ROUTE_PATH}/signup`, async (c) => {
+      if (!(await ctx.enabled(c, 'passkey'))) return error(c, 403, 'method_disabled', 'Signing up with a passkey is switched off.');
+      // An app outside PASSKEY_RP_ID could confirm the address, but never create the passkey.
+      return rpIdOf(c) ? signUpThenSetUp(c, ctx, emails, 'passkey') : wrongDomain(c);
+    });
   }
 
   // --- Signing in with a passkey alone ---

@@ -206,7 +206,14 @@ describe('Madauth.passkey.signUp', () => {
     stubWebAuthn();
     await init();
     expect(Madauth.passkey.policy?.signUp).toBe(false);
-    expect(await Madauth.passkey.signUp({ email: 'new@example.com' })).toMatchObject({ isSuccess: false, error: { code: 'method_disabled' } });
+    expect(await Madauth.passkey.signUp({ email: 'new@example.com' })).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+
+    // A browser without passkeys: the provider is left out, and no e-mail goes out for a passkey it can't create.
+    resetAll();
+    const server = signUpServer();
+    await init();
+    expect(await Madauth.passkey.signUp({ email: 'new@example.com' })).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+    expect(server.mails).toEqual([]);
   });
 });
 

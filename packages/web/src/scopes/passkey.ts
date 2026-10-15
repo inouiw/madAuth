@@ -62,8 +62,9 @@ export interface PasskeyApi {
    * Creates an account that signs in with a passkey alone (no password) and sends an e-mail with a link and
    * a code to confirm the address; confirming leads to the passkey's creation (`passkey_setup_required`:
    * call {@link add} next). Succeeds even if the address is registered, so nobody can
-   * probe for accounts. Fails with `invalid_email`, `signup_rejected`, `temporarily_unavailable` or
-   * `method_disabled`.
+   * probe for accounts. Fails with `invalid_email`, `signup_rejected`, `temporarily_unavailable`,
+   * `method_disabled`, or `flow_not_enabled` when the server offers no such sign-up (`policy.signUp`) or the
+   * Passkey provider is not passed (or was left out: the browser has no passkeys).
    */
   signUp(options: PasskeySignUpOptions): Promise<Result>;
   /** Sends the confirmation e-mail of a sign-up again. Fails with `temporarily_unavailable`. */
@@ -92,9 +93,12 @@ export interface PasskeyApi {
 
 const switchedOff = () => fail('flow_not_enabled', 'The madAuth server has passkeys switched off: an admin lists them with set-methods passkey.');
 const notRegistered = () => fail('flow_not_enabled', 'Pass new Passkey() to Madauth.initialize to sign in or up with a passkey alone.');
+const noSignUp = () =>
+  fail('flow_not_enabled', 'The madAuth server offers no sign-up with a passkey alone: passkeys must sign in on their own (set-methods passkey), and the webhook must confirm addresses (email.send_verification).');
 
 export function createPasskeyApi(core: Core): PasskeyApi {
   const call = serverCalls(core, { isOn: (config) => !!config?.passkey, switchedOff });
+  const signUpCall = serverCalls(core, { isOn: (config) => !!config?.passkey?.signUp, switchedOff: noSignUp });
   const registered = () => core.provider('passkey') instanceof Passkey;
   const confirmation = emailConfirmation(core, 'passkey', (path, body) => call(path, { body }));
 
@@ -140,8 +144,12 @@ export function createPasskeyApi(core: Core): PasskeyApi {
     },
 
     async signUp({ email, name, redirectTo }) {
+      // Only once initialize is done: a browser without passkeys has its provider left out by then, so nobody
+      // confirms an address for a passkey they can't create.
+      const ready = await core.whenReady();
+      if (!ready.isSuccess) return ready;
       if (!registered()) return notRegistered();
-      const result = await call('/auth/passkey/signup', { body: { email, name, redirectTo: redirectTo ?? currentPage(), locale: core.locale() } });
+      const result = await signUpCall('/auth/passkey/signup', { body: { email, name, redirectTo: redirectTo ?? currentPage(), locale: core.locale() } });
       return result.isSuccess ? ok() : result;
     },
 

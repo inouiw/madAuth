@@ -278,7 +278,7 @@ Signing in or up with a passkey alone needs `new Passkey()` in `initialize` and 
 | `signIn()` or `signIn({ conditional: true, signal })` | `{ user }` | `cancelled` (the user closed the browser's dialog), `passkey_unknown`, `verification_failed`, `method_disabled`, `passkey_unsupported`; the [second step](#the-second-step) when the passkey's policy asks for one |
 | `verify()` | `{ user }` | Finishes a sign-in that ended with `passkey_required`: `cancelled`, `verification_failed`, `challenge_expired` |
 | `add({ name? })` | `{ passkey, user? }` | Adds a passkey for the signed-in user, or as the setup of a sign-in (`totp_setup_required` with `passkey` in `factors`) or of a sign-up with a passkey (`passkey_setup_required`); then it signs in (`user`): `cancelled`, `already_added`, `reauth_required`, `verification_failed`, `no_session`, `setup_expired`, `passkey_unsupported`; in a sign-up whose policy asks for a second factor, `totp_setup_required` (the passkey is created, set the factor up next) |
-| `signUp({ email, name?, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `temporarily_unavailable`, `method_disabled` |
+| `signUp({ email, name?, redirectTo? })` | — | `invalid_email`, `signup_rejected`, `temporarily_unavailable`, `method_disabled`, `forbidden_origin`; `flow_not_enabled` without `policy.signUp` or the Passkey provider (which is left out in a browser without passkeys) |
 | `sendVerificationEmail({ email, redirectTo? })` | — | `invalid_email`, `temporarily_unavailable` |
 | `verifyEmail({ email, code })` | `{ user }` | `code_invalid`, `codes_locked`; `passkey_setup_required` for a sign-up with a passkey |
 | `rename({ id, name })` | `{ passkey }` | `method_not_found`, `invalid_options`, `no_session` |
