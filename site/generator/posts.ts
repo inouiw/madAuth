@@ -27,6 +27,8 @@ export interface LanguageStrings {
   language: string;
   /** The heading of a post's table of contents. */
   contents: string;
+  /** The landing page's link to the language's post list, in the language. */
+  allPosts: string;
   docs: string;
   ctaText: string;
   ctaDemo: string;
@@ -48,6 +50,7 @@ export const LANGUAGES = {
     updated: 'updated',
     language: 'Language',
     contents: 'Contents',
+    allPosts: 'All posts',
     docs: 'Docs',
     ctaText:
       'madAuth is an open-source, self-hostable alternative to Cognito and Auth0: run the server in your own cloud account and add a ready-made login dialog to any web app.',
@@ -68,6 +71,7 @@ export const LANGUAGES = {
     updated: 'aktualisiert am',
     language: 'Sprache',
     contents: 'Inhalt',
+    allPosts: 'Artikel auf Deutsch',
     docs: 'Doku',
     ctaText:
       'madAuth ist eine quelloffene Alternative zu Cognito und Auth0, die Sie selbst betreiben: Der Server läuft in Ihrem eigenen Cloud-Konto, und jede Web-App bekommt einen fertigen Anmeldedialog.',
@@ -202,6 +206,7 @@ export function headingId(html: string): string {
     .toLowerCase()
     .replace(/[äöüß]/g, (c) => umlauts[c])
     .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 }
@@ -383,7 +388,7 @@ const withSiteName = (title: string): string =>
 function tableOfContents(post: Post): string {
   if (post.headings.length < 3) return '';
   const items = post.headings.map((h) => `<li><a href="#${h.id}">${h.html}</a></li>`).join('');
-  return `        <nav class="toc" aria-labelledby="toc-heading"><p id="toc-heading">${LANGUAGES[post.language].contents}</p><ol>${items}</ol></nav>\n`;
+  return `        <nav class="toc" aria-label="${LANGUAGES[post.language].contents}"><p>${LANGUAGES[post.language].contents}</p><ol>${items}</ol></nav>\n`;
 }
 
 function postPage(post: Post, posts: Post[]): Page {
@@ -571,6 +576,10 @@ export const LANDING_IMAGE: Page['image'] = {
 export function renderLatestPosts(posts: Post[], count = 3): string {
   const newest = posts.filter((p) => p.language === 'en').sort(newestFirst).slice(0, count);
   if (newest.length === 0) return '';
+  // Only the lists that exist: a language gets one once it has a post.
+  const lists = languagesOf(posts)
+    .map((lang) => `<a href="${LANGUAGES[lang].indexPath}" hreflang="${lang}" lang="${lang}">${LANGUAGES[lang].allPosts}</a>`)
+    .join(' · ');
   const items = newest
     .map(
       (post) =>
@@ -582,6 +591,24 @@ export function renderLatestPosts(posts: Post[], count = 3): string {
         <ul>
           ${items}
         </ul>
-        <p><a href="${LANGUAGES.en.indexPath}">All posts</a> · <a href="${LANGUAGES.de.indexPath}" hreflang="de" lang="de">Artikel auf Deutsch</a></p>
+        <p>${lists}</p>
       </section>`;
+}
+
+/** The landing page's structured data, in place of its `<!-- structured-data -->` comment. */
+export function renderLandingJsonLd(): string {
+  return `<script type="application/ld+json">${jsonLd({
+    '@context': 'https://schema.org',
+    '@graph': [
+      { ...organization, sameAs: ['https://github.com/inouiw/madAuth'] },
+      {
+        '@type': 'WebSite',
+        '@id': `${ORIGIN}/#website`,
+        name: 'madAuth',
+        url: `${ORIGIN}/`,
+        inLanguage: 'en',
+        publisher: { '@id': organization['@id'] },
+      },
+    ],
+  })}</script>`;
 }

@@ -45,6 +45,7 @@ describe('parsePosts', () => {
   it('makes ids of German and accented headings', () => {
     expect(headingId('Warum ein Datenleck viel weniger kostet')).toBe('warum-ein-datenleck-viel-weniger-kostet');
     expect(headingId('Größe &amp; Café')).toBe('groesse-cafe');
+    expect(headingId('Résumé of the naïve flow')).toBe('resume-of-the-naive-flow');
   });
 
   it('refuses a title or description too long for search results', () => {
@@ -163,7 +164,7 @@ describe('renderPages', () => {
   it('gives a post with three sections and more a table of contents', () => {
     const body = '## One\n\n## Two\n\n## Three';
     const [, withToc] = renderPages(parsed([source('a', 'de', fields('a'), body)]));
-    expect(withToc.html).toContain('<p id="toc-heading">Inhalt</p><ol><li><a href="#one">One</a></li>');
+    expect(withToc.html).toContain('<nav class="toc" aria-label="Inhalt"><p>Inhalt</p><ol><li><a href="#one">One</a></li>');
     const [, without] = renderPages(parsed([source('a', 'de', fields('a'), '## One\n\n## Two')]));
     expect(without.html).not.toContain('class="toc"');
   });
@@ -180,6 +181,8 @@ describe('renderPages', () => {
     expect(html).toContain('<a href="/posts/only-english/">Title only-english</a>');
     expect(html).not.toContain('/posts/passkeys-explained/');
     expect(renderLatestPosts([])).toBe('');
+    expect(html).toContain('<a href="/posts/" hreflang="en" lang="en">All posts</a> · <a href="/posts/de/" hreflang="de" lang="de">Artikel auf Deutsch</a>');
+    expect(renderLatestPosts(posts.filter((p) => p.language === 'en'))).not.toContain('/posts/de/');
   });
 
   it('shows no language select for a post in one language', () => {

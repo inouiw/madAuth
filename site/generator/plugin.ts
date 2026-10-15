@@ -7,6 +7,7 @@ import {
   ICONS,
   LANDING_IMAGE,
   parsePosts,
+  renderLandingJsonLd,
   renderLatestPosts,
   renderPages,
   renderSitemap,
@@ -45,18 +46,16 @@ export function posts(siteRoot: string): Plugin {
   };
 
   /** The images drawn rather than copied: each one's path under the site root, and how to draw it. */
-  const drawn = (): { file: string; draw: () => Promise<Buffer> }[] => {
-    const fonts = loadFonts();
-    const icon = readFileSync(join(siteRoot, 'public', ICONS.svg), 'utf8');
-    return [
-      ...[...pages.map((page) => page.image), LANDING_IMAGE].map((image) => ({
-        file: image.file,
-        draw: () => renderOgImage(image.card, fonts),
-      })),
-      { file: ICONS.appleTouch, draw: async () => renderIcon(icon, 180) },
-      { file: ICONS.logo, draw: async () => renderIcon(icon, 512) },
-    ];
-  };
+  // The files are read when the first image is drawn, not for every request.
+  const icon = () => readFileSync(join(siteRoot, 'public', ICONS.svg), 'utf8');
+  const drawn = (): { file: string; draw: () => Promise<Buffer> }[] => [
+    ...[...pages.map((page) => page.image), LANDING_IMAGE].map((image) => ({
+      file: image.file,
+      draw: () => renderOgImage(image.card, loadFonts()),
+    })),
+    { file: ICONS.appleTouch, draw: async () => renderIcon(icon(), 180) },
+    { file: ICONS.logo, draw: async () => renderIcon(icon(), 512) },
+  ];
 
   return {
     name: 'madauth-posts',
@@ -82,7 +81,8 @@ export function posts(siteRoot: string): Plugin {
         res.end(renderSitemap(current));
       });
       server.middlewares.use((req, res, next) => {
-        const image = drawn().find((d) => `/${d.file}` === req.url?.split('?')[0]);
+        const path = req.url?.split('?')[0] ?? '';
+        const image = path.endsWith('.png') ? drawn().find((d) => `/${d.file}` === path) : undefined;
         if (!image) return next();
         image.draw().then((png) => {
           res.setHeader('Content-Type', 'image/png');
@@ -94,7 +94,7 @@ export function posts(siteRoot: string): Plugin {
       order: 'pre',
       handler(html, ctx) {
         return ctx.filename === join(siteRoot, 'index.html')
-          ? html.replace('<!-- latest-posts -->', renderLatestPosts(current))
+          ? html.replace('<!-- latest-posts -->', renderLatestPosts(current)).replace('<!-- structured-data -->', renderLandingJsonLd())
           : html;
       },
     },
@@ -109,11 +109,14 @@ export function posts(siteRoot: string): Plugin {
 
 const require = createRequire(import.meta.url);
 
-/** Public Sans from @fontsource/public-sans, the font of the site. */
+let fonts: OgFonts | undefined;
+
+/** Public Sans from @fontsource/public-sans, the font of the site; read once. */
 function loadFonts(): OgFonts {
   const file = (weight: number) =>
     readFileSync(require.resolve(`@fontsource/public-sans/files/public-sans-latin-${weight}-normal.woff`));
-  return { regular: file(400), bold: file(700) };
+  fonts ??= { regular: file(400), bold: file(700) };
+  return fonts;
 }
 
 function readSources(contentDir: string): SourceFile[] {
