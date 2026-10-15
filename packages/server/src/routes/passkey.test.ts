@@ -1,14 +1,9 @@
 // Behaviour described in docs/passkey-security.md; update the doc when changing it.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runCli } from '../cli.js';
 import { loadConfig } from '../config.js';
 import { readToken } from '../tokens.js';
 import { SESSION_TYP } from '../user.js';
 import { importSigningKeys } from '../keys.js';
-import { createSqliteAdapter } from '../store/sqlite.js';
 import { Users } from '../users.js';
 import {
   APP_ORIGIN,
@@ -18,7 +13,6 @@ import {
   cookies,
   passwordApp,
   post,
-  setClaims,
   setMethods,
   signUpVerified,
   signingKey,
@@ -364,36 +358,6 @@ describe('the user\'s passkeys', () => {
     const elsewhere = await post(made.app, '/auth/password/signin', grace, { Origin: 'https://other.test' });
     expect(elsewhere.status).toBe(200);
     expect(await made.store.findMany('account', { name: 'Laptop' })).toMatchObject([{ rpId: 'app.example.com' }]);
-  });
-
-  it('PK15: an admin, or the command line, removes the passkeys of a user who lost them', async () => {
-    const { app, hook, store, cookie } = await withGrace();
-    await addPasskey(app, cookie);
-    await addPasskey(app, cookie);
-    await setClaims(store, grace.email, { roles: ['admin'] });
-    hook.calls.length = 0;
-
-    const res = await post(app, '/auth/admin/passkey/remove', { email: grace.email }, { Cookie: cookie });
-
-    expect(await res.json()).toMatchObject({ email: grace.email, passkeys: 0 });
-    expect(hook.types()).toEqual(['user.method_removed', 'user.method_removed']);
-    expect(hook.calls[0].data).toMatchObject({ method: 'passkey', by: grace.email });
-    expect(await store.findMany('account', { name: 'Laptop' })).toEqual([]);
-
-    const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
-    try {
-      const path = join(dir, 'madauth.db');
-      const file = createSqliteAdapter(path);
-      const cli = passwordApp({ store: file });
-      await setMethods(file, { google: ON, password: ON, passkey: ON });
-      const value = await signUpVerified(cli.app, cli.hook);
-      await addPasskey(cli.app, session(value));
-      const env = { DATABASE_URL: `sqlite:${path}` };
-      expect(await runCli(['remove-passkeys', grace.email], undefined, env)).toEqual({ exitCode: 0, output: `Removed the passkey of ${grace.email}.` });
-      expect(await runCli(['remove-passkeys', grace.email], undefined, env)).toEqual({ exitCode: 0, output: `${grace.email} has no passkeys.` });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });
 

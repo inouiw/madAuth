@@ -38,9 +38,15 @@ Removing GitHub takes its authorization back at GitHub, with the token kept from
 
 The account a user signed up with is no different: it can go once another method signs them in. Two removals at once can't both take the last ways in: a removal that finds the user without a way in afterwards puts its account back and answers `only_method`.
 
+## Losing every way in
+
+A user who lost every way in, or a second factor they can't sign in without, can't change their methods: that takes a sign-in. An admin [resets their sign-in](server.md#resetting-a-users-sign-in) instead: all their methods and second factors go, their sessions end, and the address counts as unconfirmed. The user then signs up again like anyone whose sign-up nobody finished, with any method that is on, and keeps their id, claims and roles. Whoever proves the address next gets the account, so the admin checks who is asking first.
+
+Code: `resetSignIn` in [`users.ts`](../packages/server/src/users.ts), `/auth/admin/sign-in/reset` in [`app.ts`](../packages/server/src/app.ts).
+
 ## What the webhook is told
 
-`user.method_added` and `user.method_removed`, with the `method` (and for a passkey its `id` and `name`, for Google and GitHub the provider's `email`). Setting up or removing the app or a phone stays `user.second_factor_enabled` and `user.second_factor_disabled`.
+`user.method_added` and `user.method_removed`, with the `method` (and for a passkey its `id` and `name`, for Google and GitHub the provider's `email`). Setting up or removing the app or a phone stays `user.second_factor_enabled` and `user.second_factor_disabled`. A reset is one `user.sign_in_reset`, with the admin as `by`, not a removal per method.
 
 ## Not covered yet
 

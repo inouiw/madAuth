@@ -89,15 +89,14 @@ describe('parseMethodSettings', () => {
       authenticator: factorOnly,
     });
     // Listed, the app signed in on its own for the users who signed up with it, which has no meaning now: it
-    // counts as a second factor only, and the server names the choice (and doesn't start, see loadConfig).
+    // counts as a second factor only until an admin chooses, and the operator is told how.
     expect(parseLegacyMethodSettings({ google: {}, authenticator: {} })).toEqual({ google: signIn(), authenticator: factorOnly });
-    // The stored value names the app `totp`, its id before 0.6; the commands name it as it is now.
-    expect(legacyAppProblem({ google: {}, password: { secondFactor: 'required' }, totp: {} })).toContain('"set-methods google password=required authenticator=second-factor"');
+    // The stored value names the app `totp`, its id before 0.6; the message names it as it is now.
+    expect(legacyAppProblem({ google: {}, password: { secondFactor: 'required' }, totp: {} })).toContain('Madauth.admin.setSettings: authenticator with allowAsSignInMethod false');
     expect(legacyAppProblem({ google: {}, password: { secondFactor: 'required' } })).toBeNull();
-    // On an app-only server, the app has to keep signing in: only that command is named.
-    const appOnly = legacyAppProblem({ totp: {}, sms: {} })!;
-    expect(appOnly).toContain('"set-methods authenticator sms"');
-    expect(appOnly).not.toContain('second-factor');
+    // On an app-only server, the app keeps signing in, or nobody could: there is nothing to choose.
+    expect(parseLegacyMethodSettings({ authenticator: {}, sms: {} })).toEqual({ authenticator: signIn(), sms: factorOnly });
+    expect(legacyAppProblem({ totp: {}, sms: {} })).toBeNull();
     expect(legacyAppProblem({ totp: signIn() })).toBeNull();
     expect(legacyAppProblem(undefined)).toBeNull();
     for (const bad of [{ google: true }, { authenticator: { secondFactor: 'required' } }, { passkey: {} }, { google: signIn() }]) {
@@ -172,7 +171,21 @@ describe('Settings', () => {
     expect(await settings.methods()).toEqual({ password: signIn('optional'), authenticator: factorOnly });
     expect(await settings.methods()).toEqual({ password: signIn('optional'), authenticator: factorOnly });
     expect(warn).toHaveBeenCalledOnce();
-    expect(String(warn.mock.calls[0][0])).toContain('second factor only');
+    expect(String(warn.mock.calls[0][0])).toContain('Until an admin chooses, it is a second factor only');
+  });
+
+  it('with a list from before 0.6 with the app on its own, an admin chooses while the server runs', async () => {
+    const { app, store, cookie } = await withAdmin();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await new Settings(store).set('methods', { google: {}, password: { secondFactor: 'optional' }, totp: {} }, null);
+
+    // Until then the app is a second factor only.
+    expect(await config(app)).toMatchObject({ password: { secondFactor: 'optional' }, authenticator: { signIn: false } });
+    const chosen = await settingsApi(app, cookie, 'set', { methods: { google: signIn(), password: signIn('optional'), authenticator: signIn() } });
+
+    expect(chosen.status).toBe(200);
+    expect(await config(app)).toMatchObject({ authenticator: { signIn: true } });
+    expect(legacyAppProblem(await new Settings(store).get('methods'))).toBeNull();
   });
 
   it('a value stored by madAuth before 0.6 keeps its meaning after the upgrade', async () => {
@@ -215,7 +228,7 @@ describe('Settings', () => {
     expect(await settings.methods()).toEqual({ google: signIn(), password: signIn() });
     expect(await settings.methods()).toEqual({ google: signIn(), password: signIn() });
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(String(warn.mock.calls[0][0])).toContain('set-methods');
+    expect(String(warn.mock.calls[0][0])).toContain('Madauth.admin.setSettings');
     // The next change replaces it.
     await settings.changeMethods((current) => ({ ...current, authenticator: signIn() }), null);
     expect(await settings.methods()).toEqual({ google: signIn(), password: signIn(), authenticator: signIn() });

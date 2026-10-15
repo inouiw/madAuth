@@ -40,7 +40,7 @@ A passkey the server no longer has (the user removed it) is `401 passkey_unknown
 - Within ten minutes of signing in, like adding one: `Madauth.methods.remove(id)` or `POST /auth/methods/remove`.
 - Not the last way the user signs in (`403 only_method`): they add another method first, or delete the account.
 - Not the last second factor a `required` policy can ask them for (`403 required_by_policy`): a policy needs a factor the user keeps, other than the method itself. One of several passkeys may always go, and the passkeys' own policy doesn't keep the last one: without it, the user signs in with no passkey.
-- A user who lost their passkeys signs in another way and removes them, or asks the operator: `npx @madauth/server remove-passkeys <email>` (it calls no webhook) or `POST /auth/admin/passkey/remove` (`user.method_removed` with `by`).
+- A user who lost their passkeys signs in another way and removes them. One who has no other way in needs an admin, who [resets their sign-in](server.md#resetting-a-users-sign-in): every method goes, and the user signs up again. The admin checks who is asking first: after a reset, the inbox is all it takes.
 
 ## The domain
 

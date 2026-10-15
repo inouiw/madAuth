@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
+import { Admins } from './admins.js';
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
 import { importSigningKeys, type SigningKeys } from './keys.js';
@@ -43,11 +44,14 @@ import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { deriveAuthenticatorKey } from './authenticator.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
-import { Users, factorsAmong, toMadauthUser, type StoredUser } from './users.js';
+import { Users, factorsAmong, methodOf, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
+
+/** `by` of the `user.claims_changed` that INITIAL_ADMIN_EMAIL causes: the variable, where an admin's change has their address. */
+const INITIAL_ADMIN_EMAIL = 'INITIAL_ADMIN_EMAIL';
 
 export { REDIRECT_ERROR_PARAM, REDIRECT_FACTORS_PARAM, REDIRECT_METHOD_PARAM, REDIRECT_NEXT_PARAM } from './routes/oauth.js';
 
@@ -137,6 +141,7 @@ export function createApp(config: MadauthConfig): Hono {
   const users = new Users(config.store, codeKey);
   const methods = methodConfig(config);
   const settings = new Settings(config.store, initialMethods(methods));
+  const admins = new Admins(settings, users);
   const configured = (method: MethodId) => isConfigured(methods, method);
   const signsUp = (method: SignInMethod) => canSignUp(methods, method);
   const emailVerification = sendsVerificationEmails(config);
@@ -183,6 +188,8 @@ export function createApp(config: MadauthConfig): Hono {
     deleteCookie(c, RENEWAL_COOKIE, { path: '/auth', secure });
     deleteCookie(c, EXPIRY_COOKIE, { path: '/', domain: cookieDomain, secure });
   };
+  /** An admin's own change that would take the role `admin` from them: another admin has to make it. */
+  const ownAdminRole = (c: Context, message: string) => c.json({ error: 'own_admin_role', message }, 403);
 
   // --- Session ---
 
@@ -242,6 +249,12 @@ export function createApp(config: MadauthConfig): Hono {
   // The settings of a request, read once: every route that needs them shares the read.
   const methodsOf = new WeakMap<Request, Promise<MethodSettings>>();
 
+  /** INITIAL_ADMIN_EMAIL, for a user who starts a session: their new claims if it gave them the role now, else null. */
+  const promoteInitialAdmin = async (user: MadauthUser) => {
+    const value = config.initialAdminEmail;
+    return value && user.email && normalizeEmail(user.email) === value ? admins.applyInitial(user.id, value) : null;
+  };
+
   const ctx: AppContext = {
     config,
     keys,
@@ -258,7 +271,10 @@ export function createApp(config: MadauthConfig): Hono {
       url.hash = '';
       return url;
     },
-    async startSession(c, user, amr, { method, signedUpAt }, extra) {
+    async startSession(c, signedIn, amr, { method, signedUpAt }, extra) {
+      // The user INITIAL_ADMIN_EMAIL names gets the role before the session, which carries it.
+      const promoted = await promoteInitialAdmin(signedIn);
+      const user = promoted ? { ...signedIn, claims: promoted.claims } : signedIn;
       // Only a user whose first session this is gets the write, before the cookies: if it fails, nobody is
       // signed in. The write decides, so two sign-ins at once send it once.
       const firstSession = signedUpAt === 0 && (await users.markSignedUp(user.id));
@@ -266,7 +282,9 @@ export function createApp(config: MadauthConfig): Hono {
       clearChallenge(c, secure);
       await issueSession(c, user, amr, { ...extra, auth_time: Math.floor(Date.now() / 1000) });
       const result = { ...user, amr };
+      // A new user is told first, already with the role; the claims change says where it came from.
       if (firstSession) await this.emit('user.signed_up', { user: result, method });
+      if (promoted) await this.emit('user.claims_changed', { user: result, claims: promoted.claims, by: INITIAL_ADMIN_EMAIL });
       return result;
     },
     async secondStep(c, user, amr, method, profile) {
@@ -434,6 +452,11 @@ export function createApp(config: MadauthConfig): Hono {
   app.post('/auth/account/delete', async (c) => {
     const user = await currentSession(c);
     if (!user) return c.json({ error: 'no_session' }, 401);
+    // An admin never removes themselves, so a lone admin stays: another admin takes the role from them first.
+    // Checked before the code, which a refused deletion must not use up.
+    if (isAdmin(user)) {
+      return ownAdminRole(c, `You have the role "${ADMIN_ROLE}", so you can't delete your account: another admin takes the role from you first.`);
+    }
     const stored = await users.findById(user.id);
     // An app that is switched off server-wide protects nothing, so it is not asked for either. A phone for
     // SMS codes alone does not protect the deletion (not covered yet, see docs/sms-security.md).
@@ -460,10 +483,10 @@ export function createApp(config: MadauthConfig): Hono {
     return googleSub ? c.json({ googleSub }) : c.body(null, 204);
   });
 
-  // --- Admin: claims, settings and the authenticator app ---
+  // --- Admin: claims, settings and resetting a user's sign-in ---
 
-  /** The admin's address if the request comes from one; otherwise the answer to send. */
-  const admin = async (c: Context): Promise<{ email: string } | { answer: Response }> => {
+  /** The admin's id and address if the request comes from one; otherwise the answer to send. */
+  const admin = async (c: Context): Promise<{ id: string; email: string } | { answer: Response }> => {
     // currentSession reads the claims from the store, not from the session token: a removed admin role
     // stops counting at once.
     const user = await currentSession(c);
@@ -473,7 +496,7 @@ export function createApp(config: MadauthConfig): Hono {
       const message = `Only users with the role "${ADMIN_ROLE}" can manage claims and settings.`;
       return { answer: c.json({ error: 'forbidden', message }, 403) };
     }
-    return { email };
+    return { id: user.id, email };
   };
   const invalidEmail = (c: Context) => c.json({ error: 'invalid_email', message: 'This is not a valid e-mail address.' }, 400);
   const noUser = (c: Context) => c.json({ error: 'user_not_found', message: 'No user has this e-mail address.' }, 404);
@@ -508,6 +531,10 @@ export function createApp(config: MadauthConfig): Hono {
     }
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
+    // An admin never takes the role from themselves, so a lone admin keeps it: another admin has to.
+    if (user.id === caller.id && !isAdmin({ claims })) {
+      return ownAdminRole(c, `You can't take the role "${ADMIN_ROLE}" from yourself: another admin has to.`);
+    }
     // Stored as JSON, and sent with the user as stored: the webhook sees what the next session sees.
     const stored = Object.keys(claims).length ? JSON.stringify(claims) : null;
     await users.updateUser(user.id, { claims: stored });
@@ -584,49 +611,21 @@ export function createApp(config: MadauthConfig): Hono {
     return c.json(settingsAnswer(methods, password));
   });
 
-  // The last resort for a user who lost the phone and the recovery codes.
-  app.post('/auth/admin/authenticator/remove', async (c) => {
+  // The way back for a user who lost every way in, whatever they had: they sign up again and keep their id.
+  // See "Resetting a user's sign-in" in docs/server.md.
+  app.post('/auth/admin/sign-in/reset', async (c) => {
     const caller = await admin(c);
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     if (!isValidEmail(data.email)) return invalidEmail(c);
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
-    // The app a user signed up with is told as part of their sign-up: without it, they sign up with the app again.
-    const app = await users.authenticatorApp(user.id);
-    const secondFactor = !!app && !app.signedUpWith;
-    const removed = await users.removeAuthenticator(user.id);
-    if (removed && secondFactor) await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'authenticator', by: caller.email });
-    return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
-  });
-
-  // The same for a user who lost their passkeys.
-  app.post('/auth/admin/passkey/remove', async (c) => {
-    const caller = await admin(c);
-    if ('answer' in caller) return caller.answer;
-    const data = await body(c);
-    if (!isValidEmail(data.email)) return invalidEmail(c);
-    const user = await users.findByEmail(normalizeEmail(data.email));
-    if (!user) return noUser(c);
-    for (const passkey of await users.passkeys(user.id)) {
-      if (await users.unlinkAccount(passkey.key)) {
-        await ctx.emit('user.method_removed', { user: toMadauthUser(user), method: 'passkey', passkey: { id: passkey.id, name: passkey.name }, by: caller.email });
-      }
-    }
-    return c.json({ email: user.emailNormalized, userId: user.id, passkeys: 0 });
-  });
-
-  // The same for a user who lost the phone that gets the SMS codes.
-  app.post('/auth/admin/sms/remove', async (c) => {
-    const caller = await admin(c);
-    if ('answer' in caller) return caller.answer;
-    const data = await body(c);
-    if (!isValidEmail(data.email)) return invalidEmail(c);
-    const user = await users.findByEmail(normalizeEmail(data.email));
-    if (!user) return noUser(c);
-    const removed = await users.removeSms(user.id);
-    if (removed) await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'sms', by: caller.email });
-    return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
+    const removed = await users.resetSignIn(user.id);
+    // GitHub's authorization goes with its account, as when the user removes GitHub or deletes the account.
+    const github = config.github;
+    if (github) await Promise.all(removed.filter((account) => methodOf(account) === 'github').map((account) => revokeGrant(github, tokenKey, account)));
+    await ctx.emit('user.sign_in_reset', { user: toMadauthUser(user), by: caller.email });
+    return c.json({ email: user.emailNormalized, userId: user.id });
   });
 
   return app;

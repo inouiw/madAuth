@@ -48,11 +48,11 @@ Code: [`packages/server/src/routes/lockout.ts`](../packages/server/src/routes/lo
 
 ## Removing the phone
 
-`Madauth.sms.remove({ code })` takes a code sent to the number (`Madauth.sms.send()` while signed in), so a stolen session can't switch the protection off. While a method's policy is `required`, the phone can only go if the user keeps another second factor that is on, the authenticator app or a passkey (`403 required_by_policy`), and the same holds for the app and the passkeys. A user who lost the phone needs the operator: `npx @madauth/server remove-sms <email>` (with `DATABASE_URL`; it calls no webhook), or `POST /auth/admin/sms/remove` as an admin; with a `required` policy they set a factor up again at their next sign-in.
+`Madauth.sms.remove({ code })` takes a code sent to the number (`Madauth.sms.send()` while signed in), so a stolen session can't switch the protection off. While a method's policy is `required`, the phone can only go if the user keeps another second factor that is on, the authenticator app or a passkey (`403 required_by_policy`), and the same holds for the app and the passkeys. A user who lost the phone needs an admin, who [resets their sign-in](server.md#resetting-a-users-sign-in): every method and factor goes, and the user signs up again; with a `required` policy they set a factor up again then. The admin checks who is asking first: after a reset, the inbox is all it takes.
 
 An admin who switches SMS codes off (`sms` left out of the methods) ends the sign-ins that wait for an SMS code, and the phones no longer count: a user with only a phone signs in with the first factor alone under an `optional` policy, and sets the app up under a `required` one.
 
-Code: `remove` in [`sms.ts`](../packages/server/src/routes/sms.ts), `POST /auth/admin/sms/remove` in [`app.ts`](../packages/server/src/app.ts).
+Code: `remove` in [`sms.ts`](../packages/server/src/routes/sms.ts).
 
 ## Cross-site requests
 

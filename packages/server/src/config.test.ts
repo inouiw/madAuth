@@ -1,7 +1,7 @@
 import { importJWK } from 'jose';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ConfigError, envVars, loadConfig, methodConfig, readConfig } from './config.js';
+import { ConfigError, envVars, loadConfig, methodConfig } from './config.js';
 import { CLIENT_ID, WEBHOOK_SECRET, WEBHOOK_URL, signingKey } from './test/helpers.js';
 import { createSqliteAdapter } from './store/sqlite.js';
 import { checkWebhookSecret } from './webhooks.js';
@@ -15,19 +15,18 @@ const env = {
 };
 
 describe('loadConfig', () => {
-  it('refuses to start while the methods saved by madAuth before 0.6 let the app sign in on its own, and names the commands to choose with', async () => {
+  it('starts with the methods madAuth before 0.6 saved with the app on its own: an admin chooses while it runs', async () => {
     const store = createSqliteAdapter(':memory:');
     await store.create('setting', { id: 'methods', value: '{"google":{},"password":{"secondFactor":"optional"},"totp":{}}', updatedAt: 1, updatedBy: null });
 
-    const refused = loadConfig(env, { store });
-
-    await expect(refused).rejects.toThrow(ConfigError);
-    await expect(refused).rejects.toThrow(/"set-methods google password=optional authenticator=second-factor".*"set-methods google password=optional authenticator"/s);
-    // readConfig, which the command line uses to set them, reads it all the same.
-    expect((await readConfig(env, { store })).store).toBe(store);
-    // A list without the app on its own has one meaning, and starts.
-    await store.update('setting', { id: 'methods' }, { value: '{"google":{},"password":{"secondFactor":"optional"}}' });
+    // Refusing to start would leave nobody to choose: the admin API needs a running server.
     expect((await loadConfig(env, { store })).store).toBe(store);
+  });
+
+  it('INITIAL_ADMIN_EMAIL is an e-mail address, kept normalized', async () => {
+    expect((await loadConfig({ ...env, INITIAL_ADMIN_EMAIL: ' Grace@Example.com ' })).initialAdminEmail).toBe('grace@example.com');
+    expect((await loadConfig(env)).initialAdminEmail).toBeUndefined();
+    await expect(loadConfig({ ...env, INITIAL_ADMIN_EMAIL: 'grace' })).rejects.toThrow(new ConfigError('INITIAL_ADMIN_EMAIL must be an e-mail address, e.g. you@example.com, but is "grace".'));
   });
 
   it('reads a valid configuration with defaults', async () => {
@@ -125,8 +124,7 @@ describe('loadConfig', () => {
   });
 
   it('DATABASE_URL=dynamodb:<table> uses the DynamoDB adapter, which only reaches AWS on first use', async () => {
-    // readConfig: loadConfig reads the stored settings once, which is a first use.
-    const config = await readConfig({ ...env, ...hook, DATABASE_URL: 'dynamodb:madauth' });
+    const config = await loadConfig({ ...env, ...hook, DATABASE_URL: 'dynamodb:madauth' });
 
     expect(config.store).toBeDefined();
     await expect(loadConfig({ ...env, ...hook, DATABASE_URL: 'dynamodb:' })).rejects.toThrow(/needs a table name/);
@@ -233,7 +231,7 @@ describe('loadConfig', () => {
 
   it('refuses to start with PASSWORD_MIN_LENGTH, which is a setting now, and says how to set it', async () => {
     await expect(loadConfig({ ...env, ...hook, PASSWORD_MIN_LENGTH: '12' })).rejects.toThrow(
-      /PASSWORD_MIN_LENGTH was removed.*set-password-rules min-length=12/,
+      /PASSWORD_MIN_LENGTH was removed.*Madauth\.admin\.setSettings\(\{ password: \{ minLength: 12 \} \}\)/,
     );
   });
 

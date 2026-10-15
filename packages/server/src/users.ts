@@ -1,6 +1,6 @@
 // Everything madAuth stores, written once on top of the StoreAdapter. Routes never call the adapter directly.
 import { createHash, randomBytes } from 'node:crypto';
-import { claimsFromJson } from './claims.js';
+import { claimsFromJson, type Claims } from './claims.js';
 import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
 import { ALWAYS_SIGN_IN, SIGN_IN_METHODS, type SecondFactor, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
@@ -101,6 +101,9 @@ export const MAX_CODE_ATTEMPTS = 5;
  * buy five new guesses each time.
  */
 export const MAX_WRONG_CODES = 10;
+
+/** How often a write that compares what it read is tried again when another request changed it in between. */
+const MAX_TRIES = 3;
 
 /** `userId` is null if the code was wrong, expired or used; `locked` if the user's codes no longer work at all. */
 export interface CodeResult {
@@ -315,13 +318,6 @@ export class Users {
     return created;
   }
 
-  /** Removes all of the user's passkeys. Resolves to how many there were. */
-  async removePasskeys(userId: string): Promise<number> {
-    let removed = 0;
-    for (const passkey of await this.passkeys(userId)) removed += await this.store.delete('account', { id: passkey.id });
-    return removed;
-  }
-
   /**
    * The user's authenticator app, if they set one up, and whether they signed up with it (as opposed to
    * adding it later). One read: the app and the user's other accounts together.
@@ -457,16 +453,40 @@ export class Users {
     return (await this.store.delete('account', { key })) === 1;
   }
 
-  /** Removes the user's authenticator app and recovery codes. Resolves to false if they had no app. */
-  async removeAuthenticator(userId: string): Promise<boolean> {
-    const removed = await this.unlinkAccount(authenticatorAccountKey(userId));
+  /**
+   * Resets the sign-in of a user who lost every way in: removes all their accounts (sign-in methods and
+   * second factors) with the recovery codes, ends their sessions and the sign-ins that wait for a second step
+   * (a new session version), deletes their pending links and codes, counts wrong codes from zero, and marks
+   * the address unconfirmed, so their next sign-up proves the inbox again. The user keeps their id, address,
+   * name, claims and `signedUpAt`. Resolves to the accounts that were removed, e.g. for GitHub's token.
+   */
+  async resetSignIn(userId: string): Promise<StoredAccount[]> {
+    // The sessions end first, so none of them adds a method meanwhile. A sign-in that found one of the accounts
+    // before they went (or a password reset under way) may still start a session with that version: the
+    // second raise ends it. Each raise counts from the user as stored then, not as the request read them.
+    await this.endSignIns(userId);
+    const removed = await this.deleteAccounts(userId);
+    await this.endSignIns(userId);
+    await this.clearVerifications(userId);
     await this.clearRecoveryCodes(userId);
     return removed;
   }
 
-  /** Removes the user's phone number for SMS codes. Resolves to false if they had none. */
-  async removeSms(userId: string): Promise<boolean> {
-    return this.unlinkAccount(smsAccountKey(userId));
+  /** Raises the session version and marks the address unconfirmed, with wrong codes counted from zero. */
+  private async endSignIns(userId: string): Promise<void> {
+    const user = await this.findById(userId);
+    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0 });
+  }
+
+  /**
+   * Deletes the user's accounts until none is left, as another request may add one meanwhile. Resolves to the
+   * accounts this deleted (not those another request deleted at the same time).
+   */
+  private async deleteAccounts(userId: string, rounds = 3): Promise<StoredAccount[]> {
+    const accounts = rounds > 0 ? await this.accounts(userId) : [];
+    if (!accounts.length) return [];
+    const deleted = await Promise.all(accounts.map(async (account) => ((await this.store.delete('account', { id: account.id })) === 1 ? [account] : [])));
+    return [...deleted.flat(), ...(await this.deleteAccounts(userId, rounds - 1))];
   }
 
   /**
@@ -590,6 +610,22 @@ export class Users {
     await this.store.update('user', { id }, patch as Row);
   }
 
+  /**
+   * Changes the user's claims: `apply` gets them as stored and returns the new ones (in canonical form, see
+   * `parseClaims`). The write lands only if nobody changed them since they were read; otherwise `apply` runs
+   * again with the newer ones. Resolves to the user as written, or null if they are gone or kept changing.
+   */
+  async changeClaims(user: StoredUser, apply: (claims: Claims) => Claims): Promise<StoredUser | null> {
+    let current: StoredUser | null = user;
+    for (let attempt = 0; attempt < MAX_TRIES && current; attempt++) {
+      const next = apply(claimsFromJson(current.claims));
+      const claims = Object.keys(next).length ? JSON.stringify(next) : null;
+      if ((await this.store.update('user', { id: current.id, claims: current.claims ?? null }, { claims })) === 1) return { ...current, claims };
+      current = await this.findById(user.id);
+    }
+    return null;
+  }
+
   /** Changes an account. Resolves to false if it is gone meanwhile. */
   async updateAccount(id: string, patch: Partial<Omit<StoredAccount, 'id'>>): Promise<boolean> {
     return (await this.store.update('account', { id }, patch as Row)) === 1;
@@ -682,7 +718,7 @@ export class Users {
   /** Counts a code for the user and resolves to the new count; null if other requests kept changing it. */
   private async countWrongCode(user: StoredUser): Promise<number | null> {
     let current: StoredUser | null = user;
-    for (let attempt = 0; attempt < 3 && current; attempt++) {
+    for (let attempt = 0; attempt < MAX_TRIES && current; attempt++) {
       const wrongCodes = (current.wrongCodes ?? 0) + 1;
       if ((await this.store.update('user', { id: user.id, wrongCodes: current.wrongCodes ?? null }, { wrongCodes })) === 1) {
         return wrongCodes;

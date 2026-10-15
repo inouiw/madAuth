@@ -45,7 +45,7 @@ export interface SmsApi {
 }
 
 const switchedOff = () =>
-  fail('flow_not_enabled', 'The madAuth server has SMS codes switched off: an admin lists sms with set-methods, and the webhook must send sms.send_code.');
+  fail('flow_not_enabled', 'The madAuth server has SMS codes switched off: an admin lists sms in the settings (Madauth.admin.setSettings), and the webhook must send sms.send_code.');
 
 export function createSmsApi(core: Core): SmsApi {
   const call = serverCalls(core, { isOn: (config) => !!config?.sms, switchedOff });

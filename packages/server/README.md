@@ -20,7 +20,7 @@ npx @madauth/server init
 npx @madauth/server start --env-file .env
 ```
 
-`init` asks a few questions and writes the configuration to `.env`, with a new signing key, then prints the next steps. `start` runs the server on port 8787. See [Getting started](https://github.com/inouiw/madAuth/blob/main/docs/getting-started.md).
+`init` asks a few questions and writes the configuration to `.env`, with a new signing key, then prints the next steps. Give it your address to become the first admin (`INITIAL_ADMIN_EMAIL`), who manages claims and sign-in methods from your app. `start` runs the server on port 8787. See [Getting started](https://github.com/inouiw/madAuth/blob/main/docs/getting-started.md).
 
 With Docker:
 
@@ -53,7 +53,7 @@ The package also contains self-contained bundles for AWS Lambda (`dist/standalon
 ## Documentation
 
 - [Getting started](https://github.com/inouiw/madAuth/blob/main/docs/getting-started.md): set up madAuth on your machine, step by step.
-- [Running the madAuth server](https://github.com/inouiw/madAuth/blob/main/docs/server.md): the configuration, Google Cloud Console setup, the sign-in methods and their policies, passkeys, the authenticator app, webhooks, hosting and custom store adapters.
+- [Running the madAuth server](https://github.com/inouiw/madAuth/blob/main/docs/server.md): the configuration, Google Cloud Console setup, the sign-in methods and their policies, passkeys, the authenticator app, resetting a user's sign-in, webhooks, hosting and custom store adapters.
 - [Password security](https://github.com/inouiw/madAuth/blob/main/docs/password-security.md), [Passkey security](https://github.com/inouiw/madAuth/blob/main/docs/passkey-security.md), [Authenticator app security](https://github.com/inouiw/madAuth/blob/main/docs/authenticator-security.md) and [Several sign-in methods](https://github.com/inouiw/madAuth/blob/main/docs/sign-in-methods.md): what the server does to protect accounts.
 
 ## License

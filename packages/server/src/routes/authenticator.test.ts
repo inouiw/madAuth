@@ -1,13 +1,8 @@
 // Behaviour described in docs/authenticator-security.md; update the doc when changing it.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createLocalJWKSet, jwtVerify } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runCli } from '../cli.js';
 import { loadConfig } from '../config.js';
 import { generateSigningKey } from '../keys.js';
-import { createSqliteAdapter } from '../store/sqlite.js';
 import {
   ALL_EVENTS,
   APP_ORIGIN,
@@ -777,58 +772,6 @@ describe('the second step after a password, Google or GitHub', () => {
     expect(await store.findOne('account', { key: `totp:${graceUserRow.id}` })).toBeNull();
     // Signing out ends a wait as well.
     expect(cookies(await post(app, '/auth/logout', {}, withSession(graceSession, challenge))).madauth_challenge.attrs['max-age']).toBe('0');
-  });
-});
-
-describe('the operator resets a lost app', () => {
-  it('T22: the admin API and the CLI remove the app and the codes; a required policy then asks for a new setup', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
-    const path = join(dir, 'madauth.db');
-    vi.useFakeTimers({ toFake: ['Date'], now: START });
-    const store = createSqliteAdapter(path);
-    const { app, hook } = passwordApp({ store });
-    await setMethods(store, { google: { secondFactor: 'none' }, password: { secondFactor: 'optional' } });
-    const session = await signUpVerified(app, hook, 'admin@example.com', 'admins password!');
-    await setClaims(store, 'admin@example.com', { roles: ['admin'] });
-    await setUp(app, session);
-    const grace = await signUpVerified(app, hook, 'grace@example.com');
-    const { secret } = await setUp(app, grace);
-    const [{ id: userId }] = await store.findMany('user', { emailNormalized: 'grace@example.com' });
-    // From now on everybody needs the app.
-    await setMethods(store, { google: { secondFactor: 'none' }, password: { secondFactor: 'required' } });
-    hook.calls.length = 0;
-    const remove = (body: unknown, cookie?: string) => post(app, '/auth/admin/authenticator/remove', body, cookie ? withSession(cookie) : {});
-
-    expect((await remove({ email: 'grace@example.com' })).status).toBe(401);
-    expect((await remove({ email: 'grace@example.com' }, grace)).status).toBe(403);
-    expect((await remove({ email: 'nobody@example.com' }, session)).status).toBe(404);
-    expect((await remove({ email: 'nope' }, session)).status).toBe(400);
-    const res = await remove({ email: 'Grace@Example.com' }, session);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ email: 'grace@example.com', userId, enabled: false });
-    expect(await store.findOne('account', { key: `totp:${userId}` })).toBeNull();
-    expect(await store.findMany('recoveryCode', { userId })).toEqual([]);
-    expect(hook.calls).toEqual([
-      { type: 'user.second_factor_disabled', data: { user: { id: userId, email: 'grace@example.com', name: 'Grace Hopper' }, method: 'authenticator', by: 'admin@example.com' } },
-    ]);
-    // Grace sets it up again at her next sign-in; her old app is of no use.
-    const next = await post(app, '/auth/password/signin', { email: 'grace@example.com', password: 'correct horse battery' });
-    expect(await next.json()).toMatchObject({ error: 'second_factor_setup_required' });
-    expect(codeFor(secret)).toMatch(/^\d{6}$/);
-
-    // The same from the command line, with the store alone.
-    const io = { ask: async () => '', askSecret: async () => '' };
-    expect(await runCli(['remove-authenticator', 'admin@example.com'], io, { DATABASE_URL: `sqlite:${path}` })).toEqual({
-      exitCode: 0,
-      output: 'Removed the authenticator app of admin@example.com.',
-    });
-    expect(await runCli(['remove-authenticator', 'admin@example.com'], io, { DATABASE_URL: `sqlite:${path}` })).toEqual({
-      exitCode: 0,
-      output: 'admin@example.com has no authenticator app.',
-    });
-    expect(await runCli(['remove-authenticator', 'nobody@example.com'], io, { DATABASE_URL: `sqlite:${path}` })).toMatchObject({ exitCode: 1 });
-    expect(await runCli(['remove-authenticator', 'x'], io, { DATABASE_URL: `sqlite:${path}` })).toMatchObject({ exitCode: 1 });
-    rmSync(dir, { recursive: true, force: true });
   });
 });
 

@@ -64,11 +64,7 @@ In a third terminal, start the demo at http://localhost:3000 (it proxies `/auth`
 npm run dev
 ```
 
-The admin API needs the role `admin`, which the public demo at madauth.com gives to nobody. Here you give it to yourself, after signing in once:
-
-```bash
-npm run cli -w packages/server -- set-roles you@example.com admin
-```
+The admin API needs the role `admin`, which the public demo at madauth.com gives to nobody: an admin could change every visitor's claims and switch sign-in methods off for everyone. Here you give it to yourself: set `INITIAL_ADMIN_EMAIL` in `packages/server/.env` to your address, start the server again, and sign in with that address (see [The first admin](docs/server.md#the-first-admin)).
 
 Build the server, the library and the demo:
 
@@ -138,7 +134,7 @@ signInButton.onclick = () => Madauth.signIn();
 - **Language:** the dialog has English and German texts. It follows the page's `<html lang>`, then the browser's language. To set the language yourself, pass `locale: 'de'` (or e.g. `'de-CH'`) to `initialize`, and call `Madauth.setLocale('en')` when the user switches the language of your app; an open dialog changes at once. Every other language shows English. The same locale goes to your e-mail webhook, so the e-mails can match the dialog.
 - **Your own login screen:** pass `ui: 'custom'` and use `Madauth.password`, `Madauth.google`, `Madauth.github`, `Madauth.passkey`, `Madauth.authenticator`, `Madauth.emailLink`, `Madauth.sms` and `Madauth.methods` instead of the dialog. See [Building your own login screen](docs/custom-ui.md).
 - **Other methods:** `signOut()`, `getSession()`, `currentUser`, `deleteAccount()` to [delete the signed-in user's account](docs/server.md#deleting-an-account) (with a code from the authenticator app once it is set up), and `sessionReady()` to wait for a fresh session before calling your own backend (see [Sessions](docs/server.md#sessions)). All methods resolve to `{ isSuccess, ... }` and never throw for expected failures.
-- **Claims:** `currentUser.claims` holds what admins attached to the user, e.g. `{ roles: ['admin'] }`; it is in the session token for your backends too, as is `currentUser.amr`, how the session was authenticated (e.g. `['pwd', 'otp']`, or `['email']` after an e-mail link). Admins set claims with `Madauth.admin.setClaims(email, claims)`, and the sign-in methods and their policies with `Madauth.admin.setSettings(...)`. See [Claims](docs/server.md#claims) and [Sign-in methods](docs/server.md#sign-in-methods).
+- **Claims:** `currentUser.claims` holds what admins attached to the user, e.g. `{ roles: ['admin'] }`; it is in the session token for your backends too, as is `currentUser.amr`, how the session was authenticated (e.g. `['pwd', 'otp']`, or `['email']` after an e-mail link). Admins set claims with `Madauth.admin.setClaims(email, claims)`, the sign-in methods and their policies with `Madauth.admin.setSettings(...)`, and reset the sign-in of a user who lost every way in with `Madauth.admin.resetSignIn(email)`. See [Claims](docs/server.md#claims) and [Sign-in methods](docs/server.md#sign-in-methods).
 - **Server URL:** the server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 'https://auth.example.com'` to `initialize` if it runs elsewhere on the same site.
 
 ### Running the server
