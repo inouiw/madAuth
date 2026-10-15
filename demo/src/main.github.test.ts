@@ -17,7 +17,7 @@ vi.stubGlobal(
           google: { clientId: 'cid.apps.googleusercontent.com', codeFlow: false, secondFactor: 'none' },
           github: { secondFactor: 'optional' },
           password: { minLength: 8, secondFactor: 'none' },
-          totp: { signIn: false, signUp: false },
+          authenticator: { signIn: false, signUp: false },
           email: { verification: true },
         });
       case 'GET /auth/session':
@@ -30,7 +30,7 @@ vi.stubGlobal(
 beforeAll(async () => {
   // The server-side Google demo (no Google script to load here), back from GitHub with the first step done:
   // the server names the method next to the step.
-  history.replaceState(null, '', '/?google=redirect#madauth_next=totp&madauth_factors=totp&madauth_method=github');
+  history.replaceState(null, '', '/?google=redirect#madauth_next=authenticator&madauth_factors=authenticator&madauth_method=github');
   const template = document.createElement('template');
   template.innerHTML = html;
   template.content.querySelectorAll('script, link').forEach((el) => el.remove());

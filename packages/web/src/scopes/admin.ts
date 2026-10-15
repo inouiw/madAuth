@@ -38,7 +38,7 @@ export interface PasswordRules {
 }
 
 /** The ids of the methods in the settings. */
-export type MethodId = 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'passkey' | 'sms';
+export type MethodId = 'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey' | 'sms';
 
 export interface Settings {
   methods: Record<MethodId, MethodSetting>;
@@ -47,8 +47,8 @@ export interface Settings {
 
 /**
  * The list of methods to switch on, each with both of its settings. A method left out is off. A second
- * factor a policy asks for must be on too (`totp`, `passkey` or `sms`), e.g.
- * `{ password: { allowAsSignInMethod: true, secondFactor: 'optional' }, totp: { allowAsSignInMethod: false, secondFactor: 'none' } }`.
+ * factor a policy asks for must be on too (`authenticator`, `passkey` or `sms`), e.g.
+ * `{ password: { allowAsSignInMethod: true, secondFactor: 'optional' }, authenticator: { allowAsSignInMethod: false, secondFactor: 'none' } }`.
  */
 export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 

@@ -29,6 +29,9 @@ export interface RecordedRequest {
   credentials?: RequestCredentials;
 }
 
+/** Whether a challenge waits for a setup: a second factor a policy requires, or the app or passkey a sign-up with it creates. */
+const isSetup = (next: string | undefined) => next === 'second-factor-setup' || next === 'authenticator-setup' || next === 'passkey-setup';
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
@@ -75,8 +78,8 @@ export interface FakeServer {
   requests: RecordedRequest[];
   /** Claims by e-mail address, as set through the admin API. */
   claims: Map<string, Record<string, unknown>>;
-  /** Which sign-in methods are on (the list an admin sets); `totp` is the app on its own, `sms` SMS codes as a second factor. */
-  methods: { google: boolean; github: boolean; password: boolean; totp: boolean; 'email-link': boolean; sms: boolean };
+  /** Which sign-in methods are on (the list an admin sets); `authenticator` is the app on its own, `sms` SMS codes as a second factor. */
+  methods: { google: boolean; github: boolean; password: boolean; authenticator: boolean; 'email-link': boolean; sms: boolean };
   /** Whether Google, GitHub, password and the e-mail link ask for the authenticator app as a second factor. */
   policy: { google: SecondFactorPolicy; github: SecondFactorPolicy; password: SecondFactorPolicy; 'email-link': SecondFactorPolicy };
   /** The addresses whose users have set up the authenticator app, and their recovery codes left. */
@@ -84,7 +87,7 @@ export interface FakeServer {
   recoveryCodes: Map<string, string[]>;
   /** A sign-in whose first step is done, waiting for a second factor or a setup (the challenge cookie), with the factors that can finish it. */
   challenge:
-    | { email: string; next: 'passkey' | 'totp' | 'totp-setup' | 'passkey-setup' | 'sms'; method: 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'passkey'; factors: ('passkey' | 'totp' | 'sms')[] }
+    | { email: string; next: 'passkey' | 'authenticator' | 'sms' | 'second-factor-setup' | 'authenticator-setup' | 'passkey-setup'; method: 'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey'; factors: ('passkey' | 'authenticator' | 'sms')[] }
     | undefined;
   /** Passkeys, when the server has them on: whether they sign in on their own (and sign people up), and that sign-in's policy. */
   passkey: { signIn: boolean; signUp?: boolean; secondFactor: SecondFactorPolicy } | null;
@@ -95,7 +98,7 @@ export interface FakeServer {
   /** The user signed in more than ten minutes ago: changing a method answers `reauth_required`. */
   staleSignIn: boolean;
   /** A setup under way (the setup cookie); set to undefined to simulate its expiry. */
-  totpSetup: { email: string } | undefined;
+  authenticatorSetup: { email: string } | undefined;
   /** The phone numbers of the users who added one, by e-mail address. */
   phones: Map<string, string>;
   /** The SMS "sent": to which number, and what for. */
@@ -137,12 +140,12 @@ export function fakeServer(): FakeServer {
     nonces: 0,
     requests: [],
     claims: new Map(),
-    methods: { google: true, github: true, password: true, totp: false, 'email-link': false, sms: false },
+    methods: { google: true, github: true, password: true, authenticator: false, 'email-link': false, sms: false },
     policy: { google: 'none', github: 'none', password: 'none', 'email-link': 'none' },
     authenticators: new Set(),
     recoveryCodes: new Map(),
     challenge: undefined,
-    totpSetup: undefined,
+    authenticatorSetup: undefined,
     phones: new Map(),
     texts: [],
     smsSetup: undefined,
@@ -171,7 +174,7 @@ export function fakeServer(): FakeServer {
     return json({ user: server.user });
   };
   /** The authenticator app is in use at all: on its own, or as the second factor of a method. */
-  const totpOn = () => server.methods.totp || server.policy.google !== 'none' || server.policy.github !== 'none' || server.policy.password !== 'none' || server.policy['email-link'] !== 'none';
+  const authenticatorOn = () => server.methods.authenticator || server.policy.google !== 'none' || server.policy.github !== 'none' || server.policy.password !== 'none' || server.policy['email-link'] !== 'none';
   /** What follows a primary method that succeeded: the session, or a code (from the app, or by SMS) or the app's setup. */
   const passkeysOf = (email: string) => [...server.passkeys.values()].filter((p) => p.email === email);
   const afterPrimary = (email: string, method: 'google' | 'github' | 'password' | 'email-link' | 'passkey') => {
@@ -179,16 +182,16 @@ export function fakeServer(): FakeServer {
     const app = server.authenticators.has(email);
     const phone = server.methods.sms && server.phones.has(email);
     const passkey = !!server.passkey && method !== 'passkey' && passkeysOf(email).length > 0;
-    const factors: ('passkey' | 'totp' | 'sms')[] = [...(passkey ? (['passkey'] as const) : []), ...(app ? (['totp'] as const) : []), ...(phone ? (['sms'] as const) : [])];
-    const next: 'passkey' | 'totp' | 'sms' | 'totp-setup' | undefined =
-      policy === 'none' ? undefined : factors.length ? factors[0] : policy === 'required' ? 'totp-setup' : undefined;
+    const factors: ('passkey' | 'authenticator' | 'sms')[] = [...(passkey ? (['passkey'] as const) : []), ...(app ? (['authenticator'] as const) : []), ...(phone ? (['sms'] as const) : [])];
+    const next: 'passkey' | 'authenticator' | 'sms' | 'second-factor-setup' | undefined =
+      policy === 'none' ? undefined : factors.length ? factors[0] : policy === 'required' ? 'second-factor-setup' : undefined;
     if (!next) return signedIn(email);
     // As the real server: a sign-in that goes on with a second step ends the session there was.
     server.user = null;
     server.challenge = { email, next, method, factors };
-    const error = { passkey: 'passkey_required', totp: 'totp_required', sms: 'sms_required', 'totp-setup': 'totp_setup_required' }[next];
+    const error = { passkey: 'passkey_required', authenticator: 'authenticator_required', sms: 'sms_required', 'second-factor-setup': 'second_factor_setup_required' }[next];
     // For the setup, the factors that can be set up: a passkey when they are on, the app, and a phone when SMS codes are on.
-    const named = next === 'totp-setup' ? [...(server.passkey && method !== 'passkey' ? ['passkey'] : []), 'totp', ...(server.methods.sms ? ['sms'] : [])] : factors;
+    const named = next === 'second-factor-setup' ? [...(server.passkey && method !== 'passkey' ? ['passkey'] : []), 'authenticator', ...(server.methods.sms ? ['sms'] : [])] : factors;
     return json({ error, message: 'the second step is next', method, factors: named }, 401);
   };
   /** Checks a code from the app (`CODE`) or uses up a recovery code. */
@@ -232,15 +235,14 @@ export function fakeServer(): FakeServer {
     const body = (typeof init.body === 'string' ? JSON.parse(init.body) : {}) as Record<string, string>;
     const email = body.email?.trim().toLowerCase();
     /** The user a setup belongs to: the signed-in one, or the one whose sign-in waits for it. */
-    const whoSetsUp = () =>
-      server.user?.email ?? (server.challenge?.next === 'totp-setup' || server.challenge?.next === 'passkey-setup' ? server.challenge.email : undefined);
+    const whoSetsUp = () => server.user?.email ?? (isSetup(server.challenge?.next) ? server.challenge?.email : undefined);
     switch (`${method} ${url.pathname}`) {
       case 'GET /auth/config':
         return json({
           google: server.google && server.methods.google ? { clientId: CLIENT_ID, codeFlow: server.codeFlow, secondFactor: server.policy.google } : null,
           github: server.github && server.methods.github ? { secondFactor: server.policy.github } : null,
           password: server.password && server.methods.password ? { ...server.passwordRules, secondFactor: server.policy.password } : null,
-          totp: totpOn() ? { signIn: server.methods.totp, signUp: server.methods.totp && server.password } : null,
+          authenticator: authenticatorOn() ? { signIn: server.methods.authenticator, signUp: server.methods.authenticator && server.password } : null,
           email: { verification: server.password },
           emailLink: server.emailLink && server.methods['email-link'] ? { secondFactor: server.policy['email-link'] } : null,
           sms: server.methods.sms,
@@ -277,9 +279,9 @@ export function fakeServer(): FakeServer {
         const passkey = { email: who, id: `acc_${server.passkeys.size + 1}`, name: (body as { name?: string }).name || 'Passkey' };
         server.passkeys.set(credential, passkey);
         const info = { id: passkey.id, name: passkey.name, createdAt: 1, lastUsedAt: 0 };
-        if (!server.user && (server.challenge?.next === 'totp-setup' || server.challenge?.next === 'passkey-setup')) {
+        if (!server.user && isSetup(server.challenge?.next)) {
           // A sign-up with a passkey alone: it signs in as a passkey would, its policy may ask for a second factor.
-          const signUp = server.challenge.next === 'passkey-setup';
+          const signUp = server.challenge?.next === 'passkey-setup';
           server.challenge = undefined;
           const res = signUp ? afterPrimary(who, 'passkey') : signedIn(who);
           if (res.status !== 200) return res;
@@ -321,7 +323,7 @@ export function fakeServer(): FakeServer {
         const methods = [
           ...(account?.password ? [{ id: 'acc_password', method: 'password', signIn: true, removable: true, createdAt: 1 }] : []),
           ...[...(server.linked.get(user) ?? [])].map((method) => ({ id: `acc_${method}`, method, signIn: true, removable: true, createdAt: 1, ...(method === 'email-link' ? {} : { email: user }) })),
-          ...(server.authenticators.has(user) ? [{ id: 'acc_totp', method: 'totp', signIn: server.methods.totp, removable: false, createdAt: 1 }] : []),
+          ...(server.authenticators.has(user) ? [{ id: 'acc_authenticator', method: 'authenticator', signIn: server.methods.authenticator, removable: false, createdAt: 1 }] : []),
           ...passkeysOf(user).map((p) => ({ id: p.id, method: 'passkey', signIn: !!server.passkey?.signIn, removable: true, createdAt: 1, name: p.name, lastUsedAt: 0 })),
         ];
         return json({ methods });
@@ -406,8 +408,8 @@ export function fakeServer(): FakeServer {
           server.mails.push({ purpose: 'verify', to: email, redirectTo: body.redirectTo });
         }
         return json({}, 202);
-      case 'POST /auth/totp/signup':
-        if (!server.methods.totp) return json({ error: 'method_disabled', message: 'off' }, 403);
+      case 'POST /auth/authenticator/signup':
+        if (!server.methods.authenticator) return json({ error: 'method_disabled', message: 'off' }, 403);
         if (server.rejectSignUp) return json({ error: 'signup_rejected', message: server.rejectSignUp }, 403);
         if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
         if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
@@ -435,8 +437,8 @@ export function fakeServer(): FakeServer {
         account.verified = true;
         if (account.app) {
           // A sign-up with the app: it is set up now.
-          server.challenge = { email: target, next: 'totp-setup', method: 'totp', factors: [] };
-          return json({ error: 'totp_setup_required', message: 'set it up', method: 'totp', factors: ['totp'] }, 401);
+          server.challenge = { email: target, next: 'authenticator-setup', method: 'authenticator', factors: [] };
+          return json({ error: 'authenticator_setup_required', message: 'set it up', method: 'authenticator', factors: ['authenticator'] }, 401);
         }
         if (account.passkey) {
           // A sign-up with a passkey alone: it is created now.
@@ -473,17 +475,17 @@ export function fakeServer(): FakeServer {
         setExpiryCookie(null);
         return new Response(null, { status: 204 });
       // --- The authenticator app ---
-      case 'POST /auth/totp/signin': {
-        if (!totpOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
-        if (!server.methods.totp) return json({ error: 'method_disabled', message: 'not on its own' }, 403);
+      case 'POST /auth/authenticator/signin': {
+        if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
+        if (!server.methods.authenticator) return json({ error: 'method_disabled', message: 'not on its own' }, 403);
         if (server.locked) return json({ error: 'too_many_attempts', message: 'Too many failed attempts. Try again in 30 seconds.' }, 429);
         if (!server.authenticators.has(email) || !codeOk(email, body)) return json({ error: 'invalid_credentials', message: 'wrong' }, 401);
         return signedIn(email);
       }
-      case 'POST /auth/totp/verify': {
-        if (!totpOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
+      case 'POST /auth/authenticator/verify': {
+        if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         const challenge = server.challenge;
-        if (!challenge || !challenge.factors.includes('totp') || !server.authenticators.has(challenge.email)) {
+        if (!challenge || !challenge.factors.includes('authenticator') || !server.authenticators.has(challenge.email)) {
           return json({ error: 'challenge_expired', message: 'sign in again' }, 401);
         }
         if (server.locked) return json({ error: 'too_many_attempts', message: 'Too many failed attempts. Try again in 30 seconds.' }, 429);
@@ -491,8 +493,8 @@ export function fakeServer(): FakeServer {
         server.challenge = undefined;
         return signedIn(challenge.email);
       }
-      case 'POST /auth/totp/setup': {
-        if (!totpOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
+      case 'POST /auth/authenticator/setup': {
+        if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         const who = whoSetsUp();
         if (!who) return json({ error: 'no_session' }, 401);
         // Replacing an app: the current one has to agree.
@@ -500,16 +502,16 @@ export function fakeServer(): FakeServer {
           if (body.code === undefined && body.recoveryCode === undefined) return json({ error: 'code_required', message: 'the current app has to agree' }, 401);
           if (!codeOk(who, body)) return json({ error: 'code_invalid', message: 'wrong' }, 401);
         }
-        server.totpSetup = { email: who };
+        server.authenticatorSetup = { email: who };
         return json({ secret: TOTP_SECRET, uri: `otpauth://totp/app.example.com:${encodeURIComponent(who)}?secret=${TOTP_SECRET}&issuer=app.example.com&algorithm=SHA1&digits=6&period=30` });
       }
-      case 'POST /auth/totp/confirm': {
-        if (!totpOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
+      case 'POST /auth/authenticator/confirm': {
+        if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         const who = whoSetsUp();
         if (!who) return json({ error: 'no_session' }, 401);
-        if (server.totpSetup?.email !== who) return json({ error: 'setup_expired', message: 'start again' }, 400);
+        if (server.authenticatorSetup?.email !== who) return json({ error: 'setup_expired', message: 'start again' }, 400);
         if (body.code !== CODE) return json({ error: 'code_invalid', message: 'wrong' }, 400);
-        server.totpSetup = undefined;
+        server.authenticatorSetup = undefined;
         server.authenticators.add(who);
         server.recoveryCodes.set(who, [...RECOVERY_CODES]);
         if (server.user) return json({ recoveryCodes: [...RECOVERY_CODES] });
@@ -519,8 +521,8 @@ export function fakeServer(): FakeServer {
         issued();
         return json({ user: server.user, recoveryCodes: [...RECOVERY_CODES] });
       }
-      case 'POST /auth/totp/remove': {
-        if (!totpOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
+      case 'POST /auth/authenticator/remove': {
+        if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         if (!server.user?.email) return json({ error: 'no_session' }, 401);
         if (server.policy.google === 'required' || server.policy.password === 'required') return json({ error: 'required_by_policy', message: 'required' }, 403);
         if (!server.authenticators.has(server.user.email)) return json({});
@@ -532,8 +534,8 @@ export function fakeServer(): FakeServer {
         server.recoveryCodes.delete(server.user.email);
         return json({});
       }
-      case 'POST /auth/totp/recovery-codes': {
-        if (!totpOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
+      case 'POST /auth/authenticator/recovery-codes': {
+        if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         if (!server.user?.email) return json({ error: 'no_session' }, 401);
         if (!server.authenticators.has(server.user.email)) return json({ error: 'no_authenticator', message: 'none' }, 400);
         if (!codeOk(server.user.email, body)) return json({ error: 'code_invalid', message: 'wrong' }, 401);
@@ -541,8 +543,8 @@ export function fakeServer(): FakeServer {
         server.recoveryCodes.set(server.user.email, fresh);
         return json({ recoveryCodes: [...fresh] });
       }
-      case 'GET /auth/totp/status': {
-        if (!totpOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
+      case 'GET /auth/authenticator/status': {
+        if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         if (!server.user?.email) return json({ error: 'no_session' }, 401);
         const enabled = server.authenticators.has(server.user.email);
         return json({ enabled, recoveryCodesLeft: enabled ? (server.recoveryCodes.get(server.user.email)?.length ?? 0) : 0 });
@@ -650,7 +652,7 @@ export function fakeServer(): FakeServer {
             value && typeof value === 'object' && 'secondFactor' in value ? ((value as { secondFactor: SecondFactorPolicy }).secondFactor ?? 'none') : 'none';
           // The app is listed in `methods` when it signs in on its own.
           const signsIn = (value: unknown) => on(value) && (value as { allowAsSignInMethod?: unknown }).allowAsSignInMethod === true;
-          server.methods = { google: on(methods.google), github: on(methods.github), password: on(methods.password), totp: signsIn(methods.totp), 'email-link': on(methods['email-link']), sms: on(methods.sms) };
+          server.methods = { google: on(methods.google), github: on(methods.github), password: on(methods.password), authenticator: signsIn(methods.authenticator), 'email-link': on(methods['email-link']), sms: on(methods.sms) };
           server.policy = { google: policyOf(methods.google), github: policyOf(methods.github), password: policyOf(methods.password), 'email-link': policyOf(methods['email-link']) };
         }
         return json({
@@ -659,7 +661,7 @@ export function fakeServer(): FakeServer {
             google: setting(server.google, server.methods.google, true, server.policy.google),
             github: setting(server.github, server.methods.github, true, server.policy.github),
             password: setting(server.password, server.methods.password, true, server.policy.password),
-            totp: setting(true, server.methods.totp, true, 'none'),
+            authenticator: setting(true, server.methods.authenticator, true, 'none'),
             'email-link': setting(server.emailLink, server.methods['email-link'], true, server.policy['email-link']),
             passkey: setting(true, !!server.passkey, !!server.passkey?.signIn, server.passkey?.secondFactor ?? 'none'),
             sms: setting(true, server.methods.sms, false, 'none'),

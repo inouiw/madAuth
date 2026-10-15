@@ -524,7 +524,7 @@ describe('configuration', () => {
       google: null,
       github: null,
       password: { minLength: 8, minScore: 2, secondFactor: 'none' },
-      totp: null,
+      authenticator: null,
       email: { verification: true },
       // The test receiver asks for every type, email.send_signin_link and sms.send_code included: the e-mail link and SMS codes are configured and on.
       emailLink: { secondFactor: 'none' },

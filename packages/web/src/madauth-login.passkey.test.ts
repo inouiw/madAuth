@@ -6,7 +6,7 @@ import { EmailLink } from './providers/email-link.js';
 import { Passkey } from './providers/passkey.js';
 import { Password } from './providers/password.js';
 import type { SignInProvider } from './providers/provider.js';
-import { Totp } from './providers/totp.js';
+import { Authenticator } from './providers/authenticator.js';
 import { CODE, SERVER, VERIFY_TOKEN, fakeServer, grace, resetAll, settle, stubWebAuthn } from './test-helpers.js';
 
 beforeEach(() => {
@@ -54,7 +54,7 @@ async function click(selector: string): Promise<void> {
 }
 
 const credentials = { email: 'grace@example.com', password: 'correct horse battery' };
-const providers = (): SignInProvider[] => [new Password(), new Totp(), new EmailLink(), new Passkey()];
+const providers = (): SignInProvider[] => [new Password(), new Authenticator(), new EmailLink(), new Passkey()];
 
 /** A server with passkeys that sign in on their own. */
 function passkeyServer() {
@@ -354,7 +354,7 @@ describe('<madauth-login> and passkeys', () => {
     expect(text('h2')).toBe('Set up authenticator app');
     await settle();
     fill({ code: CODE });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
     await click('[data-action="saved"]');
 
     expect(text('h2')).toBe('Sign-in methods');

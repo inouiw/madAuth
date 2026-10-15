@@ -15,6 +15,7 @@ import {
   parseMethodSettings,
   parsePasswordRules,
   policyOf,
+  renameStoredMethods,
   signsIn,
 } from './settings.js';
 import { APP_ORIGIN, cookies, getNonce, googleIdToken, passwordApp, post, setClaims, signUpVerified, testApp, verify } from './test/helpers.js';
@@ -60,7 +61,7 @@ describe('parseMethodSettings', () => {
   });
 
   it('reads the methods that are on, each with both of its settings', () => {
-    const methods = { google: signIn(), password: signIn('required'), totp: factorOnly, passkey: signIn('optional') };
+    const methods = { google: signIn(), password: signIn('required'), authenticator: factorOnly, passkey: signIn('optional') };
     expect(parseMethodSettings(methods)).toEqual(methods);
     expect(parseMethodSettings({})).toEqual({});
     for (const bad of [
@@ -85,49 +86,50 @@ describe('parseMethodSettings', () => {
       google: signIn(),
       password: signIn('required'),
       sms: factorOnly,
-      totp: factorOnly,
+      authenticator: factorOnly,
     });
     // Listed, the app signed in on its own for the users who signed up with it, which has no meaning now: it
     // counts as a second factor only until an admin chooses, and the operator is told how.
-    expect(parseLegacyMethodSettings({ google: {}, totp: {} })).toEqual({ google: signIn(), totp: factorOnly });
-    expect(legacyAppProblem({ google: {}, password: { secondFactor: 'required' }, totp: {} })).toContain('Madauth.admin.setSettings');
+    expect(parseLegacyMethodSettings({ google: {}, authenticator: {} })).toEqual({ google: signIn(), authenticator: factorOnly });
+    // The stored value names the app `totp`, its id before 0.6; the message names it as it is now.
+    expect(legacyAppProblem({ google: {}, password: { secondFactor: 'required' }, totp: {} })).toContain('Madauth.admin.setSettings: authenticator with allowAsSignInMethod false');
     expect(legacyAppProblem({ google: {}, password: { secondFactor: 'required' } })).toBeNull();
     // On an app-only server, the app keeps signing in, or nobody could: there is nothing to choose.
-    expect(parseLegacyMethodSettings({ totp: {}, sms: {} })).toEqual({ totp: signIn(), sms: factorOnly });
+    expect(parseLegacyMethodSettings({ authenticator: {}, sms: {} })).toEqual({ authenticator: signIn(), sms: factorOnly });
     expect(legacyAppProblem({ totp: {}, sms: {} })).toBeNull();
     expect(legacyAppProblem({ totp: signIn() })).toBeNull();
     expect(legacyAppProblem(undefined)).toBeNull();
-    for (const bad of [{ google: true }, { totp: { secondFactor: 'required' } }, { passkey: {} }, { google: signIn() }]) {
+    for (const bad of [{ google: true }, { authenticator: { secondFactor: 'required' } }, { passkey: {} }, { google: signIn() }]) {
       expect(parseLegacyMethodSettings(bad)).toBeNull();
     }
   });
 
   it('decides what is on and what signs in from the list, with none as the policy that is not set', () => {
     const configured = () => true;
-    const methods = { google: signIn(), password: signIn('optional'), totp: factorOnly };
+    const methods = { google: signIn(), password: signIn('optional'), authenticator: factorOnly };
 
     expect(isOn('google', configured, methods)).toBe(true);
-    expect(isOn('totp', configured, methods)).toBe(true);
-    expect(signsIn('totp', configured, methods)).toBe(false);
+    expect(isOn('authenticator', configured, methods)).toBe(true);
+    expect(signsIn('authenticator', configured, methods)).toBe(false);
     expect(isOn('passkey', configured, methods)).toBe(false);
     expect(isOn('password', () => false, methods)).toBe(false);
     expect(policyOf('google', methods)).toBe('none');
     expect(policyOf('password', methods)).toBe('optional');
-    expect(factorsOn(configured, { ...methods, passkey: signIn(), sms: factorOnly })).toEqual(['passkey', 'totp', 'sms']);
+    expect(factorsOn(configured, { ...methods, passkey: signIn(), sms: factorOnly })).toEqual(['passkey', 'authenticator', 'sms']);
     // A passkey is no second factor of a passkey sign-in.
     expect(factorsOn(configured, { passkey: signIn(), sms: factorOnly }, 'passkey')).toEqual(['sms']);
   });
 
   it('checks what the settings mean together', () => {
-    expect(checkMethodSettings({ google: signIn(), password: signIn('required'), totp: factorOnly }, everything)).toBeNull();
+    expect(checkMethodSettings({ google: signIn(), password: signIn('required'), authenticator: factorOnly }, everything)).toBeNull();
     expect(checkMethodSettings({ google: factorOnly }, everything)).toContain('always signs in');
     expect(checkMethodSettings({ google: signIn(), sms: signIn() }, everything)).toContain('only a second factor');
     expect(checkMethodSettings({ google: signIn(), passkey: { allowAsSignInMethod: false, secondFactor: 'required' } }, everything)).toContain('asks for no second factor');
-    expect(checkMethodSettings({ google: signIn(), totp: signIn('required'), sms: factorOnly }, everything)).toContain('second factor itself');
+    expect(checkMethodSettings({ google: signIn(), authenticator: signIn('required'), sms: factorOnly }, everything)).toContain('second factor itself');
     // A policy needs a second factor that is on, other than the method itself.
     expect(checkMethodSettings({ password: signIn('optional') }, everything)).toContain('none is on');
     expect(checkMethodSettings({ password: signIn(), passkey: signIn('required') }, everything)).toContain('none is on');
-    expect(checkMethodSettings({ password: signIn(), passkey: signIn('required'), totp: factorOnly }, everything)).toBeNull();
+    expect(checkMethodSettings({ password: signIn(), passkey: signIn('required'), authenticator: factorOnly }, everything)).toBeNull();
     // SMS can't be the second factor on a server that doesn't send SMS.
     expect(checkMethodSettings({ password: signIn('optional'), sms: factorOnly }, { ...everything, configured: (m) => m !== 'sms' })).toContain('none is on');
     expect(checkMethodSettings({ passkey: signIn() }, { ...everything, signsUp: (m) => m !== 'passkey' })).toContain('At least one');
@@ -136,7 +138,7 @@ describe('parseMethodSettings', () => {
   it('a server runs its configured methods without a second factor until an admin sets them; the app alone only on an app-only server', () => {
     expect(initialMethods({ google: {}, password: {} })).toEqual({ google: signIn(), password: signIn() });
     expect(initialMethods({ google: {} })).toEqual({ google: signIn() });
-    expect(initialMethods({ emailVerification: true })).toEqual({ totp: signIn() });
+    expect(initialMethods({ emailVerification: true })).toEqual({ authenticator: signIn() });
     expect(initialMethods({ password: {}, emailVerification: true })).toEqual({ password: signIn() });
     expect(initialMethods({ password: {}, sms: true })).toEqual({ password: signIn(), sms: factorOnly });
   });
@@ -166,8 +168,8 @@ describe('Settings', () => {
     await store.create('setting', { id: 'methods', value: '{"password":{"secondFactor":"optional"},"totp":{}}', updatedAt: 1, updatedBy: null });
     const settings = new Settings(store);
 
-    expect(await settings.methods()).toEqual({ password: signIn('optional'), totp: factorOnly });
-    expect(await settings.methods()).toEqual({ password: signIn('optional'), totp: factorOnly });
+    expect(await settings.methods()).toEqual({ password: signIn('optional'), authenticator: factorOnly });
+    expect(await settings.methods()).toEqual({ password: signIn('optional'), authenticator: factorOnly });
     expect(warn).toHaveBeenCalledOnce();
     expect(String(warn.mock.calls[0][0])).toContain('Until an admin chooses, it is a second factor only');
   });
@@ -178,11 +180,11 @@ describe('Settings', () => {
     await new Settings(store).set('methods', { google: {}, password: { secondFactor: 'optional' }, totp: {} }, null);
 
     // Until then the app is a second factor only.
-    expect(await config(app)).toMatchObject({ password: { secondFactor: 'optional' }, totp: { signIn: false } });
-    const chosen = await settingsApi(app, cookie, 'set', { methods: { google: signIn(), password: signIn('optional'), totp: signIn() } });
+    expect(await config(app)).toMatchObject({ password: { secondFactor: 'optional' }, authenticator: { signIn: false } });
+    const chosen = await settingsApi(app, cookie, 'set', { methods: { google: signIn(), password: signIn('optional'), authenticator: signIn() } });
 
     expect(chosen.status).toBe(200);
-    expect(await config(app)).toMatchObject({ totp: { signIn: true } });
+    expect(await config(app)).toMatchObject({ authenticator: { signIn: true } });
     expect(legacyAppProblem(await new Settings(store).get('methods'))).toBeNull();
   });
 
@@ -191,7 +193,30 @@ describe('Settings', () => {
     await store.create('setting', { id: 'methods', value: '{"google":{},"password":{"secondFactor":"optional"}}', updatedAt: 1, updatedBy: null });
     const settings = new Settings(store, { google: signIn() });
 
-    expect(await settings.methods()).toEqual({ google: signIn(), password: signIn('optional'), totp: factorOnly });
+    expect(await settings.methods()).toEqual({ google: signIn(), password: signIn('optional'), authenticator: factorOnly });
+  });
+
+  it('a list saved with the app as totp, its id before 0.6, is read with authenticator in its place; a change saves authenticator', async () => {
+    const { store } = passwordApp();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const saved = '{"password":{"allowAsSignInMethod":true,"secondFactor":"optional"},"totp":{"allowAsSignInMethod":false,"secondFactor":"none"},"sms":{"allowAsSignInMethod":false,"secondFactor":"none"}}';
+    await store.create('setting', { id: 'methods', value: saved, updatedAt: 1, updatedBy: null });
+    const settings = new Settings(store);
+
+    expect(await settings.methods()).toEqual({ password: signIn('optional'), authenticator: factorOnly, sms: factorOnly });
+    expect(Object.keys(await settings.methods())).toEqual(['password', 'authenticator', 'sms']);
+    expect(legacyAppProblem(JSON.parse(saved))).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    await settings.changeMethods((current) => ({ ...current, password: signIn('required') }), null);
+    expect(JSON.parse(String((await store.findOne('setting', { id: 'methods' }))?.value))).toEqual({
+      password: signIn('required'),
+      authenticator: factorOnly,
+      sms: factorOnly,
+    });
+    // Only what is stored: totp is no method id an admin can set.
+    expect(parseMethodSettings({ totp: factorOnly })).toBeNull();
+    // A list with both, which no madAuth writes, keeps the setting of authenticator.
+    expect(renameStoredMethods({ totp: signIn(), authenticator: factorOnly, sms: factorOnly })).toEqual({ authenticator: factorOnly, sms: factorOnly });
   });
 
   it('a value nobody can read does not count: it is warned about once, and the initial methods hold', async () => {
@@ -205,8 +230,8 @@ describe('Settings', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain('Madauth.admin.setSettings');
     // The next change replaces it.
-    await settings.changeMethods((current) => ({ ...current, totp: signIn() }), null);
-    expect(await settings.methods()).toEqual({ google: signIn(), password: signIn(), totp: signIn() });
+    await settings.changeMethods((current) => ({ ...current, authenticator: signIn() }), null);
+    expect(await settings.methods()).toEqual({ google: signIn(), password: signIn(), authenticator: signIn() });
   });
 
   it('a change sees what another change wrote in between, so a guard on the written value holds', async () => {
@@ -248,7 +273,7 @@ describe('switching sign-in methods off and on', () => {
         google: { configured: true, enabled: true, allowAsSignInMethod: true, secondFactor: 'none' },
         github: { configured: false, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
         password: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
-        totp: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
+        authenticator: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
         'email-link': { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
         passkey: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
         sms: { configured: true, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
@@ -265,9 +290,9 @@ describe('switching sign-in methods off and on', () => {
     expect((await settingsApi(app, cookie, 'get')).status).toBe(200);
 
     // And on again, now asking for the authenticator app when the user has one.
-    await settingsApi(app, cookie, 'set', { methods: { google: signIn(), password: signIn('optional'), totp: factorOnly } });
+    await settingsApi(app, cookie, 'set', { methods: { google: signIn(), password: signIn('optional'), authenticator: factorOnly } });
     expect((await post(app, '/auth/password/signin', grace)).status).toBe(200);
-    expect(await config(app)).toMatchObject({ password: { minLength: 8, secondFactor: 'optional' }, totp: { signIn: false, signUp: false } });
+    expect(await config(app)).toMatchObject({ password: { minLength: 8, secondFactor: 'optional' }, authenticator: { signIn: false, signUp: false } });
   });
 
   it('Google can be switched off as well, for both flows', async () => {
@@ -292,8 +317,8 @@ describe('switching sign-in methods off and on', () => {
     expect(none.status).toBe(400);
     expect(await none.json()).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('At least one') });
     // The authenticator app alone keeps a server usable for those who set it up: it counts as a method.
-    expect((await settingsApi(app, cookie, 'set', { methods: { totp: signIn() } })).status).toBe(200);
-    expect(await config(app)).toMatchObject({ google: null, password: null, totp: { signIn: true, signUp: true } });
+    expect((await settingsApi(app, cookie, 'set', { methods: { authenticator: signIn() } })).status).toBe(200);
+    expect(await config(app)).toMatchObject({ google: null, password: null, authenticator: { signIn: true, signUp: true } });
 
     // Only Google is configured here: password can't be switched on, and nothing else is listed by default.
     const googleOnly = passwordApp({ password: undefined, webhook: undefined });
@@ -302,7 +327,7 @@ describe('switching sign-in methods off and on', () => {
       google: { clientId: expect.any(String), codeFlow: true, secondFactor: 'none' },
       github: null,
       password: null,
-      totp: null,
+      authenticator: null,
       email: { verification: false },
       emailLink: null,
       sms: false,
@@ -312,12 +337,12 @@ describe('switching sign-in methods off and on', () => {
 
   it('keeps a method on that creates users: the app or passkeys alone count only with sign-up by e-mail', () => {
     const googleOnly = { google: {}, emailVerification: false };
-    expect(anyOn((m) => canSignUp(googleOnly, m), { totp: signIn() })).toBe(false);
-    expect(anyOn((m) => canSignUp(googleOnly, m), { google: signIn(), totp: signIn() })).toBe(true);
+    expect(anyOn((m) => canSignUp(googleOnly, m), { authenticator: signIn() })).toBe(false);
+    expect(anyOn((m) => canSignUp(googleOnly, m), { google: signIn(), authenticator: signIn() })).toBe(true);
     const emails = { password: {}, emailVerification: true };
-    expect(anyOn((m) => canSignUp(emails, m), { totp: signIn() })).toBe(true);
+    expect(anyOn((m) => canSignUp(emails, m), { authenticator: signIn() })).toBe(true);
     // Only as a second factor, the app lets nobody in.
-    expect(anyOn((m) => canSignUp(emails, m), { totp: factorOnly })).toBe(false);
+    expect(anyOn((m) => canSignUp(emails, m), { authenticator: factorOnly })).toBe(false);
     expect(anyOn((m) => canSignUp(emails, m), { google: signIn() })).toBe(false);
     // Passkeys alike: people sign up with one alone only where the address is confirmed by e-mail first.
     expect(anyOn((m) => canSignUp(emails, m), { passkey: signIn() })).toBe(true);
@@ -338,7 +363,9 @@ describe('switching sign-in methods off and on', () => {
     // Both settings are always given: the shorthand of madAuth before 0.6 is not taken.
     expect((await settingsApi(app, cookie, 'set', { methods: { google: {} } })).status).toBe(400);
     expect((await settingsApi(app, cookie, 'set', { methods: { google: true } })).status).toBe(400);
-    expect((await settingsApi(app, cookie, 'set', { methods: { google: signIn(), totp: signIn('required') } })).status).toBe(400);
+    expect((await settingsApi(app, cookie, 'set', { methods: { google: signIn(), authenticator: signIn('required') } })).status).toBe(400);
+    // The app is `authenticator`: its id before 0.6 is no alias.
+    expect(await (await settingsApi(app, cookie, 'set', { methods: { google: signIn(), totp: factorOnly } })).json()).toMatchObject({ error: 'invalid_settings' });
     // SMS codes take no policy, and sign nobody in alone.
     expect((await settingsApi(app, cookie, 'set', { methods: { google: signIn(), sms: { allowAsSignInMethod: false, secondFactor: 'required' } } })).status).toBe(400);
     expect((await settingsApi(app, cookie, 'set', { methods: { google: signIn(), sms: signIn() } })).status).toBe(400);

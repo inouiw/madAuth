@@ -68,7 +68,7 @@ describe('deployment entry points', () => {
       google: { clientId: CLIENT_ID, codeFlow: false, secondFactor: 'none' },
       github: null,
       password: { minLength: 8, minScore: 2, secondFactor: 'none' },
-      totp: null,
+      authenticator: null,
       email: { verification: true },
       emailLink: null,
       sms: false,

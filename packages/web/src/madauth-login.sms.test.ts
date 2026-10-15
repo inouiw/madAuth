@@ -5,7 +5,7 @@ import type { MadauthLogin } from './madauth-login.js';
 import { GoogleRedirect } from './providers/google-redirect.js';
 import { Password } from './providers/password.js';
 import type { SignInProvider } from './providers/provider.js';
-import { Totp } from './providers/totp.js';
+import { Authenticator } from './providers/authenticator.js';
 import { CODE, MASKED_PHONE, PHONE, SERVER, fakeServer, grace, resetAll, settle } from './test-helpers.js';
 
 beforeEach(() => {
@@ -50,7 +50,7 @@ const credentials = { email: 'grace@example.com', password: 'correct horse batte
 const sends = (server: ReturnType<typeof fakeServer>) => server.requests.filter((r) => r.path === '/auth/sms/send').length;
 
 /** Opens the dialog; resolves to the pending signIn() result. */
-async function openDialog(providers: SignInProvider[] = [new Password(), new Totp()]) {
+async function openDialog(providers: SignInProvider[] = [new Password(), new Authenticator()]) {
   await Madauth.initialize({ serverUrl: SERVER, providers });
   const result = Madauth.signIn();
   await settle();
@@ -122,7 +122,7 @@ describe('<madauth-login> and SMS codes', () => {
     expect(text('h2')).toBe('Enter your code');
     expect(sends(server)).toBe(1);
     fill({ code: CODE });
-    await submit('totp-code');
+    await submit('authenticator-code');
     expect(Madauth.currentUser).toEqual(grace);
 
     // Without a phone there is nothing to switch to.
@@ -282,10 +282,10 @@ describe('<madauth-login> and SMS codes', () => {
 
   it('D29: a sign-up with the app sets the app up, never a phone: its setup has no phone link', async () => {
     const server = smsServer();
-    server.methods.totp = true;
+    server.methods.authenticator = true;
     void openDialog();
     await settle();
-    await click('[data-method="totp"]');
+    await click('[data-method="authenticator"]');
     await click('[data-action="signup"]');
     fill({ email: 'new@example.com', name: 'New User' });
     await submit('signup');

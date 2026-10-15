@@ -26,7 +26,7 @@ import {
   type TestMethods,
 } from './test/helpers.js';
 import { softAuthenticator } from './test/webauthn.js';
-import { base32Decode, stepOf, totp } from './totp.js';
+import { base32Decode, stepOf, totp } from './authenticator.js';
 import { Users } from './users.js';
 
 type Made = ReturnType<typeof passwordApp>;
@@ -43,7 +43,7 @@ const everything: TestMethods = {
   password: { allowAsSignInMethod: true, secondFactor: 'optional' },
   'email-link': ON,
   passkey: ON,
-  totp: FACTOR,
+  authenticator: FACTOR,
   sms: FACTOR,
 };
 const github = { github: { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET } };
@@ -87,10 +87,10 @@ async function addEverything({ app, hook }: Made, cookie: string) {
   const added = await post(app, '/auth/passkey/register/verify', { response, name: 'Laptop' }, { Cookie: `${cookie}; madauth_passkey=${cookies(options).madauth_passkey.value}` });
   expect(added.status).toBe(200);
 
-  const setup = await post(app, '/auth/totp/setup', {}, { Cookie: cookie });
+  const setup = await post(app, '/auth/authenticator/setup', {}, { Cookie: cookie });
   const secret = base32Decode(((await setup.json()) as { secret: string }).secret)!;
   const code = totp(secret, stepOf(Date.now()));
-  const confirmed = await post(app, '/auth/totp/confirm', { code }, { Cookie: `${cookie}; madauth_totp_setup=${cookies(setup).madauth_totp_setup.value}` });
+  const confirmed = await post(app, '/auth/authenticator/confirm', { code }, { Cookie: `${cookie}; madauth_authenticator_setup=${cookies(setup).madauth_authenticator_setup.value}` });
   expect(confirmed.status).toBe(200);
 
   const phone = await post(app, '/auth/sms/setup', { phone: '+41791234567' }, { Cookie: cookie });
@@ -113,6 +113,7 @@ describe('resetting a user\'s sign-in', () => {
     const { passkey, secret } = await addEverything(made, cookie);
     await setClaims(store, grace.email, { roles: ['editor'] });
     expect((await store.findMany('account', { userId })).map((account) => String(account.key).split(':')[0]).sort()).toEqual(
+      // The app's account keeps the key of madAuth before 0.6 (`totp:<userId>`).
       ['email-link', 'github', 'passkey', 'password', 'sms', 'totp'],
     );
     expect(await store.findMany('recoveryCode', { userId })).toHaveLength(10);
@@ -121,7 +122,7 @@ describe('resetting a user\'s sign-in', () => {
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
     const resetLink = linkAndCode(hook.lastEmail()).token;
     const waiting = await post(app, '/auth/password/signin', grace);
-    expect(await waiting.json()).toMatchObject({ error: 'passkey_required', factors: ['passkey', 'totp', 'sms'] });
+    expect(await waiting.json()).toMatchObject({ error: 'passkey_required', factors: ['passkey', 'authenticator', 'sms'] });
     const challenge = `madauth_challenge=${cookies(waiting).madauth_challenge.value}`;
     await store.update('user', { id: userId }, { wrongCodes: 7 });
     const [before] = await store.findMany('user', { id: userId });
@@ -150,7 +151,7 @@ describe('resetting a user\'s sign-in', () => {
     // Her sessions and the sign-in that waited for its second step have ended; the admin's has not.
     expect(await sessionStatus(app, cookie)).toBe(401);
     expect(await sessionStatus(app, admin)).toBe(200);
-    const step = await post(app, '/auth/totp/verify', { code: totp(secret, stepOf(Date.now())) }, { Cookie: challenge });
+    const step = await post(app, '/auth/authenticator/verify', { code: totp(secret, stepOf(Date.now())) }, { Cookie: challenge });
     expect(await step.json()).toMatchObject({ error: 'challenge_expired' });
     // Nothing she had signs her in, and the reset link is gone.
     expect(await (await post(app, '/auth/password/signin', grace)).json()).toMatchObject({ error: 'invalid_credentials' });

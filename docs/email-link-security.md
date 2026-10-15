@@ -40,7 +40,7 @@ Code: [`email-link.ts`](../packages/server/src/routes/email-link.ts), `resolvePr
 
 ## The second step
 
-With a policy of `optional` or `required` for the method, the link or the code does not sign in by itself: the sign-in goes on with the authenticator app (`401 totp_required` or `totp_setup_required`), exactly as after a password. See [Authenticator app security](totp-security.md#the-second-step). The session then says `amr: ["email", "otp"]`; the link alone gives `["email"]`.
+With a policy of `optional` or `required` for the method, the link or the code does not sign in by itself: the sign-in goes on with the authenticator app (`401 authenticator_required` or `second_factor_setup_required`), exactly as after a password. See [Authenticator app security](authenticator-security.md#the-second-step). The session then says `amr: ["email", "otp"]`; the link alone gives `["email"]`.
 
 Code: `secondStep` in [`packages/server/src/app.ts`](../packages/server/src/app.ts).
 

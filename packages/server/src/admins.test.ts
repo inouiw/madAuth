@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { INITIAL_ADMIN_SETTING } from './admins.js';
 import type { MadauthConfig } from './config.js';
 import { Settings } from './settings.js';
-import { base32Decode, stepOf, totp } from './totp.js';
+import { base32Decode, stepOf, totp } from './authenticator.js';
 import {
   REDIRECT_TO,
   cookies,
@@ -154,15 +154,15 @@ describe("an admin's own role", () => {
   it('a refused deletion leaves the code from the authenticator app unused', async () => {
     const { app, store, grace } = await withAdmin();
     const signIn = { allowAsSignInMethod: true, secondFactor: 'none' } as const;
-    await setMethods(store, { google: signIn, password: signIn, totp: { allowAsSignInMethod: false, secondFactor: 'none' } });
-    const setup = await post(app, '/auth/totp/setup', {}, withSession(grace));
+    await setMethods(store, { google: signIn, password: signIn, authenticator: { allowAsSignInMethod: false, secondFactor: 'none' } });
+    const setup = await post(app, '/auth/authenticator/setup', {}, withSession(grace));
     const secret = base32Decode((await setup.json()).secret)!;
-    const confirm = await post(app, '/auth/totp/confirm', { code: totp(secret, stepOf(Date.now())) }, { Cookie: `madauth_session=${grace}; madauth_totp_setup=${cookies(setup).madauth_totp_setup.value}` });
+    const confirm = await post(app, '/auth/authenticator/confirm', { code: totp(secret, stepOf(Date.now())) }, { Cookie: `madauth_session=${grace}; madauth_authenticator_setup=${cookies(setup).madauth_authenticator_setup.value}` });
     const [recoveryCode] = (await confirm.json()).recoveryCodes;
 
     const refused = await post(app, '/auth/account/delete', { recoveryCode }, withSession(grace));
 
     expect(await refused.json()).toMatchObject({ error: 'own_admin_role' });
-    expect(await (await app.request('/auth/totp/status', { headers: withSession(grace) })).json()).toMatchObject({ recoveryCodesLeft: 10 });
+    expect(await (await app.request('/auth/authenticator/status', { headers: withSession(grace) })).json()).toMatchObject({ recoveryCodesLeft: 10 });
   });
 });

@@ -25,18 +25,18 @@ Code: `finish` in [`routes/passkey.ts`](../packages/server/src/routes/passkey.ts
 ## Adding a passkey
 
 - Only a signed-in user adds a passkey, and only within ten minutes of signing in (the session's `auth_time`, which renewals keep): later, the answer is `401 reauth_required`, and the user signs in again first. A session someone took over (a stolen cookie, a browser left open) must not give them a way in of their own that outlives it.
-- Or the sign-in whose policy requires a second factor the user doesn't have yet (`totp_setup_required` with `passkey` among its `factors`): the new passkey finishes that sign-in.
+- Or the sign-in whose policy requires a second factor the user doesn't have yet (`second_factor_setup_required` with `passkey` among its `factors`): the new passkey finishes that sign-in.
 - Or a sign-up with a passkey alone, once its address is confirmed (see below). A sign-up with the authenticator app alone has no first factor either, so it sets the app up, never a passkey; and a sign-up with a passkey sets up a passkey, never the app or a phone.
 - The options leave out the passkeys the user has (`excludeCredentials`), so an authenticator that holds one says so instead of making another. A passkey is stored by the SHA-256 of its credential id (the id itself can be longer than a key column holds), with its public key, its transports, its counter and a name the user gives it (`Passkey` by default, at most 64 characters, changed with `Madauth.passkey.rename`).
 - madAuth asks for no attestation (`none`): it doesn't check which device made the passkey, only that it was verified and answers for this site.
 
 ## Signing up with a passkey
 
-Every user has one confirmed e-mail address, and a passkey gives none: the authenticator only names the user by madAuth's id. So a sign-up with a passkey alone confirms the address first, then creates the passkey, like the [sign-up with the authenticator app alone](totp-security.md#setting-the-app-up):
+Every user has one confirmed e-mail address, and a passkey gives none: the authenticator only names the user by madAuth's id. So a sign-up with a passkey alone confirms the address first, then creates the passkey, like the [sign-up with the authenticator app alone](authenticator-security.md#setting-the-app-up):
 
 1. `POST /auth/passkey/signup` with the address (and a name) sends the confirmation e-mail (`email.send_verification`). It is offered only while passkeys are on, allowed as a sign-in method, and the server confirms addresses (`passkey.signUp` in `GET /auth/config`), and only to an app within the passkeys' domain, with a link (`redirectTo`) to one (`403 forbidden_origin` otherwise: the address would be confirmed for a passkey that can't be made there). The same rules as for every sign-up apply: the operator's check first (`user.signing_up` with `method: "passkey"`, failing closed), the "you already have an account" e-mail for an address that signs in another way, the same answer for every address, and the latest sign-up nobody finished wins: it drops the password or e-mail link an earlier, unconfirmed sign-up set.
 2. The link or the code confirms the address and answers with the step that creates the passkey (`401 passkey_setup_required`, `method: "passkey"`, `factors: ["passkey"]`). The user records which method a pending sign-up confirms its address for (`user.signUpMethod`), so the confirmation knows it is a passkey's.
-3. `/auth/passkey/register/*` accepts that step, and only that step of a sign-in without a first factor: the new passkey becomes the user's sign-in method (the account they signed up with), and signs them in (`amr: ["passkey"]`, `user.signed_up` with `method: "passkey"`, no `user.method_added`). With a `passkey` policy that asks for a second factor, the sign-up goes on with its setup (`totp_setup_required`: the app or a phone), as a passkey sign-in would; that setup never takes another passkey.
+3. `/auth/passkey/register/*` accepts that step, and only that step of a sign-in without a first factor: the new passkey becomes the user's sign-in method (the account they signed up with), and signs them in (`amr: ["passkey"]`, `user.signed_up` with `method: "passkey"`, no `user.method_added`). With a `passkey` policy that asks for a second factor, the sign-up goes on with its setup (`second_factor_setup_required`: the app or a phone), as a passkey sign-in would; that setup never takes another passkey.
 
 A new sign-up for an address that was confirmed but got no passkey makes it unconfirmed again, whatever its method: whoever sent it hasn't proven the inbox. A password sign-up for the address after the confirmation needs its own e-mail: until it is used, the passkey's setup wins and the password goes; once it is used, the password is the user's method and the passkey of the sign-up is refused (`setup_expired`).
 
@@ -65,4 +65,4 @@ A passkey belongs to a domain (the WebAuthn relying party id), and the browser o
 
 - Passkeys in native apps (Capacitor): WebAuthn in a WebView needs the app's associated domains (iOS) or asset links (Android) for the domain, and an origin in `ALLOWED_ORIGINS` for it.
 - Attestation, or allowing only certain authenticators (e.g. security keys of one maker).
-- Deleting the account asks for no passkey (the authenticator app protects the deletion, see [Authenticator app security](totp-security.md#removing-the-app)).
+- Deleting the account asks for no passkey (the authenticator app protects the deletion, see [Authenticator app security](authenticator-security.md#removing-the-app)).

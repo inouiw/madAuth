@@ -45,7 +45,7 @@ Every question is also an option, so a script needs no prompts. `--yes` takes th
 npx @madauth/server init --yes --app-url http://localhost:3000
 ```
 
-The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--github-client-id`, `--github-client-secret`, `--password` or `--no-password`, `--totp` or `--no-totp`, `--email-link` or `--no-email-link`, `--sms` or `--no-sms`, `--database`, `--webhook-url` and `--initial-admin-email`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
+The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--github-client-id`, `--github-client-secret`, `--password` or `--no-password`, `--authenticator` or `--no-authenticator`, `--email-link` or `--no-email-link`, `--sms` or `--no-sms`, `--database`, `--webhook-url` and `--initial-admin-email`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
 
 ## 3. Start the server
 
@@ -94,12 +94,12 @@ Other dev servers have a similar setting. In production, your reverse proxy or C
 
 ## 6. Sign users in
 
-Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `GitHub`, `EmailLink` for the e-mail link, `Passkey` for signing in with a passkey, and `Totp` for signing in with the authenticator app on its own (once an admin allows it in the settings). Second factors need no provider: once an admin sets the policy, the dialog asks for a passkey, a code from the app or a code by SMS by itself, and a user adds one from your app with `Madauth.setUpPasskey()`, `Madauth.setUpAuthenticator()` or `Madauth.setUpSms()`, or all of their sign-in methods with `Madauth.manageSignInMethods()`.
+Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `GitHub`, `EmailLink` for the e-mail link, `Passkey` for signing in with a passkey, and `Authenticator` for signing in with the authenticator app on its own (once an admin allows it in the settings). Second factors need no provider: once an admin sets the policy, the dialog asks for a passkey, a code from the app or a code by SMS by itself, and a user adds one from your app with `Madauth.setUpPasskey()`, `Madauth.setUpAuthenticator()` or `Madauth.setUpSms()`, or all of their sign-in methods with `Madauth.manageSignInMethods()`.
 
 ```ts
-import { Madauth, Password, Passkey, Totp, EmailLink } from '@madauth/web';
+import { Madauth, Password, Passkey, Authenticator, EmailLink } from '@madauth/web';
 
-Madauth.initialize({ providers: [new Password(), new Passkey(), new Totp(), new EmailLink()] });
+Madauth.initialize({ providers: [new Password(), new Passkey(), new Authenticator(), new EmailLink()] });
 Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
 signInButton.onclick = () => Madauth.signIn();
 ```
@@ -117,7 +117,7 @@ To ask every password user for a second factor (a passkey or the authenticator a
 ```ts
 const signIn = (secondFactor: 'none' | 'required' = 'none') => ({ allowAsSignInMethod: true, secondFactor });
 await Madauth.admin.setSettings({
-  methods: { google: signIn(), password: signIn('required'), 'email-link': signIn(), passkey: signIn(), totp: { allowAsSignInMethod: false, secondFactor: 'none' } },
+  methods: { google: signIn(), password: signIn('required'), 'email-link': signIn(), passkey: signIn(), authenticator: { allowAsSignInMethod: false, secondFactor: 'none' } },
 });
 ```
 

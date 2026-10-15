@@ -1,5 +1,5 @@
 // The authenticator app (TOTP): setting it up, signing in with it on its own (the e-mail address and a code),
-// and the second step of the other methods. The security rules are described in docs/totp-security.md.
+// and the second step of the other methods. The security rules are described in docs/authenticator-security.md.
 import type { Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
@@ -18,8 +18,8 @@ import {
   normalizeRecoveryCode,
   otpauthUri,
   verifyTotp,
-} from '../totp.js';
-import { newId, toMadauthUser, totpAccountKey, type StoredAccount, type StoredUser } from '../users.js';
+} from '../authenticator.js';
+import { authenticatorAccountKey, newId, toMadauthUser, type StoredAccount, type StoredUser } from '../users.js';
 import { finishSignIn, isSignUpStep, pendingFactor, whoSetsUp } from './challenge.js';
 import { reclaimConfirmation, signUpThenSetUp } from './email.js';
 import { createEmails } from './emails.js';
@@ -29,13 +29,13 @@ import { countSignInAttempt } from './lockout.js';
 
 export { CHALLENGE_COOKIE, CHALLENGE_TTL, CHALLENGE_TYP, clearChallenge, setChallenge, type Challenge, type NextStep } from './challenge.js';
 
-const SETUP_COOKIE = 'madauth_totp_setup';
-const SETUP_TYP = 'madauth-totp-setup+jwt';
+const SETUP_COOKIE = 'madauth_authenticator_setup';
+const SETUP_TYP = 'madauth-authenticator-setup+jwt';
 /** How long scanning the QR code and entering the first code may take. */
 const SETUP_TTL = 10 * 60;
 
 /** The routes, and where the setup cookie is sent. */
-const COOKIE_PATH = '/auth/totp';
+const COOKIE_PATH = '/auth/authenticator';
 
 /**
  * The setup cookie: whose setup it is (`sub`), its id, the secret as it will be stored (encrypted), the id of
@@ -52,15 +52,15 @@ interface SetupClaims extends JWTPayload {
 }
 
 /** The keys of the authenticator app: one encrypts the secrets, the other (the e-mail codes' key) hashes the recovery codes. */
-export interface TotpKeys {
-  totpKey: Buffer;
+export interface AuthenticatorKeys {
+  secretKey: Buffer;
   codeKey: Buffer;
 }
 
 const cookieOptions = (secure: boolean) => ({ path: COOKIE_PATH, httpOnly: true, secure, sameSite: 'Strict' as const });
 
 /** How a code was given: from the app, or one of the recovery codes. */
-export type CodeVia = 'totp' | 'recovery_code';
+export type CodeVia = 'authenticator' | 'recovery_code';
 
 /**
  * Checks the code in the request (`code` from the app, or `recoveryCode`) against the user's authenticator
@@ -70,7 +70,7 @@ export type CodeVia = 'totp' | 'recovery_code';
 export async function checkCode(
   c: Context,
   ctx: AppContext,
-  keys: TotpKeys,
+  keys: AuthenticatorKeys,
   user: StoredUser,
   account: StoredAccount,
   data: Body,
@@ -90,7 +90,7 @@ export async function checkCode(
   }
 
   if (typeof data.code !== 'string' || !account.secret) return wrong();
-  const secret = decryptSecret(keys.totpKey, account.secret);
+  const secret = decryptSecret(keys.secretKey, account.secret);
   if (!secret) {
     console.error(`[madauth] The authenticator secret of user ${user.id} can't be read: was MADAUTH_SIGNING_KEY changed?`);
     return wrong();
@@ -98,11 +98,11 @@ export async function checkCode(
   const step = verifyTotp(secret, data.code, Date.now(), TOTP_WINDOW);
   // A code works once: it must be later than the last accepted one, and the write decides between
   // requests sent at the same time.
-  if (step === null || step <= (account.lastUsedStep ?? 0) || !(await users.useTotpStep(account, step))) return wrong();
-  return 'totp';
+  if (step === null || step <= (account.lastUsedStep ?? 0) || !(await users.useAuthenticatorStep(account, step))) return wrong();
+  return 'authenticator';
 }
 
-export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
+export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: AuthenticatorKeys): void {
   const { config, secure, users } = ctx;
   const { issuer } = config;
   const cookie = cookieOptions(secure);
@@ -110,14 +110,14 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
 
   // Every route: an admin switched the authenticator app off, on its own and as a second factor.
   app.use(`${COOKIE_PATH}/*`, async (c, next) => {
-    if (!isOn('totp', ctx.configured, await methodsNow(c))) {
+    if (!isOn('authenticator', ctx.configured, await methodsNow(c))) {
       return error(c, 403, 'method_disabled', 'The authenticator app is switched off.');
     }
     await next();
   });
 
   /** Whether the app signs in on its own (the e-mail address and a code), as opposed to a second step only. */
-  const standalone = (c: Context) => ctx.enabled(c, 'totp');
+  const standalone = (c: Context) => ctx.enabled(c, 'authenticator');
   const notStandalone = (c: Context) => error(c, 403, 'method_disabled', 'Signing in with the authenticator app alone is switched off.');
 
   /** The stored user of the request's session, or null. */
@@ -133,18 +133,18 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     return { recoveryCodes, hashes: recoveryCodes.map((code) => hashRecoveryCode(keys.codeKey, normalizeRecoveryCode(code)!)) };
   };
 
-  /** The name the app shows next to the account: TOTP_ISSUER, or the host of the app that asked. */
-  const issuerLabel = (c: Context): string => config.totpIssuer || originHost(ctx, c);
+  /** The name the app shows next to the account: AUTHENTICATOR_ISSUER, or the host of the app that asked. */
+  const issuerLabel = (c: Context): string => config.authenticatorIssuer || originHost(ctx, c);
 
   app.post(`${COOKIE_PATH}/setup`, async (c) => {
     // Allowed as a sign-in method, a first app is a way in of its own: like adding a passkey, only within ten
     // minutes of signing in, so a session someone took over gives them no lasting way in.
-    const who = await whoSetsUp(c, ctx, 'totp', async (user) => (await standalone(c)) && !(await users.totpAccount(user.id)));
+    const who = await whoSetsUp(c, ctx, 'authenticator', async (user) => (await standalone(c)) && !(await users.authenticatorAccount(user.id)));
     if (who instanceof Response) return who;
     // Replacing an app takes a current code from it (or a recovery code), like removing it: a stolen
     // session alone must not swap the app and the recovery codes for the thief's. The approval holds for
     // SETUP_TTL in the setup cookie, so starting again (or a closed dialog) costs no second code.
-    const existing = await users.totpAccount(who.user.id);
+    const existing = await users.authenticatorAccount(who.user.id);
     let approved: number | undefined;
     if (existing) {
       const previous = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
@@ -165,7 +165,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const claims = {
       sub: who.user.id,
       setup: newId('tsu'),
-      secret: encryptSecret(keys.totpKey, secret),
+      secret: encryptSecret(keys.secretKey, secret),
       ...(existing ? { replaces: existing.setupId } : {}),
       ...(approved ? { approved } : {}),
     };
@@ -176,13 +176,13 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   });
 
   app.post(`${COOKIE_PATH}/confirm`, async (c) => {
-    const who = await whoSetsUp(c, ctx, 'totp');
+    const who = await whoSetsUp(c, ctx, 'authenticator');
     if (who instanceof Response) return who;
     const { challenge } = who;
     const data = await body(c);
     const setup = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
     const secret =
-      setup && setup.sub === who.user.id && typeof setup.secret === 'string' && typeof setup.setup === 'string' ? decryptSecret(keys.totpKey, setup.secret) : null;
+      setup && setup.sub === who.user.id && typeof setup.secret === 'string' && typeof setup.setup === 'string' ? decryptSecret(keys.secretKey, setup.secret) : null;
     if (!setup || !secret) return error(c, 400, 'setup_expired', 'The setup has expired or was started in another browser. Please start again.');
     const step = typeof data.code === 'string' ? verifyTotp(secret, data.code, Date.now(), TOTP_WINDOW) : null;
     // The setup cookie stays, so a mistyped code can be tried again.
@@ -199,12 +199,12 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const { recoveryCodes, hashes } = newRecoveryCodes();
     await users.addRecoveryCodes(user.id, setup.setup, hashes);
     const patch = { secret: setup.secret, setupId: setup.setup, failedAttempts: 0, lockedUntil: 0, lastUsedStep: step };
-    const replaced = setup.replaces === undefined ? null : await users.totpApp(user.id);
+    const replaced = setup.replaces === undefined ? null : await users.authenticatorApp(user.id);
     const current = replaced?.account ?? null;
     const written =
       setup.replaces === undefined
-        ? !!(await users.linkAccount(user.id, { key: totpAccountKey(user.id), primary: signUp, ...patch }))
-        : !!current && (await users.confirmTotpSetup(current.id, setup.replaces, patch));
+        ? !!(await users.linkAccount(user.id, { key: authenticatorAccountKey(user.id), primary: signUp, ...patch }))
+        : !!current && (await users.confirmAuthenticatorSetup(current.id, setup.replaces, patch));
     if (!written) {
       await users.clearRecoveryCodes(user.id, { only: setup.setup });
       deleteCookie(c, SETUP_COOKIE, cookie);
@@ -214,18 +214,18 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     deleteCookie(c, SETUP_COOKIE, cookie);
     // A new or replaced app is told; the app a user signed up with is part of their sign-up (`user.signed_up`).
     const secondFactor = replaced ? !replaced.signedUpWith : !signUp;
-    if (secondFactor) await ctx.emit('user.second_factor_enabled', { user: toMadauthUser(user), method: 'totp' });
+    if (secondFactor) await ctx.emit('user.second_factor_enabled', { user: toMadauthUser(user), method: 'authenticator' });
     if (!challenge) return c.json({ recoveryCodes });
-    const result = await finishSignIn(c, ctx, user, challenge, 'otp', 'totp');
+    const result = await finishSignIn(c, ctx, user, challenge, 'otp', 'authenticator');
     return c.json({ user: result, recoveryCodes });
   });
 
   app.post(`${COOKIE_PATH}/verify`, async (c) => {
-    const pending = await pendingFactor(c, ctx, 'totp');
+    const pending = await pendingFactor(c, ctx, 'authenticator');
     if (pending instanceof Response) return pending;
     const { challenge, user } = pending;
     // The app was removed meanwhile.
-    const account = await users.totpAccount(user.id);
+    const account = await users.authenticatorAccount(user.id);
     if (!account) return error(c, 401, 'challenge_expired', 'The sign-in has expired. Please sign in again.');
     const via = await checkCode(c, ctx, keys, user, account, await body(c));
     if (via instanceof Response) return via;
@@ -238,14 +238,14 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const wrong = () => error(c, 401, 'invalid_credentials', 'E-mail or code is wrong.');
     if (!isValidEmail(data.email)) return wrong();
     const user = await users.findByEmail(normalizeEmail(data.email));
-    const account = user ? await users.totpAccount(user.id) : null;
+    const account = user ? await users.authenticatorAccount(user.id) : null;
     // An unknown address, one without an app, one nobody confirmed, or a wrong code: all the same answer. With
     // the app allowed as a sign-in method, every user who has one signs in with it alone: the admin's decision.
     if (!user || !user.emailVerified || !account?.secret) return wrong();
     const via = await checkCode(c, ctx, keys, user, account, data, wrong);
     if (via instanceof Response) return via;
-    const result = await ctx.startSession(c, toMadauthUser(user), ['otp'], { method: 'totp', signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
-    await ctx.emit('user.signed_in', { user: result, method: 'totp' });
+    const result = await ctx.startSession(c, toMadauthUser(user), ['otp'], { method: 'authenticator', signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
+    await ctx.emit('user.signed_in', { user: result, method: 'authenticator' });
     return c.json({ user: result });
   });
 
@@ -253,7 +253,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     const user = await signedIn(c);
     if (!user) return noSession(c);
     const accounts = await users.accounts(user.id);
-    const account = accounts.find((a) => a.key === totpAccountKey(user.id));
+    const account = accounts.find((a) => a.key === authenticatorAccountKey(user.id));
     if (!account) return c.json({});
     // Another second factor (a passkey, a phone) satisfies a policy as well; and the app is not the user's last way in.
     const refused = await removalRefused(c, ctx, accounts, account, 'the authenticator app');
@@ -265,14 +265,14 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
     if (removed instanceof Response) return removed;
     if (!removed) return c.json({});
     await users.clearRecoveryCodes(user.id);
-    await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'totp' });
+    await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'authenticator' });
     return c.json({});
   });
 
   app.post(`${COOKIE_PATH}/recovery-codes`, async (c) => {
     const user = await signedIn(c);
     if (!user) return noSession(c);
-    const account = await users.totpAccount(user.id);
+    const account = await users.authenticatorAccount(user.id);
     if (!account) return error(c, 400, 'no_authenticator', 'No authenticator app is set up.');
     const via = await checkCode(c, ctx, keys, user, account, await body(c));
     if (via instanceof Response) return via;
@@ -284,7 +284,7 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
   app.get(`${COOKIE_PATH}/status`, async (c) => {
     const user = await signedIn(c);
     if (!user) return noSession(c);
-    const account = await users.totpAccount(user.id);
+    const account = await users.authenticatorAccount(user.id);
     return c.json({ enabled: !!account, recoveryCodesLeft: account ? await users.countRecoveryCodes(account) : 0 });
   });
 
@@ -292,6 +292,6 @@ export function totpRoutes(app: Hono, ctx: AppContext, keys: TotpKeys): void {
 
   if (ctx.webhook && ctx.emailVerification) {
     const emails = createEmails(ctx, users, ctx.webhook);
-    app.post(`${COOKIE_PATH}/signup`, async (c) => ((await standalone(c)) ? signUpThenSetUp(c, ctx, emails, 'totp') : notStandalone(c)));
+    app.post(`${COOKIE_PATH}/signup`, async (c) => ((await standalone(c)) ? signUpThenSetUp(c, ctx, emails, 'authenticator') : notStandalone(c)));
   }
 }

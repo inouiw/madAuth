@@ -1,5 +1,5 @@
 // A custom login screen: everything madAuth's dialog does, built with the headless API.
-import { EmailLink, GitHub, GoogleFedcm, Madauth, Passkey, Password, Totp, type MadauthError, type MadauthUser, type Result, type SecondFactor } from '@madauth/web';
+import { Authenticator, EmailLink, GitHub, GoogleFedcm, Madauth, Passkey, Password, type MadauthError, type MadauthUser, type Result, type SecondFactor } from '@madauth/web';
 
 type View =
   | 'signin'
@@ -7,11 +7,11 @@ type View =
   | 'forgot'
   | 'code'
   | 'reset'
-  | 'totp'
-  | 'totp-signup'
-  | 'totp-code'
-  | 'totp-setup'
-  | 'totp-codes'
+  | 'authenticator'
+  | 'authenticator-signup'
+  | 'authenticator-code'
+  | 'authenticator-setup'
+  | 'authenticator-codes'
   | 'email-link'
   | 'sms-code'
   | 'sms-setup'
@@ -28,11 +28,11 @@ const titles: Record<View, string> = {
   forgot: 'Reset password',
   code: 'Check your inbox',
   reset: 'Choose a new password',
-  totp: 'Authenticator app',
-  'totp-signup': 'Create account',
-  'totp-code': 'Enter your code',
-  'totp-setup': 'Set up authenticator app',
-  'totp-codes': 'Save your recovery codes',
+  authenticator: 'Authenticator app',
+  'authenticator-signup': 'Create account',
+  'authenticator-code': 'Enter your code',
+  'authenticator-setup': 'Set up authenticator app',
+  'authenticator-codes': 'Save your recovery codes',
   'email-link': 'Sign in with an e-mail link',
   'sms-code': 'Enter the code from the SMS',
   'sms-setup': 'Add your phone number',
@@ -48,12 +48,12 @@ let factors: SecondFactor[] = [];
 let pendingPhone = '';
 
 /** The address the e-mail went to, and what it was for; `alone` for a sign-up with the authenticator app or a passkey alone. */
-let pending: { email: string; purpose: 'verify' | 'reset' | 'signin'; code?: string; alone?: 'totp' | 'passkey' } | undefined;
+let pending: { email: string; purpose: 'verify' | 'reset' | 'signin'; code?: string; alone?: 'authenticator' | 'passkey' } | undefined;
 /** The recovery codes are on the screen: the login card stays although the user is signed in. */
 let showingCodes = false;
 
 // ui: 'custom' — this page shows its own screen, so madAuth's dialog never opens.
-void Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Passkey(), new Totp(), new EmailLink()], ui: 'custom' }).then((result) => {
+void Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Passkey(), new Authenticator(), new EmailLink()], ui: 'custom' }).then((result) => {
   // The hint under "forgot password" names the providers the server offers (their users have no password); without any, it goes.
   const providers = (['google', 'github'] as const).filter((method) => !result.leftOut.includes(method)).map((method) => ({ google: 'Google', github: 'GitHub' })[method]);
   $('#provider-hint').textContent = `Signed up with ${providers.join(' or ')}? There is no password to reset: use that button instead.`;
@@ -63,16 +63,16 @@ void Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Passw
   const policy = Madauth.password.policy;
   if (policy) $('#password-hint').textContent = `At least ${policy.minLength} characters.`;
   // The authenticator app on its own, and signing up with it, only when the server lets it.
-  $('#go-totp').hidden = !Madauth.totp.policy?.signIn;
+  $('#go-authenticator').hidden = !Madauth.authenticator.policy?.signIn;
   $('#go-passkey').hidden = !Madauth.passkey.signInAvailable;
-  $('#go-totp-signup').hidden = !Madauth.totp.policy?.signUp;
+  $('#go-authenticator-signup').hidden = !Madauth.authenticator.policy?.signUp;
   $('#go-passkey-signup').hidden = !(Madauth.passkey.signInAvailable && Madauth.passkey.policy?.signUp);
   // The e-mail link, only when the server offers it (its link is handled by initialize, like the confirmation links).
   $('#go-email-link').hidden = !Madauth.emailLink.policy;
   // A sign-in that goes on with a second step: after the redirect flow, or a link from an e-mail.
-  const step = Madauth.totp.pendingStep;
+  const step = Madauth.authenticator.pendingStep;
   factors = step?.factors ?? [];
-  if (step?.step === 'code') showTotpCode();
+  if (step?.step === 'code') showAuthenticatorCode();
   if (step?.step === 'passkey') show('passkey-step');
   if (step?.step === 'sms') void startSmsStep();
   if (step?.step === 'setup') void startSetup();
@@ -112,26 +112,29 @@ function say(message: string, isError = false): void {
 }
 
 /**
- * Shows a failed result; returns whether it succeeded. A sign-in that goes on with the authenticator app
- * (`totp_required`, `totp_setup_required`), or a sign-up with a passkey whose passkey is next
- * (`passkey_setup_required`), is not a failure: the next step is shown.
+ * Shows a failed result; returns whether it succeeded. A sign-in that goes on with a second step
+ * (`authenticator_required`, `passkey_required`, `sms_required`, `second_factor_setup_required`), or a
+ * sign-up with the app or a passkey alone whose method is set up next (`authenticator_setup_required`,
+ * `passkey_setup_required`), is not a failure: the next step is shown.
  */
 function report(result: Result): boolean {
   if (result.isSuccess) return true;
   factors = result.error.factors ?? [];
-  if (result.error.code === 'totp_required') showTotpCode();
+  if (result.error.code === 'authenticator_required') showAuthenticatorCode();
   else if (result.error.code === 'passkey_required') show('passkey-step');
   // The user closed the browser's passkey dialog: nothing to say.
   else if (result.error.code === 'cancelled') say('');
   else if (result.error.code === 'sms_required') void startSmsStep();
-  else if (result.error.code === 'totp_setup_required' || result.error.code === 'passkey_setup_required') void startSetup();
+  // A setup starts with the app, or with the passkey when only a passkey can finish it; the setup view offers a
+  // passkey or a phone instead when `factors` allow.
+  else if (['second_factor_setup_required', 'authenticator_setup_required', 'passkey_setup_required'].includes(result.error.code)) void startSetup();
   else say(messageFor(result.error), true);
   return false;
 }
 
 /** The app's code step; the user can switch to the SMS when they have a phone as well. */
-function showTotpCode(): void {
-  show('totp-code');
+function showAuthenticatorCode(): void {
+  show('authenticator-code');
   $('#use-sms').hidden = !factors.includes('sms');
 }
 
@@ -191,7 +194,7 @@ function onSubmit(selector: string, handler: (values: Record<string, string>) =>
   });
 }
 
-function checkInbox(email: string, purpose: 'verify' | 'reset' | 'signin', alone?: 'totp' | 'passkey'): void {
+function checkInbox(email: string, purpose: 'verify' | 'reset' | 'signin', alone?: 'authenticator' | 'passkey'): void {
   pending = { email, purpose, alone };
   $('#code-email').textContent = email;
   show('code');
@@ -227,7 +230,7 @@ onSubmit('#code-form', async ({ code }) => {
     return;
   }
   // The same confirmation for every sign-up; one with the app or a passkey alone goes on with its setup.
-  const scope = pending.alone === 'totp' ? Madauth.totp : pending.alone === 'passkey' ? Madauth.passkey : Madauth.password;
+  const scope = pending.alone === 'authenticator' ? Madauth.authenticator : pending.alone === 'passkey' ? Madauth.passkey : Madauth.password;
   report(await scope.verifyEmail({ email: pending.email, code }));
 });
 
@@ -246,16 +249,16 @@ onSubmit('#email-link-form', async ({ email }) => {
 
 // --- The authenticator app ---
 
-onSubmit('#totp-form', async ({ email, code }) => {
-  report(await Madauth.totp.signIn({ email, ...codeOptions(code) }));
+onSubmit('#authenticator-form', async ({ email, code }) => {
+  report(await Madauth.authenticator.signIn({ email, ...codeOptions(code) }));
 });
 
-onSubmit('#totp-signup-form', async ({ name, email }) => {
-  if (report(await Madauth.totp.signUp({ email, name: name || undefined }))) checkInbox(email, 'verify', 'totp');
+onSubmit('#authenticator-signup-form', async ({ name, email }) => {
+  if (report(await Madauth.authenticator.signUp({ email, name: name || undefined }))) checkInbox(email, 'verify', 'authenticator');
 });
 
-onSubmit('#totp-code-form', async ({ code }) => {
-  const result = await Madauth.totp.verify(codeOptions(code));
+onSubmit('#authenticator-code-form', async ({ code }) => {
+  const result = await Madauth.authenticator.verify(codeOptions(code));
   // Too late: the sign-in starts over.
   if (!result.isSuccess && result.error.code === 'challenge_expired') show('signin', messageFor(result.error));
   else report(result);
@@ -263,20 +266,20 @@ onSubmit('#totp-code-form', async ({ code }) => {
 
 /** Asks the server for a new key and shows it as a QR code (an SVG from the library) and as text. */
 async function startSetup(): Promise<void> {
-  const pending = Madauth.totp.pendingStep;
+  const pending = Madauth.authenticator.pendingStep;
   // Only a passkey can finish the step, e.g. a sign-up with a passkey alone: the browser's dialog needs a click.
   if (pending?.step === 'setup' && pending.factors?.length && pending.factors.every((factor) => factor === 'passkey')) {
     show('passkey-setup');
     return;
   }
-  show('totp-setup');
+  show('authenticator-setup');
   // During a sign-in, a phone can be added instead of the app when the server has SMS codes on; a sign-up
   // with the app sets the app up, never a phone.
-  $('#use-phone').hidden = !(pending?.step === 'setup' && pending.method !== 'totp' && Madauth.sms.available);
+  $('#use-phone').hidden = !(pending?.step === 'setup' && pending.method !== 'authenticator' && Madauth.sms.available);
   $('#use-passkey-setup').hidden = !(pending?.step === 'setup' && pending.factors?.includes('passkey') && Madauth.passkey.available);
   $('#qr').innerHTML = '';
   $('#secret').textContent = '';
-  let result = await Madauth.totp.startSetup();
+  let result = await Madauth.authenticator.startSetup();
   // An app exists already: the current one has to agree to being replaced.
   if (!result.isSuccess && result.error.code === 'code_required') {
     const code = prompt('A current code from your authenticator app, or a recovery code, to replace it:');
@@ -285,7 +288,7 @@ async function startSetup(): Promise<void> {
       show('signin');
       return;
     }
-    result = await Madauth.totp.startSetup(codeOptions(code));
+    result = await Madauth.authenticator.startSetup(codeOptions(code));
   }
   if (!result.isSuccess) {
     report(result);
@@ -293,11 +296,11 @@ async function startSetup(): Promise<void> {
   }
   $('#qr').innerHTML = result.qrSvg;
   $('#secret').textContent = result.secret;
-  $<HTMLInputElement>('#totp-setup-form input').focus();
+  $<HTMLInputElement>('#authenticator-setup-form input').focus();
 }
 
-onSubmit('#totp-setup-form', async ({ code }) => {
-  const result = await Madauth.totp.confirmSetup({ code: code.replace(/\s/g, '') });
+onSubmit('#authenticator-setup-form', async ({ code }) => {
+  const result = await Madauth.authenticator.confirmSetup({ code: code.replace(/\s/g, '') });
   if (!result.isSuccess) {
     // The key on the screen is of no use any more.
     if (result.error.code === 'setup_expired') $('#qr').innerHTML = '';
@@ -314,7 +317,7 @@ onSubmit('#totp-setup-form', async ({ code }) => {
     }),
   );
   $('#login').hidden = false;
-  show('totp-codes');
+  show('authenticator-codes');
 });
 
 $('#codes-saved').addEventListener('click', () => {
@@ -325,7 +328,7 @@ $('#codes-saved').addEventListener('click', () => {
   void refreshAuthenticator();
 });
 
-$('#totp-setup-cancel').addEventListener('click', () => {
+$('#authenticator-setup-cancel').addEventListener('click', () => {
   $('#login').hidden = !!Madauth.currentUser;
   show('signin');
 });
@@ -336,7 +339,7 @@ $('#totp-setup-cancel').addEventListener('click', () => {
 async function startSmsStep(): Promise<void> {
   show('sms-code');
   $('#sms-phone').textContent = '…';
-  $('#use-app').hidden = !factors.includes('totp');
+  $('#use-app').hidden = !factors.includes('authenticator');
   const sent = await Madauth.sms.send();
   if (sent.isSuccess) $('#sms-phone').textContent = sent.phone;
   else say(messageFor(sent.error), true);
@@ -344,7 +347,7 @@ async function startSmsStep(): Promise<void> {
 
 $('#sms-resend').addEventListener('click', () => void startSmsStep());
 $('#use-sms').addEventListener('click', () => void startSmsStep());
-$('#use-app').addEventListener('click', () => showTotpCode());
+$('#use-app').addEventListener('click', () => showAuthenticatorCode());
 $('#use-phone').addEventListener('click', () => show('sms-setup'));
 
 onSubmit('#sms-code-form', async ({ code }) => {
@@ -435,29 +438,29 @@ $('#sms-remove').addEventListener('click', async () => {
 
 /** Shows whether the signed-in user has the app, and the buttons that apply. */
 async function refreshAuthenticator(): Promise<void> {
-  const status = await Madauth.totp.status();
+  const status = await Madauth.authenticator.status();
   const offered = status.isSuccess || status.error.code !== 'flow_not_enabled';
-  $('#totp-status').textContent = !status.isSuccess
+  $('#authenticator-status').textContent = !status.isSuccess
     ? status.error.code === 'flow_not_enabled'
       ? 'The authenticator app is not offered by this server.'
       : status.error.message
     : status.enabled
       ? `Authenticator app: set up, ${status.recoveryCodesLeft} recovery codes left.`
       : 'Authenticator app: not set up.';
-  $('#totp-setup').hidden = !offered;
-  $('#totp-remove').hidden = !(status.isSuccess && status.enabled);
+  $('#authenticator-setup').hidden = !offered;
+  $('#authenticator-remove').hidden = !(status.isSuccess && status.enabled);
 }
 
 // The signed-in user sets the app up in the login card's setup view, shown next to the account.
-$('#totp-setup').addEventListener('click', () => {
+$('#authenticator-setup').addEventListener('click', () => {
   $('#login').hidden = false;
   void startSetup();
 });
 
-$('#totp-remove').addEventListener('click', async () => {
+$('#authenticator-remove').addEventListener('click', async () => {
   const code = prompt('A current code from your authenticator app, or a recovery code:');
   if (!code) return;
-  const result = await Madauth.totp.remove(codeOptions(code));
+  const result = await Madauth.authenticator.remove(codeOptions(code));
   if (!result.isSuccess) alert(messageFor(result.error));
   void refreshAuthenticator();
 });

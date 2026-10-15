@@ -5,7 +5,7 @@ import type { MadauthLogin } from './madauth-login.js';
 import { EmailLink } from './providers/email-link.js';
 import { GoogleRedirect } from './providers/google-redirect.js';
 import { Password } from './providers/password.js';
-import { Totp } from './providers/totp.js';
+import { Authenticator } from './providers/authenticator.js';
 import { de } from './strings.js';
 import { CODE, RESET_TOKEN, SERVER, fakeServer, grace, resetAll, settle } from './test-helpers.js';
 
@@ -125,9 +125,9 @@ describe('the language of <madauth-login>', () => {
 describe('<madauth-login> in German', () => {
   it('shows the sign-in view', async () => {
     const server = fakeServer();
-    server.methods.totp = true;
+    server.methods.authenticator = true;
     server.codeFlow = true;
-    await openDialog({ providers: [new GoogleRedirect(), new Password(), new Totp()], locale: 'de' });
+    await openDialog({ providers: [new GoogleRedirect(), new Password(), new Authenticator()], locale: 'de' });
 
     expect(text('h2')).toBe('Anmelden');
     expect($('.close')!.getAttribute('aria-label')).toBe('Schließen');
@@ -142,7 +142,7 @@ describe('<madauth-login> in German', () => {
     expect([...login().shadowRoot!.querySelectorAll('.row .label')].map((label) => label.textContent)).toEqual([
       'Authentifizierungs-App',
     ]);
-    expect($('[data-method="totp"]')!.title).toBe(de.methods.totp.description);
+    expect($('[data-method="authenticator"]')!.title).toBe(de.methods.authenticator.description);
   });
 
   it('keeps a heading set by the page', async () => {
@@ -259,20 +259,20 @@ describe('<madauth-login> in German', () => {
 
   it('shows the views of the authenticator app', async () => {
     const server = fakeServer();
-    server.methods.totp = true;
+    server.methods.authenticator = true;
     server.policy.password = 'optional';
     server.authenticators.add('grace@example.com');
-    await openDialog({ providers: [new Password(), new Totp()], locale: 'de' });
+    await openDialog({ providers: [new Password(), new Authenticator()], locale: 'de' });
 
     // Signing in with the app alone.
-    await click('[data-method="totp"]');
+    await click('[data-method="authenticator"]');
     expect(text('h2')).toBe('Authentifizierungs-App');
     expect(text('label[for="code"]')).toBe('Code aus der App');
-    expect(text('form.totp .hint')).toBe('Geben Sie den 6-stelligen Code aus Ihrer Authentifizierungs-App ein.');
+    expect(text('form.authenticator .hint')).toBe('Geben Sie den 6-stelligen Code aus Ihrer Authentifizierungs-App ein.');
     expect(text('[data-action="toggle-recovery"]')).toBe('Stattdessen einen Wiederherstellungscode verwenden');
-    expect(text('form.totp .submit')).toBe('Anmelden');
+    expect(text('form.authenticator .submit')).toBe('Anmelden');
     fill({ email: 'grace@example.com', code: '000000' });
-    await submit('totp');
+    await submit('authenticator');
     expect(text('[part="error"]')).toContain('E-Mail-Adresse oder Code ist falsch.');
     await click('[data-action="toggle-recovery"]');
     expect(text('label[for="recovery-code"]')).toBe('Wiederherstellungscode');
@@ -284,7 +284,7 @@ describe('<madauth-login> in German', () => {
     await submit('signin');
     expect(text('h2')).toBe('Code eingeben');
     expect(text('.lead')).toBe('Geben Sie den Code aus Ihrer Authentifizierungs-App ein, um die Anmeldung abzuschließen.');
-    expect(text('form.totp-code .submit')).toBe('Weiter');
+    expect(text('form.authenticator-code .submit')).toBe('Weiter');
     login().close();
 
     // Setting the app up while signed in: Grace has one, so the current one has to agree first.
@@ -298,26 +298,26 @@ describe('<madauth-login> in German', () => {
     );
     expect(text('[data-action="cancel"]')).toBe('Abbrechen');
     fill({ code: CODE });
-    await submit('totp-code');
+    await submit('authenticator-code');
     expect(text('h2')).toBe('Authentifizierungs-App einrichten');
     expect(text('.lead')).toBe(
       'Scannen Sie diesen QR-Code mit Ihrer Authentifizierungs-App (z. B. Google Authenticator oder 1Password) und geben Sie dann den Code ein, den sie anzeigt.',
     );
     expect(text('.hint')).toBe('Die Anmeldung mit einem Passwort fragt dann zusätzlich nach einem Code aus der App.');
     expect($('[part="qr"]')!.getAttribute('aria-label')).toBe('QR-Code für Ihre Authentifizierungs-App');
-    expect(text('form.totp-setup .submit')).toBe('Einschalten');
+    expect(text('form.authenticator-setup .submit')).toBe('Einschalten');
     expect(text('[data-action="cancel"]')).toBe('Abbrechen');
-    server.totpSetup = undefined;
+    server.authenticatorSetup = undefined;
     fill({ code: CODE });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
     expect(text('[part="error"]')).toBe('Die Einrichtung hat zu lange gedauert. Bitte beginnen Sie neu. Neu beginnen');
     await click('[data-action="restart-setup"]');
     // Starting again asks the current app once more.
     expect(text('h2')).toBe('Code eingeben');
     fill({ code: CODE });
-    await submit('totp-code');
+    await submit('authenticator-code');
     fill({ code: CODE });
-    await submit('totp-setup');
+    await submit('authenticator-setup');
     expect(text('h2')).toBe('Wiederherstellungscodes speichern');
     expect(text('[data-action="saved"]')).toBe('Ich habe sie gespeichert');
   });

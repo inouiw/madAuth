@@ -120,7 +120,7 @@ describe('Madauth.passkey', () => {
     stubWebAuthn({ id: 'cred-9' });
     await init();
 
-    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'totp_setup_required', factors: ['passkey', 'totp'] } });
+    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'second_factor_setup_required', factors: ['passkey', 'authenticator'] } });
     const added = await Madauth.passkey.add();
 
     expect(added).toMatchObject({ isSuccess: true, user: grace, passkey: { name: 'Passkey' } });
@@ -181,8 +181,8 @@ describe('Madauth.passkey.signUp', () => {
     expect(Madauth.passkey.pendingStep).toEqual({ step: 'setup', method: 'passkey', factors: ['passkey'] });
     const added = await Madauth.passkey.add();
 
-    expect(added).toMatchObject({ isSuccess: false, error: { code: 'totp_setup_required', method: 'passkey', factors: ['totp'] } });
-    expect(Madauth.passkey.pendingStep).toEqual({ step: 'setup', method: 'passkey', factors: ['totp'] });
+    expect(added).toMatchObject({ isSuccess: false, error: { code: 'second_factor_setup_required', method: 'passkey', factors: ['authenticator'] } });
+    expect(Madauth.passkey.pendingStep).toEqual({ step: 'setup', method: 'passkey', factors: ['authenticator'] });
     expect(Madauth.currentUser).toBeNull();
   });
 

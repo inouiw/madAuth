@@ -1,5 +1,5 @@
 // The challenge cookie: carries a sign-in from its first step to its second (a passkey, a code from the
-// authenticator app, a code by SMS, or setting one of them up). Shared by the passkey, totp and sms routes.
+// authenticator app, a code by SMS, or setting one of them up). Shared by the passkey, authenticator and sms routes.
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
@@ -23,22 +23,24 @@ const LEGACY_COOKIE_PATH = '/auth/totp';
 
 /**
  * What a sign-in still needs after its first step succeeded: a passkey, a code from the app, a code by SMS,
- * setting a second factor up (`totp-setup`, named after the only one there was at first: the challenge's
- * `setup` says which can be set up), or creating the passkey of a sign-up with one (`passkey-setup`).
+ * or a setup, of which the challenge's `setup` names what can be set up. `second-factor-setup`: a policy
+ * requires a second factor the user doesn't have, and they choose one. `<method>-setup`: a sign-up creates
+ * that method now, after the address is confirmed (`authenticator-setup`: the sign-up with the app alone,
+ * `passkey-setup`: the sign-up with a passkey alone).
  */
-export type NextStep = 'passkey' | 'totp' | 'totp-setup' | 'passkey-setup' | 'sms';
+export type NextStep = 'passkey' | 'authenticator' | 'sms' | 'second-factor-setup' | 'authenticator-setup' | 'passkey-setup';
 
-/** The steps that set a factor up: the setup of a second factor, and the passkey of a sign-up with one. */
-const SETUP_STEPS: readonly NextStep[] = ['totp-setup', 'passkey-setup'];
+/** The steps that set something up rather than check it: the challenge's `setup` says what. */
+const SETUP_STEPS: readonly NextStep[] = ['second-factor-setup', 'authenticator-setup', 'passkey-setup'];
+export const isSetupStep = (step: unknown): boolean => SETUP_STEPS.includes(step as NextStep);
 
 /** How the second step was passed, for `user.signed_in`. */
-export type SecondFactorVia = 'passkey' | 'totp' | 'recovery_code' | 'sms';
+export type SecondFactorVia = 'passkey' | 'authenticator' | 'recovery_code' | 'sms';
 
 /**
- * The challenge cookie: who passed the first step, how (`amr`, empty for a sign-up with the app or a passkey), what comes
- * next, which factors the user can finish with, which they can set up when the setup is next (absent in
- * cookies from before madAuth 0.6: the app or a phone), and what the method knows beyond the record (Google's
- * name and picture), for the session.
+ * The challenge cookie: who passed the first step, how (`amr`, empty for a sign-up with the app or a
+ * passkey), what comes next, which factors the user can finish with, which they can set up when the setup is
+ * next, and what the method knows beyond the record (Google's name and picture), for the session.
  */
 export interface Challenge {
   sub: string;
@@ -69,14 +71,14 @@ export function clearChallenge(c: Context, secure: boolean): void {
 
 /**
  * The request's challenge for this step, or null if there is none, it expired, or it waits for another
- * step: a factor (`passkey`, `totp`, `sms`) needs to be among the challenge's, so a user who has several can
- * switch; `setup` needs `next` to be a setup step (see {@link SETUP_STEPS}).
+ * step: a factor (`passkey`, `authenticator`, `sms`) needs to be among the challenge's, so a user who has
+ * several can switch; `setup` needs `next` to be a setup step.
  */
 export async function readChallenge(c: Context, ctx: AppContext, step: SecondFactor | 'setup'): Promise<ChallengeClaims | null> {
   const claims = await readToken<ChallengeClaims>(await ctx.keys, ctx.config.issuer, CHALLENGE_TYP, getCookie(c, CHALLENGE_COOKIE));
   if (!claims || typeof claims.sub !== 'string' || !Array.isArray(claims.amr)) return null;
   const factors = Array.isArray(claims.factors) ? claims.factors : [];
-  const fits = step === 'setup' ? SETUP_STEPS.includes(claims.next) : factors.includes(step);
+  const fits = step === 'setup' ? isSetupStep(claims.next) : factors.includes(step);
   return fits ? claims : null;
 }
 
@@ -88,8 +90,7 @@ export const methodOff = (c: Context): Response => error(c, 403, 'method_disable
 /** The sign-in that waits for the setup of `factor`, with its user; null if there is none (any more). */
 export async function pendingSetup(c: Context, ctx: AppContext, factor: SecondFactor): Promise<{ user: StoredUser; challenge: ChallengeClaims } | null> {
   const pending = await readChallenge(c, ctx, 'setup');
-  // A cookie from before madAuth 0.6 names no factors: the app or a phone could be set up then.
-  const challenge = pending && (Array.isArray(pending.setup) ? pending.setup.includes(factor) : factor !== 'passkey') ? pending : null;
+  const challenge = pending && Array.isArray(pending.setup) && pending.setup.includes(factor) ? pending : null;
   const waiting = challenge ? await ctx.users.findById(challenge.sub) : null;
   return challenge && waiting && waiting.sessionVersion === challenge.sv ? { user: waiting, challenge } : null;
 }

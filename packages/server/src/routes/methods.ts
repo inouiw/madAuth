@@ -121,7 +121,7 @@ export function methodRoutes(app: Hono, ctx: AppContext, onRemoved: (account: St
     if (!account) return error(c, 404, 'method_not_found', 'You have no such sign-in method.');
     const method = methodOf(account) as MethodId;
     if (!REMOVABLE.includes(method)) {
-      return error(c, 400, 'invalid_options', 'The authenticator app is removed with a code from it: use /auth/totp/remove.');
+      return error(c, 400, 'invalid_options', 'The authenticator app is removed with a code from it: use /auth/authenticator/remove.');
     }
     const refused = await removalRefused(c, ctx, accounts, account, method === 'passkey' ? 'this passkey' : 'this sign-in method');
     if (refused) return refused;

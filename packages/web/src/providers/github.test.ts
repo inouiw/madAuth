@@ -9,7 +9,7 @@ import { GitHub } from './github.js';
 import { GoogleRedirect } from './google-redirect.js';
 import { Password } from './password.js';
 import type { SignInProvider } from './provider.js';
-import { Totp } from './totp.js';
+import { Authenticator } from './authenticator.js';
 
 let errorLog: ReturnType<typeof vi.spyOn>;
 let warnLog: ReturnType<typeof vi.spyOn>;
@@ -122,9 +122,9 @@ describe('GitHub', () => {
     const server = fakeServer();
     server.github = true;
     server.codeFlow = true;
-    server.methods.totp = true;
+    server.methods.authenticator = true;
 
-    void openDialog([new Totp(), new Password(), new GitHub(), new GoogleRedirect()]);
+    void openDialog([new Authenticator(), new Password(), new GitHub(), new GoogleRedirect()]);
     await settle();
 
     expect($$('.button-slot').map((slot) => slot.getAttribute('data-button'))).toEqual(['google', 'github']);
@@ -132,7 +132,7 @@ describe('GitHub', () => {
     expect($$('.divider')).toHaveLength(1);
     expect($('form.signin')).not.toBeNull();
     expect($('.others h3')!.textContent).toBe('Other ways to sign in');
-    expect($$('.others [data-method]').map((row) => row.getAttribute('data-method'))).toEqual(['totp']);
+    expect($$('.others [data-method]').map((row) => row.getAttribute('data-method'))).toEqual(['authenticator']);
     expect($('.github-slot')!.getAttribute('title')).toBe('Use your GitHub account');
   });
 
@@ -148,14 +148,14 @@ describe('GitHub', () => {
     expect($('.others')).toBeNull();
     login().close();
 
-    server.methods.totp = true;
-    void openDialog([new GitHub(), new Totp()]);
+    server.methods.authenticator = true;
+    void openDialog([new GitHub(), new Authenticator()]);
     await settle();
     expect($('.divider')).toBeNull();
     expect($('.others h3')).not.toBeNull();
     login().close();
 
-    void openDialog([new Totp()]);
+    void openDialog([new Authenticator()]);
     await settle();
     expect($('.others h3')).toBeNull();
   });
@@ -196,10 +196,10 @@ describe('GitHub', () => {
     server.github = true;
     server.policy.github = 'optional';
     server.authenticators.add('ada@example.com');
-    server.challenge = { email: 'ada@example.com', next: 'totp', method: 'github', factors: ['totp'] };
-    history.replaceState(null, '', '/page?x=1#madauth_next=totp&madauth_factors=totp&madauth_method=github');
+    server.challenge = { email: 'ada@example.com', next: 'authenticator', method: 'github', factors: ['authenticator'] };
+    history.replaceState(null, '', '/page?x=1#madauth_next=authenticator&madauth_factors=authenticator&madauth_method=github');
 
-    await Madauth.initialize({ serverUrl: SERVER, providers: [new GitHub(), new Totp()] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GitHub(), new Authenticator()] });
     await settle();
 
     expect(location.href).toBe('https://app.example.com/page?x=1');
@@ -208,7 +208,7 @@ describe('GitHub', () => {
     let detail: SignedInDetail | undefined;
     login().addEventListener('madauth-signed-in', (e) => (detail = (e as CustomEvent<SignedInDetail>).detail));
     $<HTMLInputElement>('form input[name="code"]')!.value = CODE;
-    $<HTMLFormElement>('form.totp-code')!.requestSubmit();
+    $<HTMLFormElement>('form.authenticator-code')!.requestSubmit();
     await settle();
     expect(Madauth.currentUser).toEqual(ada);
     expect(detail).toEqual({ method: 'github', user: ada });
@@ -220,15 +220,20 @@ describe('GitHub', () => {
     server.codeFlow = true;
     server.policy.google = 'required';
     server.policy.github = 'required';
-    const providers = () => [new GoogleRedirect(), new GitHub(), new Totp()];
+    const providers = () => [new GoogleRedirect(), new GitHub(), new Authenticator()];
 
-    history.replaceState(null, '', '/page#madauth_next=totp-setup&madauth_method=github');
+    history.replaceState(null, '', '/page#madauth_next=second-factor-setup&madauth_method=github');
     await Madauth.initialize({ serverUrl: SERVER, providers: providers(), ui: 'custom' });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'github' });
+    expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'github' });
 
-    history.replaceState(null, '', '/page#madauth_next=totp-setup');
+    history.replaceState(null, '', '/page#madauth_next=second-factor-setup');
     await Madauth.initialize({ serverUrl: SERVER, providers: providers(), ui: 'custom' });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'google' });
+    expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'google' });
+
+    // The setup of a method a sign-up creates names that method, should a redirect ever reach one.
+    history.replaceState(null, '', '/page#madauth_next=authenticator-setup');
+    await Madauth.initialize({ serverUrl: SERVER, providers: providers(), ui: 'custom' });
+    expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'google', factors: ['authenticator'] });
   });
 
   it('B8: GitHub takes a policy for the second factor, and its users are told they have no password to reset', async () => {
@@ -240,7 +245,7 @@ describe('GitHub', () => {
     void openDialog([new GoogleRedirect(), new GitHub(), new Password()]);
     await settle();
 
-    expect(Madauth.totp.policy?.secondFactorFor).toEqual(['github']);
+    expect(Madauth.authenticator.policy?.secondFactorFor).toEqual(['github']);
     $<HTMLButtonElement>('[data-action="forgot"]')!.click();
     await settle();
     expect($('.hint')!.textContent).toBe('Signed up with Google or GitHub? There is no password to reset: use that button instead.');

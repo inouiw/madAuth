@@ -17,7 +17,7 @@ import { recentSignIn } from './helpers.js';
 export const REDIRECT_ERROR_PARAM = 'madauth_error';
 /** Hash parameter that says what the sign-in still needs after the redirect flow: the authenticator app's code or setup. */
 export const REDIRECT_NEXT_PARAM = 'madauth_next';
-/** Hash parameter next to it: which second factors can finish the step, comma-separated (`madauth_factors=totp,sms`). */
+/** Hash parameter next to it: which second factors can finish the step, comma-separated (`madauth_factors=authenticator,sms`). */
 export const REDIRECT_FACTORS_PARAM = 'madauth_factors';
 /**
  * Hash parameter next to the error and the next step: which method's sign-in it is (`madauth_method=github`),
@@ -158,7 +158,7 @@ const METHOD_NAMES = {
   google: 'Google',
   github: 'GitHub',
   password: 'a password',
-  totp: 'an authenticator app',
+  authenticator: 'an authenticator app',
   'email-link': 'an e-mail link',
   passkey: 'a passkey',
 } satisfies Record<SignInMethod, string>;

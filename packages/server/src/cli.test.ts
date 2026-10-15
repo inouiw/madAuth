@@ -213,13 +213,13 @@ describe('init', () => {
   });
 
   it('tells the admin how to let the authenticator app sign in on its own next to other methods', async () => {
-    const args = ['init', '--yes', '--totp', '--sms', '--initial-admin-email', 'grace@example.com', '--out', tempFile()];
+    const args = ['init', '--yes', '--authenticator', '--sms', '--initial-admin-email', 'grace@example.com', '--out', tempFile()];
 
     const { output } = await runCli(args, noQuestions);
 
     expect(output).toContain('Signing in with the authenticator app alone is off until an admin allows it. Signed in as the admin, in your app:');
     expect(output).toContain(
-      "await Madauth.admin.setSettings({ methods: { password: signIn, totp: signIn, sms: secondFactorOnly } });",
+      "await Madauth.admin.setSettings({ methods: { password: signIn, authenticator: signIn, sms: secondFactorOnly } });",
     );
     expect(output).not.toContain('set-methods');
   });

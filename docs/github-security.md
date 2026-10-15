@@ -28,7 +28,7 @@ Code: `resolveProviderUser` in [`routes/oauth.ts`](../packages/server/src/routes
 
 ## The second step
 
-With a policy of `optional` or `required` for the method, the callback does not sign in by itself: the sign-in goes on with the authenticator app or an SMS code (`#madauth_next=totp`, `sms` or `totp-setup` in the hash of the page the user comes back to, with `madauth_method=github`), exactly as after Google's redirect flow. See [Authenticator app security](totp-security.md#the-second-step). The session then says `amr: ["github", "otp"]` or `["github", "sms"]`; GitHub alone gives `["github"]`.
+With a policy of `optional` or `required` for the method, the callback does not sign in by itself: the sign-in goes on with the authenticator app or an SMS code (`#madauth_next=authenticator`, `sms` or `second-factor-setup` in the hash of the page the user comes back to, with `madauth_method=github`), exactly as after Google's redirect flow. See [Authenticator app security](authenticator-security.md#the-second-step). The session then says `amr: ["github", "otp"]` or `["github", "sms"]`; GitHub alone gives `["github"]`.
 
 Code: `secondStep` in [`packages/server/src/app.ts`](../packages/server/src/app.ts).
 

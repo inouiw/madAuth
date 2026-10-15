@@ -25,8 +25,8 @@ export interface MadauthConfig {
   renewalTtlSeconds: number;
   /** Cookie domain, e.g. `.example.com` (COOKIE_DOMAIN). */
   cookieDomain?: string;
-  /** The name authenticator apps show next to the account (TOTP_ISSUER). Default: the host of the app that asked for the setup. */
-  totpIssuer?: string;
+  /** The name authenticator apps show next to the account (AUTHENTICATOR_ISSUER). Default: the host of the app that asked for the setup. */
+  authenticatorIssuer?: string;
   /**
    * The domain passkeys belong to (PASSKEY_RP_ID), e.g. `example.com` for apps on `example.com` and its
    * subdomains. Default: the host of the app that asks, so a passkey works on that host only.
@@ -104,7 +104,7 @@ export const envVars = {
   GITHUB_CLIENT_SECRET: false,
   DATABASE_URL: true,
   INITIAL_ADMIN_EMAIL: false,
-  TOTP_ISSUER: false,
+  AUTHENTICATOR_ISSUER: false,
   PASSKEY_RP_ID: false,
   WEBHOOK_URL: false,
   WEBHOOK_SECRET: false,
@@ -156,9 +156,14 @@ function parseOrigin(name: string, value: string): string {
   return url.origin;
 }
 
-/** Docker's --env-file keeps quotes around values (NAME='value'); Node's --env-file removes them. */
+/**
+ * A variable's value, or undefined if it is empty. Docker's --env-file keeps quotes around values
+ * (NAME='value'); Node's --env-file removes them.
+ */
+const unquote = (value: string | undefined): string | undefined => value?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
+
 function readEnv(env: Record<string, string | undefined>, name: keyof typeof envVars): string | undefined {
-  return env[name]?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
+  return unquote(env[name]);
 }
 
 /**
@@ -180,6 +185,10 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
         `Remove the variable, and an admin sets the rules with Madauth.admin.setSettings({ password: { minLength: ${env.PASSWORD_MIN_LENGTH.trim()} } }). ` +
         'See docs/upgrading.md.',
     );
+  }
+  // Renamed in 0.6. Ignored, it would change the name new authenticator apps show without a word.
+  if (unquote(env.TOTP_ISSUER)) {
+    throw new ConfigError('TOTP_ISSUER is now AUTHENTICATOR_ISSUER: rename the variable. See docs/upgrading.md.');
   }
 
   const issuerValue = require('MADAUTH_ISSUER');
@@ -284,7 +293,7 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
     sessionTtlSeconds,
     renewalTtlSeconds,
     cookieDomain: read('COOKIE_DOMAIN'),
-    totpIssuer: read('TOTP_ISSUER'),
+    authenticatorIssuer: read('AUTHENTICATOR_ISSUER'),
     google: clientId ? { clientId, clientSecret: read('GOOGLE_CLIENT_SECRET') } : undefined,
     github: githubClientId && githubClientSecret ? { clientId: githubClientId, clientSecret: githubClientSecret } : undefined,
     store,
@@ -352,8 +361,8 @@ const RENAMED_TYPES: Record<string, string> = {
   'signup.before': 'user.signing_up',
   'email.verified': 'user.email_verified',
   'email.password_reset': 'user.password_reset',
-  'totp.enabled': 'user.second_factor_enabled (with method "totp")',
-  'totp.disabled': 'user.second_factor_disabled (with method "totp")',
+  'totp.enabled': 'user.second_factor_enabled (with method "authenticator")',
+  'totp.disabled': 'user.second_factor_disabled (with method "authenticator")',
   'sms.enabled': 'user.second_factor_enabled (with method "sms")',
   'sms.disabled': 'user.second_factor_disabled (with method "sms")',
   'totp.recovery_code_used': 'user.recovery_code_used',

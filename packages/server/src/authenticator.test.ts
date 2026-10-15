@@ -1,4 +1,4 @@
-// Behaviour described in docs/totp-security.md; update the doc when changing it.
+// Behaviour described in docs/authenticator-security.md; update the doc when changing it.
 import { describe, expect, it } from 'vitest';
 import { deriveCodeKey } from './password.js';
 import { signingKey } from './test/helpers.js';
@@ -7,7 +7,7 @@ import {
   base32Decode,
   base32Encode,
   decryptSecret,
-  deriveTotpKey,
+  deriveAuthenticatorKey,
   encryptSecret,
   generateRecoveryCodes,
   generateTotpSecret,
@@ -18,7 +18,7 @@ import {
   stepOf,
   totp,
   verifyTotp,
-} from './totp.js';
+} from './authenticator.js';
 
 /** The secret of the test vectors in RFC 4226 and RFC 6238. */
 const rfcSecret = Buffer.from('12345678901234567890');
@@ -97,7 +97,7 @@ describe('codes', () => {
 });
 
 describe('secrets at rest', () => {
-  const key = deriveTotpKey(signingKey.d!);
+  const key = deriveAuthenticatorKey(signingKey.d!);
 
   it('U6: a secret is encrypted with a random IV and comes back only with the same key, untouched', () => {
     const secret = generateTotpSecret();
@@ -108,7 +108,7 @@ describe('secrets at rest', () => {
     expect(encryptSecret(key, secret)).not.toBe(stored);
     expect(decryptSecret(key, stored)).toEqual(secret);
 
-    expect(decryptSecret(deriveTotpKey(generateTotpSecret().toString('base64url')), stored)).toBe(null);
+    expect(decryptSecret(deriveAuthenticatorKey(generateTotpSecret().toString('base64url')), stored)).toBe(null);
     const [version, iv, encrypted, tag] = stored.split('.');
     const flipped = Buffer.from(tag, 'base64url');
     flipped[0] ^= 1;
@@ -119,7 +119,7 @@ describe('secrets at rest', () => {
 
   it('U6: the key is derived from the signing key and differs from the key for e-mail codes', () => {
     expect(key).toHaveLength(32);
-    expect(deriveTotpKey(signingKey.d!)).toEqual(key);
+    expect(deriveAuthenticatorKey(signingKey.d!)).toEqual(key);
     expect(key.equals(deriveCodeKey(signingKey.d!))).toBe(false);
   });
 });

@@ -47,7 +47,7 @@ export interface MadAuthServerProps {
    * `email.send_signin_link` as well, e.g. {@link EMAIL_LINK_EVENTS}. Without a webhook, Google and GitHub only.
    */
   readonly webhook?: { readonly url: string; readonly events?: readonly string[] };
-  /** More environment variables, e.g. `INITIAL_ADMIN_EMAIL`, `SESSION_TTL` or `TOTP_ISSUER` (see docs/server.md). */
+  /** More environment variables, e.g. `INITIAL_ADMIN_EMAIL`, `SESSION_TTL` or `AUTHENTICATOR_ISSUER` (see docs/server.md). */
   readonly environment?: Record<string, string>;
   /** Default: 512. madAuth needs at least 256 MB for password hashing; more memory is also more CPU. */
   readonly memorySize?: number;

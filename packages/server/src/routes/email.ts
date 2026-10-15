@@ -3,21 +3,24 @@
 import type { Context, Hono } from 'hono';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
+import { FORMER_AUTHENTICATOR_ID } from '../settings.js';
 import { isSignUpMethod, toMadauthUser, type SignUpMethod, type StoredUser, type Users } from '../users.js';
 import { localeOf, type WebhookClient } from '../webhooks.js';
 import { MAIL_INTERVAL_MS, createEmails, type Emails } from './emails.js';
 import { accepted, body, error, nameOf, redirectTarget, signInAnswer, unavailable } from './helpers.js';
 
 /**
- * The method the user's pending sign-up confirms the address for, as the sign-up recorded it. A password
- * sign-up whose password went meanwhile (an e-mail link sign-up took the address over) counts as unrecorded,
- * as does a record from before schema version 9: then, as before, a password if the user has one, else the
+ * The method the user's pending sign-up confirms the address for, as the sign-up recorded it (`totp`, the
+ * app's id before it was named `authenticator`, is read as `authenticator`). A password sign-up whose
+ * password went meanwhile (an e-mail link sign-up took the address over) counts as unrecorded, as does a
+ * record from before schema version 9: then, as before, a password if the user has one, else the
  * authenticator app.
  */
 export async function signUpMethodOf(users: Users, user: StoredUser): Promise<SignUpMethod> {
-  const recorded = isSignUpMethod(user.signUpMethod) ? user.signUpMethod : null;
+  const stored = user.signUpMethod === FORMER_AUTHENTICATOR_ID ? 'authenticator' : user.signUpMethod;
+  const recorded = isSignUpMethod(stored) ? stored : null;
   if (recorded && recorded !== 'password') return recorded;
-  return (await users.passwordAccount(user.id)) ? 'password' : 'totp';
+  return (await users.passwordAccount(user.id)) ? 'password' : 'authenticator';
 }
 
 /**
