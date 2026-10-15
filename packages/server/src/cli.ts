@@ -18,9 +18,9 @@ Commands:
                                An answer given as an option is not asked for: --app-url <url>,
                                --google-client-id <id>, --google-client-secret <secret>,
                                --github-client-id <id>, --github-client-secret <secret>, --password or
-                               --no-password, --totp or --no-totp (sign-up with the authenticator app),
-                               --email-link or --no-email-link (passwordless sign-in by e-mail),
-                               --sms or --no-sms (SMS codes as a second factor),
+                               --no-password, --authenticator or --no-authenticator (sign-up with the
+                               authenticator app), --email-link or --no-email-link (passwordless sign-in
+                               by e-mail), --sms or --no-sms (SMS codes as a second factor),
                                --database <url>, --webhook-url <url>, --initial-admin-email <address> (who
                                becomes the first admin). --yes takes the default for the rest. --out <path>
                                writes another file, --force overwrites.
@@ -167,7 +167,7 @@ function parseCliArgs(args: string[]) {
       'github-client-id': { type: 'string' },
       'github-client-secret': { type: 'string' },
       password: { type: 'boolean' },
-      totp: { type: 'boolean' },
+      authenticator: { type: 'boolean' },
       'email-link': { type: 'boolean' },
       sms: { type: 'boolean' },
       database: { type: 'string' },
@@ -289,11 +289,11 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
 
   const password = options.password ?? /^y/i.test(await answer(undefined, 'E-mail & password sign-in? (yes/no)', 'yes'));
   // The app as a second factor needs no setting here; signing up with it alone needs the confirmation e-mails.
-  const totp = options.totp ?? /^y/i.test(await answer(undefined, 'Sign-up with the authenticator app alone, without a password? (yes/no)', 'no'));
+  const authenticator = options.authenticator ?? /^y/i.test(await answer(undefined, 'Sign-up with the authenticator app alone, without a password? (yes/no)', 'no'));
   const emailLink = options['email-link'] ?? /^y/i.test(await answer(undefined, 'Passwordless sign-in with an e-mail link? (yes/no)', 'no'));
   // SMS codes are a second factor only: they need a method that signs in, and a receiver that sends the SMS.
   const sms = options.sms ?? /^y/i.test(await answer(undefined, 'SMS codes as a second factor, sent by your webhook receiver? (yes/no)', 'no'));
-  const emails = password || totp || emailLink;
+  const emails = password || authenticator || emailLink;
   const webhook = emails || sms;
   if (!webhook && options['webhook-url'] !== undefined) {
     return fail('--webhook-url is for the e-mails of e-mail & password sign-in, of the e-mail link and of sign-up with the authenticator app, and for SMS codes, which are turned off.');
@@ -315,7 +315,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   // The types each chosen method needs, once each.
   const events = [
     ...(password ? ['email.send_verification', 'email.send_password_reset', 'email.send_already_registered', 'email.send_password_reset_no_password'] : []),
-    ...(totp ? ['email.send_verification', 'email.send_already_registered'] : []),
+    ...(authenticator ? ['email.send_verification', 'email.send_already_registered'] : []),
     ...(emailLink ? ['email.send_signin_link', 'email.send_already_registered'] : []),
     ...(sms ? ['sms.send_code', 'user.second_factor_enabled', 'user.second_factor_disabled'] : []),
   ]
@@ -369,7 +369,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   writeFileSync(file, content, { mode: 0o600, flag: 'wx' });
 
   const google = clientSecret ? 'GoogleRedirect' : clientId ? 'GoogleFedcm' : undefined;
-  const steps = nextSteps(file, origin, google, !!githubClientId, password, totp, emailLink, sms, normalizeEmail(adminEmail));
+  const steps = nextSteps(file, origin, google, !!githubClientId, password, authenticator, emailLink, sms, normalizeEmail(adminEmail));
   return { output: `Wrote ${file}.\n\nNext steps:\n\n${steps}`, exitCode: 0 };
 }
 
@@ -380,7 +380,7 @@ function nextSteps(
   google: 'GoogleFedcm' | 'GoogleRedirect' | undefined,
   github: boolean,
   password: boolean,
-  totp = false,
+  authenticator = false,
   emailLink = false,
   sms = false,
   adminEmail = '',
@@ -388,9 +388,9 @@ function nextSteps(
   const server = `http://localhost:${PORT}`;
   // Quoted when needed, so the command can be pasted as it is.
   const envFile = /[^\w./-]/.test(file) ? `'${file.replaceAll("'", `'\\''`)}'` : file;
-  const providers = [google, github && 'GitHub', password && 'Password', totp && 'Totp', emailLink && 'EmailLink'].filter(Boolean);
+  const providers = [google, github && 'GitHub', password && 'Password', authenticator && 'Authenticator', emailLink && 'EmailLink'].filter(Boolean);
   // The methods as the admin lists them to let the app sign in on its own; SMS codes stay a second factor.
-  const methodList = [google && 'google', github && 'github', password && 'password', totp && 'totp', emailLink && "'email-link'"]
+  const methodList = [google && 'google', github && 'github', password && 'password', authenticator && 'authenticator', emailLink && "'email-link'"]
     .filter(Boolean)
     .map((method) => `${method}: signIn`)
     .concat(sms ? ['sms: secondFactorOnly'] : [])
@@ -399,7 +399,7 @@ function nextSteps(
   const googleOrigins = new Set([origin, ...(new URL(origin).hostname === 'localhost' ? ['http://localhost'] : [])]);
   const steps = [
     ['Start the madAuth server:', '', `  npx @madauth/server start --env-file ${envFile}`],
-    (password || totp || emailLink || sms) && [
+    (password || authenticator || emailLink || sms) && [
       `madAuth hands its ${sms ? 'e-mails and SMS' : 'e-mails'} to your webhook receiver. For development, start the development receiver,`,
       `which prints them, with the same WEBHOOK_URL and WEBHOOK_SECRET as in ${file}:`,
       '',
@@ -440,7 +440,7 @@ function nextSteps(
       `Sign up with ${adminEmail} in your app: you get the role admin (INITIAL_ADMIN_EMAIL), and manage claims and`,
       'settings with Madauth.admin. Give a second user the role as well, so that one admin can help the other.',
     ],
-    totp &&
+    authenticator &&
       (google || github || password || emailLink) && [
         `Signing in with the authenticator app alone is off until an admin allows it. ${adminEmail ? 'Signed in as the admin' : 'As an admin (see INITIAL_ADMIN_EMAIL)'}, in your app:`,
         '',

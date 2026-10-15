@@ -22,20 +22,21 @@ import { createMethodsApi } from './scopes/methods.js';
 import { createPasskeyApi, type PasskeyInfo } from './scopes/passkey.js';
 import { createPasswordApi } from './scopes/password.js';
 import { createSmsApi } from './scopes/sms.js';
-import { createTotpApi } from './scopes/totp.js';
+import { createAuthenticatorApi } from './scopes/authenticator.js';
 import { stringsFor, type Strings } from './strings.js';
 
 export interface MadauthOptions {
   /** Base URL of the madAuth server. Default: the page's own origin (e.g. behind a reverse proxy). */
   serverUrl?: string;
-  /** The sign-in methods to offer, e.g. `[new GoogleFedcm(), new Password(), new Totp()]`. */
+  /** The sign-in methods to offer, e.g. `[new GoogleFedcm(), new Password(), new Authenticator()]`. */
   providers: SignInProvider[];
   /**
    * `'dialog'` (default): madAuth's sign-in dialog, opened with `Madauth.signIn()`; it also opens by itself
    * when the page was opened from a password reset link, when a sign-in goes on with a second step, or with
    * the error of a sign-in that failed outside it (a redirect, a link, One Tap) while nobody is signed in.
-   * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.github`, `Madauth.totp`,
-   * `Madauth.emailLink`, `Madauth.passkey`, `Madauth.sms` and `Madauth.methods`; the dialog never opens.
+   * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.github`,
+   * `Madauth.authenticator`, `Madauth.emailLink`, `Madauth.passkey`, `Madauth.sms` and `Madauth.methods`; the
+   * dialog never opens.
    */
   ui?: 'dialog' | 'custom';
   /**
@@ -139,7 +140,7 @@ function logError<T extends object>(result: Result<T>): Result<T> {
   return result;
 }
 
-/** The step a `passkey_required`, `totp_required`, `sms_required` or `totp_setup_required` error stands for, with the method whose sign-in it is. */
+/** The step an error stands for (see `secondStepOf`), with the method whose sign-in it is. */
 function nextStepOf(error: MadauthError): PendingStep | undefined {
   return pendingStepOf(error, isLoginMethodId(error.method) ? error.method : 'password');
 }
@@ -213,7 +214,8 @@ function validate(
 
 /**
  * Opened from the link in a confirmation e-mail: confirms the address and signs the user in, or goes on
- * with the authenticator app. The same for a sign-up with a password and one with the app.
+ * with the next step: a second factor, or setting up the app or the passkey the user signs up with. The
+ * same for a sign-up with a password, one with the app and one with a passkey.
  */
 async function handleVerifyLink(ctx: ProviderContext): Promise<void> {
   // The token is a secret: it leaves the address bar (and so the history) right away.
@@ -264,7 +266,9 @@ function handleRedirectReturn(ctx: ProviderContext): 'google' | 'github' | undef
     return undefined;
   }
   if (isSecondFactor(next)) ctx.signInContinues({ step: FACTOR_STEPS[next], method, factors: named.length ? named : [next] });
-  else if (next === 'totp-setup') ctx.signInContinues(named.length ? { step: 'setup', method, factors: named } : { step: 'setup', method });
+  else if (next === 'second-factor-setup') ctx.signInContinues(named.length ? { step: 'setup', method, factors: named } : { step: 'setup', method });
+  else if (next === 'authenticator-setup') ctx.signInContinues({ step: 'setup', method, factors: ['authenticator'] });
+  else if (next === 'passkey-setup') ctx.signInContinues({ step: 'setup', method, factors: ['passkey'] });
   return undefined;
 }
 
@@ -467,13 +471,13 @@ export const Madauth = {
    * with the app, a field for the first code it shows, and the recovery codes to save. Resolves with the
    * recovery codes once the user has seen them. A user who has an app already is asked for a code from it
    * first: a new app replaces it. Fails with `cancelled` when the dialog is closed before, `no_session` when
-   * nobody is signed in, and `flow_not_enabled` when the server has the app switched off (no `new Totp()`
-   * is needed). With `ui: 'custom'` use `Madauth.totp.startSetup()` and `confirmSetup()`.
+   * nobody is signed in, and `flow_not_enabled` when the server has the app switched off (no `new Authenticator()`
+   * is needed). With `ui: 'custom'` use `Madauth.authenticator.startSetup()` and `confirmSetup()`.
    */
   async setUpAuthenticator(): Promise<Result<{ recoveryCodes: string[] }>> {
-    const ready = await dialogReady('setUpAuthenticator', 'Madauth.totp.startSetup() and confirmSetup()');
+    const ready = await dialogReady('setUpAuthenticator', 'Madauth.authenticator.startSetup() and confirmSetup()');
     if (!ready.isSuccess) return ready;
-    if (!state!.config?.totp) {
+    if (!state!.config?.authenticator) {
       return fail('flow_not_enabled', 'The madAuth server has the authenticator app switched off: no sign-in method is set to ask for it, and it does not sign in on its own.');
     }
     if (!user) return fail('no_session', 'Nobody is signed in.');
@@ -642,8 +646,8 @@ export const Madauth = {
   /** GitHub sign-in for custom login screens. Needs `new GitHub()`. */
   github: createGitHubApi(core),
 
-  /** The authenticator app for custom login screens: sign-in, the second step, the setup. Needs `new Totp()`. */
-  totp: createTotpApi(core),
+  /** The authenticator app for custom login screens: sign-in, the second step, the setup. Needs `new Authenticator()`. */
+  authenticator: createAuthenticatorApi(core),
 
   /** The passwordless e-mail link for custom login screens. Needs `new EmailLink()`. */
   emailLink: createEmailLinkApi(core),

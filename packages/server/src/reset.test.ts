@@ -26,7 +26,7 @@ import {
   type TestMethods,
 } from './test/helpers.js';
 import { softAuthenticator } from './test/webauthn.js';
-import { base32Decode, stepOf, totp } from './totp.js';
+import { base32Decode, stepOf, totp } from './authenticator.js';
 import { Users } from './users.js';
 
 type Made = ReturnType<typeof passwordApp>;
@@ -43,7 +43,7 @@ const everything: TestMethods = {
   password: { allowAsSignInMethod: true, secondFactor: 'optional' },
   'email-link': ON,
   passkey: ON,
-  totp: FACTOR,
+  authenticator: FACTOR,
   sms: FACTOR,
 };
 const github = { github: { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET } };
@@ -87,10 +87,10 @@ async function addEverything({ app, hook }: Made, cookie: string) {
   const added = await post(app, '/auth/passkey/register/verify', { response, name: 'Laptop' }, { Cookie: `${cookie}; madauth_passkey=${cookies(options).madauth_passkey.value}` });
   expect(added.status).toBe(200);
 
-  const setup = await post(app, '/auth/totp/setup', {}, { Cookie: cookie });
+  const setup = await post(app, '/auth/authenticator/setup', {}, { Cookie: cookie });
   const secret = base32Decode(((await setup.json()) as { secret: string }).secret)!;
   const code = totp(secret, stepOf(Date.now()));
-  const confirmed = await post(app, '/auth/totp/confirm', { code }, { Cookie: `${cookie}; madauth_totp_setup=${cookies(setup).madauth_totp_setup.value}` });
+  const confirmed = await post(app, '/auth/authenticator/confirm', { code }, { Cookie: `${cookie}; madauth_authenticator_setup=${cookies(setup).madauth_authenticator_setup.value}` });
   expect(confirmed.status).toBe(200);
 
   const phone = await post(app, '/auth/sms/setup', { phone: '+41791234567' }, { Cookie: cookie });
@@ -113,6 +113,7 @@ describe('resetting a user\'s sign-in', () => {
     const { passkey, secret } = await addEverything(made, cookie);
     await setClaims(store, grace.email, { roles: ['editor'] });
     expect((await store.findMany('account', { userId })).map((account) => String(account.key).split(':')[0]).sort()).toEqual(
+      // The app's account keeps the key of madAuth before 0.6 (`totp:<userId>`).
       ['email-link', 'github', 'passkey', 'password', 'sms', 'totp'],
     );
     expect(await store.findMany('recoveryCode', { userId })).toHaveLength(10);
@@ -121,7 +122,7 @@ describe('resetting a user\'s sign-in', () => {
     await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
     const resetLink = linkAndCode(hook.lastEmail()).token;
     const waiting = await post(app, '/auth/password/signin', grace);
-    expect(await waiting.json()).toMatchObject({ error: 'passkey_required', factors: ['passkey', 'totp', 'sms'] });
+    expect(await waiting.json()).toMatchObject({ error: 'passkey_required', factors: ['passkey', 'authenticator', 'sms'] });
     const challenge = `madauth_challenge=${cookies(waiting).madauth_challenge.value}`;
     await store.update('user', { id: userId }, { wrongCodes: 7 });
     const [before] = await store.findMany('user', { id: userId });
@@ -134,9 +135,9 @@ describe('resetting a user\'s sign-in', () => {
     expect(await store.findMany('account', { userId })).toEqual([]);
     expect(await store.findMany('recoveryCode', { userId })).toEqual([]);
     expect((await store.findMany('verification', { userId })).filter((record) => record.purpose !== 'passkey')).toEqual([]);
-    // The user stays, with her address unconfirmed: her next sign-up proves the inbox again.
+    // The user stays, with her address unconfirmed and no pending sign-up: her next sign-up proves the inbox again.
     const [after] = await store.findMany('user', { id: userId });
-    expect(after).toEqual({ ...before, emailVerified: false, sessionVersion: expect.any(Number), wrongCodes: 0 });
+    expect(after).toEqual({ ...before, emailVerified: false, sessionVersion: expect.any(Number), wrongCodes: 0, signUpMethod: null });
     expect(after.sessionVersion).toBeGreaterThan(Number(before.sessionVersion));
     // GitHub's authorization goes with its account; one event tells the webhook, none per method.
     expect(revoked.revocations()).toHaveLength(1);
@@ -150,7 +151,7 @@ describe('resetting a user\'s sign-in', () => {
     // Her sessions and the sign-in that waited for its second step have ended; the admin's has not.
     expect(await sessionStatus(app, cookie)).toBe(401);
     expect(await sessionStatus(app, admin)).toBe(200);
-    const step = await post(app, '/auth/totp/verify', { code: totp(secret, stepOf(Date.now())) }, { Cookie: challenge });
+    const step = await post(app, '/auth/authenticator/verify', { code: totp(secret, stepOf(Date.now())) }, { Cookie: challenge });
     expect(await step.json()).toMatchObject({ error: 'challenge_expired' });
     // Nothing she had signs her in, and the reset link is gone.
     expect(await (await post(app, '/auth/password/signin', grace)).json()).toMatchObject({ error: 'invalid_credentials' });
@@ -218,6 +219,38 @@ describe('resetting a user\'s sign-in', () => {
     expect(error).toHaveBeenLastCalledWith(expect.stringContaining('did not revoke'));
     expect(await store.findMany('account', { email: 'ada@example.com' })).toEqual([]);
     expect(hook.calls.at(-1)).toMatchObject({ type: 'user.sign_in_reset', data: { user: { email: 'ada@example.com' } } });
+  });
+
+  it('R6: a user who signed up with a passkey alone and lost it signs up again with a passkey, and keeps her id', async () => {
+    const made = await withAdminAndGrace();
+    const { app, hook, store, admin } = made;
+    const pia = 'pia@example.com';
+    const passkeySignUp = async () => {
+      expect((await post(app, '/auth/passkey/signup', { email: pia, redirectTo: REDIRECT_TO })).status).toBe(202);
+      const confirmed = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
+      expect(await confirmed.json()).toMatchObject({ error: 'passkey_setup_required', factors: ['passkey'] });
+      const challenge = `madauth_challenge=${cookies(confirmed).madauth_challenge.value}`;
+      const options = await post(app, '/auth/passkey/register/options', {}, { Cookie: challenge });
+      const { response } = browser.create(await options.json());
+      const added = await post(app, '/auth/passkey/register/verify', { response }, { Cookie: `${challenge}; madauth_passkey=${cookies(options).madauth_passkey.value}` });
+      expect(added.status).toBe(200);
+      return ((await added.json()) as { user: { id: string } }).user.id;
+    };
+    advance(61_000);
+    const userId = await passkeySignUp();
+    expect(await store.findOne('user', { id: userId })).toMatchObject({ signUpMethod: 'passkey', emailVerified: true });
+
+    expect((await reset(app, pia, admin)).status).toBe(200);
+
+    // The sign-up her method was recorded for is over with the reset: the next one records its own.
+    expect(await store.findOne('user', { id: userId })).toMatchObject({ signUpMethod: null, emailVerified: false });
+    expect(await store.findMany('account', { userId })).toEqual([]);
+    hook.calls.length = 0;
+    advance(61_000);
+    expect(await passkeySignUp()).toBe(userId);
+    expect(await store.findMany('account', { userId })).toEqual([expect.objectContaining({ primaryUserId: userId })]);
+    // Her sign-up was complete before: no second user.signed_up.
+    expect(hook.types()).not.toContain('user.signed_up');
   });
 
   it('R5: an account another request adds while the reset runs goes too, with its authorization at GitHub', async () => {

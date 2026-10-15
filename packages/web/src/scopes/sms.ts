@@ -24,7 +24,7 @@ export interface SmsApi {
   confirmSetup(options: { code: string }): Promise<Result<{ user?: MadauthUser }>>;
   /**
    * Sends a code to the user's number: for the second step of a sign-in that ended with `sms_required` (or
-   * `totp_required` with `sms` among its `factors`), or, signed in, to approve replacing or removing the
+   * `authenticator_required` with `sms` among its `factors`), or, signed in, to approve replacing or removing the
    * number. Resolves to the masked number. Fails with `too_soon`, `no_phone`, `challenge_expired` or `no_session`.
    */
   send(): Promise<Result<{ phone: string }>>;
@@ -38,7 +38,7 @@ export interface SmsApi {
   remove(options: { code: string }): Promise<Result>;
   /** Whether the signed-in user has a number, and which (masked). Fails with `no_session`. */
   status(): Promise<Result<{ enabled: boolean; phone: string | null }>>;
-  /** What a sign-in under way still needs, see `Madauth.totp.pendingStep`: `step` is `sms` for a code by SMS. */
+  /** What a sign-in under way still needs, see `Madauth.authenticator.pendingStep`: `step` is `sms` for a code by SMS. */
   readonly pendingStep: PendingStep | null;
   /** Whether the server has SMS codes on; false until initialized. */
   readonly available: boolean;

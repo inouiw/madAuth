@@ -19,7 +19,7 @@ export const en = {
     google: { label: 'Continue with Google', description: 'Use your Google account' },
     github: { label: 'Continue with GitHub', description: 'Use your GitHub account' },
     password: { label: 'Email & password', description: 'Sign in with your email address and password' },
-    totp: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
+    authenticator: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
     'email-link': { label: 'Email link', description: 'Passwordless sign-in by email' },
     passkey: { label: 'Passkey', description: 'Sign in with your fingerprint, face or screen lock' },
   } satisfies Record<LoginMethodId, { label: string; description: string }>,
@@ -91,19 +91,19 @@ export const en = {
   recoveryCode: 'Recovery code',
   useRecoveryCode: 'Use a recovery code instead',
   useApp: 'Use the authenticator app instead',
-  totpHint: 'Enter the 6-digit code from your authenticator app.',
+  authenticatorHint: 'Enter the 6-digit code from your authenticator app.',
   /** `invalid_credentials` on the authenticator app's own sign-in form. */
-  totpInvalid: 'Email or code is wrong. To sign in with an authenticator app, set it up first while signed in another way.',
+  authenticatorInvalid: 'Email or code is wrong. To sign in with an authenticator app, set it up first while signed in another way.',
   /** On the "Create account" form of a sign-up with the app alone. */
-  totpSignUpHint: 'You will set up your authenticator app after confirming your email address.',
+  authenticatorSignUpHint: 'You will set up your authenticator app after confirming your email address.',
   /** The second step after a password, Google, GitHub or e-mail link sign-in. */
-  totpCode: {
+  authenticatorCode: {
     heading: 'Enter your code',
     lead: 'Enter the code from your authenticator app to finish signing in.',
     /** Setting up a new app while one exists: the current one has to agree. */
     replaceLead: 'Enter the code from your current authenticator app, or a recovery code, to replace it with a new one.',
   },
-  totpSetup: {
+  authenticatorSetup: {
     heading: 'Set up authenticator app',
     lead: 'Scan this QR code with your authenticator app (e.g. Google Authenticator or 1Password), then enter the code it shows.',
     /** When a sign-in requires the app and the user has none yet. */
@@ -118,7 +118,7 @@ export const en = {
       secondFactor: (methods: string) => `From then on, signing in with ${methods} also asks for a code from the app.`,
     },
   },
-  totpCodes: {
+  authenticatorCodes: {
     heading: 'Save your recovery codes',
     lead: 'If you lose your authenticator app, one of these codes signs you in instead. Each works once. Keep them somewhere safe.',
     saved: 'I have saved them',
@@ -157,6 +157,11 @@ export const en = {
   /** The button at the top of the sign-in view. */
   signInWithPasskey: 'Sign in with a passkey',
   usePasskey: 'Use a passkey instead',
+  /** On the "Create account" form of a sign-up with a passkey alone. */
+  passkeySignUpHint: 'You will create your passkey after confirming your email address. It signs you in with your fingerprint, face or screen lock.',
+  /** Links on the "Create account" form, between the sign-up with a password and the one with a passkey. */
+  passkeySignUpInstead: 'Use a passkey instead of a password',
+  passwordSignUpInstead: 'Use a password instead',
   /** The second step with a passkey. */
   passkeyStep: {
     heading: 'Confirm with your passkey',
@@ -168,6 +173,8 @@ export const en = {
     lead: 'A passkey signs you in with your fingerprint, face or screen lock. It is kept on your device or in your password manager.',
     /** When a sign-in requires a second factor and the user has none yet. */
     requiredLead: 'Signing in requires a second factor. Create a passkey: it uses your fingerprint, face or screen lock.',
+    /** In a sign-up with a passkey alone, once the address is confirmed. */
+    signUpLead: 'Your email address is confirmed. Create your passkey to finish signing up: it uses your fingerprint, face or screen lock.',
     name: 'Name',
     /** Under the name field. */
     nameHint: 'So you can tell your passkeys apart, e.g. "Laptop".',
@@ -182,7 +189,7 @@ export const en = {
   methodsView: {
     heading: 'Sign-in methods',
     lead: 'These are the ways you sign in. Add another one, so you can still sign in if you lose one.',
-    labels: { google: 'Google', github: 'GitHub', password: 'Password', totp: 'Authenticator app', 'email-link': 'Email link', passkey: 'Passkey' } satisfies Record<LoginMethodId, string>,
+    labels: { google: 'Google', github: 'GitHub', password: 'Password', authenticator: 'Authenticator app', 'email-link': 'Email link', passkey: 'Passkey' } satisfies Record<LoginMethodId, string>,
     /** Next to a method the server allows only as a second factor. */
     secondFactorOnly: 'As a second factor',
     lastUsed: (date: string) => `Last used ${date}`,
@@ -210,8 +217,8 @@ export const en = {
 
   /** `other_method` with the methods the server named, e.g. "a password", and the provider that was refused, if known. */
   otherMethod: (how: string, instead?: string) => `This email address signs in with ${how}. Use that instead${instead ? ` of ${instead}` : ''}.`,
-  /** A method's name inside a sentence, e.g. after "with" ("mit" in German) in `otherMethod` and in what a second factor will do (`totpSetup.effects`, `smsSetup.effect`, `passkeySetup.effect`). */
-  methodNames: { google: 'Google', github: 'GitHub', password: 'a password', totp: 'an authenticator app', 'email-link': 'an email link', passkey: 'a passkey' },
+  /** A method's name inside a sentence, e.g. after "with" ("mit" in German) in `otherMethod` and in what a second factor will do (`authenticatorSetup.effects`, `smsSetup.effect`, `passkeySetup.effect`). */
+  methodNames: { google: 'Google', github: 'GitHub', password: 'a password', authenticator: 'an authenticator app', 'email-link': 'an email link', passkey: 'a passkey' },
   /** Between alternatives in a sentence. */
   orList: ' or ',
 
@@ -290,7 +297,7 @@ export const de: Strings = {
     google: { label: 'Weiter mit Google', description: 'Mit Ihrem Google-Konto anmelden' },
     github: { label: 'Weiter mit GitHub', description: 'Mit Ihrem GitHub-Konto anmelden' },
     password: { label: 'E-Mail-Adresse und Passwort', description: 'Mit E-Mail-Adresse und Passwort anmelden' },
-    totp: { label: 'Authentifizierungs-App', description: 'Einmalcode aus Ihrer Authentifizierungs-App' },
+    authenticator: { label: 'Authentifizierungs-App', description: 'Einmalcode aus Ihrer Authentifizierungs-App' },
     'email-link': { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
     passkey: { label: 'Passkey', description: 'Mit Fingerabdruck, Gesicht oder Bildschirmsperre anmelden' },
   },
@@ -348,16 +355,16 @@ export const de: Strings = {
   recoveryCode: 'Wiederherstellungscode',
   useRecoveryCode: 'Stattdessen einen Wiederherstellungscode verwenden',
   useApp: 'Stattdessen die Authentifizierungs-App verwenden',
-  totpHint: 'Geben Sie den 6-stelligen Code aus Ihrer Authentifizierungs-App ein.',
-  totpInvalid:
+  authenticatorHint: 'Geben Sie den 6-stelligen Code aus Ihrer Authentifizierungs-App ein.',
+  authenticatorInvalid:
     'E-Mail-Adresse oder Code ist falsch. Um sich mit einer Authentifizierungs-App anzumelden, richten Sie diese zuerst ein, während Sie auf andere Weise angemeldet sind.',
-  totpSignUpHint: 'Nach der Bestätigung Ihrer E-Mail-Adresse richten Sie Ihre Authentifizierungs-App ein.',
-  totpCode: {
+  authenticatorSignUpHint: 'Nach der Bestätigung Ihrer E-Mail-Adresse richten Sie Ihre Authentifizierungs-App ein.',
+  authenticatorCode: {
     heading: 'Code eingeben',
     lead: 'Geben Sie den Code aus Ihrer Authentifizierungs-App ein, um die Anmeldung abzuschließen.',
     replaceLead: 'Geben Sie den Code aus Ihrer bisherigen Authentifizierungs-App oder einen Wiederherstellungscode ein, um sie durch eine neue zu ersetzen.',
   },
-  totpSetup: {
+  authenticatorSetup: {
     heading: 'Authentifizierungs-App einrichten',
     lead: 'Scannen Sie diesen QR-Code mit Ihrer Authentifizierungs-App (z. B. Google Authenticator oder 1Password) und geben Sie dann den Code ein, den sie anzeigt.',
     requiredLead:
@@ -370,7 +377,7 @@ export const de: Strings = {
       secondFactor: (methods) => `Die Anmeldung mit ${methods} fragt dann zusätzlich nach einem Code aus der App.`,
     },
   },
-  totpCodes: {
+  authenticatorCodes: {
     heading: 'Wiederherstellungscodes speichern',
     lead: 'Wenn Sie Ihre Authentifizierungs-App verlieren, meldet Sie stattdessen einer dieser Codes an. Jeder funktioniert einmal. Bewahren Sie sie sicher auf.',
     saved: 'Ich habe sie gespeichert',
@@ -400,6 +407,9 @@ export const de: Strings = {
   },
   signInWithPasskey: 'Mit Passkey anmelden',
   usePasskey: 'Stattdessen einen Passkey verwenden',
+  passkeySignUpHint: 'Nach der Bestätigung Ihrer E-Mail-Adresse erstellen Sie Ihren Passkey. Er meldet Sie mit Fingerabdruck, Gesicht oder Bildschirmsperre an.',
+  passkeySignUpInstead: 'Passkey statt Passwort verwenden',
+  passwordSignUpInstead: 'Stattdessen ein Passwort verwenden',
   passkeyStep: {
     heading: 'Mit Passkey bestätigen',
     lead: 'Verwenden Sie Ihren Passkey, um die Anmeldung abzuschließen.',
@@ -409,6 +419,7 @@ export const de: Strings = {
     heading: 'Passkey erstellen',
     lead: 'Ein Passkey meldet Sie mit Fingerabdruck, Gesicht oder Bildschirmsperre an. Er wird auf Ihrem Gerät oder in Ihrem Passwortmanager gespeichert.',
     requiredLead: 'Für die Anmeldung ist ein zweiter Faktor erforderlich. Erstellen Sie einen Passkey: Er verwendet Fingerabdruck, Gesicht oder Bildschirmsperre.',
+    signUpLead: 'Ihre E-Mail-Adresse ist bestätigt. Erstellen Sie Ihren Passkey, um die Registrierung abzuschließen: Er verwendet Fingerabdruck, Gesicht oder Bildschirmsperre.',
     name: 'Name',
     nameHint: 'Damit Sie Ihre Passkeys auseinanderhalten können, z. B. „Laptop“.',
     create: 'Passkey erstellen',
@@ -419,7 +430,7 @@ export const de: Strings = {
   methodsView: {
     heading: 'Anmeldemethoden',
     lead: 'So melden Sie sich an. Fügen Sie eine weitere Methode hinzu, damit Sie sich auch anmelden können, wenn Sie eine verlieren.',
-    labels: { google: 'Google', github: 'GitHub', password: 'Passwort', totp: 'Authentifizierungs-App', 'email-link': 'E-Mail-Link', passkey: 'Passkey' },
+    labels: { google: 'Google', github: 'GitHub', password: 'Passwort', authenticator: 'Authentifizierungs-App', 'email-link': 'E-Mail-Link', passkey: 'Passkey' },
     secondFactorOnly: 'Als zweiter Faktor',
     lastUsed: (date) => `Zuletzt verwendet am ${date}`,
     neverUsed: 'Noch nicht verwendet',
@@ -443,7 +454,7 @@ export const de: Strings = {
   signInAgain: 'Erneut anmelden',
 
   otherMethod: (how, instead) => `Diese E-Mail-Adresse meldet sich mit ${how} an. Verwenden Sie das ${instead ? `statt ${instead}` : 'stattdessen'}.`,
-  methodNames: { google: 'Google', github: 'GitHub', password: 'einem Passwort', totp: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link', passkey: 'einem Passkey' },
+  methodNames: { google: 'Google', github: 'GitHub', password: 'einem Passwort', authenticator: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link', passkey: 'einem Passkey' },
   orList: ' oder ',
 
   errors: {

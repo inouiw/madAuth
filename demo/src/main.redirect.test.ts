@@ -17,7 +17,7 @@ vi.stubGlobal(
         return json({
           google: { clientId: 'cid.apps.googleusercontent.com', codeFlow: false, secondFactor: 'optional' },
           password: { minLength: 8, secondFactor: 'none' },
-          totp: { signIn: false, signUp: false },
+          authenticator: { signIn: false, signUp: false },
           email: { verification: true },
         });
       case 'GET /auth/session':
@@ -29,7 +29,7 @@ vi.stubGlobal(
 
 beforeAll(async () => {
   // Opened with ?google=redirect: the server-side demo, back from Google with the first step done.
-  history.replaceState(null, '', '/?google=redirect#madauth_next=totp');
+  history.replaceState(null, '', '/?google=redirect#madauth_next=authenticator');
   const template = document.createElement('template');
   template.innerHTML = html;
   template.content.querySelectorAll('script, link').forEach((el) => el.remove());

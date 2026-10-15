@@ -13,10 +13,10 @@ import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
 import { body, error } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
-import { clearChallenge, setChallenge, type NextStep } from './routes/challenge.js';
+import { clearChallenge, isSetupStep, setChallenge, type NextStep } from './routes/challenge.js';
 import { appOriginOf } from './routes/oauth.js';
 import { smsRoutes } from './routes/sms.js';
-import { checkCode, totpRoutes, type TotpKeys } from './routes/totp.js';
+import { authenticatorRoutes, checkCode, type AuthenticatorKeys } from './routes/authenticator.js';
 import {
   METHODS,
   MAX_MIN_LENGTH,
@@ -42,7 +42,7 @@ import {
 import { methodRoutes } from './routes/methods.js';
 import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
-import { deriveTotpKey } from './totp.js';
+import { deriveAuthenticatorKey } from './authenticator.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 import { Users, factorsAmong, methodOf, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
@@ -145,7 +145,7 @@ export function createApp(config: MadauthConfig): Hono {
   const configured = (method: MethodId) => isConfigured(methods, method);
   const signsUp = (method: SignInMethod) => canSignUp(methods, method);
   const emailVerification = sendsVerificationEmails(config);
-  const totpKeys: TotpKeys = { totpKey: deriveTotpKey(config.signingKey.d!), codeKey };
+  const authenticatorKeys: AuthenticatorKeys = { secretKey: deriveAuthenticatorKey(config.signingKey.d!), codeKey };
   const tokenKey = deriveTokenKey(config.signingKey.d!);
 
   /**
@@ -293,11 +293,16 @@ export function createApp(config: MadauthConfig): Hono {
       let next: NextStep | null = null;
       // The factors the user can finish with; for a setup, those the user can set up.
       let factors: SecondFactor[] = [];
-      if (method === 'totp') {
+      if (method === 'authenticator') {
         // The app itself is the method of a sign-up with it: it is set up now, or asked for if it exists already.
-        const app = await users.totpAccount(user.id);
-        next = app ? 'totp' : 'totp-setup';
-        factors = ['totp'];
+        const app = await users.authenticatorAccount(user.id);
+        next = app ? 'authenticator' : 'authenticator-setup';
+        factors = ['authenticator'];
+      } else if (method === 'passkey' && !amr.length) {
+        // A sign-up with a passkey alone, whose address is confirmed: the passkey is created now, and then
+        // the passkey's policy applies (see routes/passkey.ts).
+        next = 'passkey-setup';
+        factors = ['passkey'];
       } else {
         const policy = policyOf(method, methods);
         if (policy !== 'none') {
@@ -306,7 +311,7 @@ export function createApp(config: MadauthConfig): Hono {
           const on = factorsOn(configured, methods, method);
           // A passkey answers only on the domain it was made for: one of another app's is no factor here.
           const has = factorsAmong(await users.accounts(user.id), on, usableOn(passkeyDomain(config, appOriginOf(c))));
-          next = has[0] ?? (policy === 'required' ? 'totp-setup' : null);
+          next = has[0] ?? (policy === 'required' ? 'second-factor-setup' : null);
           factors = has.length ? has : on;
         }
       }
@@ -316,7 +321,7 @@ export function createApp(config: MadauthConfig): Hono {
         clearSession(c);
         // Only what the session will show; the cookie is signed, not encrypted.
         const known = { ...(profile?.name ? { name: profile.name } : {}), ...(profile?.picture ? { picture: profile.picture } : {}) };
-        const step = next === 'totp-setup' ? { factors: [], setup: factors } : { factors };
+        const step = isSetupStep(next) ? { factors: [], setup: factors } : { factors };
         await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, ...step, ...(Object.keys(known).length ? { profile: known } : {}) });
         return { next, method, factors };
       }
@@ -407,14 +412,15 @@ export function createApp(config: MadauthConfig): Hono {
       github: on('github') ? { secondFactor: policyOf('github', current) } : null,
       password: rules ? { ...rules, secondFactor: policyOf('password', current) } : null,
       // The app can be set up when it is on; `signIn` says whether it signs in on its own (allowAsSignInMethod).
-      totp: on('totp') ? { signIn: signIn('totp'), signUp: signIn('totp') && emailVerification } : null,
+      authenticator: on('authenticator') ? { signIn: signIn('authenticator'), signUp: signIn('authenticator') && emailVerification } : null,
       email: { verification: emailVerification },
       emailLink: on('email-link') ? { secondFactor: policyOf('email-link', current) } : null,
       // SMS codes as a second factor: a signed-in user can add a phone, and the dialog offers it in the second step.
       sms: on('sms'),
-      // Passkeys: a signed-in user can add them; `signIn` says whether they sign in on their own, `secondFactor`
-      // whether such a sign-in then asks for a code. On, they are a second factor of the methods that ask for one.
-      passkey: on('passkey') ? { signIn: signIn('passkey'), secondFactor: policyOf('passkey', current) } : null,
+      // Passkeys: a signed-in user can add them; `signIn` says whether they sign in on their own, `signUp` whether
+      // people can sign up with one alone, `secondFactor` whether such a sign-in then asks for a second factor.
+      // On, they are a second factor of the methods that ask for one.
+      passkey: on('passkey') ? { signIn: signIn('passkey'), signUp: signIn('passkey') && emailVerification, secondFactor: policyOf('passkey', current) } : null,
     });
   });
 
@@ -424,7 +430,7 @@ export function createApp(config: MadauthConfig): Hono {
   if (config.google) googleRoutes(app, ctx, config.google);
   if (config.github) githubRoutes(app, ctx, config.github, tokenKey);
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, users, ctx.webhook);
-  totpRoutes(app, ctx, totpKeys);
+  authenticatorRoutes(app, ctx, authenticatorKeys);
   passkeyRoutes(app, ctx);
   // GitHub's authorization goes with the account, with the token kept from its last sign-in.
   methodRoutes(app, ctx, async (account) => {
@@ -460,15 +466,15 @@ export function createApp(config: MadauthConfig): Hono {
     const stored = await users.findById(user.id);
     // An app that is switched off server-wide protects nothing, so it is not asked for either. A phone for
     // SMS codes alone does not protect the deletion (not covered yet, see docs/sms-security.md).
-    const protects = stored && isOn('totp', configured, await ctx.methods(c));
-    const authenticator = protects ? await users.totpAccount(user.id) : null;
+    const protects = stored && isOn('authenticator', configured, await ctx.methods(c));
+    const authenticator = protects ? await users.authenticatorAccount(user.id) : null;
     if (stored && authenticator) {
       // Deleting the user removes their authenticator app too, so like removing it, it takes a current code.
       const data = await body(c);
       if (data.code === undefined && data.recoveryCode === undefined) {
         return error(c, 401, 'code_required', 'Enter a code from your authenticator app (or a recovery code) to delete your account.');
       }
-      const via = await checkCode(c, ctx, totpKeys, stored, authenticator, data);
+      const via = await checkCode(c, ctx, authenticatorKeys, stored, authenticator, data);
       if (via instanceof Response) return via;
     }
     // Read before the deletion: the web library revokes the app's access to this Google account with it.
@@ -583,7 +589,7 @@ export function createApp(config: MadauthConfig): Hono {
         `methods must list the methods that are on (${METHODS.join(', ')}), each as { "allowAsSignInMethod": true | false, ` +
           `"secondFactor": ${SECOND_FACTOR_POLICIES.map((p) => `"${p}"`).join(' | ')} }, both given, e.g. ` +
           '{ "google": { "allowAsSignInMethod": true, "secondFactor": "none" }, "password": { "allowAsSignInMethod": true, "secondFactor": "optional" }, ' +
-          '"totp": { "allowAsSignInMethod": false, "secondFactor": "none" } }. A method that is not listed is off.',
+          '"authenticator": { "allowAsSignInMethod": false, "secondFactor": "none" } }. A method that is not listed is off.',
       );
     }
     const rules = data.password === undefined ? undefined : parsePasswordRules(data.password);

@@ -2,7 +2,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { claimsFromJson, type Claims } from './claims.js';
 import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
-import { ALWAYS_SIGN_IN, SIGN_IN_METHODS, type SecondFactor, type SignInMethod } from './settings.js';
+import { ALWAYS_SIGN_IN, FORMER_AUTHENTICATOR_ID, SIGN_IN_METHODS, type SecondFactor, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 import type { MadauthUser } from './user.js';
 
@@ -25,13 +25,28 @@ export interface StoredUser {
    * from before schema version 7, whose sign-up counts as complete.
    */
   signedUpAt: number | null;
+  /**
+   * The method the user's pending sign-up confirms the address for, see {@link SignUpMethod}. Empty in records
+   * from before schema version 9, and for users who signed up without a confirmation e-mail.
+   */
+  signUpMethod: string | null;
   createdAt: number;
 }
+
+/**
+ * The methods whose sign-up confirms the address by e-mail (`/auth/email/verify`): a password, and the
+ * authenticator app and passkeys, which are set up once the address is confirmed.
+ */
+export const SIGN_UP_METHODS = ['password', 'authenticator', 'passkey'] as const;
+export type SignUpMethod = (typeof SIGN_UP_METHODS)[number];
+
+/** Whether a stored value is a {@link SignUpMethod}. */
+export const isSignUpMethod = (value: unknown): value is SignUpMethod => (SIGN_UP_METHODS as readonly unknown[]).includes(value);
 
 export interface StoredAccount {
   id: string;
   userId: string;
-  /** `password:<userId>`, `google:<sub>`, `github:<id>`, `totp:<userId>`, `email-link:<userId>`, `sms:<userId>` or `passkey:<hash>`. */
+  /** `password:<userId>`, `google:<sub>`, `github:<id>`, `totp:<userId>` (the authenticator app), `email-link:<userId>`, `sms:<userId>` or `passkey:<hash>`. */
   key: string;
   /**
    * The password hash, the encrypted secret of the authenticator app, GitHub's encrypted access token, or a
@@ -42,7 +57,7 @@ export interface StoredAccount {
   lockedUntil: number;
   /** The address the provider reported at the last sign-in. Empty for password accounts and before schema version 4. */
   email: string | null;
-  /** The time step of the last authenticator code that was accepted (totp accounts). Empty in records from before schema version 5. */
+  /** The time step of the last authenticator code that was accepted (authenticator accounts). Empty in records from before schema version 5. */
   lastUsedStep: number | null;
   /** The setup the authenticator secret came from; its recovery codes carry the same id. Empty for other accounts. */
   setupId: string | null;
@@ -127,8 +142,16 @@ export function githubAccountKey(id: string): string {
   return `github:${id}`;
 }
 
-export function totpAccountKey(userId: string): string {
-  return `totp:${userId}`;
+/**
+ * The start of the authenticator app's account keys: `totp`, the app's id before madAuth 0.6. The key is
+ * internal and nobody sees it, so it was not renamed with the method: a new one would need a migration of
+ * every stored account (DynamoDB tables too). {@link methodOf} reads it as `authenticator`.
+ */
+const AUTHENTICATOR_KEY_PREFIX = FORMER_AUTHENTICATOR_ID;
+
+/** The account of the user's authenticator app: `totp:<userId>`, see {@link AUTHENTICATOR_KEY_PREFIX}. */
+export function authenticatorAccountKey(userId: string): string {
+  return `${AUTHENTICATOR_KEY_PREFIX}:${userId}`;
 }
 
 /** The account of a user who signs in with the e-mail link; it has no secret, the inbox is the key. */
@@ -149,8 +172,11 @@ export function passkeyAccountKey(credentialId: string): string {
   return `passkey:${createHash('sha256').update(credentialId).digest('base64url')}`;
 }
 
-/** The method of an account: the start of its key, e.g. `password` or `sms`. */
-export const methodOf = (account: Pick<StoredAccount, 'key'>): string => String(account.key).split(':')[0];
+/** The method of an account: the start of its key, e.g. `password` or `sms`, and `authenticator` for the app's `totp:` key. */
+export const methodOf = (account: Pick<StoredAccount, 'key'>): string => {
+  const start = String(account.key).split(':')[0];
+  return start === AUTHENTICATOR_KEY_PREFIX ? 'authenticator' : start;
+};
 
 /** The methods whose accounts a sign-up makes; the authenticator app makes one only for a sign-up with it. */
 const isAlwaysPrimary = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method);
@@ -164,7 +190,7 @@ export function isPrimary(account: StoredAccount, accounts: StoredAccount[]): bo
   if (account.primaryUserId) return true;
   if (account.secondFactor === true) return false;
   const method = methodOf(account);
-  if (method !== 'totp') return isAlwaysPrimary(method);
+  if (method !== 'authenticator') return isAlwaysPrimary(method);
   return !accounts.some((other) => isAlwaysPrimary(methodOf(other)));
 }
 
@@ -175,7 +201,7 @@ export function isPrimary(account: StoredAccount, accounts: StoredAccount[]): bo
 export function factorsAmong(accounts: StoredAccount[], on: readonly SecondFactor[], passkeyUsable: (account: StoredAccount) => boolean = () => true): SecondFactor[] {
   const has: Record<SecondFactor, boolean> = {
     passkey: accounts.some((account) => account.key.startsWith('passkey:') && passkeyUsable(account)),
-    totp: accounts.some((account) => methodOf(account) === 'totp'),
+    authenticator: accounts.some((account) => methodOf(account) === 'authenticator'),
     sms: accounts.some((account) => methodOf(account) === 'sms' && !!account.phone),
   };
   return on.filter((factor) => has[factor]);
@@ -251,8 +277,8 @@ export class Users {
   }
 
   /** The user's authenticator app, if they set one up. */
-  async totpAccount(userId: string): Promise<StoredAccount | null> {
-    return this.findAccountByKey(totpAccountKey(userId));
+  async authenticatorAccount(userId: string): Promise<StoredAccount | null> {
+    return this.findAccountByKey(authenticatorAccountKey(userId));
   }
 
   /** The user's e-mail link account, if they sign in that way. */
@@ -311,9 +337,9 @@ export class Users {
    * The user's authenticator app, if they set one up, and whether they signed up with it (as opposed to
    * adding it later). One read: the app and the user's other accounts together.
    */
-  async totpApp(userId: string): Promise<{ account: StoredAccount; signedUpWith: boolean } | null> {
+  async authenticatorApp(userId: string): Promise<{ account: StoredAccount; signedUpWith: boolean } | null> {
     const accounts = await this.accounts(userId);
-    const account = accounts.find((a) => a.key === totpAccountKey(userId));
+    const account = accounts.find((a) => a.key === authenticatorAccountKey(userId));
     return account ? { account, signedUpWith: isPrimary(account, accounts) } : null;
   }
 
@@ -374,8 +400,9 @@ export class Users {
   /**
    * Creates a user, with their first account if given. Resolves to null if the e-mail address or the
    * account key is taken. `account.key` is `password:<userId>` for a password (its hash as `secret`), or
-   * e.g. `google:<sub>`. A sign-up with the authenticator app creates the user without an account: the app
-   * is set up once the address is confirmed.
+   * e.g. `google:<sub>`. A sign-up with the authenticator app or a passkey creates the user without an
+   * account: it is set up once the address is confirmed. `signUpMethod` is the method a sign-up that sends a
+   * confirmation e-mail confirms the address for.
    */
   async createUser(data: {
     email: string;
@@ -383,6 +410,7 @@ export class Users {
     name: string | null;
     emailVerified: boolean;
     account?: NewAccount | ((userId: string) => NewAccount);
+    signUpMethod?: SignUpMethod;
   }): Promise<StoredUser | null> {
     const user: StoredUser = {
       id: newId('usr'),
@@ -396,6 +424,7 @@ export class Users {
       wrongCodes: 0,
       claims: null,
       signedUpAt: 0,
+      signUpMethod: data.signUpMethod ?? null,
       createdAt: Date.now(),
     };
     if (!(await this.store.create('user', user as unknown as Row))) return null;
@@ -446,8 +475,9 @@ export class Users {
    * Resets the sign-in of a user who lost every way in: removes all their accounts (sign-in methods and
    * second factors) with the recovery codes, ends their sessions and the sign-ins that wait for a second step
    * (a new session version), deletes their pending links and codes, counts wrong codes from zero, and marks
-   * the address unconfirmed, so their next sign-up proves the inbox again. The user keeps their id, address,
-   * name, claims and `signedUpAt`. Resolves to the accounts that were removed, e.g. for GitHub's token.
+   * the address unconfirmed, so their next sign-up proves the inbox again; it records its own method
+   * (`signUpMethod`, cleared here with the sign-up it was for). The user keeps their id, address, name, claims
+   * and `signedUpAt`. Resolves to the accounts that were removed, e.g. for GitHub's token.
    */
   async resetSignIn(userId: string): Promise<StoredAccount[]> {
     // The sessions end first, so none of them adds a method meanwhile. A sign-in that found one of the accounts
@@ -461,10 +491,13 @@ export class Users {
     return removed;
   }
 
-  /** Raises the session version and marks the address unconfirmed, with wrong codes counted from zero. */
+  /**
+   * Raises the session version and marks the address unconfirmed, with wrong codes counted from zero and no
+   * pending sign-up's method.
+   */
   private async endSignIns(userId: string): Promise<void> {
     const user = await this.findById(userId);
-    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0 });
+    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0, signUpMethod: null });
   }
 
   /**
@@ -513,7 +546,7 @@ export class Users {
    * setup it had when this setup started (`replaces`): the write count decides, so of two setups confirmed
    * at once exactly one wins, and the other is told to start again.
    */
-  async confirmTotpSetup(accountId: string, replaces: string | null, patch: Pick<StoredAccount, 'secret' | 'setupId' | 'failedAttempts' | 'lockedUntil' | 'lastUsedStep'>): Promise<boolean> {
+  async confirmAuthenticatorSetup(accountId: string, replaces: string | null, patch: Pick<StoredAccount, 'secret' | 'setupId' | 'failedAttempts' | 'lockedUntil' | 'lastUsedStep'>): Promise<boolean> {
     return (await this.store.update('account', { id: accountId, setupId: replaces }, patch)) === 1;
   }
 
@@ -522,7 +555,7 @@ export class Users {
    * no other request accepted a code meanwhile: the write count decides, so the same code sent twice signs
    * in once.
    */
-  async useTotpStep(account: StoredAccount, step: number): Promise<boolean> {
+  async useAuthenticatorStep(account: StoredAccount, step: number): Promise<boolean> {
     const changed = await this.store.update(
       'account',
       { id: account.id, lastUsedStep: account.lastUsedStep ?? null },

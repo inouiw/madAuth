@@ -356,7 +356,7 @@ describe('user.signed_up', () => {
     await setMethods(store, { password: { secondFactor: 'required' } });
     await signUp(app);
     const confirmed = await post(app, '/auth/email/verify', { token: linkAndCode(hook.lastEmail()).token });
-    expect(await confirmed.json()).toMatchObject({ error: 'totp_setup_required' });
+    expect(await confirmed.json()).toMatchObject({ error: 'second_factor_setup_required' });
     expect(hook.types()).not.toContain('user.signed_up');
 
     // The admin drops the requirement before Grace set the app up: her next sign-in completes the sign-up.

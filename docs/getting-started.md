@@ -32,7 +32,7 @@ npx @madauth/server init
 | Passwordless sign-in with an e-mail link? | no | The user enters their address and gets an e-mail with a link that signs them in and a code. A new address is signed up on first use. |
 | SMS codes as a second factor? | no | Your webhook receiver sends the SMS (`sms.send_code`). A signed-in user adds a phone number; the policy then asks for a code sent to it, next to the authenticator app. |
 | Database | `sqlite:./madauth.db` | The SQLite file that stores the users, whichever way they sign in. |
-| Webhook URL | `http://localhost:8790/webhook` | Only with e-mail & password sign-in, the e-mail link, sign-up with the app or SMS codes: where madAuth hands over its e-mails and SMS (step 4). |
+| Webhook URL | `http://localhost:8790/webhook` | Only with e-mail & password sign-in, the e-mail link, sign-up with the app or a passkey alone, or SMS codes: where madAuth hands over its e-mails and SMS (step 4). |
 | Your e-mail address, to become the first admin | none | Who signs up with it gets the role `admin` (`INITIAL_ADMIN_EMAIL`), once the address is proven, and manages [claims](server.md#claims) and [sign-in methods](server.md#sign-in-methods) from your app (step 7). |
 
 Choose at least one way to create users. At the end, `init` prints the next steps for your answers. They are the steps below.
@@ -45,7 +45,7 @@ Every question is also an option, so a script needs no prompts. `--yes` takes th
 npx @madauth/server init --yes --app-url http://localhost:3000
 ```
 
-The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--github-client-id`, `--github-client-secret`, `--password` or `--no-password`, `--totp` or `--no-totp`, `--email-link` or `--no-email-link`, `--sms` or `--no-sms`, `--database`, `--webhook-url` and `--initial-admin-email`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
+The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--github-client-id`, `--github-client-secret`, `--password` or `--no-password`, `--authenticator` or `--no-authenticator`, `--email-link` or `--no-email-link`, `--sms` or `--no-sms`, `--database`, `--webhook-url` and `--initial-admin-email`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
 
 ## 3. Start the server
 
@@ -94,12 +94,12 @@ Other dev servers have a similar setting. In production, your reverse proxy or C
 
 ## 6. Sign users in
 
-Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `GitHub`, `EmailLink` for the e-mail link, `Passkey` for signing in with a passkey, and `Totp` for signing in with the authenticator app on its own (once an admin allows it in the settings). Second factors need no provider: once an admin sets the policy, the dialog asks for a passkey, a code from the app or a code by SMS by itself, and a user adds one from your app with `Madauth.setUpPasskey()`, `Madauth.setUpAuthenticator()` or `Madauth.setUpSms()`, or all of their sign-in methods with `Madauth.manageSignInMethods()`.
+Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `GitHub`, `EmailLink` for the e-mail link, `Passkey` for signing in with a passkey, and `Authenticator` for signing in with the authenticator app on its own (once an admin allows it in the settings). Second factors need no provider: once an admin sets the policy, the dialog asks for a passkey, a code from the app or a code by SMS by itself, and a user adds one from your app with `Madauth.setUpPasskey()`, `Madauth.setUpAuthenticator()` or `Madauth.setUpSms()`, or all of their sign-in methods with `Madauth.manageSignInMethods()`.
 
 ```ts
-import { Madauth, Password, Passkey, Totp, EmailLink } from '@madauth/web';
+import { Madauth, Password, Passkey, Authenticator, EmailLink } from '@madauth/web';
 
-Madauth.initialize({ providers: [new Password(), new Passkey(), new Totp(), new EmailLink()] });
+Madauth.initialize({ providers: [new Password(), new Passkey(), new Authenticator(), new EmailLink()] });
 Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
 signInButton.onclick = () => Madauth.signIn();
 ```
@@ -117,7 +117,7 @@ To ask every password user for a second factor (a passkey or the authenticator a
 ```ts
 const signIn = (secondFactor: 'none' | 'required' = 'none') => ({ allowAsSignInMethod: true, secondFactor });
 await Madauth.admin.setSettings({
-  methods: { google: signIn(), password: signIn('required'), 'email-link': signIn(), passkey: signIn(), totp: { allowAsSignInMethod: false, secondFactor: 'none' } },
+  methods: { google: signIn(), password: signIn('required'), 'email-link': signIn(), passkey: signIn(), authenticator: { allowAsSignInMethod: false, secondFactor: 'none' } },
 });
 ```
 

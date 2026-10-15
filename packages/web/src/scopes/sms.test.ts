@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '../index.js';
 import { Madauth } from '../madauth.js';
 import { Password } from '../providers/password.js';
-import { Totp } from '../providers/totp.js';
+import { Authenticator } from '../providers/authenticator.js';
 import { CODE, MASKED_PHONE, PHONE, SERVER, fakeServer, grace, resetAll } from '../test-helpers.js';
 
 beforeEach(() => {
@@ -13,7 +13,7 @@ beforeEach(() => {
 afterEach(resetAll);
 
 const init = (options: Partial<Parameters<typeof Madauth.initialize>[0]> = {}) =>
-  Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Totp()], ...options });
+  Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()], ...options });
 
 const credentials = { email: 'grace@example.com', password: 'correct horse battery' };
 
@@ -105,14 +105,14 @@ describe('Madauth.sms', () => {
     server.authenticators.add(grace.email!);
     await init();
 
-    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'totp_required', factors: ['totp', 'sms'] } });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'password', factors: ['totp', 'sms'] });
+    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'authenticator_required', factors: ['authenticator', 'sms'] } });
+    expect(Madauth.authenticator.pendingStep).toEqual({ step: 'code', method: 'password', factors: ['authenticator', 'sms'] });
     expect(await Madauth.sms.send()).toEqual({ isSuccess: true, phone: MASKED_PHONE });
     expect(await Madauth.sms.verify({ code: CODE })).toEqual({ isSuccess: true, user: grace });
 
     await Madauth.signOut();
     await Madauth.password.signIn(credentials);
-    expect(await Madauth.totp.verify({ code: CODE })).toEqual({ isSuccess: true, user: grace });
+    expect(await Madauth.authenticator.verify({ code: CODE })).toEqual({ isSuccess: true, user: grace });
   });
 
   it('H37: a required policy with neither factor: the phone is added during the sign-in and signs in', async () => {
@@ -121,8 +121,8 @@ describe('Madauth.sms', () => {
     server.policy.password = 'required';
     await init();
 
-    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'totp_setup_required', factors: ['totp', 'sms'] } });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'password', factors: ['totp', 'sms'] });
+    expect(await Madauth.password.signIn(credentials)).toMatchObject({ isSuccess: false, error: { code: 'second_factor_setup_required', factors: ['authenticator', 'sms'] } });
+    expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'password', factors: ['authenticator', 'sms'] });
     expect(await Madauth.sms.setUp({ phone: PHONE })).toEqual({ isSuccess: true, phone: MASKED_PHONE });
     const done = await Madauth.sms.confirmSetup({ code: CODE });
 

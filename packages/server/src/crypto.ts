@@ -1,6 +1,6 @@
 // Keys derived from the signing key, and AES-256-GCM at rest, for what the server must be able to read again:
-// the secrets of authenticator apps (totp.ts) and the access tokens of providers (github.ts). Each use derives
-// a key of its own, so the two stay apart and a leaked database alone gives neither away.
+// the secrets of authenticator apps (authenticator.ts) and the access tokens of providers (github.ts). Each use
+// derives a key of its own, so the two stay apart and a leaked database alone gives neither away.
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
 
 const ENCRYPTION_VERSION = 'v1';

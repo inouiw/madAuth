@@ -101,18 +101,18 @@
         <!-- The authenticator app: Madauth.setUpAuthenticator() opens the dialog with the QR code; the other calls take a code. -->
         <div class="authenticator">
           <span class="caption">Authenticator app</span>
-          <p id="totp-status"></p>
+          <p id="authenticator-status"></p>
           <label class="code-field" hidden>
             Code from the app, or a recovery code
-            <input id="totp-code" type="text" autocomplete="off" spellcheck="false" />
+            <input id="authenticator-code" type="text" autocomplete="off" spellcheck="false" />
           </label>
           <p class="buttons">
             <button type="button" data-call="setUpAuthenticator" hidden>Madauth.setUpAuthenticator()</button>
-            <button type="button" data-call="newRecoveryCodes" hidden>Madauth.totp.newRecoveryCodes({ code })</button>
-            <button type="button" data-call="removeAuthenticator" hidden>Madauth.totp.remove({ code })</button>
+            <button type="button" data-call="newRecoveryCodes" hidden>Madauth.authenticator.newRecoveryCodes({ code })</button>
+            <button type="button" data-call="removeAuthenticator" hidden>Madauth.authenticator.remove({ code })</button>
           </p>
           <!-- What the last of these calls resolved to; a status region, so screen readers announce it. -->
-          <div id="totp-output" class="api-box" hidden>
+          <div id="authenticator-output" class="api-box" hidden>
             <span class="caption">Response</span>
             <pre id="output" role="status"></pre>
           </div>
@@ -249,8 +249,8 @@
                   <td><label class="policy">Second factor <select id="policy-passkey"><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select></label></td>
                 </tr>
                 <tr>
-                  <td><label><input id="method-totp" type="checkbox" /> Authenticator app</label></td>
-                  <td><label class="policy"><input id="signin-totp" type="checkbox" /> Signs in on its own</label></td>
+                  <td><label><input id="method-authenticator" type="checkbox" /> Authenticator app</label></td>
+                  <td><label class="policy"><input id="signin-authenticator" type="checkbox" /> Signs in on its own</label></td>
                   <td></td>
                 </tr>
                 <tr>

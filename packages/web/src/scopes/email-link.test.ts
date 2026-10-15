@@ -129,18 +129,18 @@ describe('Madauth.emailLink', () => {
 
     expect(result).toEqual({ isSuccess: true, leftOut: [] });
     expect(Madauth.currentUser).toBeNull();
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'code', method: 'email-link', factors: ['totp'] });
-    expect(Madauth.totp.policy?.secondFactorFor).toEqual(['email-link']);
-    expect(await Madauth.totp.verify({ code: CODE })).toEqual({ isSuccess: true, user: linda });
-    expect(Madauth.totp.pendingStep).toBeNull();
+    expect(Madauth.authenticator.pendingStep).toEqual({ step: 'code', method: 'email-link', factors: ['authenticator'] });
+    expect(Madauth.authenticator.policy?.secondFactorFor).toEqual(['email-link']);
+    expect(await Madauth.authenticator.verify({ code: CODE })).toEqual({ isSuccess: true, user: linda });
+    expect(Madauth.authenticator.pendingStep).toBeNull();
 
     server.policy['email-link'] = 'required';
     await Madauth.emailLink.send({ email: 'new@example.com' });
     expect(await Madauth.emailLink.verify({ email: 'new@example.com', code: CODE })).toMatchObject({
       isSuccess: false,
-      error: { code: 'totp_setup_required', method: 'email-link' },
+      error: { code: 'second_factor_setup_required', method: 'email-link' },
     });
-    expect(Madauth.totp.pendingStep).toEqual({ step: 'setup', method: 'email-link', factors: ['totp'] });
+    expect(Madauth.authenticator.pendingStep).toEqual({ step: 'setup', method: 'email-link', factors: ['authenticator'] });
   });
 
   it('H31: left out when the server does not offer the e-mail link; without the provider the scope says so', async () => {

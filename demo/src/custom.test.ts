@@ -8,10 +8,11 @@ const expected: Record<string, Record<string, string>> = {
   'forgot-form': { email: 'email' },
   'code-form': { code: 'one-time-code' },
   'reset-form': { password: 'new-password' },
-  'totp-form': { email: 'email', code: 'off' },
-  'totp-signup-form': { name: 'name', email: 'email' },
-  'totp-code-form': { code: 'off' },
-  'totp-setup-form': { code: 'off' },
+  'authenticator-form': { email: 'email', code: 'off' },
+  'authenticator-signup-form': { name: 'name', email: 'email' },
+  'passkey-signup-form': { name: 'name', email: 'email' },
+  'authenticator-code-form': { code: 'off' },
+  'authenticator-setup-form': { code: 'off' },
 };
 
 describe('custom.html', () => {

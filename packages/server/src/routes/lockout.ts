@@ -1,5 +1,5 @@
 // The lock against guessing a secret, shared by the methods that check one: a password, or a code from
-// the authenticator app. See "Brute force" in docs/password-security.md and docs/totp-security.md.
+// the authenticator app. See "Brute force" in docs/password-security.md and docs/authenticator-security.md.
 import type { Context } from 'hono';
 import type { StoredAccount, Users } from '../users.js';
 

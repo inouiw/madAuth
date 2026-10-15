@@ -26,7 +26,7 @@ Code: `POST /auth/email-link/send` in [`packages/server/src/routes/email-link.ts
 
 ## Sign-up on first use
 
-An address nobody has is signed up by its first link: the user is created unconfirmed, with an account of the `email-link` method and no name; `user.signed_up` is sent at the first session, once the link is used. The operator's sign-up check (`user.signing_up`, `method: "email-link"`) runs before anything is stored and fails closed. The address counts as confirmed once the link or the code is used (`user.email_verified`); until then it looks like any unfinished sign-up, and another method can take it over: a sign-up with a password or with the authenticator app for the address, or a Google sign-in with it, drops the link account, so the link stops working (`link_invalid`) and the address signs in with the method that proved it.
+An address nobody has is signed up by its first link: the user is created unconfirmed, with an account of the `email-link` method and no name; `user.signed_up` is sent at the first session, once the link is used. The operator's sign-up check (`user.signing_up`, `method: "email-link"`) runs before anything is stored and fails closed. The address counts as confirmed once the link or the code is used (`user.email_verified`); until then it looks like any unfinished sign-up, and another method can take it over: a sign-up with a password, with the authenticator app or with a passkey for the address, or a Google sign-in with it, drops the link account, so the link stops working (`link_invalid`) and the address signs in with the method that proved it.
 
 A sign-up with a password that nobody confirmed is taken over the other way round, as with Google and the authenticator app: the first link drops the unproven password. Until the address is proven, the latest sign-up counts, as between two password sign-ups: a password sign-up after the link drops the link account again, and the link stops working. Whoever proves the address first, with the e-mail of their sign-up, is the one it ends up with.
 
@@ -40,7 +40,7 @@ Code: [`email-link.ts`](../packages/server/src/routes/email-link.ts), `resolvePr
 
 ## The second step
 
-With a policy of `optional` or `required` for the method, the link or the code does not sign in by itself: the sign-in goes on with the authenticator app (`401 totp_required` or `totp_setup_required`), exactly as after a password. See [Authenticator app security](totp-security.md#the-second-step). The session then says `amr: ["email", "otp"]`; the link alone gives `["email"]`.
+With a policy of `optional` or `required` for the method, the link or the code does not sign in by itself: the sign-in goes on with the authenticator app (`401 authenticator_required` or `second_factor_setup_required`), exactly as after a password. See [Authenticator app security](authenticator-security.md#the-second-step). The session then says `amr: ["email", "otp"]`; the link alone gives `["email"]`.
 
 Code: `secondStep` in [`packages/server/src/app.ts`](../packages/server/src/app.ts).
 

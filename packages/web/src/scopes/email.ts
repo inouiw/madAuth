@@ -1,5 +1,5 @@
-// Confirming an e-mail address, shared by the methods that sign people up with one (password and the
-// authenticator app): the routes are the same, only the scope that offers them differs.
+// Confirming an e-mail address, shared by the methods that sign people up with one (password, the
+// authenticator app and passkeys): the routes are the same, only the scope that offers them differs.
 import type { LoginMethodId } from '../methods.js';
 import { pendingStepOf } from '../providers/provider.js';
 import { ok, type MadauthUser, type Result } from '../result.js';
@@ -14,8 +14,9 @@ export interface SendEmailOptions {
 export const currentPage = (): string => location.href.split('#')[0];
 
 /**
- * Marks a sign-in that goes on with a second step, and returns the result as it is: a `totp_required`,
- * `sms_required` or `totp_setup_required` failure tells the caller what comes next.
+ * Marks a sign-in that goes on with a second step, and returns the result as it is: an `authenticator_required`,
+ * `sms_required`, `second_factor_setup_required`, `authenticator_setup_required` or `passkey_setup_required`
+ * failure tells the caller what comes next.
  */
 export function noteNextStep<T extends object>(core: Core, method: LoginMethodId, result: Result<T>): Result<T> {
   if (!result.isSuccess) {

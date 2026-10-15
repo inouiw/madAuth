@@ -229,12 +229,12 @@ describe('removing a sign-in method', () => {
   });
 
   it('M11: allowed as a sign-in method, a first authenticator app needs a recent sign-in too; only as a second factor, it doesn\'t', async () => {
-    const { app, store, cookie } = await withGrace({ ...everything, totp: { allowAsSignInMethod: true, secondFactor: 'none' } });
+    const { app, store, cookie } = await withGrace({ ...everything, authenticator: { allowAsSignInMethod: true, secondFactor: 'none' } });
     advance(11 * 60_000);
 
-    expect(await (await post(app, '/auth/totp/setup', {}, { Cookie: cookie })).json()).toMatchObject({ error: 'reauth_required' });
-    await setMethods(store, { ...everything, totp: { allowAsSignInMethod: false, secondFactor: 'none' } });
-    expect((await post(app, '/auth/totp/setup', {}, { Cookie: cookie })).status).toBe(200);
+    expect(await (await post(app, '/auth/authenticator/setup', {}, { Cookie: cookie })).json()).toMatchObject({ error: 'reauth_required' });
+    await setMethods(store, { ...everything, authenticator: { allowAsSignInMethod: false, secondFactor: 'none' } });
+    expect((await post(app, '/auth/authenticator/setup', {}, { Cookie: cookie })).status).toBe(200);
   });
 
   it('M12: two removals at once of the last two ways in leave one', async () => {
@@ -249,7 +249,7 @@ describe('removing a sign-in method', () => {
   });
 
   it('M9: removing GitHub takes back its authorization at GitHub; the app is removed with a code of its own', async () => {
-    const { app, cookie } = await withGrace({ ...everything, totp: { allowAsSignInMethod: false, secondFactor: 'none' } });
+    const { app, cookie } = await withGrace({ ...everything, authenticator: { allowAsSignInMethod: false, secondFactor: 'none' } });
     const github = stubGitHub();
     const started = await app.request(`/auth/github/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`, { headers: { Cookie: cookie } });
     const state = new URL(started.headers.get('location')!).searchParams.get('state')!;
