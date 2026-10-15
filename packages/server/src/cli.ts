@@ -1,12 +1,11 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 import { parseArgs, parseEnv } from 'node:util';
-import { loadConfig, loadStore } from './config.js';
+import { loadConfig } from './config.js';
 import { generateSigningKey } from './keys.js';
 import { isValidEmail, normalizeEmail } from './password.js';
 import { madauthSchema, type StoreAdapter } from './store/schema.js';
 import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
-import { Users } from './users.js';
 import { DEV_WEBHOOK_RECEIVER_URL, generateWebhookSecret } from './webhooks.js';
 
 /** The server's default port, which `init` writes as PORT. */
@@ -28,11 +27,6 @@ Commands:
   start                        Start the server on PORT (default ${PORT})
   generate-key                 Print a new private ES256 key to use as MADAUTH_SIGNING_KEY
   generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
-  remove-totp <email>          Remove a user's authenticator app and recovery codes: the last resort when
-                               both are lost. With a required policy, the user sets it up again next time.
-  remove-sms <email>           Remove a user's phone number for SMS codes, when they lost the phone.
-  remove-passkeys <email>      Remove all passkeys of a user, when they lost them.
-                               The remove commands use DATABASE_URL from the environment.
   schema [--dialect <name>] [--from <version>]
                                Print the SQL that creates madAuth's tables for a custom store adapter.
                                Dialects: postgres (default), mysql, sqlite. With --from, print only the
@@ -42,8 +36,23 @@ Options:
   --env-file <path>            Read environment variables from this file, for any command. A variable
                                that is already set in the environment wins.`;
 
-/** Commands of madAuth before 0.6 that the admin API and INITIAL_ADMIN_EMAIL replaced. */
-const REMOVED_COMMANDS = ['create-user', 'set-roles', 'get-roles', 'set-claims', 'get-claims', 'set-methods', 'get-methods', 'set-password-rules', 'get-password-rules'];
+/** Commands of madAuth before 0.6, with what replaced them. */
+const ADMIN_API = 'admins manage claims and settings with Madauth.admin from your app, and the first admin is who signs in with the address in INITIAL_ADMIN_EMAIL';
+const RESET = 'an admin resets a user who lost every way in with Madauth.admin.resetSignIn(email) (POST /auth/admin/sign-in/reset)';
+const REMOVED_COMMANDS: Record<string, string> = {
+  'create-user': ADMIN_API,
+  'set-roles': ADMIN_API,
+  'get-roles': ADMIN_API,
+  'set-claims': ADMIN_API,
+  'get-claims': ADMIN_API,
+  'set-methods': ADMIN_API,
+  'get-methods': ADMIN_API,
+  'set-password-rules': ADMIN_API,
+  'get-password-rules': ADMIN_API,
+  'remove-totp': RESET,
+  'remove-sms': RESET,
+  'remove-passkeys': RESET,
+};
 
 export interface CliIo {
   /** Asks a question; an empty answer means `defaultValue`. */
@@ -187,22 +196,10 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
   }
   const { values: options, positionals } = parsed;
   const [command, ...rest] = positionals;
-  if (command && REMOVED_COMMANDS.includes(command)) {
-    return {
-      output:
-        `${command} was removed in madAuth 0.6: admins manage claims and settings with Madauth.admin from your app, and the first ` +
-        'admin is who signs in with the address in INITIAL_ADMIN_EMAIL. See docs/upgrading.md.',
-      exitCode: 1,
-    };
-  }
-  // Few commands take arguments; anywhere else one is likely a mistyped option, e.g. `init .env.local`.
-  const argumentLimits: Record<string, number> = {
-    'remove-totp': 1,
-    'remove-sms': 1,
-    'remove-passkeys': 1,
-  };
-  const maxArguments = command ? (argumentLimits[command] ?? 0) : 0;
-  if (rest.length > maxArguments) {
+  const replacement = command && Object.hasOwn(REMOVED_COMMANDS, command) ? REMOVED_COMMANDS[command] : undefined;
+  if (replacement) return { output: `${command} was removed in madAuth 0.6: ${replacement}. See docs/upgrading.md.`, exitCode: 1 };
+  // No command takes arguments; one is likely a mistyped option, e.g. `init .env.local`.
+  if (rest.length) {
     return { output: `Unexpected argument: ${rest.at(-1)}\n\n${usage}`, exitCode: 1 };
   }
   try {
@@ -234,15 +231,6 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
       const from = Number(options.from);
       if (!Number.isInteger(from) || from < 1 || from > madauthSchema.version) return { output: usage, exitCode: 1 };
       return { output: upgradeTablesSql(dialect, from) || '-- The tables are up to date.', exitCode: 0 };
-    }
-    if (command === 'remove-totp') {
-      return await removeTotp(rest[0], env);
-    }
-    if (command === 'remove-sms') {
-      return await removeSms(rest[0], env);
-    }
-    if (command === 'remove-passkeys') {
-      return await removePasskeys(rest[0], env);
     }
   } catch (e) {
     return { output: e instanceof Error ? e.message : String(e), exitCode: 1 };
@@ -467,43 +455,4 @@ function nextSteps(
   ].filter((step) => !!step);
   // The lines after the first are indented under the step's text.
   return steps.map((lines, i) => `${i + 1}. ${lines.map((line, j) => (j && line ? `   ${line}` : line)).join('\n')}`).join('\n\n');
-}
-
-async function removeTotp(email: string | undefined, env: Env) {
-  if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const users = new Users(await loadStore(env));
-  const address = normalizeEmail(email);
-  const user = await users.findByEmail(address);
-  if (!user) return { output: `No user has the e-mail address ${address}.`, exitCode: 1 };
-  const removed = await users.removeTotp(user.id);
-  return {
-    output: removed ? `Removed the authenticator app of ${address}.` : `${address} has no authenticator app.`,
-    exitCode: 0,
-  };
-}
-
-async function removeSms(email: string | undefined, env: Env) {
-  if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const users = new Users(await loadStore(env));
-  const address = normalizeEmail(email);
-  const user = await users.findByEmail(address);
-  if (!user) return { output: `No user has the e-mail address ${address}.`, exitCode: 1 };
-  const removed = await users.removeSms(user.id);
-  return {
-    output: removed ? `Removed the phone number of ${address}.` : `${address} has no phone number for SMS codes.`,
-    exitCode: 0,
-  };
-}
-
-async function removePasskeys(email: string | undefined, env: Env) {
-  if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const users = new Users(await loadStore(env));
-  const address = normalizeEmail(email);
-  const user = await users.findByEmail(address);
-  if (!user) return { output: `No user has the e-mail address ${address}.`, exitCode: 1 };
-  const removed = await users.removePasskeys(user.id);
-  return {
-    output: removed ? `Removed ${removed === 1 ? 'the passkey' : `the ${removed} passkeys`} of ${address}.` : `${address} has no passkeys.`,
-    exitCode: 0,
-  };
 }

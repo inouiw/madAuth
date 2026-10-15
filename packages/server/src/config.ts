@@ -294,13 +294,6 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
   };
 }
 
-/** Only the store from DATABASE_URL, for the command line. */
-export async function loadStore(env: Record<string, string | undefined>): Promise<StoreAdapter> {
-  const store = await storeFromDatabaseUrl(readEnv(env, 'DATABASE_URL'));
-  if (!store) throw new ConfigError('Set DATABASE_URL to manage users.');
-  return store;
-}
-
 /**
  * `DATABASE_URL=sqlite:<path>` or `DATABASE_URL=dynamodb:<table>` creates the built-in adapter, just as
  * passing it as `store` would.

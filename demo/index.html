@@ -178,8 +178,8 @@
         <p id="admin-note" class="note" hidden>
           You don't have the role, so these calls answer <code>forbidden</code>.
           <span data-hosted hidden>
-            Visitors don't get it on madauth.com: an admin could change every visitor's claims and switch sign-in
-            methods off for everyone.
+            Visitors don't get it on madauth.com: an admin could change every visitor's claims, reset their sign-in
+            and switch sign-in methods off for everyone.
           </span>
           To try the admin API, <a href="https://github.com/inouiw/madAuth#getting-started">run the demo on your machine</a>
           and give yourself the role: set <code>INITIAL_ADMIN_EMAIL</code> in <code>packages/server/.env</code> to your
@@ -199,6 +199,13 @@
               <p>Replaces the claims of the user with this address, the same as in <code>getClaims</code>. The user sees them at their next session check; your backends from their next session token.</p>
               <label>E-mail <input data-param="email" type="email" autocomplete="off" spellcheck="false" /></label>
               <label>Claims (JSON) <textarea data-param="claims" data-json rows="2" spellcheck="false">{ "roles": ["admin"] }</textarea></label>
+            </div>
+          </li>
+          <li class="api-method" data-call="resetSignIn">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.resetSignIn(email)</button>
+            <div class="api-detail" hidden>
+              <p>For a user who lost every way in, or a second factor: removes all their sign-in methods and second factors, ends their sessions and marks the address unconfirmed. They sign up again with any method that is on, and keep their id and claims. Check who is asking first: whoever proves the inbox next gets the account. The page asks first; resetting yourself signs you out.</p>
+              <label>E-mail <input data-param="email" type="email" autocomplete="off" spellcheck="false" /></label>
             </div>
           </li>
           <li class="api-method" data-call="getSettings">

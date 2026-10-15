@@ -53,8 +53,9 @@ export interface Settings {
 export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 
 /**
- * Managing claims and settings, for users with the role `admin` (`claims.roles`). The first admin is the
- * user who signs in with the address in the server's `INITIAL_ADMIN_EMAIL`.
+ * Managing claims and settings, and resetting a user's sign-in, for users with the role `admin`
+ * (`claims.roles`). The first admin is the user who signs in with the address in the server's
+ * `INITIAL_ADMIN_EMAIL`.
  */
 export interface AdminApi {
   /**
@@ -80,13 +81,13 @@ export interface AdminApi {
    */
   setSettings(settings: { methods?: MethodsToSet; password?: Partial<PasswordRules> }): Promise<Result<Settings>>;
   /**
-   * Removes a user's authenticator app and recovery codes: the last resort when both are lost. With a
-   * `required` policy the user sets it up again at the next sign-in. Fails with `forbidden`,
-   * `invalid_email` or `user_not_found`.
+   * Resets the sign-in of the user with this e-mail address, who lost every way in or a second factor:
+   * removes all their sign-in methods and second factors, ends their sessions and marks the address
+   * unconfirmed. They sign up again with any method that is on and keep their id, claims and roles. Check
+   * who is asking first: whoever proves the inbox next gets the account. An admin who resets themselves is
+   * signed out at the next session check. Fails with `forbidden`, `invalid_email` or `user_not_found`.
    */
-  removeAuthenticator(email: string): Promise<Result<{ userId: string }>>;
-  /** Removes all passkeys of a user who lost them. Fails with `forbidden`, `invalid_email` or `user_not_found`. */
-  removePasskeys(email: string): Promise<Result<{ userId: string }>>;
+  resetSignIn(email: string): Promise<Result<{ userId: string }>>;
 }
 
 export function createAdminApi(core: Core): AdminApi {
@@ -104,7 +105,6 @@ export function createAdminApi(core: Core): AdminApi {
     setClaims: (email, value) => call('claims/set', { email, claims: value }, claims),
     getSettings: () => call('settings/get', {}, settings),
     setSettings: (value) => call('settings/set', { methods: value.methods, password: value.password }, settings),
-    removeAuthenticator: (email) => call('totp/remove', { email }, (data: { userId: string }) => ({ userId: data.userId })),
-    removePasskeys: (email) => call('passkey/remove', { email }, (data: { userId: string }) => ({ userId: data.userId })),
+    resetSignIn: (email) => call('sign-in/reset', { email }, (data: { userId: string }) => ({ userId: data.userId })),
   };
 }

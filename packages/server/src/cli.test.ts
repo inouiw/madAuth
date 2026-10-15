@@ -414,6 +414,10 @@ describe('usage', () => {
     const result = await runCli(['set-roles', 'you@example.com', 'admin'], noQuestions, {});
 
     expect(result).toEqual({ exitCode: 1, output: expect.stringMatching(/^set-roles was removed in madAuth 0\.6: .*Madauth\.admin.*INITIAL_ADMIN_EMAIL/) });
+    expect(await runCli(['remove-totp', 'you@example.com'], noQuestions, {})).toEqual({
+      exitCode: 1,
+      output: expect.stringMatching(/^remove-totp was removed in madAuth 0\.6: .*Madauth\.admin\.resetSignIn\(email\) \(POST \/auth\/admin\/sign-in\/reset\)/),
+    });
   });
 
   it('is printed with an unknown option', async () => {

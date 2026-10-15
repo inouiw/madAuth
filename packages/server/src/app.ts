@@ -44,7 +44,7 @@ import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { deriveTotpKey } from './totp.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
-import { Users, factorsAmong, toMadauthUser, type StoredUser } from './users.js';
+import { Users, factorsAmong, methodOf, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
 /** How long madAuth waits for an event call; events never make a request fail. */
@@ -483,7 +483,7 @@ export function createApp(config: MadauthConfig): Hono {
     return googleSub ? c.json({ googleSub }) : c.body(null, 204);
   });
 
-  // --- Admin: claims, settings and the authenticator app ---
+  // --- Admin: claims, settings and resetting a user's sign-in ---
 
   /** The admin's id and address if the request comes from one; otherwise the answer to send. */
   const admin = async (c: Context): Promise<{ id: string; email: string } | { answer: Response }> => {
@@ -611,49 +611,21 @@ export function createApp(config: MadauthConfig): Hono {
     return c.json(settingsAnswer(methods, password));
   });
 
-  // The last resort for a user who lost the phone and the recovery codes.
-  app.post('/auth/admin/totp/remove', async (c) => {
+  // The way back for a user who lost every way in, whatever they had: they sign up again and keep their id.
+  // See "Resetting a user's sign-in" in docs/server.md.
+  app.post('/auth/admin/sign-in/reset', async (c) => {
     const caller = await admin(c);
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     if (!isValidEmail(data.email)) return invalidEmail(c);
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
-    // The app a user signed up with is told as part of their sign-up: without it, they sign up with the app again.
-    const app = await users.totpApp(user.id);
-    const secondFactor = !!app && !app.signedUpWith;
-    const removed = await users.removeTotp(user.id);
-    if (removed && secondFactor) await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'totp', by: caller.email });
-    return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
-  });
-
-  // The same for a user who lost their passkeys.
-  app.post('/auth/admin/passkey/remove', async (c) => {
-    const caller = await admin(c);
-    if ('answer' in caller) return caller.answer;
-    const data = await body(c);
-    if (!isValidEmail(data.email)) return invalidEmail(c);
-    const user = await users.findByEmail(normalizeEmail(data.email));
-    if (!user) return noUser(c);
-    for (const passkey of await users.passkeys(user.id)) {
-      if (await users.unlinkAccount(passkey.key)) {
-        await ctx.emit('user.method_removed', { user: toMadauthUser(user), method: 'passkey', passkey: { id: passkey.id, name: passkey.name }, by: caller.email });
-      }
-    }
-    return c.json({ email: user.emailNormalized, userId: user.id, passkeys: 0 });
-  });
-
-  // The same for a user who lost the phone that gets the SMS codes.
-  app.post('/auth/admin/sms/remove', async (c) => {
-    const caller = await admin(c);
-    if ('answer' in caller) return caller.answer;
-    const data = await body(c);
-    if (!isValidEmail(data.email)) return invalidEmail(c);
-    const user = await users.findByEmail(normalizeEmail(data.email));
-    if (!user) return noUser(c);
-    const removed = await users.removeSms(user.id);
-    if (removed) await ctx.emit('user.second_factor_disabled', { user: toMadauthUser(user), method: 'sms', by: caller.email });
-    return c.json({ email: user.emailNormalized, userId: user.id, enabled: false });
+    const removed = await users.resetSignIn(user.id);
+    // GitHub's authorization goes with its account, as when the user removes GitHub or deletes the account.
+    const github = config.github;
+    if (github) await Promise.all(removed.filter((account) => methodOf(account) === 'github').map((account) => revokeGrant(github, tokenKey, account)));
+    await ctx.emit('user.sign_in_reset', { user: toMadauthUser(user), by: caller.email });
+    return c.json({ email: user.emailNormalized, userId: user.id });
   });
 
   return app;

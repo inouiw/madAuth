@@ -116,6 +116,12 @@ vi.stubGlobal(
         return json({ email: body().email, userId: ada.id, claims: ada.claims });
       case 'POST /auth/admin/claims/set':
         return json({ email: body().email, userId: ada.id, claims: body().claims });
+      case 'POST /auth/admin/sign-in/reset': {
+        // The user's sessions end: the admin's own, when they reset themselves.
+        const email = String(body().email).toLowerCase();
+        if (email === sessionUser?.email) sessionUser = null;
+        return json({ email, userId: email === ada.email ? ada.id : 'usr_2' });
+      }
       case 'POST /auth/admin/settings/get':
         await holdSettings;
         return json({ methods: settings });
@@ -430,6 +436,33 @@ describe('demo page', () => {
     expect(response('deleteAccount')).toBe('');
   });
 
+  it("resets a user's sign-in only after a confirmation; resetting yourself signs you out", async () => {
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => $('#api').hidden).toBe(false);
+    open('resetSignIn');
+    // The address is the one the other admin calls target.
+    type(param('getClaims', 'email'), 'bob@example.com');
+    expect(request('resetSignIn')).toBe(`Madauth.admin.resetSignIn(email)\n${JSON.stringify({ email: 'bob@example.com' }, null, 2)}`);
+    vi.mocked(confirm).mockReturnValueOnce(false);
+    execute('resetSignIn').click();
+    await expect.poll(() => response('resetSignIn')).toBe('Cancelled.');
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/auth/admin/sign-in/reset'))).toBe(false);
+
+    execute('resetSignIn').click();
+    await expect.poll(() => response('resetSignIn')).toContain('"userId": "usr_2"');
+    expect(vi.mocked(confirm)).toHaveBeenLastCalledWith(expect.stringContaining('bob@example.com'));
+    expect($('#sign-in').hidden).toBe(true);
+
+    // Her own reset is asked as such, and ends her session: the page signs her out, and the result lands below the sign-in button.
+    type(param('resetSignIn', 'email'), 'Ada@example.com');
+    execute('resetSignIn').click();
+    await expect.poll(() => vi.mocked(confirm).mock.lastCall?.[0]).toContain('Reset your own sign-in');
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
+    await expect.poll(() => $('#last-response').hidden).toBe(false);
+    expect($('#last-response').textContent).toContain('Madauth.admin.resetSignIn(email)');
+    expect($('#last-response').textContent).toContain('"userId": "usr_1"');
+  });
+
   it('tells a user without the role admin why the admin calls fail, and loads no settings for them', async () => {
     const { claims: _, ...bob } = { ...ada, id: 'usr_2', name: 'Bob', email: 'bob@example.com' };
     signInAs = bob;
@@ -437,7 +470,7 @@ describe('demo page', () => {
     gis.callback!({ credential: 'token' });
 
     await expect.poll(() => $('#api').hidden).toBe(false);
-    // The previous user's deletion result is gone with the new sign-in.
+    // The previous user's result (her own reset) is gone with the new sign-in.
     expect($('#last-response').hidden).toBe(true);
     expect($('#admin-note').hidden).toBe(false);
     expect($('#admin-note').textContent).toContain('forbidden');

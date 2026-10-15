@@ -1,13 +1,7 @@
 // Behaviour described in docs/sms-security.md; update the doc when changing it.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runCli } from '../cli.js';
-import { createSqliteAdapter } from '../store/sqlite.js';
-import { APP_ORIGIN, WEBHOOK_SECRET, WEBHOOK_URL, cookies, passwordApp, post, setClaims, signUpVerified, setMethods, type TestMethods } from '../test/helpers.js';
+import { APP_ORIGIN, WEBHOOK_SECRET, WEBHOOK_URL, cookies, passwordApp, post, signUpVerified, setMethods, type TestMethods } from '../test/helpers.js';
 import { base32Decode, stepOf, totp } from '../totp.js';
-import { Users } from '../users.js';
 
 type Made = ReturnType<typeof passwordApp>;
 type App = Made['app'];
@@ -389,26 +383,5 @@ describe('SMS codes as the second step', () => {
     expect((await post(without.app, '/auth/sms/setup', { phone: PHONE })).status).toBe(404);
     expect(await (await without.app.request('/auth/config')).json()).toMatchObject({ sms: false });
     void hook;
-  });
-
-  it('S11: an admin removes a lost phone over the API or the command line', async () => {
-    const { app, hook, store, session } = await withPhone();
-    await setClaims(store, 'grace@example.com', { roles: ['admin'] });
-
-    const removed = await post(app, '/auth/admin/sms/remove', { email: 'Grace@example.com' }, withSession(session));
-
-    expect(removed.status).toBe(200);
-    expect(await removed.json()).toEqual({ email: 'grace@example.com', userId: expect.stringMatching(/^usr_/), enabled: false });
-    expect(hook.calls.at(-1)).toMatchObject({ type: 'user.second_factor_disabled', data: { user: { email: 'grace@example.com' }, method: 'sms', by: 'grace@example.com' } });
-    expect(await (await app.request('/auth/sms/status', { headers: withSession(session) })).json()).toEqual({ enabled: false, phone: null });
-    expect(await (await post(app, '/auth/admin/sms/remove', { email: 'nobody@example.com' }, withSession(session))).json()).toMatchObject({ error: 'user_not_found' });
-
-    const dir = mkdtempSync(join(tmpdir(), 'madauth-'));
-    const env = { DATABASE_URL: `sqlite:${join(dir, 'madauth.db')}` };
-    const io = { ask: async () => '', askSecret: async () => '' };
-    await new Users(createSqliteAdapter(join(dir, 'madauth.db'))).createUser({ email: 'ada@example.com', emailNormalized: 'ada@example.com', name: null, emailVerified: true });
-    expect(await runCli(['remove-sms', 'ada@example.com'], io, env)).toEqual({ exitCode: 0, output: 'ada@example.com has no phone number for SMS codes.' });
-    expect(await runCli(['remove-sms', 'nobody@example.com'], io, env)).toMatchObject({ exitCode: 1 });
-    rmSync(dir, { recursive: true, force: true });
   });
 });

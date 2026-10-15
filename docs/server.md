@@ -246,10 +246,11 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `user.deleted` | A user deleted their account | `user` | the same | the same |
 | `user.claims_changed` | An admin set the claims of a user, or [`INITIAL_ADMIN_EMAIL`](#the-first-admin) gave a user the role `admin` | `user` (with the new claims), `claims`, `by` (the admin's address, or `INITIAL_ADMIN_EMAIL`) | the same | the same |
 | `user.second_factor_enabled` | A user set up or replaced a second factor: the authenticator app as the second step of their sign-in method, or a phone number for SMS codes | `user`, `method` (`totp` or `sms`), `phone` (for `sms`) | the same | the same |
-| `user.second_factor_disabled` | A user removed a second factor, or an admin did over the HTTP API (the command line calls no webhook) | `user`, `method` (`totp` or `sms`), `by` (the admin's address, when an admin did) | the same | the same |
+| `user.second_factor_disabled` | A user removed a second factor | `user`, `method` (`totp` or `sms`) | the same | the same |
 | `user.recovery_code_used` | A recovery code was used instead of the app | `user`, `remaining` (recovery codes left) | the same | the same |
 | `user.method_added` | A signed-in user added a [sign-in method](sign-in-methods.md): a password, the e-mail link, Google, GitHub or a passkey | `user`, `method`, `email` (Google's or GitHub's address), `passkey { id, name }` (for a passkey) | the same | the same |
-| `user.method_removed` | A user removed one, or an admin removed a user's passkeys over the HTTP API (the command line calls no webhook) | `user`, `method`, `passkey { id, name }` (for a passkey), `by` (the admin's address, when an admin did) | the same | the same |
+| `user.method_removed` | A user removed one | `user`, `method`, `passkey { id, name }` (for a passkey) | the same | the same |
+| `user.sign_in_reset` | An admin [reset the sign-in](#resetting-a-users-sign-in) of a user: their methods and second factors are gone, and they sign up again | `user`, `by` (the admin's address) | the same | the same |
 
 - The prefix says what a call is: `email.send_*` and `sms.send_*` hand over a message for you to send, `user.signing_up` asks you to decide, and the other `user.*` types tell you what happened.
 - A user signs up with one method and can [add more](sign-in-methods.md) while signed in (`user.method_added`). The authenticator app and SMS codes are told as second factors (`user.second_factor_*`), whether or not the app also signs in on its own; setting up or replacing the app a user signed up with is part of their sign-up (`user.signed_up`), so no `user.second_factor_*` is sent for it.
@@ -303,7 +304,7 @@ A backend that answers 401 although the user is signed in met a session that exp
 
 ## Claims
 
-Claims are what admins attach to a user, as a JSON object, e.g. `{ "roles": ["admin"], "plan": "pro" }`. madAuth puts them into the session, so your app and your backends can tell what a user may do or has. What a claim means is up to you; madAuth only knows the role `admin` in `claims.roles`: the role that may manage claims and settings.
+Claims are what admins attach to a user, as a JSON object, e.g. `{ "roles": ["admin"], "plan": "pro" }`. madAuth puts them into the session, so your app and your backends can tell what a user may do or has. What a claim means is up to you; madAuth only knows the role `admin` in `claims.roles`: the role that may manage claims and settings, and [reset a user's sign-in](#resetting-a-users-sign-in).
 
 - Claims belong to the **user**, whichever way they sign in: with Google as well as with a password.
 - The session carries them as `claims` (a `claims` claim in the JWT). `createSessionVerifier` returns them as `user.claims`, and the web library as `Madauth.currentUser.claims`. A user without claims has no `claims` field.
@@ -326,7 +327,7 @@ Set `INITIAL_ADMIN_EMAIL` to your address, like every other variable: in `.env` 
 
 - **Once per value.** madAuth records in the settings which values it applied, and the write decides, so two sign-ins at once apply a value once. A value that was applied does nothing afterwards, also when it names someone who is no longer an admin, or no longer a user: from then on, roles are managed through the admin API only. A new value applies again: that is the way back in when no admin is left, or the only one is locked out.
 - **Existing admins keep their role**: it is stored in their claims. A deployment without an admin sets the variable.
-- **No admin takes the role from themselves.** The admin API refuses to take `admin` from the admin who calls it, and an admin can't delete their own account while they have the role (`403 own_admin_role`): another admin has to. So a lone admin keeps the role. Give a second user the role, so that one admin can help the other, e.g. remove a lost authenticator app. Two admins who take the role from each other at the same moment can still leave no admin; then set a new `INITIAL_ADMIN_EMAIL` value.
+- **No admin takes the role from themselves.** The admin API refuses to take `admin` from the admin who calls it, and an admin can't delete their own account while they have the role (`403 own_admin_role`): another admin has to. So a lone admin keeps the role. Give a second user the role, so that one admin can help the other, e.g. [reset their sign-in](#resetting-a-users-sign-in). Two admins who take the role from each other at the same moment can still leave no admin; then set a new `INITIAL_ADMIN_EMAIL` value.
 
 ## Sign-in methods
 
@@ -404,7 +405,7 @@ The authenticator app (TOTP, RFC 6238: Google Authenticator, 1Password, Microsof
 
 **Signing in.** After a method whose policy asks for it, the server answers `401 totp_required` (or `totp_setup_required`, with the `factors` the user can set up) instead of a session and sets a ten-minute challenge cookie; the dialog asks for the code, and `POST /auth/totp/verify` finishes the sign-in. With the app allowed as a sign-in method, `POST /auth/totp/signin` takes the e-mail address and a code, for every user who has the app. A recovery code works wherever a code does, once; `user.recovery_code_used` tells your webhook how many are left.
 
-**Removing it.** `Madauth.totp.remove(...)` and `newRecoveryCodes(...)` take a current code from the app or a recovery code, so a stolen session can't switch the protection off; while any method's policy is `required`, the app can only go if the user keeps another second factor, a passkey or a phone for [SMS codes](#sms-codes) (`403 required_by_policy`), and it can't go as the user's last way to sign in (`403 only_method`; they add another method, or delete the account). Deleting the account takes a code as well once the app is set up, while the app is on. A user who lost both the phone and the recovery codes needs the operator: `npx @madauth/server remove-totp <email>` (with `DATABASE_URL`; it calls no webhook), or `POST /auth/admin/totp/remove` as an admin; with a `required` policy they set the app up again at their next sign-in.
+**Removing it.** `Madauth.totp.remove(...)` and `newRecoveryCodes(...)` take a current code from the app or a recovery code, so a stolen session can't switch the protection off; while any method's policy is `required`, the app can only go if the user keeps another second factor, a passkey or a phone for [SMS codes](#sms-codes) (`403 required_by_policy`), and it can't go as the user's last way to sign in (`403 only_method`; they add another method, or delete the account). Deleting the account takes a code as well once the app is set up, while the app is on. A user who lost both the phone and the recovery codes needs an admin, who [resets their sign-in](#resetting-a-users-sign-in).
 
 The session says how it was authenticated: `amr` is `["pwd", "otp"]`, `["google", "otp"]`, `["github", "otp"]`, `["email", "otp"]` or `["passkey", "otp"]` after the second step and `["otp"]` for the app alone, as `user.amr` in the web library and in [`createSessionVerifier`](#verifying-the-session-in-your-backend). A backend can require `otp` before a sensitive action.
 
@@ -418,7 +419,7 @@ With `sms` among the [sign-in methods](#sign-in-methods) and a webhook that send
 
 **Signing in.** After the first step, a user with only a phone gets `401 sms_required`; one with the app and a phone gets `totp_required` with `factors: ["totp", "sms"]` and can switch (a passkey comes first: `passkey_required`). The SMS goes when the client asks for it (`POST /auth/sms/send` with the challenge cookie), and `POST /auth/sms/verify` finishes the sign-in with `amr` ending in `sms`. One SMS per minute goes to a user (`429 too_soon`); a code lives ten minutes.
 
-**Removing it.** `Madauth.sms.remove({ code })` takes a code sent to the number (`Madauth.sms.send()` while signed in). While a policy is `required`, the phone can only go if the user keeps another second factor, the app or a passkey (`403 required_by_policy`). A user who lost the phone needs the operator: `npx @madauth/server remove-sms <email>`, or `POST /auth/admin/sms/remove` as an admin. Deleting the account takes no SMS code (only the app protects the deletion). See [SMS code security](sms-security.md) for the rules in detail.
+**Removing it.** `Madauth.sms.remove({ code })` takes a code sent to the number (`Madauth.sms.send()` while signed in). While a policy is `required`, the phone can only go if the user keeps another second factor, the app or a passkey (`403 required_by_policy`). A user who lost the phone needs an admin, who [resets their sign-in](#resetting-a-users-sign-in). Deleting the account takes no SMS code (only the app protects the deletion). See [SMS code security](sms-security.md) for the rules in detail.
 
 ## Passkeys
 
@@ -430,11 +431,26 @@ A passkey (WebAuthn) signs in with the device's screen lock: a fingerprint, the 
 
 **Signing in.** With passkeys allowed as a sign-in method and `new Passkey()` in `Madauth.initialize`, the dialog shows a "Sign in with a passkey" button above all other methods and offers the user's passkeys in the e-mail field's autofill (`Madauth.passkey.signIn()`, with `{ conditional: true }` for the autofill): no address is asked for. The `passkey` policy may ask for a second factor after it, the app or a phone. As a second factor, a passkey comes first: `401 passkey_required`, and `Madauth.passkey.verify()` finishes the sign-in. The session's `amr` is `["passkey"]`, or e.g. `["pwd", "passkey"]` after the second step.
 
-**Removing one.** The user removes a passkey with `Madauth.methods.remove(id)`, within ten minutes of signing in; not their last one while a `required` policy has no other second factor of theirs to ask for (`403 required_by_policy`), nor their last way to sign in (`403 only_method`). A user who lost their passkeys needs another method, or the operator: `npx @madauth/server remove-passkeys <email>`, or `POST /auth/admin/passkey/remove` as an admin. See [Passkey security](passkey-security.md) for the rules in detail.
+**Removing one.** The user removes a passkey with `Madauth.methods.remove(id)`, within ten minutes of signing in; not their last one while a `required` policy has no other second factor of theirs to ask for (`403 required_by_policy`), nor their last way to sign in (`403 only_method`). A user who lost their passkeys needs another method, or an admin, who [resets their sign-in](#resetting-a-users-sign-in). See [Passkey security](passkey-security.md) for the rules in detail.
 
 ## A user's sign-in methods
 
 A user signs up with one method and can add more while signed in: a passkey, a password (`Madauth.password.add`), the e-mail link (`Madauth.emailLink.add`), Google or GitHub (their buttons with `purpose: 'link'`), the authenticator app. `Madauth.manageSignInMethods()` opens all of this in the dialog: the user's methods, buttons to add another and to remove one. See [Several sign-in methods](sign-in-methods.md) for the rules.
+
+## Resetting a user's sign-in
+
+A user who lost every way in, or a second factor they can't sign in without (the app and its recovery codes, the phone for SMS codes, the passkeys), needs an admin. `Madauth.admin.resetSignIn(email)` in the web library (`POST /auth/admin/sign-in/reset`) resets their sign-in, whatever they had:
+
+- Every sign-in method and second factor of the user goes: the password, Google, GitHub, the e-mail link, the authenticator app with its recovery codes, the phone, the passkeys. GitHub's authorization is taken back at GitHub, as when the user removes GitHub or deletes the account; a failure is logged, and the reset goes ahead.
+- Every session of the user ends, and every sign-in that waits for its second step (the session version goes up). Their pending confirmation, reset and sign-in links and SMS codes stop working, and wrong codes count from zero.
+- The address counts as unconfirmed, so the next sign-up proves the inbox again.
+- The user stays: their id (`usr_…`), address, name, claims and roles. Their sign-up stays complete: no second `user.signed_up`.
+
+The user then signs up again with any method that is on, and gets the same id. The rules for a sign-up nobody finished apply: until one proves the address, the latest sign-up wins, and a Google or GitHub sign-in with the address takes the user over. `user.sign_in_reset` tells your webhook, with the admin's address as `by`. There is no command for it: an admin calls it from your app. An admin who resets themselves is signed out. An admin who lost their own way in is reset by another admin. With no admin who can sign in, set a new `INITIAL_ADMIN_EMAIL` value (see [The first admin](#the-first-admin)): the new admin then resets the old one.
+
+**Check who is asking before a reset.** Afterwards the address is all it takes: whoever proves it next (with the e-mail, or a Google or GitHub account with the address) gets the account, with its id, your app's data under that id, and its roles, `admin` too. Someone who took over the user's mailbox and asks for a reset gets past the app, the phone and the passkeys that protected it. Confirm that the request comes from the user in a way that doesn't rest on the mailbox alone.
+
+Code: `resetSignIn` in [`users.ts`](../packages/server/src/users.ts), `/auth/admin/sign-in/reset` in [`app.ts`](../packages/server/src/app.ts).
 
 ## Deleting an account
 
@@ -667,9 +683,7 @@ The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the
 | `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims`, 403 `own_admin_role` (it would take the role `admin` from the caller, see [The first admin](#the-first-admin)) |
 | `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, allowAsSignInMethod, secondFactor }, github: { … }, password: { … }, totp: { … }, 'email-link': { … }, passkey: { … }, sms: { … } }, password: { minLength, minScore } }`, for admins. See [Sign-in methods](#sign-in-methods) and [Password rules](#password-rules). |
 | `POST /auth/admin/settings/set` | `{ methods?: { <id>: { allowAsSignInMethod, secondFactor } }, password?: { minLength?, minScore? } }`, one or both (`methods` is the list of the methods that are on, each with both settings; what `password` leaves out takes its default) → the same; 400 `invalid_settings` when a setting doesn't fit its method, a policy has no second factor that is on, or no method that creates users would stay on, and then nothing is changed |
-| `POST /auth/admin/totp/remove` | `{ email }` → `{ email, userId, enabled: false }`: removes the user's authenticator app and recovery codes, for admins. See [Authenticator app](#authenticator-app). |
-| `POST /auth/admin/passkey/remove` | `{ email }` → `{ email, userId, passkeys: 0 }`: removes all of the user's passkeys, for admins. See [Passkeys](#passkeys). |
-| `POST /auth/admin/sms/remove` | `{ email }` → `{ email, userId, enabled: false }`: removes the user's phone number, for admins. See [SMS codes](#sms-codes). |
+| `POST /auth/admin/sign-in/reset` | `{ email }` → `{ email, userId }`: removes all of the user's sign-in methods and second factors, ends their sessions and marks the address unconfirmed, for admins; they sign up again. See [Resetting a user's sign-in](#resetting-a-users-sign-in). |
 | `POST /auth/account/delete` | Deletes the signed-in user's account and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`, 403 `own_admin_role` (the user has the role `admin`). See [Deleting an account](#deleting-an-account). |
 | `GET /.well-known/jwks.json` | Public key to verify sessions |
 | `GET /health` | `ok` |

@@ -371,7 +371,8 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/password/signin': {
         if (server.locked) return json({ error: 'too_many_attempts', message: 'Too many failed attempts. Try again in 30 seconds.' }, 429);
         const account = server.accounts.get(email);
-        if (!account || account.app || account.password !== body.password) return json({ error: 'invalid_credentials', message: 'wrong' }, 401);
+        // A user without a password (one whose sign-in an admin reset) has none to sign in with.
+        if (!account?.password || account.app || account.password !== body.password) return json({ error: 'invalid_credentials', message: 'wrong' }, 401);
         if (!account.verified) return json({ error: 'email_unverified', message: 'unverified' }, 403);
         return afterPrimary(email, 'password');
       }
@@ -642,14 +643,23 @@ export function fakeServer(): FakeServer {
           },
         });
       }
-      case 'POST /auth/admin/totp/remove': {
+      case 'POST /auth/admin/sign-in/reset': {
         if (!server.user) return json({ error: 'no_session' }, 401);
         if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
         if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
-        if (!server.accounts.has(email)) return json({ error: 'user_not_found', message: 'no user' }, 404);
+        const account = server.accounts.get(email);
+        if (!account) return json({ error: 'user_not_found', message: 'no user' }, 404);
+        // Every way in goes, and the address is unconfirmed until the next sign-up proves it.
+        server.accounts.set(email, { password: '', verified: false, ...(account.name ? { name: account.name } : {}) });
         server.authenticators.delete(email);
         server.recoveryCodes.delete(email);
-        return json({ email, userId: userFor(email).id, enabled: false });
+        server.phones.delete(email);
+        server.linked.delete(email);
+        for (const [id, passkey] of server.passkeys) if (passkey.email === email) server.passkeys.delete(id);
+        const userId = userFor(email).id;
+        // Their sessions end: the admin's own as well.
+        if (server.user.email === email) server.user = null;
+        return json({ email, userId });
       }
       case 'POST /auth/account/delete': {
         if (!server.user) return json({ error: 'no_session' }, 401);
