@@ -304,13 +304,6 @@ export class Users {
     return created;
   }
 
-  /** Removes all of the user's passkeys. Resolves to how many there were. */
-  async removePasskeys(userId: string): Promise<number> {
-    let removed = 0;
-    for (const passkey of await this.passkeys(userId)) removed += await this.store.delete('account', { id: passkey.id });
-    return removed;
-  }
-
   /**
    * The user's authenticator app, if they set one up, and whether they signed up with it (as opposed to
    * adding it later). One read: the app and the user's other accounts together.
@@ -446,16 +439,40 @@ export class Users {
     return (await this.store.delete('account', { key })) === 1;
   }
 
-  /** Removes the user's authenticator app and recovery codes. Resolves to false if they had no app. */
-  async removeTotp(userId: string): Promise<boolean> {
-    const removed = await this.unlinkAccount(totpAccountKey(userId));
+  /**
+   * Resets the sign-in of a user who lost every way in: removes all their accounts (sign-in methods and
+   * second factors) with the recovery codes, ends their sessions and the sign-ins that wait for a second step
+   * (a new session version), deletes their pending links and codes, counts wrong codes from zero, and marks
+   * the address unconfirmed, so their next sign-up proves the inbox again. The user keeps their id, address,
+   * name, claims and `signedUpAt`. Resolves to the accounts that were removed, e.g. for GitHub's token.
+   */
+  async resetSignIn(userId: string): Promise<StoredAccount[]> {
+    // The sessions end first, so none of them adds a method meanwhile. A sign-in that found one of the accounts
+    // before they went (or a password reset under way) may still start a session with that version: the
+    // second raise ends it. Each raise counts from the user as stored then, not as the request read them.
+    await this.endSignIns(userId);
+    const removed = await this.deleteAccounts(userId);
+    await this.endSignIns(userId);
+    await this.clearVerifications(userId);
     await this.clearRecoveryCodes(userId);
     return removed;
   }
 
-  /** Removes the user's phone number for SMS codes. Resolves to false if they had none. */
-  async removeSms(userId: string): Promise<boolean> {
-    return this.unlinkAccount(smsAccountKey(userId));
+  /** Raises the session version and marks the address unconfirmed, with wrong codes counted from zero. */
+  private async endSignIns(userId: string): Promise<void> {
+    const user = await this.findById(userId);
+    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0 });
+  }
+
+  /**
+   * Deletes the user's accounts until none is left, as another request may add one meanwhile. Resolves to the
+   * accounts this deleted (not those another request deleted at the same time).
+   */
+  private async deleteAccounts(userId: string, rounds = 3): Promise<StoredAccount[]> {
+    const accounts = rounds > 0 ? await this.accounts(userId) : [];
+    if (!accounts.length) return [];
+    const deleted = await Promise.all(accounts.map(async (account) => ((await this.store.delete('account', { id: account.id })) === 1 ? [account] : [])));
+    return [...deleted.flat(), ...(await this.deleteAccounts(userId, rounds - 1))];
   }
 
   /**

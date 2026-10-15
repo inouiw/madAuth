@@ -74,13 +74,8 @@ Commands:
                                passwords or simple patterns). What is left out takes its default, e.g.
                                set-password-rules min-length=10 min-score=3. Uses DATABASE_URL.
   get-password-rules           Print the rules for new passwords.
-  remove-totp <email>          Remove a user's authenticator app and recovery codes: the last resort when
-                               both are lost. With a required policy, the user sets it up again next time.
-  remove-sms <email>           Remove a user's phone number for SMS codes, when they lost the phone.
-  remove-passkeys <email>      Remove all passkeys of a user, when they lost them.
-                               The claims commands and the remove commands use DATABASE_URL from the
-                               environment; the methods commands need the server's whole configuration
-                               (e.g. --env-file .env).
+                               The claims commands use DATABASE_URL from the environment; the methods
+                               commands need the server's whole configuration (e.g. --env-file .env).
   schema [--dialect <name>] [--from <version>]
                                Print the SQL that creates madAuth's tables for a custom store adapter.
                                Dialects: postgres (default), mysql, sqlite. With --from, print only the
@@ -240,9 +235,6 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     'create-user': 1,
     'get-roles': 1,
     'get-claims': 1,
-    'remove-totp': 1,
-    'remove-sms': 1,
-    'remove-passkeys': 1,
   };
   const maxArguments = command ? (argumentLimits[command] ?? 0) : 0;
   if (rest.length > maxArguments) {
@@ -289,15 +281,6 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     }
     if (command === 'set-password-rules' || command === 'get-password-rules') {
       return await passwordRules(command, rest, env);
-    }
-    if (command === 'remove-totp') {
-      return await removeTotp(rest[0], env);
-    }
-    if (command === 'remove-sms') {
-      return await removeSms(rest[0], env);
-    }
-    if (command === 'remove-passkeys') {
-      return await removePasskeys(rest[0], env);
     }
   } catch (e) {
     return { output: e instanceof Error ? e.message : String(e), exitCode: 1 };
@@ -619,45 +602,6 @@ async function passwordRules(command: 'set-password-rules' | 'get-password-rules
     await settings.setPasswordRules(rules, null);
   }
   return { output: describeRules(await settings.passwordRules()), exitCode: 0 };
-}
-
-async function removeTotp(email: string | undefined, env: Env) {
-  if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const users = new Users(await loadStore(env));
-  const address = normalizeEmail(email);
-  const user = await users.findByEmail(address);
-  if (!user) return { output: `No user has the e-mail address ${address}.`, exitCode: 1 };
-  const removed = await users.removeTotp(user.id);
-  return {
-    output: removed ? `Removed the authenticator app of ${address}.` : `${address} has no authenticator app.`,
-    exitCode: 0,
-  };
-}
-
-async function removeSms(email: string | undefined, env: Env) {
-  if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const users = new Users(await loadStore(env));
-  const address = normalizeEmail(email);
-  const user = await users.findByEmail(address);
-  if (!user) return { output: `No user has the e-mail address ${address}.`, exitCode: 1 };
-  const removed = await users.removeSms(user.id);
-  return {
-    output: removed ? `Removed the phone number of ${address}.` : `${address} has no phone number for SMS codes.`,
-    exitCode: 0,
-  };
-}
-
-async function removePasskeys(email: string | undefined, env: Env) {
-  if (!isValidEmail(email)) return { output: `"${email ?? ''}" is not an e-mail address.\n\n${usage}`, exitCode: 1 };
-  const users = new Users(await loadStore(env));
-  const address = normalizeEmail(email);
-  const user = await users.findByEmail(address);
-  if (!user) return { output: `No user has the e-mail address ${address}.`, exitCode: 1 };
-  const removed = await users.removePasskeys(user.id);
-  return {
-    output: removed ? `Removed ${removed === 1 ? 'the passkey' : `the ${removed} passkeys`} of ${address}.` : `${address} has no passkeys.`,
-    exitCode: 0,
-  };
 }
 
 async function createUser(email: string | undefined, io: CliIo, env: Env) {

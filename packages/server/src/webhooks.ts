@@ -25,6 +25,7 @@ export const WEBHOOK_TYPES = [
   'user.recovery_code_used',
   'user.method_added',
   'user.method_removed',
+  'user.sign_in_reset',
 ] as const;
 
 /** The calls that hand over an e-mail (as opposed to events and checks). */
