@@ -150,7 +150,7 @@ export const madauthSchema = {
     },
     /**
      * A setting, as JSON (since version 4): e.g. `methods`, which sign-in methods are on, which admins change at
-     * runtime, or `admins` and `initialAdmin`, which madAuth keeps about the role `admin` (see admins.ts).
+     * runtime, or `initialAdmin`, the values of INITIAL_ADMIN_EMAIL that madAuth applied (see admins.ts).
      */
     setting: {
       fields: {

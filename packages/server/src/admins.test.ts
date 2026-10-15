@@ -1,7 +1,7 @@
-// The role admin: INITIAL_ADMIN_EMAIL makes the first admin, and the last admin keeps the role. See "The first
-// admin" in docs/server.md.
+// The role admin: INITIAL_ADMIN_EMAIL makes the first admin, and no admin takes the role from themselves. See
+// "The first admin" in docs/server.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ADMINS_SETTING, INITIAL_ADMIN_SETTING } from './admins.js';
+import { INITIAL_ADMIN_SETTING } from './admins.js';
 import type { MadauthConfig } from './config.js';
 import { Settings } from './settings.js';
 import {
@@ -10,7 +10,6 @@ import {
   linkAndCode,
   passwordApp,
   post,
-  setClaims,
   signInResponse,
   signUpVerified,
   testApp,
@@ -55,7 +54,6 @@ describe('INITIAL_ADMIN_EMAIL', () => {
     // After user.signed_up, which carries the role as well: the receiver hears of the user first.
     expect(hook.types().slice(-3)).toEqual(['user.signed_up', 'user.claims_changed', 'user.signed_in']);
     expect(await new Settings(store).get(INITIAL_ADMIN_SETTING)).toEqual([{ email: GRACE, userId: user.id }]);
-    expect(await new Settings(store).get(ADMINS_SETTING)).toEqual([user.id]);
     // The session works for the admin API at once.
     const session = cookies(confirmed).madauth_session.value;
     expect((await post(app, '/auth/admin/claims/get', { email: GRACE }, withSession(session))).status).toBe(200);
@@ -111,7 +109,7 @@ describe('INITIAL_ADMIN_EMAIL', () => {
   });
 });
 
-describe('the last admin', () => {
+describe("an admin's own role", () => {
   /** Grace is the admin (by INITIAL_ADMIN_EMAIL), Ada a user; returns both sessions. */
   async function withAdmin() {
     const made = appFor(GRACE);
@@ -120,63 +118,34 @@ describe('the last admin', () => {
     return { ...made, grace, ada };
   }
 
-  it('keeps the role: the admin API refuses to take it, until another user has it', async () => {
+  it("an admin can't take the role from themselves; another admin can", async () => {
     const { app, grace, ada } = await withAdmin();
 
     const refused = await setClaimsOf(app, grace, GRACE, { plan: 'pro' });
 
     expect(refused.status).toBe(403);
-    expect(await refused.json()).toMatchObject({ error: 'last_admin' });
+    expect(await refused.json()).toMatchObject({ error: 'own_admin_role' });
     expect((await sessionUser(app, grace)).claims).toEqual({ roles: ['admin'] });
-    // With a second admin, either can go.
+    // Their other claims are theirs to change, as long as the role stays.
+    expect((await setClaimsOf(app, grace, GRACE, { plan: 'pro', roles: ['admin'] })).status).toBe(200);
     expect((await setClaimsOf(app, grace, ADA, { roles: ['admin'] })).status).toBe(200);
-    expect((await setClaimsOf(app, grace, GRACE, { plan: 'pro' })).status).toBe(200);
+    expect((await setClaimsOf(app, ada, GRACE, { plan: 'pro' })).status).toBe(200);
     expect((await sessionUser(app, grace)).claims).toEqual({ plan: 'pro' });
-    expect(await (await setClaimsOf(app, ada, ADA, {})).json()).toMatchObject({ error: 'last_admin' });
-    // Claims without a change of the role are no matter.
-    expect((await setClaimsOf(app, ada, ADA, { roles: ['admin', 'editor'] })).status).toBe(200);
+    expect(await (await setClaimsOf(app, ada, ADA, {})).json()).toMatchObject({ error: 'own_admin_role' });
   });
 
-  it("can't delete their account until another user has the role", async () => {
-    const { app, store, grace } = await withAdmin();
+  it("an admin can't delete their own account while they have the role", async () => {
+    const { app, store, grace, ada } = await withAdmin();
     const deleteAccount = () => post(app, '/auth/account/delete', {}, withSession(grace));
 
     const refused = await deleteAccount();
 
     expect(refused.status).toBe(403);
-    expect(await refused.json()).toMatchObject({ error: 'last_admin' });
+    expect(await refused.json()).toMatchObject({ error: 'own_admin_role' });
     expect(await store.findOne('user', { emailNormalized: GRACE })).not.toBeNull();
-    expect((await setClaimsOf(app, grace, ADA, { roles: ['admin'] })).status).toBe(200);
-    expect((await deleteAccount()).status).toBe(204);
-  });
-
-  it('of two admins who take the role from each other at once, one is refused', async () => {
-    const { app, grace, ada } = await withAdmin();
+    // Another admin takes the role from her first.
     await setClaimsOf(app, grace, ADA, { roles: ['admin'] });
-
-    const results = await Promise.all([setClaimsOf(app, grace, ADA, {}), setClaimsOf(app, ada, GRACE, {})]);
-
-    expect(results.map((res) => res.status).sort()).toEqual([200, 403]);
-    const admins = [await sessionUser(app, grace), await sessionUser(app, ada)].filter((user) => user.claims?.roles?.includes('admin'));
-    expect(admins).toHaveLength(1);
-  });
-
-  it('counts an admin whose role was set straight in the store (e.g. before 0.6) once they sign in or call the admin API', async () => {
-    const { app, hook, store } = appFor(undefined);
-    await signUpVerified(app, hook);
-    await signUpVerified(app, hook, ADA, 'adas password!');
-    await setClaims(store, GRACE, { roles: ['admin'] });
-    await setClaims(store, ADA, { roles: ['admin'] });
-    const grace = await signInWithPassword(app, GRACE);
-
-    // madAuth hasn't met Ada as an admin yet, so Grace counts as the last one.
-    expect((await setClaimsOf(app, grace, GRACE, {})).status).toBe(403);
-    await signInWithPassword(app, ADA);
-    expect((await setClaimsOf(app, grace, GRACE, {})).status).toBe(200);
-    // A role taken away straight in the store counts no more either.
-    await setClaims(store, GRACE, { roles: ['admin'] });
-    await post(app, '/auth/admin/claims/get', { email: GRACE }, withSession(grace));
-    await setClaims(store, ADA, null);
-    expect((await setClaimsOf(app, grace, GRACE, {})).status).toBe(403);
+    await setClaimsOf(app, ada, GRACE, {});
+    expect((await deleteAccount()).status).toBe(204);
   });
 });

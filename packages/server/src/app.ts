@@ -188,8 +188,8 @@ export function createApp(config: MadauthConfig): Hono {
     deleteCookie(c, RENEWAL_COOKIE, { path: '/auth', secure });
     deleteCookie(c, EXPIRY_COOKIE, { path: '/', domain: cookieDomain, secure });
   };
-  /** A change that would leave nobody with the role `admin`. */
-  const lastAdmin = (c: Context, message: string) => c.json({ error: 'last_admin', message }, 403);
+  /** An admin's own change that would take the role `admin` from them: another admin has to make it. */
+  const ownAdminRole = (c: Context, message: string) => c.json({ error: 'own_admin_role', message }, 403);
 
   // --- Session ---
 
@@ -275,8 +275,6 @@ export function createApp(config: MadauthConfig): Hono {
       // The user INITIAL_ADMIN_EMAIL names gets the role before the session, which carries it.
       const promoted = await promoteInitialAdmin(signedIn);
       const user = promoted ? { ...signedIn, claims: promoted.claims } : signedIn;
-      // An admin madAuth didn't know of yet (e.g. from before 0.6) is noted, so that the last admin keeps the role.
-      if (!promoted && isAdmin(user)) await admins.met(user.id);
       // Only a user whose first session this is gets the write, before the cookies: if it fails, nobody is
       // signed in. The write decides, so two sign-ins at once send it once.
       const firstSession = signedUpAt === 0 && (await users.markSignedUp(user.id));
@@ -468,10 +466,9 @@ export function createApp(config: MadauthConfig): Hono {
       const via = await checkCode(c, ctx, totpKeys, stored, authenticator, data);
       if (via instanceof Response) return via;
     }
-    // Somebody must stay able to manage claims and settings. The list's write decides, so two admins who delete
-    // their accounts at once can't both go.
-    if (isAdmin(user) && !(await admins.release(user.id, user.email ? normalizeEmail(user.email) : null))) {
-      return lastAdmin(c, "You are the last admin, so your account can't be deleted. Give another user the role \"admin\" first.");
+    // An admin never removes themselves, so a lone admin stays: another admin takes the role from them first.
+    if (isAdmin(user)) {
+      return ownAdminRole(c, `You have the role "${ADMIN_ROLE}", so you can't delete your account: another admin takes the role from you first.`);
     }
     // Read before the deletion: the web library revokes the app's access to this Google account with it.
     const googleSub = await users.googleSub(user.id);
@@ -487,8 +484,8 @@ export function createApp(config: MadauthConfig): Hono {
 
   // --- Admin: claims, settings and the authenticator app ---
 
-  /** The admin's address if the request comes from one; otherwise the answer to send. */
-  const admin = async (c: Context): Promise<{ email: string } | { answer: Response }> => {
+  /** The admin's id and address if the request comes from one; otherwise the answer to send. */
+  const admin = async (c: Context): Promise<{ id: string; email: string } | { answer: Response }> => {
     // currentSession reads the claims from the store, not from the session token: a removed admin role
     // stops counting at once.
     const user = await currentSession(c);
@@ -498,9 +495,7 @@ export function createApp(config: MadauthConfig): Hono {
       const message = `Only users with the role "${ADMIN_ROLE}" can manage claims and settings.`;
       return { answer: c.json({ error: 'forbidden', message }, 403) };
     }
-    // Admins whose session started before madAuth knew of them (e.g. from before 0.6) count from their first call.
-    await admins.met(user.id);
-    return { email };
+    return { id: user.id, email };
   };
   const invalidEmail = (c: Context) => c.json({ error: 'invalid_email', message: 'This is not a valid e-mail address.' }, 400);
   const noUser = (c: Context) => c.json({ error: 'user_not_found', message: 'No user has this e-mail address.' }, 404);
@@ -535,15 +530,13 @@ export function createApp(config: MadauthConfig): Hono {
     }
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
-    // The last admin keeps the role; the list's write decides, so two admins can't take it from each other at once.
-    const losesRole = isAdmin({ claims: claimsFromJson(user.claims) }) && !isAdmin({ claims });
-    if (losesRole && !(await admins.release(user.id, caller.email))) {
-      return lastAdmin(c, `This is the last admin, so the role "${ADMIN_ROLE}" can't be taken away. Give another user the role first.`);
+    // An admin never takes the role from themselves, so a lone admin keeps it: another admin has to.
+    if (user.id === caller.id && !isAdmin({ claims })) {
+      return ownAdminRole(c, `You can't take the role "${ADMIN_ROLE}" from yourself: another admin has to.`);
     }
     // Stored as JSON, and sent with the user as stored: the webhook sees what the next session sees.
     const stored = Object.keys(claims).length ? JSON.stringify(claims) : null;
     await users.updateUser(user.id, { claims: stored });
-    if (isAdmin({ claims })) await admins.note(user.id, caller.email);
     const email = user.emailNormalized;
     await ctx.emit('user.claims_changed', { user: toMadauthUser({ ...user, claims: stored }), claims, by: caller.email });
     return c.json({ email, userId: user.id, claims });

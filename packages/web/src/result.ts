@@ -66,7 +66,7 @@ const errorCodes = [
   'code_required',
   'no_authenticator',
   'only_method',
-  'last_admin',
+  'own_admin_role',
   'other_method',
   'unknown',
 ] as const;

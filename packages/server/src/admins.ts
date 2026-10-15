@@ -1,16 +1,9 @@
-// The role `admin`: who holds it is in each user's claims (`claims.roles`), where the admin API and
-// INITIAL_ADMIN_EMAIL put it. Two settings go with it: the admins madAuth knows of, so the last one keeps the
-// role, and the value of INITIAL_ADMIN_EMAIL that was applied. See "The first admin" in docs/server.md.
+// The first admin: INITIAL_ADMIN_EMAIL gives the role `admin` (in the user's claims, `claims.roles`) to the user
+// with that address, once per value. The setting `initialAdmin` records the values applied. See "The first
+// admin" in docs/server.md.
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, rolesOf, type Claims } from './claims.js';
 import type { Settings } from './settings.js';
 import type { StoredUser, Users } from './users.js';
-
-/**
- * The id of the setting that lists the admins madAuth knows of, by their user ids: those who got the role
- * from the admin API or INITIAL_ADMIN_EMAIL, and those it met as admins at a sign-in or a call of the admin
- * API (e.g. admins from before madAuth 0.6).
- */
-export const ADMINS_SETTING = 'admins';
 
 /**
  * The id of the setting that lists the values of INITIAL_ADMIN_EMAIL that were applied, each with the user it
@@ -37,8 +30,6 @@ const holdsRole = (user: StoredUser | null): boolean => !!user && isAdmin({ clai
 const withAdminRole = (claims: Claims): Claims | null => parseClaims({ ...claims, roles: [...rolesOf({ claims }), ADMIN_ROLE] });
 
 export class Admins {
-  /** The ids this instance knows to be on the list, so a sign-in of an admin it met before reads nothing. */
-  private readonly listed = new Set<string>();
   /** The INITIAL_ADMIN_EMAIL value this instance knows to be applied: applied stays applied. */
   private applied: string | undefined;
 
@@ -46,37 +37,6 @@ export class Admins {
     private readonly settings: Settings,
     private readonly users: Users,
   ) {}
-
-  /** Notes that the user holds the role: they got it, or madAuth met an admin it didn't know of yet. Writes only then. */
-  async note(userId: string, updatedBy: string | null): Promise<void> {
-    await this.settings.change<string[]>(ADMINS_SETTING, (known = []) => (known.includes(userId) ? null : [...known, userId].sort()), updatedBy);
-    this.listed.add(userId);
-  }
-
-  /** {@link note} for an admin met at a sign-in or a call of the admin API: only the first time this instance meets them. */
-  async met(userId: string): Promise<void> {
-    if (!this.listed.has(userId)) await this.note(userId, null);
-  }
-
-  /**
-   * Takes the user off the list before their role or their account goes. Resolves to false, changing nothing,
-   * if no other admin would be left: none of the others on the list still holds the role. The list's write
-   * decides, so of two changes at once that would each leave only the other admin, one is refused.
-   */
-  async release(userId: string, updatedBy: string | null): Promise<boolean> {
-    const left = await this.settings.change<string[]>(
-      ADMINS_SETTING,
-      async (known = []) => {
-        // Others whose role went meanwhile (e.g. straight in the store) don't count, and leave the list.
-        const others = known.filter((id) => id !== userId);
-        const holders = (await Promise.all(others.map(async (id) => (holdsRole(await this.users.findById(id)) ? [id] : [])))).flat();
-        return holders.length ? holders : null;
-      },
-      updatedBy,
-    );
-    if (left) this.listed.clear();
-    return left !== null;
-  }
 
   /**
    * INITIAL_ADMIN_EMAIL (`value`, normalized): gives the role to the user with that address as they start a
@@ -113,7 +73,6 @@ export class Admins {
       return null;
     }
     this.applied = value;
-    await this.note(user.id, null);
     return written === user ? null : { user: written, claims: claimsFromJson(written.claims) };
   }
 }
