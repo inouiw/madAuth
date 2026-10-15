@@ -48,9 +48,10 @@ export interface PasskeyApi {
   /** Finishes a sign-in that ended with `passkey_required`. Fails with `cancelled`, `verification_failed` or `challenge_expired`. */
   verify(): Promise<Result<{ user: MadauthUser }>>;
   /**
-   * Adds a passkey for the signed-in user, or for a sign-in that ended with `totp_setup_required` and
-   * `passkey` among its factors (then it finishes the sign-in, and `user` is set): also the sign-up with a
-   * passkey alone, whose passkey is then the user's sign-in method. Only within ten minutes of signing in:
+   * Adds a passkey for the signed-in user, for a sign-in that ended with `totp_setup_required` and
+   * `passkey` among its factors, or for a sign-up with a passkey alone that ended with
+   * `passkey_setup_required` (then it finishes the sign-in or sign-up, and `user` is set; the sign-up's
+   * passkey is the user's sign-in method). Only within ten minutes of signing in:
    * later it fails with `reauth_required` (sign in again, then add it). Fails with `cancelled`,
    * `already_added` (this device holds one of the user's passkeys), `verification_failed`, `no_session`,
    * `setup_expired` or `passkey_unsupported`; in a sign-up whose passkey policy asks for a second factor, with
@@ -59,8 +60,8 @@ export interface PasskeyApi {
   add(options?: { name?: string }): Promise<Result<{ passkey: PasskeyInfo; user?: MadauthUser }>>;
   /**
    * Creates an account that signs in with a passkey alone (no password) and sends an e-mail with a link and
-   * a code to confirm the address; confirming leads to the passkey's creation (`totp_setup_required` with
-   * `factors: ['passkey']`: call {@link add} next). Succeeds even if the address is registered, so nobody can
+   * a code to confirm the address; confirming leads to the passkey's creation (`passkey_setup_required`:
+   * call {@link add} next). Succeeds even if the address is registered, so nobody can
    * probe for accounts. Fails with `invalid_email`, `signup_rejected`, `temporarily_unavailable` or
    * `method_disabled`.
    */
@@ -69,7 +70,7 @@ export interface PasskeyApi {
   sendVerificationEmail(options: SendEmailOptions): Promise<Result>;
   /**
    * Confirms the address with the code from the e-mail. For a sign-up with a passkey it fails with
-   * `totp_setup_required`: call {@link add} next.
+   * `passkey_setup_required`: call {@link add} next.
    */
   verifyEmail(options: { email: string; code: string }): Promise<Result<{ user: MadauthUser }>>;
   /** Renames a passkey of the signed-in user. Fails with `method_not_found`, `invalid_options` or `no_session`. */

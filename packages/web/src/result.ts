@@ -48,6 +48,7 @@ const errorCodes = [
   'invalid_settings',
   'totp_required',
   'totp_setup_required',
+  'passkey_setup_required',
   'sms_required',
   'passkey_required',
   'passkey_unknown',
@@ -76,11 +77,15 @@ export interface MadauthError {
   code: MadauthErrorCode;
   /** Human-readable details, e.g. which option is invalid. */
   message: string;
-  /** With `passkey_required`, `totp_required`, `sms_required` and `totp_setup_required`: the method whose sign-in goes on with the second step. */
+  /**
+   * With `passkey_required`, `totp_required`, `sms_required`, `totp_setup_required` and `passkey_setup_required`:
+   * the method whose sign-in goes on with the second step (`passkey` for a sign-up with a passkey alone).
+   */
   method?: string;
   /**
    * With `passkey_required`, `totp_required` and `sms_required`: the second factors the user can finish the
-   * sign-in with, e.g. `['totp', 'sms']`. With `totp_setup_required`: those they can set up.
+   * sign-in with, e.g. `['totp', 'sms']`. With `totp_setup_required`: those they can set up; with
+   * `passkey_setup_required` (a sign-up with a passkey alone, its address confirmed): `['passkey']`.
    */
   factors?: SecondFactor[];
   /** With `other_method`: how the address signs in instead, e.g. `['password']`. */

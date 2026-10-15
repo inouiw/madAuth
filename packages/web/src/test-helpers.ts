@@ -84,7 +84,7 @@ export interface FakeServer {
   recoveryCodes: Map<string, string[]>;
   /** A sign-in whose first step is done, waiting for a second factor or a setup (the challenge cookie), with the factors that can finish it. */
   challenge:
-    | { email: string; next: 'passkey' | 'totp' | 'totp-setup' | 'sms'; method: 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'passkey'; factors: ('passkey' | 'totp' | 'sms')[] }
+    | { email: string; next: 'passkey' | 'totp' | 'totp-setup' | 'passkey-setup' | 'sms'; method: 'google' | 'github' | 'password' | 'totp' | 'email-link' | 'passkey'; factors: ('passkey' | 'totp' | 'sms')[] }
     | undefined;
   /** Passkeys, when the server has them on: whether they sign in on their own (and sign people up), and that sign-in's policy. */
   passkey: { signIn: boolean; signUp?: boolean; secondFactor: SecondFactorPolicy } | null;
@@ -232,7 +232,8 @@ export function fakeServer(): FakeServer {
     const body = (typeof init.body === 'string' ? JSON.parse(init.body) : {}) as Record<string, string>;
     const email = body.email?.trim().toLowerCase();
     /** The user a setup belongs to: the signed-in one, or the one whose sign-in waits for it. */
-    const whoSetsUp = () => server.user?.email ?? (server.challenge?.next === 'totp-setup' ? server.challenge.email : undefined);
+    const whoSetsUp = () =>
+      server.user?.email ?? (server.challenge?.next === 'totp-setup' || server.challenge?.next === 'passkey-setup' ? server.challenge.email : undefined);
     switch (`${method} ${url.pathname}`) {
       case 'GET /auth/config':
         return json({
@@ -276,9 +277,9 @@ export function fakeServer(): FakeServer {
         const passkey = { email: who, id: `acc_${server.passkeys.size + 1}`, name: (body as { name?: string }).name || 'Passkey' };
         server.passkeys.set(credential, passkey);
         const info = { id: passkey.id, name: passkey.name, createdAt: 1, lastUsedAt: 0 };
-        if (!server.user && server.challenge?.next === 'totp-setup') {
+        if (!server.user && (server.challenge?.next === 'totp-setup' || server.challenge?.next === 'passkey-setup')) {
           // A sign-up with a passkey alone: it signs in as a passkey would, its policy may ask for a second factor.
-          const signUp = server.challenge.method === 'passkey';
+          const signUp = server.challenge.next === 'passkey-setup';
           server.challenge = undefined;
           const res = signUp ? afterPrimary(who, 'passkey') : signedIn(who);
           if (res.status !== 200) return res;
@@ -438,8 +439,8 @@ export function fakeServer(): FakeServer {
         }
         if (account.passkey) {
           // A sign-up with a passkey alone: it is created now.
-          server.challenge = { email: target, next: 'totp-setup', method: 'passkey', factors: [] };
-          return json({ error: 'totp_setup_required', message: 'create it', method: 'passkey', factors: ['passkey'] }, 401);
+          server.challenge = { email: target, next: 'passkey-setup', method: 'passkey', factors: [] };
+          return json({ error: 'passkey_setup_required', message: 'create it', method: 'passkey', factors: ['passkey'] }, 401);
         }
         return afterPrimary(target, 'password');
       }

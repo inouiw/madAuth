@@ -55,12 +55,17 @@ const STEPS: Partial<Record<string, PendingStep['step']>> = {
   totp_required: 'code',
   sms_required: 'sms',
   totp_setup_required: 'setup',
+  // A sign-up with a passkey alone: the passkey it signs up with is set up next, as a second factor would be.
+  passkey_setup_required: 'setup',
 };
 
 /** The step that asks for each factor. */
 export const FACTOR_STEPS: Record<SecondFactor, Exclude<PendingStep['step'], 'setup'>> = { passkey: 'passkey', totp: 'code', sms: 'sms' };
 
-/** The step an error stands for: `passkey_required`, `totp_required`, `sms_required` or `totp_setup_required`; undefined for any other. */
+/**
+ * The step an error stands for: `passkey_required`, `totp_required`, `sms_required`, `totp_setup_required` or
+ * `passkey_setup_required` (a `setup` whose factors are `passkey`); undefined for any other.
+ */
 export function secondStepOf(error: MadauthError): PendingStep['step'] | undefined {
   return STEPS[error.code];
 }
@@ -91,7 +96,7 @@ export interface ProviderContext {
   /**
    * A sign-in failed outside the dialog (e.g. after the redirect flow): with `ui: 'dialog'` and nobody signed
    * in, the dialog opens by itself and shows it; otherwise it is shown the next time the dialog opens.
-   * A `passkey_required`, `totp_required`, `sms_required` or `totp_setup_required` error is not a failure:
+   * A `passkey_required`, `totp_required`, `sms_required`, `totp_setup_required` or `passkey_setup_required` error is not a failure:
    * the sign-in goes on with its second step, see {@link signInContinues}.
    */
   signInFailed(error: MadauthError): void;

@@ -113,7 +113,8 @@ function say(message: string, isError = false): void {
 
 /**
  * Shows a failed result; returns whether it succeeded. A sign-in that goes on with the authenticator app
- * (`totp_required`, `totp_setup_required`) is not a failure: the next step is shown.
+ * (`totp_required`, `totp_setup_required`), or a sign-up with a passkey whose passkey is next
+ * (`passkey_setup_required`), is not a failure: the next step is shown.
  */
 function report(result: Result): boolean {
   if (result.isSuccess) return true;
@@ -123,7 +124,7 @@ function report(result: Result): boolean {
   // The user closed the browser's passkey dialog: nothing to say.
   else if (result.error.code === 'cancelled') say('');
   else if (result.error.code === 'sms_required') void startSmsStep();
-  else if (result.error.code === 'totp_setup_required') void startSetup();
+  else if (result.error.code === 'totp_setup_required' || result.error.code === 'passkey_setup_required') void startSetup();
   else say(messageFor(result.error), true);
   return false;
 }

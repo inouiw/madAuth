@@ -80,8 +80,8 @@ describe('e-mail confirmation', () => {
     const password = await signUp('/auth/password/signup', 'alan@example.com', 'correct horse battery');
     expect([passkey, withApp, password].map(({ user }) => user.signUpMethod)).toEqual(['passkey', 'totp', 'password']);
 
-    expect(await (await post(app, '/auth/email/verify', { token: passkey.token })).json()).toMatchObject({ factors: ['passkey'] });
-    expect(await (await post(app, '/auth/email/verify', { token: withApp.token })).json()).toMatchObject({ factors: ['totp'] });
+    expect(await (await post(app, '/auth/email/verify', { token: passkey.token })).json()).toMatchObject({ error: 'passkey_setup_required', factors: ['passkey'] });
+    expect(await (await post(app, '/auth/email/verify', { token: withApp.token })).json()).toMatchObject({ error: 'totp_setup_required', factors: ['totp'] });
 
     // A user stored before schema version 9: a password if there is one (else the app), as before.
     await store.update('user', { id: password.user.id }, { signUpMethod: null });

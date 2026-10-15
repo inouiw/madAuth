@@ -159,7 +159,7 @@ describe('Madauth.passkey.signUp', () => {
 
     expect(await Madauth.passkey.verifyEmail({ email: 'new@example.com', code: CODE })).toMatchObject({
       isSuccess: false,
-      error: { code: 'totp_setup_required', method: 'passkey', factors: ['passkey'] },
+      error: { code: 'passkey_setup_required', method: 'passkey', factors: ['passkey'] },
     });
     expect(Madauth.passkey.pendingStep).toEqual({ step: 'setup', method: 'passkey', factors: ['passkey'] });
     expect(await Madauth.passkey.add()).toMatchObject({ isSuccess: true, user: newUser, passkey: { name: 'Passkey' } });
@@ -184,6 +184,16 @@ describe('Madauth.passkey.signUp', () => {
     expect(added).toMatchObject({ isSuccess: false, error: { code: 'totp_setup_required', method: 'passkey', factors: ['totp'] } });
     expect(Madauth.passkey.pendingStep).toEqual({ step: 'setup', method: 'passkey', factors: ['totp'] });
     expect(Madauth.currentUser).toBeNull();
+  });
+
+  it('PW12: a redirect that returns with the passkey of a sign-up next (#madauth_next=passkey-setup) goes on with it', async () => {
+    signUpServer();
+    history.replaceState(null, '', '/page#madauth_next=passkey-setup&madauth_method=github');
+
+    await init();
+
+    expect(Madauth.passkey.pendingStep).toEqual({ step: 'setup', method: 'github', factors: ['passkey'] });
+    expect(location.hash).toBe('');
   });
 
   it('PW11: signing up with a passkey alone needs the Passkey provider and a server that offers it', async () => {

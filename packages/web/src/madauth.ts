@@ -139,7 +139,7 @@ function logError<T extends object>(result: Result<T>): Result<T> {
   return result;
 }
 
-/** The step a `passkey_required`, `totp_required`, `sms_required` or `totp_setup_required` error stands for, with the method whose sign-in it is. */
+/** The step a `passkey_required`, `totp_required`, `sms_required`, `totp_setup_required` or `passkey_setup_required` error stands for, with the method whose sign-in it is. */
 function nextStepOf(error: MadauthError): PendingStep | undefined {
   return pendingStepOf(error, isLoginMethodId(error.method) ? error.method : 'password');
 }
@@ -265,6 +265,7 @@ function handleRedirectReturn(ctx: ProviderContext): 'google' | 'github' | undef
   }
   if (isSecondFactor(next)) ctx.signInContinues({ step: FACTOR_STEPS[next], method, factors: named.length ? named : [next] });
   else if (next === 'totp-setup') ctx.signInContinues(named.length ? { step: 'setup', method, factors: named } : { step: 'setup', method });
+  else if (next === 'passkey-setup') ctx.signInContinues({ step: 'setup', method, factors: ['passkey'] });
   return undefined;
 }
 

@@ -15,7 +15,7 @@ export const currentPage = (): string => location.href.split('#')[0];
 
 /**
  * Marks a sign-in that goes on with a second step, and returns the result as it is: a `totp_required`,
- * `sms_required` or `totp_setup_required` failure tells the caller what comes next.
+ * `sms_required`, `totp_setup_required` or `passkey_setup_required` failure tells the caller what comes next.
  */
 export function noteNextStep<T extends object>(core: Core, method: LoginMethodId, result: Result<T>): Result<T> {
   if (!result.isSuccess) {

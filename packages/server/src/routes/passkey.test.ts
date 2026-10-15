@@ -329,7 +329,7 @@ describe('signing up with a passkey alone', () => {
     // Confirming does not sign in yet: the passkey has to be created first, and nothing else can be set up.
     const { res: confirmed, challenge } = await confirm(made);
     expect(confirmed.status).toBe(401);
-    expect(await confirmed.json()).toMatchObject({ error: 'totp_setup_required', method: 'passkey', factors: ['passkey'] });
+    expect(await confirmed.json()).toMatchObject({ error: 'passkey_setup_required', method: 'passkey', factors: ['passkey'] });
     expect(cookies(confirmed).madauth_session?.value ?? '').toBe('');
     expect(hook.calls.at(-1)).toMatchObject({ type: 'user.email_verified', data: { method: 'passkey', via: 'link' } });
     expect(await (await post(app, '/auth/totp/setup', {}, { Cookie: challenge })).json()).toMatchObject({ error: 'no_session' });
@@ -372,7 +372,7 @@ describe('signing up with a passkey alone', () => {
     await signUp(app);
     expect(await store.findMany('account', {})).toEqual([]);
     const byCode = await post(app, '/auth/email/verify', { email: grace.email, code: linkAndCode(hook.lastEmail()).code });
-    expect(await byCode.json()).toMatchObject({ error: 'totp_setup_required', factors: ['passkey'] });
+    expect(await byCode.json()).toMatchObject({ error: 'passkey_setup_required', factors: ['passkey'] });
     expect((await post(app, '/auth/password/signin', grace)).status).toBe(401);
 
     // Confirmed, but no passkey was created: a sign-up with the app for the address starts over and wins.
@@ -383,7 +383,7 @@ describe('signing up with a passkey alone', () => {
     advance(61_000);
     await signUp(app);
     const { res } = await confirm(made);
-    expect(await res.json()).toMatchObject({ error: 'totp_setup_required', factors: ['passkey'] });
+    expect(await res.json()).toMatchObject({ error: 'passkey_setup_required', factors: ['passkey'] });
   });
 
   it('PK21: a password sign-up meanwhile needs its own e-mail; until it is used, the passkey wins, afterwards it is refused', async () => {
@@ -461,7 +461,7 @@ describe('signing up with a passkey alone', () => {
     expect(hook.emails()).toHaveLength(1);
     expect((await store.findMany('user', {}))[0]).toMatchObject({ emailVerified: false });
     await setMethods(store, onlyPasskeys);
-    expect(await (await post(app, '/auth/email/verify', { token })).json()).toMatchObject({ error: 'totp_setup_required', factors: ['passkey'] });
+    expect(await (await post(app, '/auth/email/verify', { token })).json()).toMatchObject({ error: 'passkey_setup_required', factors: ['passkey'] });
 
     // Without the confirmation e-mails there is no sign-up route.
     const noEmails = passwordApp({ password: undefined, webhook: undefined });

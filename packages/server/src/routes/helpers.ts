@@ -90,6 +90,8 @@ export function signInAnswer(c: Context, step: SignInStep): Response {
     if (step.next === 'totp') return c.json({ error: 'totp_required', message: 'Enter the code from your authenticator app to finish signing in.', ...rest }, 401);
     if (step.next === 'sms') return c.json({ error: 'sms_required', message: 'Enter the code we sent to your phone to finish signing in.', ...rest }, 401);
     if (step.next === 'passkey') return c.json({ error: 'passkey_required', message: 'Confirm with your passkey to finish signing in.', ...rest }, 401);
+    // A sign-up with a passkey alone, whose address is confirmed: its passkey is created next.
+    if (step.next === 'passkey-setup') return c.json({ error: 'passkey_setup_required', message: 'Create your passkey to finish signing up.', ...rest }, 401);
     // `factors` are the second factors the user can set up here.
     return c.json({ error: 'totp_setup_required', message: 'Set up a second factor to finish signing in.', ...rest }, 401);
   }

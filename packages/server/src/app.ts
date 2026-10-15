@@ -283,7 +283,7 @@ export function createApp(config: MadauthConfig): Hono {
       } else if (method === 'passkey' && !amr.length) {
         // A sign-up with a passkey alone, whose address is confirmed: the passkey is created now, and then
         // the passkey's policy applies (see routes/passkey.ts).
-        next = 'totp-setup';
+        next = 'passkey-setup';
         factors = ['passkey'];
       } else {
         const policy = policyOf(method, methods);
@@ -303,7 +303,7 @@ export function createApp(config: MadauthConfig): Hono {
         clearSession(c);
         // Only what the session will show; the cookie is signed, not encrypted.
         const known = { ...(profile?.name ? { name: profile.name } : {}), ...(profile?.picture ? { picture: profile.picture } : {}) };
-        const step = next === 'totp-setup' ? { factors: [], setup: factors } : { factors };
+        const step = next === 'totp-setup' || next === 'passkey-setup' ? { factors: [], setup: factors } : { factors };
         await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, ...step, ...(Object.keys(known).length ? { profile: known } : {}) });
         return { next, method, factors };
       }
