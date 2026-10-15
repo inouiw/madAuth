@@ -49,7 +49,9 @@ export async function signUpThenSetUp(c: Context, ctx: AppContext, emails: Email
     if (Date.now() - existing.lastMailAt < MAIL_INTERVAL_MS) return accepted(c);
     if (!existing.emailVerified) await users.dropUnprovenAccounts(existing.id);
     await users.reopenSignUp(existing);
-    await users.updateUser(existing.id, { name, signUpMethod: method });
+    // A confirmed address without a sign-in method (a sign-up whose setup was abandoned) is confirmed again,
+    // as for a password: whoever sent this hasn't proven the inbox. "Send the e-mail again" works then too.
+    await users.updateUser(existing.id, { name, signUpMethod: method, emailVerified: false });
     return (await emails.sendLinkEmail({ ...existing, name }, 'verify', target, locale)) ? accepted(c) : unavailable(c);
   }
 

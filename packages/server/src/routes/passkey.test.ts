@@ -369,10 +369,15 @@ describe('signing up with a passkey alone', () => {
     expect(await byCode.json()).toMatchObject({ error: 'passkey_setup_required', factors: ['passkey'] });
     expect((await post(app, '/auth/password/signin', grace)).status).toBe(401);
 
-    // Confirmed, but no passkey was created: a sign-up with the app for the address starts over and wins.
+    // Confirmed, but no passkey was created: a sign-up with the app for the address starts over and wins. It
+    // hasn't proven the inbox, so the address is unconfirmed again, and its e-mail can be sent again.
     advance(61_000);
     await post(app, '/auth/totp/signup', { email: grace.email, redirectTo: REDIRECT_TO });
-    expect(await store.findMany('user', {})).toMatchObject([{ signUpMethod: 'totp' }]);
+    expect(await store.findMany('user', {})).toMatchObject([{ signUpMethod: 'totp', emailVerified: false }]);
+    advance(61_000);
+    hook.calls.length = 0;
+    await post(app, '/auth/email/send-verification', { email: grace.email, redirectTo: REDIRECT_TO });
+    expect(hook.types()).toEqual(['email.send_verification']);
     // And a passkey sign-up after it wins again.
     advance(61_000);
     await signUp(app);
@@ -462,6 +467,9 @@ describe('signing up with a passkey alone', () => {
     await setMethods(shared.store, onlyPasskeys);
     const outside = await post(shared.app, '/auth/passkey/signup', { email: grace.email, redirectTo: 'https://other.test/' }, { Origin: 'https://other.test' });
     expect(await outside.json()).toMatchObject({ error: 'forbidden_origin' });
+    // Nor does a link to such an app, from one within the domain.
+    const linkOutside = await post(shared.app, '/auth/passkey/signup', { email: grace.email, redirectTo: 'https://other.test/' });
+    expect(await linkOutside.json()).toMatchObject({ error: 'forbidden_origin' });
     expect(shared.hook.emails()).toEqual([]);
 
     // Without the confirmation e-mails there is no sign-up route.

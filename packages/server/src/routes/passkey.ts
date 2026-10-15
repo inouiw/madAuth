@@ -294,8 +294,10 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
     const emails = createEmails(ctx, users, ctx.webhook);
     app.post(`${ROUTE_PATH}/signup`, async (c) => {
       if (!(await ctx.enabled(c, 'passkey'))) return error(c, 403, 'method_disabled', 'Signing up with a passkey is switched off.');
-      // An app outside PASSKEY_RP_ID could confirm the address, but never create the passkey.
-      return rpIdOf(c) ? signUpThenSetUp(c, ctx, emails, 'passkey') : wrongDomain(c);
+      // An app outside PASSKEY_RP_ID, or a link to one, could confirm the address, but never create the passkey.
+      const target = ctx.allowedUrl((await body(c)).redirectTo);
+      const outside = !rpIdOf(c) || (!!target && !passkeyDomain(config, target.origin));
+      return outside ? wrongDomain(c) : signUpThenSetUp(c, ctx, emails, 'passkey');
     });
   }
 
