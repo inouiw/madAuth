@@ -23,7 +23,7 @@ packages/web     @madauth/web – sign-in client and UI as framework-agnostic we
 packages/server  @madauth/server – the madAuth server for Docker, AWS Lambda and Azure Functions (Hono)
 demo             demo page: plain HTML + TypeScript served by Vite, no framework (live at https://madauth.com/demo/)
 deploy/aws       AWS CDK template to host the madAuth server: Lambda, DynamoDB, secrets in SSM
-site             the madauth.com website (landing page) and its infrastructure (site/infra)
+site             the madauth.com website (landing page and blog, see site/README.md) and its infrastructure (site/infra)
 ```
 
 The UI ships as a standard custom element, so it works in plain HTML, React, Angular, Vue, Svelte and Capacitor apps.
