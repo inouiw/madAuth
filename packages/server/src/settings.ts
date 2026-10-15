@@ -256,10 +256,10 @@ export class Settings {
    * again with the newer value. Resolves to the new value, or null if `apply` refused.
    * `updatedBy` is the address of the admin, or null when madAuth changes it by itself.
    */
-  async change<T>(id: string, apply: (current: T | undefined) => T | null | Promise<T | null>, updatedBy: string | null): Promise<T | null> {
+  async change<T>(id: string, apply: (current: T | undefined) => T | null, updatedBy: string | null): Promise<T | null> {
     for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
       const { json, value } = await this.read<T>(id);
-      const next = await apply(value);
+      const next = apply(value);
       if (next === null) return null;
       const patch: Row = { value: JSON.stringify(next), updatedAt: Date.now(), updatedBy };
       const written =

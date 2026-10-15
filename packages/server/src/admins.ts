@@ -65,7 +65,9 @@ export class Admins {
       null,
     );
     if (!won) return null;
-    const written = holdsRole(user) ? user : await this.users.changeClaims(user, (claims) => withAdminRole(claims) ?? claims);
+    const changed = holdsRole(user) ? user : await this.users.changeClaims(user, (claims) => withAdminRole(claims) ?? claims);
+    // Claims that filled up meanwhile have no room for the role: that counts as not written.
+    const written = changed && holdsRole(changed) ? changed : null;
     if (!written) {
       // The value counts as applied only with the role in place: taken back, it applies at a later sign-in.
       await this.settings.change<AppliedInitialAdmin[]>(
@@ -73,7 +75,7 @@ export class Admins {
         (current) => (Array.isArray(current) ? current.filter((applied) => applied?.email !== value) : null),
         null,
       );
-      console.error(`[madauth] INITIAL_ADMIN_EMAIL: the role "${ADMIN_ROLE}" could not be added to ${value}: their claims kept changing, or the user is gone.`);
+      console.error(`[madauth] INITIAL_ADMIN_EMAIL: the role "${ADMIN_ROLE}" could not be added to ${value}: their claims kept changing or are full, or the user is gone.`);
       return null;
     }
     this.applied = value;
