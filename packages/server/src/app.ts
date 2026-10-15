@@ -282,7 +282,7 @@ export function createApp(config: MadauthConfig): Hono {
       clearChallenge(c, secure);
       await issueSession(c, user, amr, { ...extra, auth_time: Math.floor(Date.now() / 1000) });
       const result = { ...user, amr };
-      // A new user is told first: their claims change after.
+      // A new user is told first, already with the role; the claims change says where it came from.
       if (firstSession) await this.emit('user.signed_up', { user: result, method });
       if (promoted) await this.emit('user.claims_changed', { user: result, claims: promoted.claims, by: INITIAL_ADMIN_EMAIL });
       return result;
@@ -452,6 +452,11 @@ export function createApp(config: MadauthConfig): Hono {
   app.post('/auth/account/delete', async (c) => {
     const user = await currentSession(c);
     if (!user) return c.json({ error: 'no_session' }, 401);
+    // An admin never removes themselves, so a lone admin stays: another admin takes the role from them first.
+    // Checked before the code, which a refused deletion must not use up.
+    if (isAdmin(user)) {
+      return ownAdminRole(c, `You have the role "${ADMIN_ROLE}", so you can't delete your account: another admin takes the role from you first.`);
+    }
     const stored = await users.findById(user.id);
     // An app that is switched off server-wide protects nothing, so it is not asked for either. A phone for
     // SMS codes alone does not protect the deletion (not covered yet, see docs/sms-security.md).
@@ -465,10 +470,6 @@ export function createApp(config: MadauthConfig): Hono {
       }
       const via = await checkCode(c, ctx, totpKeys, stored, authenticator, data);
       if (via instanceof Response) return via;
-    }
-    // An admin never removes themselves, so a lone admin stays: another admin takes the role from them first.
-    if (isAdmin(user)) {
-      return ownAdminRole(c, `You have the role "${ADMIN_ROLE}", so you can't delete your account: another admin takes the role from you first.`);
     }
     // Read before the deletion: the web library revokes the app's access to this Google account with it.
     const googleSub = await users.googleSub(user.id);
