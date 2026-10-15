@@ -92,7 +92,7 @@ The cryptography is done by the browser and the authenticator. What's left for t
 
 You don't have to drop passwords to use passkeys. Two common setups:
 
-- **Passkeys as a sign-in method:** users sign up with e-mail, Google or GitHub, add a passkey, and from then on sign in with it alone.
+- **Passkeys as a sign-in method:** users sign up with a passkey right away, or sign up with e-mail, Google or GitHub and add one, and from then on sign in with it alone.
 - **Passkeys as a second factor:** users sign in with their password as before, and the server asks for a passkey afterwards. This is still phishing-resistant at the second step, unlike a code from an app or an SMS.
 
 ## Adding passkeys with madAuth
@@ -108,7 +108,7 @@ signInButton.onclick = () => Madauth.signIn(); // the dialog, with passkeys in t
 addPasskeyButton.onclick = () => Madauth.setUpPasskey(); // for a signed-in user
 ```
 
-An admin decides while the server runs whether passkeys sign in on their own or are only a second factor, and `PASSKEY_RP_ID` sets the domain the passkeys belong to. In madAuth, a user adds a passkey after signing up another way. The details are in the [passkey security notes](https://github.com/inouiw/madAuth/blob/main/docs/passkey-security.md), and the [demo](/demo/) lets you add a passkey and sign in with it.
+An admin decides while the server runs whether passkeys sign in on their own or are only a second factor, and `PASSKEY_RP_ID` sets the domain the passkeys belong to. Users can sign up with a passkey alone: madAuth confirms their address by e-mail first, then the passkey is created. The details are in the [passkey security notes](https://github.com/inouiw/madAuth/blob/main/docs/passkey-security.md), and the [demo](/demo/) lets you add a passkey and sign in with it.
 
 ## Summary
 

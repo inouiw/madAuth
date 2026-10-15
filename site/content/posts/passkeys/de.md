@@ -92,7 +92,7 @@ Die Kryptografie übernehmen Browser und Authenticator. Für den Server bleibt B
 
 Für Passkeys müssen Sie Passwörter nicht abschaffen. Zwei verbreitete Varianten:
 
-- **Passkeys als Anmeldemethode:** Nutzer registrieren sich per E-Mail, Google oder GitHub, fügen einen Passkey hinzu und melden sich danach allein damit an.
+- **Passkeys als Anmeldemethode:** Nutzer registrieren sich direkt mit einem Passkey oder per E-Mail, Google oder GitHub und fügen einen hinzu – und melden sich danach allein damit an.
 - **Passkeys als zweiter Faktor:** Nutzer melden sich wie bisher mit Passwort an, und der Server fragt danach einen Passkey ab. Anders als ein Code aus der App oder per SMS ist auch dieser zweite Schritt phishing-resistent.
 
 ## Passkeys mit madAuth einbauen
@@ -108,7 +108,7 @@ signInButton.onclick = () => Madauth.signIn(); // der Dialog, mit Passkeys im Au
 addPasskeyButton.onclick = () => Madauth.setUpPasskey(); // für angemeldete Nutzer
 ```
 
-Ob Passkeys allein anmelden oder nur zweiter Faktor sind, legt ein Admin im laufenden Betrieb fest; `PASSKEY_RP_ID` bestimmt die Domain, zu der die Passkeys gehören. In madAuth fügt ein Nutzer einen Passkey hinzu, nachdem er sich auf anderem Weg registriert hat. Die Details stehen in den [Sicherheitshinweisen zu Passkeys](https://github.com/inouiw/madAuth/blob/main/docs/passkey-security.md) (englisch), und in der [Demo](/demo/) können Sie einen Passkey anlegen und sich damit anmelden.
+Ob Passkeys allein anmelden oder nur zweiter Faktor sind, legt ein Admin im laufenden Betrieb fest; `PASSKEY_RP_ID` bestimmt die Domain, zu der die Passkeys gehören. Nutzer können sich auch allein mit einem Passkey registrieren: madAuth bestätigt zuerst ihre Adresse per E-Mail, dann wird der Passkey angelegt. Die Details stehen in den [Sicherheitshinweisen zu Passkeys](https://github.com/inouiw/madAuth/blob/main/docs/passkey-security.md) (englisch), und in der [Demo](/demo/) können Sie einen Passkey anlegen und sich damit anmelden.
 
 ## Zusammenfassung
 
