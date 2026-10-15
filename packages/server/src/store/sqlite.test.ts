@@ -29,6 +29,7 @@ const user = {
   wrongCodes: 0,
   claims: null,
   signedUpAt: null,
+  signUpMethod: null,
   createdAt: 1,
 };
 
@@ -58,7 +59,7 @@ describe('SQLite adapter', () => {
     const path = join(dir, 'madauth.db');
     // Schema version 1: users had no count of wrong codes and no claims, accounts no e-mail and no last code,
     // and there were no settings and no recovery codes.
-    const { wrongCodes: _, claims: __, lastSmsAt: _________, signedUpAt: __________, ...v1Fields } = madauthSchema.models.user.fields;
+    const { wrongCodes: _, claims: __, lastSmsAt: _________, signedUpAt: __________, signUpMethod: _g, ...v1Fields } = madauthSchema.models.user.fields;
     const { email: ___, lastUsedStep: _____, setupId: _______, phone: ________, primaryUserId: ___________, secondFactor: ____________, name: _a, credentialId: _b, signCount: _c, transports: _d, lastUsedAt: _e, rpId: _f, ...v1AccountFields } = madauthSchema.models.account.fields;
     const { setting: ____, recoveryCode: ______, ...v1Models } = madauthSchema.models;
     const v1 = { version: 1, models: { ...v1Models, user: { fields: v1Fields }, account: { fields: v1AccountFields } } };
@@ -129,13 +130,15 @@ describe('createTablesSql', () => {
   });
 
   it('upgradeTablesSql lists what newer schema versions added, per dialect', () => {
+    const V9 = 'ALTER TABLE madauth_user ADD COLUMN sign_up_method TEXT;';
     const V8 =
       'ALTER TABLE madauth_account ADD COLUMN name TEXT;\n' +
       'ALTER TABLE madauth_account ADD COLUMN credential_id TEXT;\n' +
       'ALTER TABLE madauth_account ADD COLUMN sign_count DOUBLE PRECISION;\n' +
       'ALTER TABLE madauth_account ADD COLUMN transports TEXT;\n' +
       'ALTER TABLE madauth_account ADD COLUMN last_used_at DOUBLE PRECISION;\n' +
-      'ALTER TABLE madauth_account ADD COLUMN rp_id TEXT;';
+      'ALTER TABLE madauth_account ADD COLUMN rp_id TEXT;\n' +
+      V9;
     const V7 =
       'ALTER TABLE madauth_user ADD COLUMN signed_up_at DOUBLE PRECISION;\n' +
       'ALTER TABLE madauth_account ADD COLUMN primary_user_id TEXT;\n' +
@@ -171,6 +174,9 @@ describe('createTablesSql', () => {
     expect(upgradeTablesSql('mysql', 6).split('\n')[1]).toBe('ALTER TABLE madauth_account ADD COLUMN primary_user_id VARCHAR(255);');
     // Version 8 added passkeys: their name, credential id, counter, transports and last use.
     expect(upgradeTablesSql('postgres', 7)).toBe(V8);
+    // Version 9 added the method a pending sign-up confirms its address for.
+    expect(upgradeTablesSql('postgres', 8)).toBe(V9);
+    expect(upgradeTablesSql('mysql', 8)).toBe(V9);
     expect(upgradeTablesSql('sqlite', madauthSchema.version)).toBe('');
   });
 

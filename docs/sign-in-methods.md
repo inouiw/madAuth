@@ -4,7 +4,7 @@ How a user gets more than one way to sign in, and loses one, for app developers 
 
 ## Signing up with one, adding more
 
-A user signs up with one method: a password, Google, GitHub, the e-mail link, or the authenticator app. While signed in, they can add more: a passkey, a password, the e-mail link, Google, GitHub, the app. Each of them then signs the user in, as long as the admin allows the method as a sign-in method (`allowAsSignInMethod`). A user with a password and a passkey can sign in with either; one with Google and the app (allowed on its own) with either.
+A user signs up with one method: a password, Google, GitHub, the e-mail link, the authenticator app, or a passkey (the app and a passkey alone confirm the address by e-mail first, see [Signing up with a passkey](passkey-security.md#signing-up-with-a-passkey)). While signed in, they can add more: a passkey, a password, the e-mail link, Google, GitHub, the app. Each of them then signs the user in, as long as the admin allows the method as a sign-in method (`allowAsSignInMethod`). A user with a password and a passkey can sign in with either; one with Google and the app (allowed on its own) with either.
 
 A method is only ever added while signed in, never by signing in:
 

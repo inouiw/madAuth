@@ -23,16 +23,19 @@ const LEGACY_COOKIE_PATH = '/auth/totp';
 
 /**
  * What a sign-in still needs after its first step succeeded: a passkey, a code from the app, a code by SMS,
- * or setting a second factor up (`totp-setup`, named after the only one there was at first: the challenge's
- * `setup` says which can be set up).
+ * setting a second factor up (`totp-setup`, named after the only one there was at first: the challenge's
+ * `setup` says which can be set up), or creating the passkey of a sign-up with one (`passkey-setup`).
  */
-export type NextStep = 'passkey' | 'totp' | 'totp-setup' | 'sms';
+export type NextStep = 'passkey' | 'totp' | 'totp-setup' | 'passkey-setup' | 'sms';
+
+/** The steps that set a factor up: the setup of a second factor, and the passkey of a sign-up with one. */
+const SETUP_STEPS: readonly NextStep[] = ['totp-setup', 'passkey-setup'];
 
 /** How the second step was passed, for `user.signed_in`. */
 export type SecondFactorVia = 'passkey' | 'totp' | 'recovery_code' | 'sms';
 
 /**
- * The challenge cookie: who passed the first step, how (`amr`, empty for a sign-up with the app), what comes
+ * The challenge cookie: who passed the first step, how (`amr`, empty for a sign-up with the app or a passkey), what comes
  * next, which factors the user can finish with, which they can set up when the setup is next (absent in
  * cookies from before madAuth 0.6: the app or a phone), and what the method knows beyond the record (Google's
  * name and picture), for the session.
@@ -67,13 +70,13 @@ export function clearChallenge(c: Context, secure: boolean): void {
 /**
  * The request's challenge for this step, or null if there is none, it expired, or it waits for another
  * step: a factor (`passkey`, `totp`, `sms`) needs to be among the challenge's, so a user who has several can
- * switch; the setup needs `next` to be it.
+ * switch; `setup` needs `next` to be a setup step (see {@link SETUP_STEPS}).
  */
-export async function readChallenge(c: Context, ctx: AppContext, step: NextStep): Promise<ChallengeClaims | null> {
+export async function readChallenge(c: Context, ctx: AppContext, step: SecondFactor | 'setup'): Promise<ChallengeClaims | null> {
   const claims = await readToken<ChallengeClaims>(await ctx.keys, ctx.config.issuer, CHALLENGE_TYP, getCookie(c, CHALLENGE_COOKIE));
   if (!claims || typeof claims.sub !== 'string' || !Array.isArray(claims.amr)) return null;
   const factors = Array.isArray(claims.factors) ? claims.factors : [];
-  const fits = step === 'totp-setup' ? claims.next === 'totp-setup' : factors.includes(step);
+  const fits = step === 'setup' ? SETUP_STEPS.includes(claims.next) : factors.includes(step);
   return fits ? claims : null;
 }
 
@@ -84,7 +87,7 @@ export const methodOff = (c: Context): Response => error(c, 403, 'method_disable
 
 /** The sign-in that waits for the setup of `factor`, with its user; null if there is none (any more). */
 export async function pendingSetup(c: Context, ctx: AppContext, factor: SecondFactor): Promise<{ user: StoredUser; challenge: ChallengeClaims } | null> {
-  const pending = await readChallenge(c, ctx, 'totp-setup');
+  const pending = await readChallenge(c, ctx, 'setup');
   // A cookie from before madAuth 0.6 names no factors: the app or a phone could be set up then.
   const challenge = pending && (Array.isArray(pending.setup) ? pending.setup.includes(factor) : factor !== 'passkey') ? pending : null;
   const waiting = challenge ? await ctx.users.findById(challenge.sub) : null;
@@ -92,12 +95,19 @@ export async function pendingSetup(c: Context, ctx: AppContext, factor: SecondFa
 }
 
 /**
+ * Whether a challenge belongs to a sign-up with the app or a passkey alone: it has no first factor (the
+ * address was confirmed by e-mail), so its own method is what it sets up (or, for an app that exists
+ * already, asks the code of), nothing else, and that method is no second factor.
+ */
+export const isSignUpStep = (challenge: Challenge): boolean => !challenge.amr.length;
+
+/**
  * Who sets `factor` up: the user whose sign-in waits for its setup (the challenge, the latest sign-in at
  * this browser), else the signed-in user; otherwise the answer to send. Starting a session ends the
  * challenge, so an abandoned one can't outlive a later sign-in, and one from before a password reset no
- * longer counts. A sign-up with the app has no first factor yet: it sets the app up, nothing else. A
- * signed-in user for whom `recent` holds (a factor that is a way in of its own) must have signed in within
- * the last ten minutes (`reauth_required`).
+ * longer counts. A sign-up with the app or a passkey has no first factor yet: it sets up its own method,
+ * nothing else. A signed-in user for whom `recent` holds (a factor that is a way in of its own) must have
+ * signed in within the last ten minutes (`reauth_required`).
  */
 export async function whoSetsUp(
   c: Context,
@@ -107,7 +117,7 @@ export async function whoSetsUp(
 ): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | Response> {
   const pending = await pendingSetup(c, ctx, factor);
   if (pending) {
-    if (!pending.challenge.amr.length && factor !== 'totp') return noSession(c);
+    if (isSignUpStep(pending.challenge) && factor !== pending.challenge.method) return noSession(c);
     return (await methodStillOn(c, ctx, pending.challenge)) ? pending : methodOff(c);
   }
   const signedIn = await signedInUser(c, ctx);
@@ -141,6 +151,6 @@ export async function finishSignIn(
 ): Promise<MadauthUser> {
   const result = await ctx.startSession(c, toMadauthUser(user, challenge.profile), [...challenge.amr, amr], { method: challenge.method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
   // For a sign-up with the app, the app is the method itself, not a second factor.
-  await ctx.emit('user.signed_in', { user: result, method: challenge.method, ...(challenge.amr.length ? { secondFactor: via } : {}) });
+  await ctx.emit('user.signed_in', { user: result, method: challenge.method, ...(isSignUpStep(challenge) ? {} : { secondFactor: via }) });
   return result;
 }

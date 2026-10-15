@@ -32,7 +32,7 @@ npx @madauth/server init
 | Passwordless sign-in with an e-mail link? | no | The user enters their address and gets an e-mail with a link that signs them in and a code. A new address is signed up on first use. |
 | SMS codes as a second factor? | no | Your webhook receiver sends the SMS (`sms.send_code`). A signed-in user adds a phone number; the policy then asks for a code sent to it, next to the authenticator app. |
 | Database | `sqlite:./madauth.db` | The SQLite file that stores the users, whichever way they sign in. |
-| Webhook URL | `http://localhost:8790/webhook` | Only with e-mail & password sign-in, the e-mail link, sign-up with the app or SMS codes: where madAuth hands over its e-mails and SMS (step 4). |
+| Webhook URL | `http://localhost:8790/webhook` | Only with e-mail & password sign-in, the e-mail link, sign-up with the app or a passkey alone, or SMS codes: where madAuth hands over its e-mails and SMS (step 4). |
 | Your e-mail address, to become the first admin | none | Who signs up with it gets the role `admin` (`INITIAL_ADMIN_EMAIL`), once the address is proven, and manages [claims](server.md#claims) and [sign-in methods](server.md#sign-in-methods) from your app (step 7). |
 
 Choose at least one way to create users. At the end, `init` prints the next steps for your answers. They are the steps below.

@@ -1,6 +1,7 @@
 // Passkeys (WebAuthn): a signed-in user adds them; they sign the user in on their own when an admin allows
-// them as a sign-in method, and are a second factor of the methods whose policy asks for one. The security
-// rules are described in docs/passkey-security.md.
+// them as a sign-in method, and then people can sign up with one alone (the address confirmed by e-mail
+// first); they are a second factor of the methods whose policy asks for one. The security rules are described
+// in docs/passkey-security.md.
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -18,7 +19,9 @@ import { isWithin, type MadauthConfig } from '../config.js';
 import { isOn } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import { passkeyAccountKey, toMadauthUser, type StoredAccount, type StoredUser } from '../users.js';
-import { finishSignIn, pendingFactor, whoSetsUp } from './challenge.js';
+import { finishSignIn, isSignUpStep, pendingFactor, whoSetsUp } from './challenge.js';
+import { reclaimConfirmation, signUpThenSetUp } from './email.js';
+import { createEmails } from './emails.js';
 import { body, error, nameOf, noSession, originHost, signInAnswer, type Body } from './helpers.js';
 
 /** The routes, and where the ceremony cookie is sent. */
@@ -200,8 +203,9 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
   // --- Adding a passkey ---
 
   /**
-   * Who adds a passkey: the user whose sign-in waits for a second factor's setup (a `required` policy), or
-   * the signed-in user if they signed in recently (a passkey is a way in of its own); else the answer to send.
+   * Who adds a passkey: the user whose sign-in waits for a second factor's setup (a `required` policy) or
+   * whose sign-up with a passkey waits for it, or the signed-in user if they signed in recently (a passkey is
+   * a way in of its own); else the answer to send.
    */
   const whoAdds = (c: Context) => whoSetsUp(c, ctx, 'passkey', async () => true);
 
@@ -232,8 +236,8 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
   app.post(`${ROUTE_PATH}/register/verify`, async (c) => {
     const who = await whoAdds(c);
     if (who instanceof Response) return who;
-    const { user, challenge } = who;
-    const ceremony = await finish(c, 'register', user.id);
+    const { user: adding, challenge } = who;
+    const ceremony = await finish(c, 'register', adding.id);
     if (!ceremony) return expired(c);
     const data = await body(c);
     if (!isCredential(data.response)) return failed(c);
@@ -248,26 +252,54 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
         supportedAlgorithmIDs: SUPPORTED_ALGORITHMS,
       });
     } catch (e) {
-      console.warn(`[madauth] A new passkey of user ${user.id} was refused: ${(e as Error).message}`);
+      console.warn(`[madauth] A new passkey of user ${adding.id} was refused: ${(e as Error).message}`);
       return failed(c);
     }
     // The answer adds one passkey: the same options don't add another.
-    if (!verification.verified || !(await users.useCeremony(user.id, ceremony.challenge, ceremony.exp * 1000))) return failed(c);
+    if (!verification.verified || !(await users.useCeremony(adding.id, ceremony.challenge, ceremony.exp * 1000))) return failed(c);
+    // A sign-up with a passkey alone: the new passkey is the method the user signs up with.
+    const signUp = !!challenge && isSignUpStep(challenge);
+    const user = signUp ? await reclaimConfirmation(users, adding) : adding;
     const { credential } = verification.registrationInfo;
     const name = nameOf(data.name, MAX_NAME_LENGTH) ?? 'Passkey';
+    const key = passkeyAccountKey(credential.id);
     const account = await users.linkAccount(user.id, {
-      key: passkeyAccountKey(credential.id),
+      key,
       secret: Buffer.from(credential.publicKey).toString('base64url'),
-      primary: false,
+      primary: signUp,
       passkey: { name, credentialId: credential.id, signCount: credential.counter, transports: joinTransports(credential.transports), rpId: ceremony.rpId },
     });
+    // The sign-up's passkey is refused when the sign-up got its method meanwhile: a password confirmed by its
+    // own e-mail, or another passkey of this sign-up (a second tab).
+    if (!account && signUp && !(await users.findAccountByKey(key))) {
+      return error(c, 400, 'setup_expired', 'Your sign-up was finished meanwhile. Please sign in.');
+    }
     if (!account) return error(c, 409, 'already_added', 'This passkey is added already.');
     const passkey = toEntry(account);
+    // The passkey a user signs up with is part of their sign-up (`user.signed_up`), not a method they added.
+    if (signUp) {
+      // It signs in now, as a passkey sign-in would: its policy may ask for a second factor first.
+      const step = await ctx.secondStep(c, user, ['passkey'], 'passkey');
+      return 'user' in step ? c.json({ passkey, user: step.user }) : signInAnswer(c, step);
+    }
     await ctx.emit('user.method_added', { user: toMadauthUser(user), method: 'passkey', passkey: { id: passkey.id, name } });
     // The setup of a sign-in's second step: the new passkey finishes it.
     if (challenge) return c.json({ passkey, user: await finishSignIn(c, ctx, user, challenge, 'passkey', 'passkey') });
     return c.json({ passkey });
   });
+
+  // --- Signing up with a passkey alone: the address is confirmed by e-mail, then the passkey is created ---
+
+  if (ctx.webhook && ctx.emailVerification) {
+    const emails = createEmails(ctx, users, ctx.webhook);
+    app.post(`${ROUTE_PATH}/signup`, async (c) => {
+      if (!(await ctx.enabled(c, 'passkey'))) return error(c, 403, 'method_disabled', 'Signing up with a passkey is switched off.');
+      // An app outside PASSKEY_RP_ID, or a link to one, could confirm the address, but never create the passkey.
+      const target = ctx.allowedUrl((await body(c)).redirectTo);
+      const outside = !rpIdOf(c) || (!!target && !passkeyDomain(config, target.origin));
+      return outside ? wrongDomain(c) : signUpThenSetUp(c, ctx, emails, 'passkey');
+    });
+  }
 
   // --- Signing in with a passkey alone ---
 

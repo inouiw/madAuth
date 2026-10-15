@@ -157,6 +157,11 @@ export const en = {
   /** The button at the top of the sign-in view. */
   signInWithPasskey: 'Sign in with a passkey',
   usePasskey: 'Use a passkey instead',
+  /** On the "Create account" form of a sign-up with a passkey alone. */
+  passkeySignUpHint: 'You will create your passkey after confirming your email address. It signs you in with your fingerprint, face or screen lock.',
+  /** Links on the "Create account" form, between the sign-up with a password and the one with a passkey. */
+  passkeySignUpInstead: 'Use a passkey instead of a password',
+  passwordSignUpInstead: 'Use a password instead',
   /** The second step with a passkey. */
   passkeyStep: {
     heading: 'Confirm with your passkey',
@@ -168,6 +173,8 @@ export const en = {
     lead: 'A passkey signs you in with your fingerprint, face or screen lock. It is kept on your device or in your password manager.',
     /** When a sign-in requires a second factor and the user has none yet. */
     requiredLead: 'Signing in requires a second factor. Create a passkey: it uses your fingerprint, face or screen lock.',
+    /** In a sign-up with a passkey alone, once the address is confirmed. */
+    signUpLead: 'Your email address is confirmed. Create your passkey to finish signing up: it uses your fingerprint, face or screen lock.',
     name: 'Name',
     /** Under the name field. */
     nameHint: 'So you can tell your passkeys apart, e.g. "Laptop".',
@@ -400,6 +407,9 @@ export const de: Strings = {
   },
   signInWithPasskey: 'Mit Passkey anmelden',
   usePasskey: 'Stattdessen einen Passkey verwenden',
+  passkeySignUpHint: 'Nach der Bestätigung Ihrer E-Mail-Adresse erstellen Sie Ihren Passkey. Er meldet Sie mit Fingerabdruck, Gesicht oder Bildschirmsperre an.',
+  passkeySignUpInstead: 'Passkey statt Passwort verwenden',
+  passwordSignUpInstead: 'Stattdessen ein Passwort verwenden',
   passkeyStep: {
     heading: 'Mit Passkey bestätigen',
     lead: 'Verwenden Sie Ihren Passkey, um die Anmeldung abzuschließen.',
@@ -409,6 +419,7 @@ export const de: Strings = {
     heading: 'Passkey erstellen',
     lead: 'Ein Passkey meldet Sie mit Fingerabdruck, Gesicht oder Bildschirmsperre an. Er wird auf Ihrem Gerät oder in Ihrem Passwortmanager gespeichert.',
     requiredLead: 'Für die Anmeldung ist ein zweiter Faktor erforderlich. Erstellen Sie einen Passkey: Er verwendet Fingerabdruck, Gesicht oder Bildschirmsperre.',
+    signUpLead: 'Ihre E-Mail-Adresse ist bestätigt. Erstellen Sie Ihren Passkey, um die Registrierung abzuschließen: Er verwendet Fingerabdruck, Gesicht oder Bildschirmsperre.',
     name: 'Name',
     nameHint: 'Damit Sie Ihre Passkeys auseinanderhalten können, z. B. „Laptop“.',
     create: 'Passkey erstellen',
