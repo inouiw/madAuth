@@ -55,7 +55,7 @@ At least one way to create users must be configured: `GOOGLE_CLIENT_ID`, `GITHUB
 madAuth does everything it needs a key for through a key service ([`key-service.ts`](../packages/server/src/key-service.ts)): it signs the tokens (sessions, renewals and the cookies of a sign-in under way), hashes the e-mail and recovery codes (HMAC-SHA256), and encrypts the authenticator secrets and GitHub tokens it must read again. Whoever has these keys can sign sessions for anyone, so `MADAUTH_KEY_SERVICE` must say where they are; madAuth doesn't start without it:
 
 - **`aws-kms`**: the keys are in AWS KMS and never leave it; madAuth asks KMS to sign, hash and encrypt. Someone who breaks into the server can use the keys only while they are in, never take them away, and every use is logged in CloudTrail. The way to run madAuth in production; see [AWS KMS](#aws-kms).
-- **`local`**: the keys are in the server's memory, made from `MADAUTH_SIGNING_KEY` (see [Signing key](#signing-key)). Whoever can read that memory (a break-in, a core dump, a heap snapshot) can read them. For development, or where no key service is available; madAuth warns about it at every start.
+- **`local`**: the keys are in the server's memory, made from `MADAUTH_SIGNING_KEY` (see [Signing key](#signing-key)). Whoever can read that memory (a break-in, a core dump, a heap snapshot) can read them; see [Hardening](#hardening). For development, or where no key service is available; madAuth warns about it at every start.
 
 With [`createApp`](#your-own-node-server) you can pass a key service of your own as `keyService`, e.g. for another cloud's key vault.
 
@@ -216,6 +216,8 @@ npx @madauth/server start --env-file .env
 
 `npx @madauth/server init` writes such a file. It asks for your app's URL and the sign-in methods, and every question is also an option (`--yes` takes the defaults); see [Getting started](getting-started.md). Run `npx @madauth/server` for all commands.
 
+In production, run it as in [Hardening](#hardening).
+
 ### Docker
 
 Run the published image (for `linux/amd64` and `linux/arm64`). Pin a version, e.g. `ghcr.io/inouiw/madauth-server:0.1.0`, in production:
@@ -224,7 +226,7 @@ Run the published image (for `linux/amd64` and `linux/arm64`). Pin a version, e.
 docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data ghcr.io/inouiw/madauth-server
 ```
 
-The `madauth-data` volume keeps a SQLite database (`DATABASE_URL=sqlite:/data/madauth.db`) when the container is removed.
+The `madauth-data` volume keeps a SQLite database (`DATABASE_URL=sqlite:/data/madauth.db`) when the container is removed. In production, add the flags from [Hardening](#hardening).
 
 To build the image yourself, run this from the repository root:
 
@@ -232,7 +234,7 @@ To build the image yourself, run this from the repository root:
 docker build -f packages/server/Dockerfile -t madauth-server .
 ```
 
-There is also a `docker-compose.yml` in `packages/server` that builds and runs it from the repository. The container exposes `GET /health` for health checks.
+There is also a `docker-compose.yml` in `packages/server` that builds and runs it from the repository, with the settings from [Hardening](#hardening). The container exposes `GET /health` for health checks.
 
 With e-mail & password sign-in, the container must reach your webhook receiver. A receiver on your own machine, e.g. the development receiver, is `http://host.docker.internal:8790/webhook` from inside the container.
 
@@ -303,6 +305,34 @@ import { createApp, loadConfig } from '@madauth/server';
 
 const app = createApp(await loadConfig(process.env)); // a Hono app: app.fetch(request) → response
 ```
+
+### Hardening
+
+Whoever can read the server's memory, or plant a file that it runs, gets what the server has: every record it reads and, with the `local` [key service](#key-service), its keys. On a host you run yourself, the ways in are a core dump, a debugger, swap and a writable file system. Close them.
+
+In the container, the `docker-compose.yml` in `packages/server` sets these. The image already runs as the unprivileged `node` user, with `--disable-sigusr1` (see below):
+
+- **`read_only: true`** (`--read-only`): the container's file system is read-only, so nobody can change the image's files, the server's code among them. Only the data volume, for the SQLite database and its WAL files (`-wal`, `-shm`), and `/tmp` stay writable.
+- **`tmpfs: [/tmp]`** (`--tmpfs /tmp`): temporary files go to memory, and are gone when the container stops.
+- **`cap_drop: [ALL]`** (`--cap-drop ALL`): no Linux capabilities, not even for a process that becomes root. The server needs none.
+- **`security_opt: [no-new-privileges:true]`** (`--security-opt no-new-privileges`): no process gains privileges through a setuid program such as `su`, so the `node` user stays unprivileged.
+- **`ulimits: { core: 0 }`** (`--ulimit core=0`): no core dumps. A core dump is a copy of the server's memory, written to a file when it crashes.
+
+With `docker run`:
+
+```bash
+docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data \
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges --ulimit core=0 \
+  ghcr.io/inouiw/madauth-server
+```
+
+On the host, for Docker and for Node alike:
+
+- **No swap, or encrypted swap.** The kernel may write any part of the server's memory to swap, where it stays after the server stops. Turn swap off (`swapoff -a`, and remove it from `/etc/fstab`) or encrypt it. In Docker, you can keep just the container out of swap instead: give `--memory-swap` the same value as `--memory` (`memswap_limit` and `mem_limit` in compose).
+- **Never `--inspect`, and no heap snapshots in production.** `--inspect` opens a debugger that reads all of the server's memory; a heap snapshot (`--heapsnapshot-signal`, `--heapsnapshot-near-heap-limit`, `v8.writeHeapSnapshot()`) writes it to a file. Check `NODE_OPTIONS` too. Node also starts the debugger when it gets the signal `SIGUSR1`, which any process of the same user can send; `--disable-sigusr1` (Node 22.14 or newer) turns that off: `NODE_OPTIONS=--disable-sigusr1 npx @madauth/server start --env-file .env`.
+- **No core dumps.** In Docker, the `ulimits` setting above. With Node on the host, run `ulimit -c 0` before you start it, or set `LimitCORE=0` in its systemd unit. When `/proc/sys/kernel/core_pattern` starts with `|`, the kernel hands each crash to that program whatever the limit, for containers too. systemd-coredump keeps no dump at a limit of 0; check any other.
+
+AWS Lambda and Azure Functions need none of this: the platform runs the code in managed, isolated environments.
 
 ## Webhooks
 

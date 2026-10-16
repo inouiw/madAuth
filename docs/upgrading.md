@@ -2,6 +2,7 @@
 
 ## To 0.7
 
+- **The `docker-compose.yml` hardens the container:** a read-only file system with `/tmp` in memory, no capabilities, `no-new-privileges` and no core dumps. If you copied it or run `docker run`, add these settings; see [Hardening](server.md#hardening). The image starts Node with `--disable-sigusr1`, so `SIGUSR1` no longer opens its debugger.
 - **New: `WEBHOOK_AUTH=aws-iam`** signs the webhook calls with madAuth's AWS role (Signature Version 4) instead of `WEBHOOK_SECRET`, for a receiver behind a Lambda Function URL with `AWS_IAM` auth: AWS checks each call before the receiver runs, and no secret is shared. `WEBHOOK_SECRET` must not be set with it; without it, nothing changes. The aws-ses-mailer of [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks) accepts only madAuth's role with `MADAUTH_ROLE_ARN`. The AWS template sets it up for such a receiver (`webhookFunctionArn`, or `awsIamReceiver` of the construct), and fails to deploy while `<secretsPath>/WEBHOOK_SECRET` is in the Parameter Store; see [Switching the webhook receiver to AWS IAM](../deploy/aws/README.md#switching-the-webhook-receiver-to-aws-iam). Elsewhere than on Lambda and in Docker, install `@smithy/signature-v4` and `@aws-sdk/credential-provider-node` next to madAuth. See [AWS IAM](server.md#aws-iam).
 
 ## To 0.6

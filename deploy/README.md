@@ -18,6 +18,8 @@ More templates (Azure, Docker with HTTPS) will be added next to `aws/`.
   `MADAUTH_ISSUER` is your app's origin, e.g. `https://example.com`.
 - **E-mail & password, the e-mail link and SMS codes need a webhook receiver** that sends the e-mails (and the SMS), e.g. the
   [aws-ses-mailer](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer).
+- **On a host you run yourself (Docker, Node), harden the server process:** a read-only file system, no
+  capabilities, no core dumps, no swap. See [Hardening](../docs/server.md#hardening).
 - **Limit requests per IP address** in front of the server (WAF, reverse proxy): madAuth's brute-force
   protection is per account. See [Password security](../docs/password-security.md).
 
