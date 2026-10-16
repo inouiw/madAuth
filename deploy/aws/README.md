@@ -5,7 +5,7 @@ Deploys the madAuth server as an AWS Lambda function with a Function URL. The us
 What it creates (`lib/madauth-server.ts`, the `MadAuthServer` construct):
 
 - **A DynamoDB table** with the keys `pk` and `sk`. It is on-demand, has point-in-time recovery, and is kept when the stack is deleted.
-- **A Lambda function** (Node.js 22, arm64, 512 MB) that runs [`lambda/server.ts`](lambda/server.ts). It reads every parameter under the secrets path, e.g. `/madauth/MADAUTH_SIGNING_KEY`, as the environment variable of that name. The secrets therefore never appear in the function's configuration.
+- **A Lambda function** (Node.js 22, arm64, 512 MB) that runs [`lambda/server.ts`](lambda/server.ts). It reads every parameter under the secrets path, e.g. `/madauth/MADAUTH_SIGNING_KEY`, as the environment variable of that name. The secrets therefore never appear in the function's configuration. For now the signing key is such a secret (`MADAUTH_KEY_SERVICE=local`); keys in AWS KMS follow, see [Key service](../../docs/server.md#key-service).
 
 It deploys madAuth 0.3 or newer, which stores every user in the table, with or without e-mail & password sign-in.
 - **A Function URL.** madAuth checks the `Origin` of every request itself (`ALLOWED_ORIGINS`).

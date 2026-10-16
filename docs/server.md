@@ -27,7 +27,8 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | Variable | Required | Description |
 | --- | --- | --- |
 | `MADAUTH_ISSUER` | yes | Public base URL of the server, e.g. `https://auth.example.com`. Used as the JWT issuer and for the callbacks of the redirect flows, `<issuer>/auth/google/callback` and `<issuer>/auth/github/callback`. |
-| `MADAUTH_SIGNING_KEY` | yes | Private ES256 key (JWK JSON) that signs the sessions; the keys that hash the codes and encrypt the stored secrets are derived from it. Or a set of keys, the newest first, to [rotate](#rotating-the-signing-key) it: `{"keys":[<new>,<old>]}`. Use the same value on every instance and keep it secret. |
+| `MADAUTH_KEY_SERVICE` | yes | Where madAuth keeps its keys: `aws-kms`, in AWS KMS, where they never leave it (see [AWS KMS](#aws-kms)), or `local`, in the server's memory, from `MADAUTH_SIGNING_KEY`. There is no default: see [Key service](#key-service). |
+| `MADAUTH_SIGNING_KEY` | with `local` | Private ES256 key (JWK JSON) that signs the sessions; the keys that hash the codes and encrypt the stored secrets are derived from it. Or a set of keys, the newest first, to [rotate](#rotating-the-signing-key) it: `{"keys":[<new>,<old>]}`. Use the same value on every instance and keep it secret. |
 | `ALLOWED_ORIGINS` | yes | Comma-separated origins of your apps, e.g. `https://app.example.com`. Only these may call the server or be redirected back to. |
 | `GOOGLE_CLIENT_ID` | for Google | OAuth client ID of type "Web application", ending in `.apps.googleusercontent.com`. Turns on Google sign-in. |
 | `GOOGLE_CLIENT_SECRET` | no | Client secret of the same client. Enables the server-side redirect flow (`GoogleRedirect`); without it those routes return 404. |
@@ -48,15 +49,65 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 
 At least one way to create users must be configured: `GOOGLE_CLIENT_ID`, `GITHUB_CLIENT_ID` with its secret, or a webhook that sends the e-mails (e-mail & password sign-in needs `email.send_verification` and `email.send_password_reset` among its events, the e-mail link needs `email.send_signin_link`, sign-up with the authenticator app alone needs `email.send_verification`), or both. Which configured methods are on, and whether they ask for the authenticator app, admins set while the server runs, see [Sign-in methods](#sign-in-methods).
 
+### Key service
+
+madAuth does everything it needs a key for through a key service ([`key-service.ts`](../packages/server/src/key-service.ts)): it signs the tokens (sessions, renewals and the cookies of a sign-in under way), hashes the e-mail and recovery codes (HMAC-SHA256), and encrypts the authenticator secrets and GitHub tokens it must read again. Whoever has these keys can sign sessions for anyone, so `MADAUTH_KEY_SERVICE` must say where they are; madAuth doesn't start without it:
+
+- **`aws-kms`**: the keys are in AWS KMS and never leave it; madAuth asks KMS to sign, hash and encrypt. Someone who breaks into the server can use the keys only while they are in, never take them away, and every use is logged in CloudTrail. The way to run madAuth in production; see [AWS KMS](#aws-kms).
+- **`local`**: the keys are in the server's memory, made from `MADAUTH_SIGNING_KEY` (see [Signing key](#signing-key)). Whoever can read that memory (a break-in, a core dump, a heap snapshot) can read them. For development, or where no key service is available; madAuth warns about it at every start.
+
+With [`createApp`](#your-own-node-server) you can pass a key service of your own as `keyService`, e.g. for another cloud's key vault.
+
+#### AWS KMS
+
+With `MADAUTH_KEY_SERVICE=aws-kms`, madAuth finds its keys by itself, under aliases named after the host of `MADAUTH_ISSUER` (e.g. `auth-example-com` for `https://auth.example.com`); nothing else is configured:
+
+| Alias | Key |
+| --- | --- |
+| `alias/madauth/<deployment>/signing` | The ES256 key (`ECC_NIST_P256`) that signs now |
+| `alias/madauth/<deployment>/signing/<time>` | Every signing key, by when it was made, e.g. `…/signing/20261017T120000Z`: all of them verify, and `/.well-known/jwks.json` publishes them |
+| `alias/madauth/<deployment>/mac`, `…/mac/<time>` | The same for the HMAC keys (`HMAC_256`) that hash the codes |
+| `alias/madauth/<deployment>/encryption` | The symmetric key that encrypts the secrets, bound to their purpose (the encryption context); KMS gives it new material every year by itself and keeps the old to decrypt |
+
+madAuth reads the aliases when it starts and every five minutes after, so a rotation reaches every running instance; it doesn't start when the keys are missing.
+
+**Who creates the keys.** Never the server: whatever can create a key that madAuth trusts could make one its own AWS account may use too, and so forge sessions for anyone, also after the break-in that let it in is over. So the server's role may only *use* the keys of its deployment, which it finds by their aliases, and can't create keys or aliases:
+
+```json
+[
+  {
+    "Effect": "Allow",
+    "Action": ["kms:GetPublicKey", "kms:Sign", "kms:GenerateMac", "kms:Encrypt", "kms:Decrypt"],
+    "Resource": "*",
+    "Condition": { "ForAnyValue:StringLike": { "kms:ResourceAliases": "alias/madauth/<deployment>/*" } }
+  },
+  { "Effect": "Allow", "Action": "kms:ListAliases", "Resource": "*" }
+]
+```
+
+The [AWS template](../deploy/aws/README.md) is to create the keys and run the rotation itself ([#74](https://github.com/inouiw/madAuth/issues/74)); until then it keeps `MADAUTH_KEY_SERVICE=local`. Otherwise an admin creates the keys once with their own AWS credentials, which prints this policy for the deployment:
+
+```bash
+npx @madauth/server kms-setup --env-file .env
+```
+
+**Rotation.** The signing and hash keys get a successor once a year, through `npx @madauth/server kms-rotate` with an admin's credentials, run every day (e.g. by a scheduled job with a role of its own). A new key is published first, and used from a run at least two hours later, since backends may cache the list of signing keys for an hour. An old signing key is disabled 32 days after its successor began to sign, when the sessions it signed can't be renewed any more (the default `SESSION_RENEWAL_TTL`); old hash keys stay, since recovery codes hashed with them may be kept for years. The encryption key KMS rotates in place.
+
+**Moving from `local` to `aws-kms`** is a clean cut: `MADAUTH_SIGNING_KEY` must be gone (madAuth refuses to start while it is set), so no key stays in a variable. What the old key made can't be read any more:
+
+- every session ends, and the users sign in again;
+- authenticator apps and recovery codes set up before stop working: their users set the app up again, and users whose sign-in asks for the app ask an admin to [reset their sign-in](#resetting-a-users-sign-in);
+- the stored GitHub tokens can't be revoked: each is replaced at its user's next sign-in.
+
+Each KMS key costs a monthly fee, also when disabled: three keys, plus one for each rotation of the signing and hash keys a year. Every signature, hash and encryption is a KMS request: a sign-in makes a few.
+
 ### Signing key
 
-`init` writes a new key into `.env`. Otherwise, start the server without `MADAUTH_SIGNING_KEY` and the error message contains a freshly generated key to copy. You can also generate one directly:
+With `MADAUTH_KEY_SERVICE=local`, `MADAUTH_SIGNING_KEY` holds the keys: the signing key itself, and a hash key and an encryption key per purpose derived from it (HKDF). `init` writes a new key into `.env`. Otherwise, start the server without `MADAUTH_SIGNING_KEY` and the error message contains a freshly generated key to copy. You can also generate one directly:
 
 ```bash
 npx @madauth/server generate-key
 ```
-
-madAuth does everything it needs a key for through a key service ([`key-service.ts`](../packages/server/src/key-service.ts)): it signs the tokens (sessions, renewals and the cookies of a sign-in under way), hashes the e-mail and recovery codes (HMAC-SHA256), and encrypts the authenticator secrets and GitHub tokens it must read again (AES-256-GCM). The built-in one holds its keys in the server's memory, made from `MADAUTH_SIGNING_KEY`: the signing key itself, and a hash key and an encryption key per purpose derived from it (HKDF). Whoever can read the server's memory can read them. Key services that keep the keys out of the process (AWS KMS first) are planned, see [#74](https://github.com/inouiw/madAuth/issues/74). With [`createApp`](#your-own-node-server) you can pass your own as `keyService`.
 
 #### Rotating the signing key
 

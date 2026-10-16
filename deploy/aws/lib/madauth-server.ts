@@ -95,6 +95,8 @@ export class MadAuthServer extends Construct {
 
     const environment: Record<string, string> = {
       MADAUTH_ISSUER: issuer,
+      // The signing key from the Parameter Store, in the function's memory, until the template creates KMS keys (#74).
+      MADAUTH_KEY_SERVICE: 'local',
       ALLOWED_ORIGINS: allowedOrigins.join(','),
       DATABASE_URL: `dynamodb:${this.table.tableName}`,
       MADAUTH_SECRETS_PATH: secretsPath,

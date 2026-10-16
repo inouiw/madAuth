@@ -127,4 +127,4 @@ await Madauth.admin.setSettings({
 - [Styling the login form](styling.md) and [Building your own login screen](custom-ui.md).
 - [Upgrading](upgrading.md) from an earlier madAuth.
 - [Running the madAuth server](server.md): all settings, sending real e-mails, hosting with Docker, AWS Lambda or Azure Functions, and verifying the session in your backend.
-- For production, run `init` again with your app's https URL. Each environment needs a signing key of its own.
+- For production, run `init` again with your app's https URL. Each environment needs keys of its own: `init` writes `MADAUTH_KEY_SERVICE=local`, with the key in `.env`; in production keep the keys in a key service that never gives them out, e.g. `MADAUTH_KEY_SERVICE=aws-kms`, see [Key service](server.md#key-service).
