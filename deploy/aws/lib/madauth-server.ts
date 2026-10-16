@@ -1,9 +1,13 @@
-import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import { deploymentOf, serverKmsPolicy } from '@madauth/server/aws-kms';
+import { CfnOutput, CustomResource, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +41,7 @@ export interface MadAuthServerProps {
   readonly githubClientId?: string;
   /**
    * The Parameter Store path of the secrets. Each SecureString parameter under it becomes the environment
-   * variable of its name, e.g. `/madauth/MADAUTH_SIGNING_KEY`. `scripts/bootstrap-secrets.sh` creates them.
+   * variable of its name, e.g. `/madauth/WEBHOOK_SECRET`. `scripts/bootstrap-secrets.sh` creates them.
    * Default: `/madauth`.
    */
   readonly secretsPath?: string;
@@ -63,14 +67,16 @@ export interface MadAuthServerProps {
 }
 
 /**
- * The madAuth server as an AWS Lambda function with a Function URL, its users in a DynamoDB table and its
- * secrets in the Parameter Store. Put the URL behind your app's origin (e.g. a CloudFront behavior for
- * `/auth/*` and `/.well-known/*`), so madAuth's cookies are first-party.
+ * The madAuth server as an AWS Lambda function with a Function URL, its users in a DynamoDB table, its keys in
+ * AWS KMS and its secrets in the Parameter Store. Put the URL behind your app's origin (e.g. a CloudFront behavior
+ * for `/auth/*` and `/.well-known/*`), so madAuth's cookies are first-party.
  */
 export class MadAuthServer extends Construct {
   readonly function: nodejs.NodejsFunction;
   readonly functionUrl: lambda.FunctionUrl;
   readonly table: dynamodb.Table;
+  /** Creates the KMS keys at the deploy and rotates them daily; a failed rotation is an error of this function. */
+  readonly keyManager: nodejs.NodejsFunction;
 
   constructor(scope: Construct, id: string, props: MadAuthServerProps) {
     super(scope, id);
@@ -95,8 +101,7 @@ export class MadAuthServer extends Construct {
 
     const environment: Record<string, string> = {
       MADAUTH_ISSUER: issuer,
-      // The signing key from the Parameter Store, in the function's memory, until the template creates KMS keys (#74).
-      MADAUTH_KEY_SERVICE: 'local',
+      MADAUTH_KEY_SERVICE: 'aws-kms',
       ALLOWED_ORIGINS: allowedOrigins.join(','),
       DATABASE_URL: `dynamodb:${this.table.tableName}`,
       MADAUTH_SECRETS_PATH: secretsPath,
@@ -146,6 +151,69 @@ export class MadAuthServer extends Construct {
         resources: [parameterArn(secretsPath.slice(1)), parameterArn(`${secretsPath.slice(1)}/*`)],
       }),
     );
+
+    // The keys in AWS KMS, under aliases named after the issuer (see "AWS KMS" in docs/server.md). The server may
+    // only use them; a function with a role of its own creates them at the deploy and rotates them every day, so
+    // whatever takes over the server can't make a key that madAuth trusts.
+    const deployment = deploymentOf(issuer);
+    for (const statement of serverKmsPolicy(deployment)) this.function.addToRolePolicy(iam.PolicyStatement.fromJson(statement));
+    const signingKeyParameter = `${secretsPath}/MADAUTH_SIGNING_KEY`;
+    this.keyManager = new nodejs.NodejsFunction(this, 'Keys', {
+      entry: fileURLToPath(new URL('../lambda/keys.ts', import.meta.url)),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      memorySize: 256,
+      timeout: Duration.minutes(1),
+      environment: { MADAUTH_ISSUER: issuer, SIGNING_KEY_PARAMETER: signingKeyParameter },
+      // What was rotated when, for a year.
+      logGroup: new logs.LogGroup(this, 'KeysLogs', {
+        retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: RemovalPolicy.DESTROY,
+      }),
+      bundling: {
+        ...lambdaBundling,
+        esbuildArgs: props.serverPackageDir
+          ? { '--alias:@madauth/server/aws-kms': join(props.serverPackageDir, 'dist/aws-kms.js') }
+          : undefined,
+      },
+    });
+    const kmsArn = (resource: 'key' | 'alias', resourceName: string) => Stack.of(this).formatArn({ service: 'kms', resource, resourceName });
+    const deploymentAliases = { 'ForAnyValue:StringLike': { 'kms:ResourceAliases': `alias/madauth/${deployment}/*` } };
+    // In the function's default policy, which the function and so the custom resource below wait for.
+    const keyManagerStatements = [
+      new iam.PolicyStatement({ actions: ['kms:CreateKey', 'kms:ListAliases'], resources: ['*'] }),
+      // Right after CreateKey, before the new key has an alias; it only turns on KMS's own rotation.
+      new iam.PolicyStatement({ actions: ['kms:EnableKeyRotation'], resources: [kmsArn('key', '*')] }),
+      // Checked against the alias and against each key it points to.
+      new iam.PolicyStatement({
+        actions: ['kms:CreateAlias', 'kms:UpdateAlias', 'kms:DeleteAlias'],
+        resources: [kmsArn('alias', `madauth/${deployment}/*`), kmsArn('key', '*')],
+      }),
+      new iam.PolicyStatement({ actions: ['kms:DescribeKey', 'kms:DisableKey'], resources: [kmsArn('key', '*')], conditions: deploymentAliases }),
+      // Whether the local key service's key is still there; its value isn't read.
+      new iam.PolicyStatement({ actions: ['ssm:GetParameters'], resources: [parameterArn(signingKeyParameter.slice(1))] }),
+    ];
+    for (const statement of keyManagerStatements) this.keyManager.addToRolePolicy(statement);
+    const provider = new cr.Provider(this, 'KeysProvider', {
+      onEventHandler: this.keyManager,
+      logGroup: new logs.LogGroup(this, 'KeysProviderLogs', {
+        retention: logs.RetentionDays.ONE_MONTH,
+        removalPolicy: RemovalPolicy.DESTROY,
+      }),
+    });
+    const keys = new CustomResource(this, 'KmsKeys', {
+      serviceToken: provider.serviceToken,
+      resourceType: 'Custom::MadAuthKmsKeys',
+      properties: { Deployment: deployment },
+    });
+    // The server's new configuration only once its keys exist.
+    this.function.node.addDependency(keys);
+    new events.Rule(this, 'KeysSchedule', {
+      description: "Rotates the madAuth server's KMS keys",
+      schedule: events.Schedule.rate(Duration.days(1)),
+      targets: [new targets.LambdaFunction(this.keyManager, { retryAttempts: 2 })],
+    });
 
     // Public, without AWS authentication: madAuth checks the Origin of every request itself (ALLOWED_ORIGINS).
     this.functionUrl = this.function.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });

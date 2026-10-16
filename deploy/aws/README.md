@@ -1,13 +1,14 @@
 # madAuth on AWS (CDK)
 
-Deploys the madAuth server as an AWS Lambda function with a Function URL. The users are stored in a DynamoDB table, and the secrets are kept in the Parameter Store. It costs close to nothing at low traffic: Lambda and DynamoDB are paid per request, and the Parameter Store's standard parameters are free.
+Deploys the madAuth server as an AWS Lambda function with a Function URL. The users are stored in a DynamoDB table, madAuth's keys in AWS KMS, and the secrets in the Parameter Store. At low traffic it costs about $3 a month, for the three KMS keys: Lambda, DynamoDB and KMS's requests are paid per request, and the Parameter Store's standard parameters are free.
 
 What it creates (`lib/madauth-server.ts`, the `MadAuthServer` construct):
 
 - **A DynamoDB table** with the keys `pk` and `sk`. It is on-demand, has point-in-time recovery, and is kept when the stack is deleted.
-- **A Lambda function** (Node.js 22, arm64, 512 MB) that runs [`lambda/server.ts`](lambda/server.ts). It reads every parameter under the secrets path, e.g. `/madauth/MADAUTH_SIGNING_KEY`, as the environment variable of that name. The secrets therefore never appear in the function's configuration. For now the signing key is such a secret (`MADAUTH_KEY_SERVICE=local`); keys in AWS KMS follow, see [Key service](../../docs/server.md#key-service).
+- **A Lambda function** (Node.js 22, arm64, 512 MB) that runs [`lambda/server.ts`](lambda/server.ts). It reads every parameter under the secrets path, e.g. `/madauth/WEBHOOK_SECRET`, as the environment variable of that name. The secrets therefore never appear in the function's configuration.
+- **Three keys in AWS KMS** that sign the sessions, hash the codes and encrypt the stored secrets (`MADAUTH_KEY_SERVICE=aws-kms`, see [AWS KMS](../../docs/server.md#aws-kms)). They never leave KMS, and the server's role may only use them. A second function with a role of its own, [`lambda/keys.ts`](lambda/keys.ts), creates them at the first deploy, checks them every day and rotates them once a year; a failed rotation is an error of that function (`keyManager`), which an alarm can watch. The keys are kept when the stack is deleted, like the table: without them nothing stored in it can be read. Each costs $1 a month, and every rotation, once a year, adds one. They are named after the issuer: a new `issuer` gets new keys, which signs every user out, and the old ones stay, and cost, until you schedule their deletion in KMS.
 
-It deploys madAuth 0.3 or newer, which stores every user in the table, with or without e-mail & password sign-in.
+It deploys madAuth 0.6 or newer, the first that keeps its keys in AWS KMS.
 - **A Function URL.** madAuth checks the `Origin` of every request itself (`ALLOWED_ORIGINS`).
 
 ## What you need
@@ -38,7 +39,7 @@ npx cdk bootstrap
 
 ## 2. Store the secrets
 
-The script creates the signing key and the webhook secret, then asks for the Google client secret (leave it empty if you only use Google One Tap / FedCM) and the GitHub client secret (empty without GitHub sign-in; one without `githubClientId` is ignored). The values go straight into the Parameter Store, under `/madauth` by default:
+The script creates the webhook secret, then asks for the Google client secret (leave it empty if you only use Google One Tap / FedCM) and the GitHub client secret (empty without GitHub sign-in; one without `githubClientId` is ignored). The values go straight into the Parameter Store, under `/madauth` by default:
 
 ```bash
 scripts/bootstrap-secrets.sh /madauth
@@ -67,7 +68,7 @@ Then deploy:
 npx cdk deploy
 ```
 
-The output `FunctionUrl` is the server, e.g. `https://xyz.lambda-url.eu-central-1.on.aws/`. Check it with:
+The first deploy also creates the keys. KMS may take up to five minutes to let the server use them, so the server may answer errors until then. The output `FunctionUrl` is the server, e.g. `https://xyz.lambda-url.eu-central-1.on.aws/`. Check it with:
 
 ```bash
 curl https://xyz.lambda-url.eu-central-1.on.aws/health
@@ -84,7 +85,7 @@ For Google's redirect flow, also add `https://example.com/auth/google/callback` 
 
 ## Using the construct in your own CDK app
 
-Copy `lib/madauth-server.ts` and `lambda/server.ts` into your app, or install this folder (`npm install <path>/deploy/aws`). Then use it:
+Copy `lib/madauth-server.ts`, `lambda/server.ts` and `lambda/keys.ts` into your app and add `@madauth/server` 0.6 or newer to its dependencies (the construct reads the KMS policy from it), or install this folder (`npm install <path>/deploy/aws`). Then use it:
 
 ```ts
 import { EMAIL_LINK_EVENTS, MadAuthServer } from '@madauth/deploy-aws';
@@ -98,10 +99,31 @@ const madauth = new MadAuthServer(this, 'MadAuth', {
   webhook: { url: mailerUrl, events: EMAIL_LINK_EVENTS },
   reservedConcurrentExecutions: 10,
 });
-// madauth.functionUrl, madauth.function, madauth.table
+// madauth.functionUrl, madauth.function, madauth.table, madauth.keyManager
+```
+
+A failed key rotation is an error of `keyManager`. To hear of it, alarm on its errors, e.g. to an SNS topic:
+
+```ts
+madauth.keyManager.metricErrors({ period: Duration.days(1) }).createAlarm(this, 'KeyRotationFailed', {
+  threshold: 1,
+  evaluationPeriods: 1,
+}).addAlarmAction(new SnsAction(topic));
 ```
 
 `environment` adds more settings, e.g. `{ SESSION_TTL: '3600' }`; see [all settings](../../docs/server.md#configuration).
+
+## Upgrading from a template before madAuth 0.6
+
+The template kept madAuth's keys in the Parameter Store, as `<secretsPath>/MADAUTH_SIGNING_KEY`; now they are in AWS KMS. The move is a clean cut: what the old key made can't be read any more, so every user is signed out, and the authenticator apps and recovery codes set up before stop working (see [AWS KMS](../../docs/server.md#aws-kms)). While the old key is in the Parameter Store, the deploy fails and rolls back, and the running server keeps working. When you are ready, delete it and deploy right away (the running server can't start new instances without it):
+
+```bash
+aws ssm delete-parameter --name /madauth/MADAUTH_SIGNING_KEY
+```
+
+```bash
+npx cdk deploy
+```
 
 ## Administration
 

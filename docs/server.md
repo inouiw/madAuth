@@ -85,7 +85,7 @@ madAuth reads the aliases when it starts and every five minutes after, so a rota
 ]
 ```
 
-The [AWS template](../deploy/aws/README.md) is to create the keys and run the rotation itself ([#74](https://github.com/inouiw/madAuth/issues/74)); until then it keeps `MADAUTH_KEY_SERVICE=local`. Otherwise an admin creates the keys once with their own AWS credentials, which prints this policy for the deployment:
+The [AWS template](../deploy/aws/README.md) does all of this itself: it creates the keys at the first deploy and rotates them every day with a function of its own, and gives the server's role this policy. Otherwise an admin creates the keys once with their own AWS credentials, which prints this policy for the deployment:
 
 ```bash
 npx @madauth/server kms-setup --env-file .env

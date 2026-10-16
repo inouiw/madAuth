@@ -2,7 +2,7 @@
   "name": "@madauth/deploy-aws",
   "private": true,
   "version": "0.0.0",
-  "description": "AWS CDK template for the madAuth server: Lambda with a Function URL, DynamoDB, secrets from the Parameter Store.",
+  "description": "AWS CDK template for the madAuth server: Lambda with a Function URL, DynamoDB, keys in AWS KMS, secrets from the Parameter Store.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -21,7 +21,7 @@
     "deploy": "cdk deploy"
   },
   "dependencies": {
-    "@madauth/server": ">=0.2.0-beta.2 <1.0.0",
+    "@madauth/server": ">=0.6.0-beta.1 <1.0.0",
     "esbuild": "^0.28.2"
   },
   "peerDependencies": {
