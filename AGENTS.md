@@ -62,7 +62,7 @@ The webhook receivers (the dev receiver that prints e-mails and SMS codes, and t
 
 ### Testing
 
-Before considering a task done, run what CI runs at the repo root: `npm run typecheck`, `npm test` and `npm run build`. `deploy/aws` and `site/infra` are separate npm projects outside the workspaces: after changing one, run `npm ci && npm run typecheck && npm run build` and `npx cdk synth` in it (see `.github/workflows/infra.yml` for the context values).
+Before considering a task done, run what CI runs at the repo root: `npm run typecheck`, `npm test` and `npm run build`. `deploy/aws` and `site/infra` are separate npm projects outside the workspaces: after changing one, run `npm ci && npm run typecheck && npm run build` and `npx cdk synth` in it, and in `deploy/aws` also `npm test` (see `.github/workflows/infra.yml` for the context values).
 
 ### Documentation
 
