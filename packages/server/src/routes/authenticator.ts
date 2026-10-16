@@ -13,6 +13,7 @@ import {
   generateRecoveryCodes,
   generateTotpSecret,
   normalizeRecoveryCode,
+  recoveryCodeHash,
   recoveryCodeHashes,
   otpauthUri,
   verifyTotp,
@@ -83,16 +84,16 @@ export async function checkCode(
   if (typeof data.code !== 'string' || !account.secret) return wrong();
   const decrypted = await ctx.keys.decrypt('authenticator-secret', account.secret);
   if (!decrypted) {
-    console.error(`[madauth] The authenticator secret of user ${user.id} can't be read: was its key removed from MADAUTH_SIGNING_KEY?`);
+    console.error(`[madauth] The authenticator secret of user ${user.id} can't be read: was its key removed from the key service (MADAUTH_SIGNING_KEY)?`);
     return wrong();
   }
   const secret = Buffer.from(decrypted.plaintext);
-  // Encrypted with an older key: moved to the newest now, so that key can go once every secret has moved.
-  if (!decrypted.current) await users.updateAccount(account.id, { secret: await ctx.keys.encrypt('authenticator-secret', secret) });
   const step = verifyTotp(secret, data.code, Date.now(), TOTP_WINDOW);
   // A code works once: it must be later than the last accepted one, and the write decides between
   // requests sent at the same time.
   if (step === null || step <= (account.lastUsedStep ?? 0) || !(await users.useAuthenticatorStep(account, step))) return wrong();
+  // Encrypted with an older key: moved to the newest, at a right code only, and only if no setup replaced it meanwhile.
+  if (!decrypted.current) await users.reencryptSecret(account, await ctx.keys.encrypt('authenticator-secret', secret));
   return 'authenticator';
 }
 
@@ -124,7 +125,7 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext): void {
   /** New recovery codes, with what is stored for them. */
   const newRecoveryCodes = async () => {
     const recoveryCodes = generateRecoveryCodes();
-    const hashes = await Promise.all(recoveryCodes.map(async (code) => (await recoveryCodeHashes(ctx.keys, normalizeRecoveryCode(code)!))[0]!));
+    const hashes = await Promise.all(recoveryCodes.map((code) => recoveryCodeHash(ctx.keys, normalizeRecoveryCode(code)!)));
     return { recoveryCodes, hashes };
   };
 

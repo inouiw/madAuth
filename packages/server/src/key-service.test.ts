@@ -10,7 +10,7 @@ import { generateSigningKey } from './keys.js';
 import { codeHashes } from './password.js';
 import { ISSUER, cookies, linkAndCode, passwordApp, post, setMethods, type TestMethods } from './test/helpers.js';
 import { readToken, signToken } from './tokens.js';
-import { authenticatorAccountKey } from './users.js';
+import { Users, authenticatorAccountKey } from './users.js';
 
 const START = 1_700_000_015_000;
 const grace = { email: 'grace@example.com', name: 'Grace Hopper' };
@@ -117,6 +117,20 @@ describe('rotating MADAUTH_SIGNING_KEY on a running deployment', () => {
     expect(signedIn.status).toBe(200);
     const [moved] = await store.findMany('account', { id: account!.id });
     expect(await onlyNew.decrypt('authenticator-secret', moved!.secret as string)).toEqual({ plaintext: new Uint8Array(secret), current: true });
+  });
+
+  it('KS9: a wrong code moves nothing, and a secret that a new setup replaced meanwhile is not overwritten', async () => {
+    const { app, store, secret } = await graceThenRotation();
+    const account = await store.findOne('account', { key: authenticatorAccountKey(String((await store.findMany('user', {}))[0]!.id)) });
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 60_000 });
+    expect((await post(app, '/auth/authenticator/signin', { email: grace.email, code: '000000' })).status).toBe(401);
+    expect((await store.findOne('account', { id: account!.id }))!.secret).toBe(account!.secret);
+
+    // A setup confirmed meanwhile wrote another secret: the old one, re-encrypted, must not replace it.
+    await store.update('account', { id: account!.id }, { secret: 'v1.the-new-apps-secret' });
+    const users = new Users(store, rotated);
+    expect(await users.reencryptSecret(account as never, await rotated.encrypt('authenticator-secret', secret))).toBe(false);
+    expect((await store.findOne('account', { id: account!.id }))!.secret).toBe('v1.the-new-apps-secret');
   });
 
   it('KS7: recovery codes made under the old key still work', async () => {

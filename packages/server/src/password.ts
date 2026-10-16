@@ -114,12 +114,17 @@ export function generateCode(): string {
 }
 
 /**
- * What is stored for a code: its keyed hash (the key service's HMAC). A 6-digit code has only a million
- * values, so a plain hash could be reversed from a leaked database; a keyed one can't without the key. One
- * hash per hash key, the newest first: the first is stored, and a stored code is found as any of them.
+ * What is stored for a code: its keyed hash (the key service's HMAC, with the newest key). A 6-digit code has
+ * only a million values, so a plain hash could be reversed from a leaked database; a keyed one can't without
+ * the key.
  */
+export async function codeHash(keys: KeyService, code: string): Promise<string> {
+  return Buffer.from(await keys.mac(new TextEncoder().encode(code))).toString('base64url');
+}
+
+/** The hashes a stored code may have: one per hash key, the newest first (see {@link codeHash}). */
 export async function codeHashes(keys: KeyService, code: string): Promise<string[]> {
-  return (await keys.mac(new TextEncoder().encode(code))).map((tag) => Buffer.from(tag).toString('base64url'));
+  return (await keys.macs(new TextEncoder().encode(code))).map((tag) => Buffer.from(tag).toString('base64url'));
 }
 
 /** Compares two strings in constant time. */

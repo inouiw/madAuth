@@ -2,7 +2,7 @@
 // docs/authenticator-security.md.
 import { createHmac, randomBytes, randomInt } from 'node:crypto';
 import type { KeyService } from './key-service.js';
-import { codeHashes, safeEqual } from './password.js';
+import { codeHash, codeHashes, safeEqual } from './password.js';
 
 /** How long one code is valid, as authenticator apps expect. */
 export const TOTP_STEP_SECONDS = 30;
@@ -120,10 +120,12 @@ export function normalizeRecoveryCode(text: unknown): string | null {
   return code.length === RECOVERY_CODE_LENGTH && [...code].every((char) => RECOVERY_ALPHABET.includes(char)) ? code : null;
 }
 
-/**
- * What is stored for a recovery code: a keyed hash, like the e-mail codes, so a leaked database gives no usable
- * code. One per hash key, the newest first (see codeHashes).
- */
+/** What is stored for a recovery code: a keyed hash, like the e-mail codes, so a leaked database gives no usable code. */
+export function recoveryCodeHash(keys: KeyService, code: string): Promise<string> {
+  return codeHash(keys, `recovery:${code}`);
+}
+
+/** The hashes a stored recovery code may have: one per hash key, the newest first (see codeHashes). */
 export function recoveryCodeHashes(keys: KeyService, code: string): Promise<string[]> {
   return codeHashes(keys, `recovery:${code}`);
 }

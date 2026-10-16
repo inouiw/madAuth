@@ -19,11 +19,13 @@ export interface KeyService {
   verificationKeys(): Promise<JWK[]>;
   /** Signs a JWS signing input (`header.payload`) with the key `kid`: ES256, the signature as JWS has it (r and s, 64 bytes). */
   sign(kid: string, data: Uint8Array): Promise<Uint8Array>;
+  /** The keyed hash (HMAC-SHA256) of `data` with the newest hash key: what is stored. */
+  mac(data: Uint8Array): Promise<Uint8Array>;
   /**
-   * Keyed hashes (HMAC-SHA256) of `data`, one per hash key, the newest first. The first is stored; a stored
-   * hash is found as any of them, so what was hashed before a rotation is still found.
+   * The keyed hashes of `data` with every hash key, the newest first: a stored hash is found as any of them, so
+   * what was hashed before a rotation is still found.
    */
-  mac(data: Uint8Array): Promise<Uint8Array[]>;
+  macs(data: Uint8Array): Promise<Uint8Array[]>;
   /** Encrypts `plaintext` for `purpose` with the newest key. */
   encrypt(purpose: EncryptionPurpose, plaintext: Uint8Array): Promise<string>;
   /**
@@ -51,6 +53,8 @@ interface LocalKey {
   macKey: KeyObject;
   encryptionKeys: Record<EncryptionPurpose, Buffer>;
 }
+
+const hmac = (key: LocalKey, data: Uint8Array) => new Uint8Array(createHmac('sha256', key.macKey).update(data).digest());
 
 async function localKey(jwk: JWK): Promise<LocalKey> {
   assertPrivateSigningJwk(jwk);
@@ -87,7 +91,8 @@ export async function createLocalKeyService(jwks: JWK[]): Promise<KeyService> {
       // WebCrypto's ECDSA signature is r and s, as JWS wants it.
       return new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key.privateKey, new Uint8Array(data)));
     },
-    mac: async (data) => keys.map((key) => new Uint8Array(createHmac('sha256', key.macKey).update(data).digest())),
+    mac: async (data) => hmac(newest!, data),
+    macs: async (data) => keys.map((key) => hmac(key, data)),
     encrypt: async (purpose, plaintext) => encrypt(newest!.encryptionKeys[purpose], plaintext),
     async decrypt(purpose, value) {
       // AES-GCM opens a value only with its own key.

@@ -2,7 +2,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { claimsFromJson, type Claims } from './claims.js';
 import type { KeyService } from './key-service.js';
-import { codeHashes, generateCode, generateLinkToken, hashLinkToken, safeEqual } from './password.js';
+import { codeHash, codeHashes, generateCode, generateLinkToken, hashLinkToken, safeEqual } from './password.js';
 import { ALWAYS_SIGN_IN, FORMER_AUTHENTICATOR_ID, SIGN_IN_METHODS, type SecondFactor, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 import type { MadauthUser } from './user.js';
@@ -260,9 +260,9 @@ export class Users {
     private readonly keys?: KeyService,
   ) {}
 
-  private hashes(code: string): Promise<string[]> {
+  private get keyService(): KeyService {
     if (!this.keys) throw new Error('Users needs the key service to issue or check codes.');
-    return codeHashes(this.keys, code);
+    return this.keys;
   }
 
   async findByEmail(emailNormalized: string): Promise<StoredUser | null> {
@@ -658,6 +658,14 @@ export class Users {
   }
 
   /** Changes an account. Resolves to false if it is gone meanwhile. */
+  /**
+   * Stores the account's secret encrypted anew (with the newest key), only if it is still the one that was read:
+   * a setup confirmed meanwhile has replaced it, and must not be undone.
+   */
+  async reencryptSecret(account: StoredAccount, secret: string): Promise<boolean> {
+    return (await this.store.update('account', { id: account.id, secret: account.secret ?? null }, { secret })) === 1;
+  }
+
   async updateAccount(id: string, patch: Partial<Omit<StoredAccount, 'id'>>): Promise<boolean> {
     return (await this.store.update('account', { id }, patch as Row)) === 1;
   }
@@ -690,7 +698,7 @@ export class Users {
       id: hashLinkToken(token),
       userId,
       purpose,
-      codeHash: (await this.hashes(code))[0]!,
+      codeHash: await codeHash(this.keyService, code),
       attempts: 0,
       expiresAt: Date.now() + ttlMs,
     };
@@ -739,7 +747,7 @@ export class Users {
       if (count > MAX_WRONG_CODES) return { userId: null, locked: true };
       wrongCodes = count;
     }
-    if (!(await this.hashes(code)).some((hash) => safeEqual(hash, record.codeHash))) {
+    if (!(await codeHashes(this.keyService, code)).some((hash) => safeEqual(hash, record.codeHash))) {
       if (attempts >= MAX_CODE_ATTEMPTS) await this.store.delete('verification', { id: record.id });
       return { userId: null, locked: counted && wrongCodes >= MAX_WRONG_CODES };
     }
