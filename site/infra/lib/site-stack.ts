@@ -68,10 +68,8 @@ export class SiteStack extends Stack {
       memorySize: 256,
       timeout: Duration.seconds(8),
       reservedConcurrentExecutions: 2,
-      environment: {
-        MAIL_FROM: `"madAuth demo" <noreply@${domain}>`,
-        WEBHOOK_SECRET_PARAMETER: `${SECRETS_PATH}/WEBHOOK_SECRET`,
-      },
+      // MADAUTH_ROLE_ARN, the only caller it accepts, is added below, once the server exists.
+      environment: { MAIL_FROM: `"madAuth demo" <noreply@${domain}>` },
       logGroup: new logs.LogGroup(this, 'MailerLogs', {
         retention: logs.RetentionDays.ONE_MONTH,
         removalPolicy: RemovalPolicy.DESTROY,
@@ -90,14 +88,8 @@ export class SiteStack extends Stack {
         resources: [this.formatArn({ service: 'ses', resource: 'identity', resourceName: identity.emailIdentityName })],
       }),
     );
-    mailer.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['ssm:GetParameter'],
-        resources: [this.formatArn({ service: 'ssm', resource: 'parameter', resourceName: `${SECRETS_PATH.slice(1)}/WEBHOOK_SECRET` })],
-      }),
-    );
-    // Public: the mailer checks every call's signature (WEBHOOK_SECRET).
-    const mailerUrl = mailer.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
+    // AWS checks every call's signature (SigV4) before the mailer runs, and the mailer that the caller is the server's role.
+    const mailerUrl = mailer.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
 
     // The demo's madAuth server, from this repository's packages/server (built before the deploy).
     const server = new MadAuthServer(this, 'MadAuth', {
@@ -105,13 +97,15 @@ export class SiteStack extends Stack {
       googleClientId: props.googleClientId || undefined,
       githubClientId: props.githubClientId || undefined,
       secretsPath: SECRETS_PATH,
-      webhook: { url: mailerUrl.url, events: EMAIL_LINK_EVENTS },
+      // The server signs its calls with its role, which may invoke the mailer's URL: no webhook secret.
+      webhook: { url: mailerUrl.url, events: EMAIL_LINK_EVENTS, awsIamReceiver: mailer },
       // The demo's example scopes for API keys, next to madAuth's own (demo/public/api-scopes.json).
       environment: { API_KEY_SCOPES_URL: `${origin}/demo/api-scopes.json` },
       // A public demo: cap what abuse can cost.
       reservedConcurrentExecutions: 5,
       serverPackageDir: join(repoRoot, 'packages/server'),
     });
+    mailer.addEnvironment('MADAUTH_ROLE_ARN', server.role.roleArn);
 
     // The static files: site/dist at the root, demo/dist under demo/.
     const bucket = new s3.Bucket(this, 'Files', {

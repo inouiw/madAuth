@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { SignatureV4 } from '@smithy/signature-v4';
+import { describe, expect, it, vi } from 'vitest';
+import { Sha256, createAwsIamSigner } from './aws-iam.js';
 import { WEBHOOK_TYPES, createWebhookClient, generateWebhookSecret, signWebhook, verifyWebhook } from './webhooks.js';
 
 // The example from the Standard Webhooks specification, so other implementations can verify our calls.
@@ -93,5 +95,71 @@ describe('webhook client', () => {
 
     expect(sent).toEqual(['email.send_verification', 'user.email_verified']);
     expect(client.wants('email.send_password_reset')).toBe(false);
+  });
+});
+
+describe('webhook client with AWS IAM (WEBHOOK_AUTH=aws-iam)', () => {
+  const url = 'https://abcdefghijklmnopqrstuvwxyz012345.lambda-url.eu-central-1.on.aws/';
+  // A Lambda function's role: temporary credentials with a session token.
+  const credentials = { accessKeyId: 'ASIAEXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY', sessionToken: 'session-token' };
+  const now = new Date('2026-10-17T12:00:00Z');
+  const sigv4 = () => new SignatureV4({ service: 'lambda', region: 'eu-central-1', credentials, sha256: Sha256 });
+
+  it('signs the call it sends with SigV4, as AWS checks it at the Function URL', async () => {
+    let received: { url: string; headers: Headers; body: string } | undefined;
+    const client = createWebhookClient({ url, events: new Set(WEBHOOK_TYPES), awsIam: createAwsIamSigner(sigv4()) }, (async (to: string, init: RequestInit) => {
+      received = { url: to, headers: new Headers(init.headers), body: String(init.body) };
+      return new Response('{"allow":false}', { status: 200 });
+    }) as typeof fetch);
+
+    vi.useFakeTimers({ toFake: ['Date'], now });
+    const result = await client.call('user.signing_up', { email: 'a@example.com' }, 1000).finally(() => vi.useRealTimers());
+
+    expect(result).toEqual({ ok: true, body: { allow: false } });
+    const { headers, body } = received!;
+    expect(JSON.parse(body)).toEqual({ type: 'user.signing_up', data: { email: 'a@example.com' } });
+    expect(headers.get('x-amz-date')).toBe('20261017T120000Z');
+    expect(headers.get('x-amz-security-token')).toBe('session-token');
+    expect(headers.get('authorization')).toMatch(
+      /^AWS4-HMAC-SHA256 Credential=ASIAEXAMPLE\/20261017\/eu-central-1\/lambda\/aws4_request, SignedHeaders=content-type;host;webhook-id;webhook-timestamp;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=[0-9a-f]{64}$/,
+    );
+    expect(headers.get('webhook-id')).toMatch(/^msg_/);
+    expect(headers.get('webhook-signature')).toBeNull();
+
+    // What AWS does: sign the request as it arrived (its host from the URL, as fetch sends it) and compare.
+    const added = ['authorization', 'x-amz-date', 'x-amz-security-token', 'x-amz-content-sha256'];
+    const unsigned = Object.fromEntries([...headers].filter(([name]) => !added.includes(name)));
+    const target = new URL(received!.url);
+    const expected = (sent: string) =>
+      sigv4().sign(
+        { method: 'POST', protocol: target.protocol, hostname: target.hostname, path: target.pathname, query: {}, headers: { ...unsigned, host: target.host }, body: sent },
+        { signingDate: now },
+      );
+    expect(headers.get('authorization')).toBe((await expected(body)).headers.authorization);
+    expect(headers.get('authorization')).not.toBe((await expected(body.replace('a@example.com', 'b@example.com'))).headers.authorization);
+  });
+
+  it('counts the signing, e.g. getting the credentials, into the time limit', async () => {
+    // As fetch does: an aborted signal fails at once.
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      if (init.signal?.aborted) throw init.signal.reason;
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    const slowSigner = async ({ headers }: { headers: Record<string, string> }) => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { headers };
+    };
+    const client = createWebhookClient({ url, events: new Set(WEBHOOK_TYPES), awsIam: slowSigner }, fetchImpl);
+
+    expect(await client.call('user.signing_up', {}, 20)).toEqual({ ok: false, reason: 'no answer within 20 ms' });
+    expect(await client.call('user.signing_up', {}, 1000)).toEqual({ ok: true, body: undefined });
+  });
+
+  it('sends nothing when it can not sign, and says why', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const client = createWebhookClient({ url, events: new Set(WEBHOOK_TYPES), awsIam: async () => ({ problem: 'could not sign the call with AWS IAM: no credentials' }) }, fetchImpl);
+
+    expect(await client.call('email.send_verification', {}, 1000)).toEqual({ ok: false, reason: 'could not sign the call with AWS IAM: no credentials' });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

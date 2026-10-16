@@ -1,6 +1,7 @@
 // Webhooks: how madAuth asks your code to send e-mails, decide on sign-ups and learn about events.
-// Calls are signed in the Standard Webhooks format (https://www.standardwebhooks.com/).
+// Calls are signed in the Standard Webhooks format (https://www.standardwebhooks.com/), or with AWS IAM (aws-iam.ts).
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import type { WebhookSigner } from './aws-iam.js';
 
 /**
  * Every `type` madAuth sends: `email.send_*` and `sms.send_*` hand over a message to send, `user.signing_up`
@@ -121,12 +122,17 @@ export function verifyWebhook(
   });
 }
 
-export interface WebhookSettings {
+/**
+ * How the calls are signed: with the secret the receiver checks (WEBHOOK_SECRET), or with AWS IAM (WEBHOOK_AUTH=aws-iam):
+ * with madAuth's AWS credentials, which AWS checks before the receiver runs.
+ */
+export type WebhookAuth = { secret: string } | { awsIam: WebhookSigner };
+
+export type WebhookSettings = {
   url: string;
-  secret: string;
   /** The types that are sent (WEBHOOK_EVENTS); all others are skipped. */
   events: ReadonlySet<string>;
-}
+} & WebhookAuth;
 
 export type WebhookResult = { ok: true; body: unknown } | { ok: false; reason: string };
 
@@ -146,18 +152,22 @@ export function createWebhookClient(settings: WebhookSettings, fetchImpl: typeof
       const id = `msg_${randomUUID()}`;
       const timestamp = Math.floor(Date.now() / 1000);
       const body = JSON.stringify({ type, data });
+      // One time limit for the whole call: with AWS IAM, getting the credentials (e.g. from the instance metadata) counts too.
+      const signal = AbortSignal.timeout(timeoutMs);
+      // The id and the time also with AWS IAM: the id tells a receiver that two calls are the same.
+      const headers = { 'Content-Type': 'application/json', 'webhook-id': id, 'webhook-timestamp': String(timestamp) };
+      const signed =
+        'secret' in settings
+          ? { headers: { ...headers, 'webhook-signature': signWebhook(settings.secret, id, timestamp, body) } }
+          : await settings.awsIam({ url: settings.url, headers, body });
+      if ('problem' in signed) return { ok: false, reason: signed.problem };
       let response: Response;
       try {
         response = await fetchImpl(settings.url, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'webhook-id': id,
-            'webhook-timestamp': String(timestamp),
-            'webhook-signature': signWebhook(settings.secret, id, timestamp, body),
-          },
+          headers: signed.headers,
           body,
-          signal: AbortSignal.timeout(timeoutMs),
+          signal,
         });
       } catch (e) {
         const reason = (e as Error).name === 'TimeoutError' ? `no answer within ${timeoutMs} ms` : (e as Error).message;
