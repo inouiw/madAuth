@@ -10,7 +10,7 @@
 //
 // A record and its unique values and index entries are always written in one transaction, and every read is
 // strongly consistent. So a record can be read right after it was written, which a global secondary index
-// would not guarantee.
+// would not guarantee. Only `scan` reads the whole table, for admins (e.g. to search users).
 import type { AttributeValue, DynamoDBClient, TransactWriteItem } from '@aws-sdk/client-dynamodb';
 import { madauthSchema, type FieldDef, type Row, type StoreAdapter, type Value, type Where } from './schema.js';
 
@@ -123,7 +123,7 @@ const pause = (attempt: number) =>
  * and the sort key `sk`, both of type string (see "DynamoDB" in docs/server.md).
  *
  * A filter must contain the record's id, a unique field or an indexed field: the adapter never scans the
- * table. Unique and indexed fields can't be changed by `update`.
+ * table to find records, only for `scan`. Unique and indexed fields can't be changed by `update`.
  */
 export function createDynamoDbAdapter(options: DynamoDbAdapterOptions): StoreAdapter {
   const { tableName } = options;
@@ -322,6 +322,32 @@ export function createDynamoDbAdapter(options: DynamoDbAdapterOptions): StoreAda
         }),
       );
       return deleted.filter(Boolean).length;
+    },
+
+    // A Scan of the table, which holds every model's records, their unique values and index entries: it reads
+    // pages until it has `limit` records of the model. DynamoDB scans in a fixed order, so the next page starts
+    // after the key of `after`, whether or not that record still exists.
+    async scan(model, { after, limit }) {
+      const fields = fieldsOf(model);
+      const { sdk, client } = await aws();
+      const wanted = Math.max(0, Math.floor(limit));
+      const rows: Row[] = [];
+      let start: Item | undefined = after === undefined ? undefined : recordKey(model, after);
+      while (rows.length < wanted) {
+        const page = await client.send(
+          new sdk.ScanCommand({
+            TableName: tableName,
+            ConsistentRead: true,
+            FilterExpression: 'begins_with(pk, :model)',
+            ExpressionAttributeValues: { ':model': { S: `r|${model}|` } },
+            ExclusiveStartKey: start,
+          }),
+        );
+        rows.push(...(page.Items ?? []).slice(0, wanted - rows.length).map((item) => toRow(fields, item)));
+        if (!page.LastEvaluatedKey) break;
+        start = page.LastEvaluatedKey;
+      }
+      return rows;
     },
   };
 }

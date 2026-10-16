@@ -261,6 +261,7 @@ describe('resetting a user\'s sign-in', () => {
       findOne: (model, where) => inner.findOne(model, where),
       findMany: (model, where, opts) => inner.findMany(model, where, opts),
       update: (model, where, patch) => inner.update(model, where, patch),
+      scan: (model, opts) => inner.scan(model, opts),
       async delete(model, where) {
         const deleted = await inner.delete(model, where);
         const run = model === 'account' ? meanwhile : undefined;

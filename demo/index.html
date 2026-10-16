@@ -197,6 +197,13 @@
           address, and sign in with it.
         </p>
         <ul class="api-list">
+          <li class="api-method" data-call="searchUsers">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.searchUsers(search)</button>
+            <div class="api-detail" hidden>
+              <p>The users that match every filter: <code>role</code>, <code>email</code> (the exact address), <code>signedUpAfter</code> and <code>signedUpBefore</code> (milliseconds since 1970) and <code>pending</code> (sign-ups whose address isn't confirmed yet), a page of <code>limit</code> users at a time (at most 100). With a <code>cursor</code> in the answer there may be more: add it to the search for the next page. <code>{}</code> lists everyone.</p>
+              <label>Search (JSON) <textarea data-param="search" data-json rows="2" spellcheck="false">{ "role": "admin" }</textarea></label>
+            </div>
+          </li>
           <li class="api-method" data-call="getClaims">
             <button type="button" class="api-row" aria-expanded="false">Madauth.admin.getClaims(email)</button>
             <div class="api-detail" hidden>

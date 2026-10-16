@@ -332,12 +332,12 @@ function methodsToSet(): MethodsToSet {
   return set;
 }
 
-/** The claims typed as JSON, or the reason they can't be sent. */
-function parseClaims(text: string): { claims: Record<string, unknown> } | { error: string } {
+/** The JSON typed into a field, or the reason it can't be sent (`example` shows what it should look like). */
+function parseJson(text: string, example: string): { value: Record<string, unknown> } | { error: string } {
   try {
-    return { claims: JSON.parse(text) as Record<string, unknown> };
+    return { value: JSON.parse(text) as Record<string, unknown> };
   } catch {
-    return { error: 'The claims must be JSON, e.g. { "roles": ["admin"] }.' };
+    return { error: `This must be JSON, e.g. ${example}.` };
   }
 }
 
@@ -359,6 +359,14 @@ const methods: Record<string, ApiMethod> = {
         ? Madauth.deleteAccount(code)
         : 'Cancelled.',
   ),
+  // A filter the server doesn't have is answered with invalid_search.
+  searchUsers: api(
+    (values) => {
+      const parsed = parseJson(values.search, '{ "role": "admin" }');
+      return 'error' in parsed ? parsed.error : { search: parsed.value };
+    },
+    ({ search }) => Madauth.admin.searchUsers(search),
+  ),
   getClaims: api(
     (values) => ({ email: values.email.trim() }),
     ({ email }) => Madauth.admin.getClaims(email),
@@ -366,8 +374,8 @@ const methods: Record<string, ApiMethod> = {
   // Anything but an object of claims is answered by the server with invalid_claims.
   setClaims: api(
     (values) => {
-      const parsed = parseClaims(values.claims);
-      return 'error' in parsed ? parsed.error : { email: values.email.trim(), claims: parsed.claims };
+      const parsed = parseJson(values.claims, '{ "roles": ["admin"] }');
+      return 'error' in parsed ? parsed.error : { email: values.email.trim(), claims: parsed.value };
     },
     ({ email, claims }) => Madauth.admin.setClaims(email, claims),
   ),

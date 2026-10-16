@@ -34,6 +34,7 @@ export const MADAUTH_SCOPES = [
   { name: 'madauth:settings:read', description: 'Read the sign-in settings', role: ADMIN_ROLE, endpoints: ['POST /auth/admin/settings/get'] },
   { name: 'madauth:settings:write', description: 'Change the sign-in settings', role: ADMIN_ROLE, endpoints: ['POST /auth/admin/settings/set'] },
   { name: 'madauth:sign-in:reset', description: "Reset a user's sign-in, for a user who lost every way in", role: ADMIN_ROLE, endpoints: ['POST /auth/admin/sign-in/reset'] },
+  { name: 'madauth:users:read', description: 'Find users by role, address or sign-up date', role: ADMIN_ROLE, endpoints: ['POST /auth/admin/users/search'] },
 ] as const satisfies readonly Scope[];
 
 export type MadauthScope = (typeof MADAUTH_SCOPES)[number]['name'];

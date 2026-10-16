@@ -133,7 +133,8 @@ export class MadAuthServer extends Construct {
       },
     });
 
-    // Exactly what the DynamoDB store uses (see "DynamoDB" in docs/server.md): no Scan, no batch writes.
+    // Exactly what the DynamoDB store uses (see "DynamoDB" in docs/server.md): no batch writes, and Scan only
+    // for admins searching users.
     this.table.grant(
       this.function,
       'dynamodb:GetItem',
@@ -142,6 +143,7 @@ export class MadAuthServer extends Construct {
       'dynamodb:UpdateItem',
       'dynamodb:DeleteItem',
       'dynamodb:TransactWriteItems',
+      'dynamodb:Scan',
     );
     // The hierarchy and the parameters in it: GetParametersByPath is checked against both.
     const parameterArn = (name: string) => Stack.of(this).formatArn({ service: 'ssm', resource: 'parameter', resourceName: name });

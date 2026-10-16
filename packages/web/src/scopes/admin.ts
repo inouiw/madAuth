@@ -53,6 +53,38 @@ export interface Settings {
  */
 export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 
+/** What `searchUsers` looks for; every filter given must match. */
+export interface UserSearch {
+  /** Users whose `claims.roles` hold this role. */
+  role?: string;
+  /** The user with this address (exact, ignoring case). */
+  email?: string;
+  /** Users who signed up after this time, in milliseconds since 1970. */
+  signedUpAfter?: number;
+  /** Users who signed up before this time. */
+  signedUpBefore?: number;
+  /** `true`: only pending sign-ups, whose address isn't confirmed yet; `false`: only complete ones. Default: both. */
+  pending?: boolean;
+  /** The most users on a page, 1 to 100. Default: 50. */
+  limit?: number;
+  /** The `cursor` of the previous page, for the next one. */
+  cursor?: string;
+}
+
+/** A user as `searchUsers` finds them. */
+export interface FoundUser {
+  id: string;
+  email: string;
+  name: string | null;
+  emailVerified: boolean;
+  claims: Claims;
+  /** The user's sign-in methods and second factors, e.g. `['passkey', 'password']`. */
+  methods: string[];
+  /** When the sign-up was complete (milliseconds since 1970); `null` while it is pending. */
+  signedUpAt: number | null;
+  pending: boolean;
+}
+
 /**
  * Managing claims, settings and users' API keys, and resetting a user's sign-in, for users with the role `admin`
  * (`claims.roles`). The first admin is the user who signs in with the address in the server's
@@ -96,6 +128,13 @@ export interface AdminApi {
   listApiKeys(email: string): Promise<Result<{ userId: string; apiKeys: ApiKeyInfo[] }>>;
   /** Revokes an API key of the user with this e-mail address. Fails with `forbidden`, `invalid_email`, `user_not_found` or `api_key_not_found`. */
   revokeApiKey(email: string, id: string): Promise<Result<{ userId: string }>>;
+  /**
+   * The users that match every filter, a page at a time, in no particular order. With `cursor` there may be more:
+   * pass it for the next page, which can hold fewer users than `limit`, or none, and still have a cursor; the
+   * search reads at most a thousand users per call. Without filters, every user. What it finds is for showing:
+   * it may be outdated by the time it is shown. Fails with `forbidden`, `invalid_email` or `invalid_search`.
+   */
+  searchUsers(search?: UserSearch): Promise<Result<{ users: FoundUser[]; cursor?: string }>>;
 }
 
 export function createAdminApi(core: Core): AdminApi {
@@ -116,5 +155,7 @@ export function createAdminApi(core: Core): AdminApi {
     resetSignIn: (email) => call('sign-in/reset', { email }, (data: { userId: string }) => ({ userId: data.userId })),
     listApiKeys: (email) => call('api-keys/list', { email }, (data: { userId: string; apiKeys: ApiKeyInfo[] }) => ({ userId: data.userId, apiKeys: data.apiKeys })),
     revokeApiKey: (email, id) => call('api-keys/revoke', { email, id }, (data: { userId: string }) => ({ userId: data.userId })),
+    searchUsers: (search = {}) =>
+      call('users/search', { ...search }, (data: { users: FoundUser[]; cursor?: string }) => ({ users: data.users, ...(data.cursor ? { cursor: data.cursor } : {}) })),
   };
 }

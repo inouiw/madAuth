@@ -46,6 +46,7 @@ const errorCodes = [
   'invalid_claims',
   'user_not_found',
   'invalid_settings',
+  'invalid_search',
   'authenticator_required',
   'authenticator_setup_required',
   'second_factor_setup_required',

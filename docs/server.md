@@ -174,7 +174,7 @@ On AWS, and always on AWS Lambda, store the users in a DynamoDB table. madAuth k
    ```
 
 2. Set `DATABASE_URL=dynamodb:madauth` on the server.
-3. Allow the server these actions on the table: `dynamodb:GetItem`, `dynamodb:Query`, `dynamodb:PutItem`, `dynamodb:UpdateItem` and `dynamodb:DeleteItem`. On Lambda, add them to the function's role.
+3. Allow the server these actions on the table: `dynamodb:GetItem`, `dynamodb:Query`, `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:DeleteItem`, `dynamodb:TransactWriteItems`, and `dynamodb:Scan` for [searching users](#searching-users). On Lambda, add them to the function's role.
 
 The region and the credentials come from the environment, as for every AWS SDK: on Lambda from the function itself, elsewhere e.g. from `AWS_REGION` and `aws configure`.
 
@@ -535,6 +535,23 @@ The user then signs up again with any method that is on, and gets the same id. T
 
 Code: `resetSignIn` in [`users.ts`](../packages/server/src/users.ts), `/auth/admin/sign-in/reset` in [`app.ts`](../packages/server/src/app.ts).
 
+## Searching users
+
+`Madauth.admin.searchUsers(search)` in the web library (`POST /auth/admin/users/search`) finds users for admins: who has a role, the user with an address, who signed up when, or every user, e.g. for a list on an admin screen. Every filter given must match:
+
+- `role`: users whose `claims.roles` hold the role.
+- `email`: the user with this address (exact, ignoring case).
+- `signedUpAfter`, `signedUpBefore`: users whose sign-up was complete after or before this time, in milliseconds since 1970. Users whose sign-up is older than madAuth 0.5, which records the time, count from when they were created. A pending sign-up has no time, so it matches neither.
+- `pending`: `true` for sign-ups whose address isn't confirmed yet, `false` for complete ones; both without it.
+
+Each user comes with `id`, `email`, `name`, `emailVerified`, `claims`, `methods` (their sign-in methods and second factors, e.g. `["passkey", "password"]`), `signedUpAt` (`null` while pending) and `pending`. A page holds at most `limit` users (1 to 100, default 50), in no particular order. With a `cursor` in the answer, there may be more: pass it in the next search. A search reads at most a thousand users per call, so a page may hold fewer users than `limit`, or none, and still have a cursor. A filter madAuth doesn't have is refused (`400 invalid_search`), so a typo never finds everyone. Programs search with an admin's [API key](api-keys.md) with the scope `madauth:users:read`.
+
+**It reads every user.** Except for an address, which is one lookup, the search reads the users page by page (the adapter's [`scan`](#custom-store-adapter)) and filters them. That works on every store and needs no index, but its cost grows with the number of users. On DynamoDB a scan reads the whole table, the sign-in methods and pending links too, strongly consistent: 10,000 users are about 40,000 items, read in a second or two for a fraction of a cent. That is fine for admins now and then, not for a page every visitor opens.
+
+**What it finds is for showing.** It may be outdated by the time it is shown. Of a search through several pages, each user who exists all along is in it once; one who signs up or is deleted meanwhile may be in it or not. No rule relies on it: e.g. that an admin can't take their own role is checked when the claims are set.
+
+Code: [`user-search.ts`](../packages/server/src/user-search.ts).
+
 ## Deleting an account
 
 `Madauth.deleteAccount()` in the web library (`POST /auth/account/delete`) lets a signed-in user delete their account:
@@ -550,7 +567,7 @@ Delete the user's data in your own backend first, while the user is still signed
 
 ## Custom store adapter
 
-Users are stored through a `StoreAdapter`. madAuth does all the security work (hashing, throttling, single-use links); an adapter only stores records. It has five methods:
+Users are stored through a `StoreAdapter`. madAuth does all the security work (hashing, throttling, single-use links); an adapter only stores records. It has six methods:
 
 ```ts
 interface StoreAdapter {
@@ -559,9 +576,12 @@ interface StoreAdapter {
   findMany(model: string, where: Where, opts?: { limit?: number }): Promise<Row[]>;
   update(model: string, where: Where, patch: Row): Promise<number>; // records changed
   delete(model: string, where: Where): Promise<number>; // records deleted; must be exact under concurrency
+  scan(model: string, opts: { after?: string; limit: number }): Promise<Row[]>; // a page of all records of the model
 }
 // Row: { field: string | number | boolean | null }. Where: every field equals the value (null: is empty).
 ```
+
+`scan` returns a model's records a page at a time, for admins only (it is how [searching users](#searching-users) reads them): at most `limit`, in an order of your choosing that stays the same, starting after the record whose id is `after`, which may have been deleted since. Fewer than `limit` means there are no more. Ordering by the primary key does all of this in SQL (`where id > $after order by id limit $limit`); the DynamoDB adapter scans the table, whose order is fixed, from the key of `after`.
 
 The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` (one per sign-in method of a user), `verification`, `setting` and `recoveryCode`. The schema says nothing about how records are stored, so it fits any database. For SQL databases there are helpers: rows use the schema's camelCase field names, while the SQL tables use `madauth_<model>` and snake_case columns (`madauth_recovery_code`; `tableName()` and `columnName()` convert), and `createTablesSql()` creates them. Print the SQL to create the tables:
 
@@ -639,6 +659,11 @@ export function createPostgresAdapter(url: string): StoreAdapter {
     async delete(model, w) {
       fieldsOf(model);
       return (await sql`delete from ${table(model)} ${where(w)}`).count;
+    },
+    async scan(model, { after, limit }) {
+      fieldsOf(model);
+      const from = after === undefined ? sql`` : sql`where id > ${after}`;
+      return (await sql`select * from ${table(model)} ${from} order by id limit ${limit}`).map((record) => toRow(model, record));
     },
   };
 }
@@ -784,6 +809,7 @@ Your app lists the scopes of its API at `API_KEY_SCOPES_URL`; see [API keys](api
 | `POST /auth/api-keys/verify` | With `Authorization: Bearer madauth_…`, for your backend → `{ user, apiKey: { id, name, scopes } }` (the scopes that count now); 401 `invalid_api_key` |
 | `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
 | `POST /auth/logout` | Clears the cookies of the session |
+| `POST /auth/admin/users/search` | `{ role?, email?, signedUpAfter?, signedUpBefore?, pending?, limit?, cursor? }` → `{ users: [{ id, email, name, emailVerified, claims, methods, signedUpAt, pending }], cursor? }`, for admins; 400 `invalid_search`, `invalid_email`. See [Searching users](#searching-users). |
 | `POST /auth/admin/claims/get` | `{ email }` → `{ email, userId, claims }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`, 404 `user_not_found`. See [Claims](#claims). |
 | `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims`, 403 `own_admin_role` (it would take the role `admin` from the caller, see [The first admin](#the-first-admin)) |
 | `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, allowAsSignInMethod, secondFactor }, github: { … }, password: { … }, authenticator: { … }, 'email-link': { … }, passkey: { … }, sms: { … } }, password: { minLength, minScore } }`, for admins. See [Sign-in methods](#sign-in-methods) and [Password rules](#password-rules). |
