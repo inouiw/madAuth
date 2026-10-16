@@ -74,7 +74,7 @@ void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new 
 });
 Madauth.onAuthStateChanged(handleAuthStateChanged);
 
-$('#sign-in').addEventListener('click', () => void Madauth.signIn());
+$('#sign-in').addEventListener('click', () => void Madauth.showSignInDialog());
 $('#sign-out').addEventListener('click', () => void Madauth.signOut());
 
 function handleAuthStateChanged(user: MadauthUser | null): void {
@@ -185,7 +185,7 @@ async function refreshPhone(): Promise<void> {
 
 function showPhone(on: boolean, offered: boolean): void {
   $('[data-call="setUpSms"]').hidden = !offered;
-  $('[data-call="setUpSms"]').textContent = on ? 'Madauth.setUpSms() (replace)' : 'Madauth.setUpSms()';
+  $('[data-call="setUpSms"]').textContent = on ? 'Madauth.showSetUpSmsDialog() (replace)' : 'Madauth.showSetUpSmsDialog()';
   $('[data-call="removeSms"]').hidden = !on;
 }
 
@@ -216,15 +216,17 @@ function showOutput(box: HTMLElement, label: string, result: unknown): void {
 
 const accountCalls: Record<string, () => Promise<unknown>> = {
   // The dialog lists the user's methods, adds and removes them; it may ask the user to sign in again first.
-  manageSignInMethods: () => Madauth.manageSignInMethods().then(async (result) => (await Promise.all([refreshMethods(), refreshAuthenticator()]), result)),
+  manageSignInMethods: () => Madauth.showManageSignInMethodsDialog().then(async (result) => (await Promise.all([refreshMethods(), refreshAuthenticator()]), result)),
+  // The dialog lists the user's API keys, makes one (shown once, to copy) and revokes one.
+  manageApiKeys: () => Madauth.showManageApiKeysDialog(),
   // The dialog asks for a name, then the browser creates the passkey.
-  setUpPasskey: () => Madauth.setUpPasskey().then(async (result) => (await refreshMethods(), result)),
+  setUpPasskey: () => Madauth.showSetUpPasskeyDialog().then(async (result) => (await refreshMethods(), result)),
   // The dialog shows the QR code, asks for the first code and shows the recovery codes.
-  setUpAuthenticator: () => Madauth.setUpAuthenticator().then(async (result) => (await refreshAuthenticator(), result)),
+  setUpAuthenticator: () => Madauth.showSetUpAuthenticatorDialog().then(async (result) => (await refreshAuthenticator(), result)),
   newRecoveryCodes: () => Madauth.authenticator.newRecoveryCodes(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
   removeAuthenticator: () => Madauth.authenticator.remove(codeOptions()).then(async (result) => (await refreshAuthenticator(), result)),
   // The dialog asks for the number, then for the code sent to it (and, replacing one, for a code to the current number first).
-  setUpSms: () => Madauth.setUpSms().then(async (result) => (await refreshPhone(), result)),
+  setUpSms: () => Madauth.showSetUpSmsDialog().then(async (result) => (await refreshPhone(), result)),
   // Removing the number takes a code sent to it: send, ask for it, remove.
   removeSms: async () => {
     const sent = await Madauth.sms.send();
@@ -243,7 +245,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#account butt
     try {
       const result = await accountCalls[button.dataset.call!]();
       // Labelled with the call: the code of a button that has a name of its own too.
-      const box = button.id === 'manage-methods' ? $('#methods-output') : $('#authenticator-output');
+      const box = button.id === 'manage-methods' || button.id === 'manage-api-keys' ? $('#methods-output') : $('#authenticator-output');
       if (Madauth.currentUser?.id === user) showOutput(box, (button.querySelector('code') ?? button).textContent, result);
     } finally {
       button.disabled = false;
@@ -384,6 +386,14 @@ const methods: Record<string, ApiMethod> = {
       if (result.isSuccess && result.userId === Madauth.currentUser?.id) await Madauth.getSession();
       return result;
     },
+  ),
+  listApiKeys: api(
+    (values) => ({ email: values.email.trim() }),
+    ({ email }) => Madauth.admin.listApiKeys(email),
+  ),
+  revokeApiKey: api(
+    (values) => ({ email: values.email.trim(), id: values.id.trim() }),
+    ({ email, id }) => Madauth.admin.revokeApiKey(email, id),
   ),
   getSettings: api(
     () => undefined,

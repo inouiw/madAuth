@@ -88,17 +88,28 @@
         </div>
         <!-- How this session was authenticated (Madauth.currentUser.amr), e.g. pwd and otp, or email for the e-mail link. -->
         <p class="amr">Signed in with <code id="amr"></code></p>
-        <!-- The dialog on the user's sign-in methods: Madauth.manageSignInMethods() lists them and adds or removes one. -->
+        <!-- The dialog on the user's sign-in methods: Madauth.showManageSignInMethodsDialog() lists them and adds or removes one. -->
         <button id="manage-methods" type="button" data-call="manageSignInMethods">
           Manage Sign-In Methods
-          <code>Madauth.manageSignInMethods()</code>
+          <code>Madauth.showManageSignInMethodsDialog()</code>
         </button>
+        <!-- The dialog on the user's API keys: Madauth.showManageApiKeysDialog() lists them, makes one (shown once) and revokes one. -->
+        <button id="manage-api-keys" type="button" data-call="manageApiKeys">
+          API Keys
+          <code>Madauth.showManageApiKeysDialog()</code>
+        </button>
+        <p class="api-keys-hint">
+          The demo's own scopes (<code>notes:read</code>, <code>notes:write</code>) are examples from
+          <a href="api-scopes.json">api-scopes.json</a>, which the server reads from <code>API_KEY_SCOPES_URL</code>; the demo
+          has no API to call with them. Check a key the way your backend would:
+          <code>curl -X POST https://madauth.com/auth/api-keys/verify -H "Authorization: Bearer madauth_…"</code>
+        </p>
         <!-- What the dialog resolved to, below its button; a status region, so screen readers announce it. -->
         <div id="methods-output" class="api-box" hidden>
           <span class="caption">Response</span>
           <pre role="status"></pre>
         </div>
-        <!-- The authenticator app: Madauth.setUpAuthenticator() opens the dialog with the QR code; the other calls take a code. -->
+        <!-- The authenticator app: Madauth.showSetUpAuthenticatorDialog() opens the dialog with the QR code; the other calls take a code. -->
         <div class="authenticator">
           <span class="caption">Authenticator app</span>
           <p id="authenticator-status"></p>
@@ -107,7 +118,7 @@
             <input id="authenticator-code" type="text" autocomplete="off" spellcheck="false" />
           </label>
           <p class="buttons">
-            <button type="button" data-call="setUpAuthenticator" hidden>Madauth.setUpAuthenticator()</button>
+            <button type="button" data-call="setUpAuthenticator" hidden>Madauth.showSetUpAuthenticatorDialog()</button>
             <button type="button" data-call="newRecoveryCodes" hidden>Madauth.authenticator.newRecoveryCodes({ code })</button>
             <button type="button" data-call="removeAuthenticator" hidden>Madauth.authenticator.remove({ code })</button>
           </p>
@@ -117,21 +128,21 @@
             <pre id="output" role="status"></pre>
           </div>
         </div>
-        <!-- SMS codes as a second factor: Madauth.setUpSms() opens the dialog for the number and its code; removing takes a code sent to it. -->
+        <!-- SMS codes as a second factor: Madauth.showSetUpSmsDialog() opens the dialog for the number and its code; removing takes a code sent to it. -->
         <div class="authenticator phone">
           <span class="caption">Phone (SMS codes)</span>
           <p id="sms-status"></p>
           <p class="buttons">
-            <button type="button" data-call="setUpSms" hidden>Madauth.setUpSms()</button>
+            <button type="button" data-call="setUpSms" hidden>Madauth.showSetUpSmsDialog()</button>
             <button type="button" data-call="removeSms" hidden>Madauth.sms.remove({ code })</button>
           </p>
         </div>
-        <!-- The user's sign-in methods (Madauth.methods.list()); Madauth.setUpPasskey() adds a passkey. -->
+        <!-- The user's sign-in methods (Madauth.methods.list()); Madauth.showSetUpPasskeyDialog() adds a passkey. -->
         <div class="authenticator methods-box">
           <span class="caption">Sign-in methods</span>
           <p id="methods-status"></p>
           <p class="buttons">
-            <button type="button" data-call="setUpPasskey" hidden>Madauth.setUpPasskey()</button>
+            <button type="button" data-call="setUpPasskey" hidden>Madauth.showSetUpPasskeyDialog()</button>
           </p>
         </div>
         <button id="sign-out" type="button">Sign out</button>
@@ -206,6 +217,21 @@
             <div class="api-detail" hidden>
               <p>For a user who lost every way in, or a second factor: removes all their sign-in methods and second factors, ends their sessions and marks the address unconfirmed. They sign up again with any method that is on, and keep their id and claims. Check who is asking first: whoever proves the inbox next gets the account. The page asks first; resetting yourself signs you out.</p>
               <label>E-mail <input data-param="email" type="email" autocomplete="off" spellcheck="false" /></label>
+            </div>
+          </li>
+          <li class="api-method" data-call="listApiKeys">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.listApiKeys(email)</button>
+            <div class="api-detail" hidden>
+              <p>The API keys of the user with this address: their names, scopes and when they were last used, never the keys themselves.</p>
+              <label>E-mail <input data-param="email" type="email" autocomplete="off" spellcheck="false" /></label>
+            </div>
+          </li>
+          <li class="api-method" data-call="revokeApiKey">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.revokeApiKey(email, id)</button>
+            <div class="api-detail" hidden>
+              <p>Revokes one of them, e.g. one that leaked: it stops working at once. The id (<code>key_…</code>) is in <code>listApiKeys</code>.</p>
+              <label>E-mail <input data-param="email" type="email" autocomplete="off" spellcheck="false" /></label>
+              <label>Id <input data-param="id" type="text" autocomplete="off" spellcheck="false" /></label>
             </div>
           </li>
           <li class="api-method" data-call="getSettings">

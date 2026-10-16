@@ -70,6 +70,10 @@ const errorCodes = [
   'only_method',
   'own_admin_role',
   'other_method',
+  'invalid_scopes',
+  'scope_not_allowed',
+  'too_many_api_keys',
+  'api_key_not_found',
   'unknown',
 ] as const;
 

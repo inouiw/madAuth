@@ -94,14 +94,14 @@ Other dev servers have a similar setting. In production, your reverse proxy or C
 
 ## 6. Sign users in
 
-Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `GitHub`, `EmailLink` for the e-mail link, `Passkey` for signing in with a passkey, and `Authenticator` for signing in with the authenticator app on its own (once an admin allows it in the settings). Second factors need no provider: once an admin sets the policy, the dialog asks for a passkey, a code from the app or a code by SMS by itself, and a user adds one from your app with `Madauth.setUpPasskey()`, `Madauth.setUpAuthenticator()` or `Madauth.setUpSms()`, or all of their sign-in methods with `Madauth.manageSignInMethods()`.
+Pass the providers that match your answers: `Password`, `GoogleFedcm` or `GoogleRedirect`, `GitHub`, `EmailLink` for the e-mail link, `Passkey` for signing in with a passkey, and `Authenticator` for signing in with the authenticator app on its own (once an admin allows it in the settings). Second factors need no provider: once an admin sets the policy, the dialog asks for a passkey, a code from the app or a code by SMS by itself, and a user adds one from your app with `Madauth.showSetUpPasskeyDialog()`, `Madauth.showSetUpAuthenticatorDialog()` or `Madauth.showSetUpSmsDialog()`, or all of their sign-in methods with `Madauth.showManageSignInMethodsDialog()`.
 
 ```ts
 import { Madauth, Password, Passkey, Authenticator, EmailLink } from '@madauth/web';
 
 Madauth.initialize({ providers: [new Password(), new Passkey(), new Authenticator(), new EmailLink()] });
 Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
-signInButton.onclick = () => Madauth.signIn();
+signInButton.onclick = () => Madauth.showSignInDialog();
 ```
 
 With Google sign-in, add your app URL under **Authorized JavaScript origins** in the Google Cloud Console (for `http://localhost:5173`, add `http://localhost` as well). For the redirect flow, also add `<app URL>/auth/google/callback` under **Authorized redirect URIs**. With GitHub sign-in, the OAuth App's authorization callback URL is `<app URL>/auth/github/callback`.

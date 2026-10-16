@@ -44,7 +44,7 @@ async function click(selector: string): Promise<void> {
 /** Opens the dialog with the password provider; resolves to the pending signIn() result. */
 async function openDialog(providers: SignInProvider[] = [new Password()]) {
   await Madauth.initialize({ serverUrl: SERVER, providers });
-  const result = Madauth.signIn();
+  const result = Madauth.showSignInDialog();
   await settle();
   return result;
 }
@@ -64,7 +64,7 @@ describe('<madauth-login> with e-mail & password', () => {
   it('opened from a used-up confirmation link while signed in, the dialog stays closed', async () => {
     fakeServer().user = ada;
     history.replaceState(null, '', '/page#madauth_verify=used-up');
-    const signIn = vi.spyOn(Madauth, 'signIn');
+    const signIn = vi.spyOn(Madauth, 'showSignInDialog');
 
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
     await settle();
@@ -475,7 +475,7 @@ describe('<madauth-login> with e-mail & password', () => {
 
     await click('form.signin .reveal');
     $<HTMLButtonElement>('.close')!.click();
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     // The sign-in view's fields stay for the next opening; the password is not shown there.
     expect([field().type, $('form.signin .reveal')!.getAttribute('aria-pressed')]).toEqual(['password', 'false']);
@@ -496,7 +496,7 @@ describe('<madauth-login> with e-mail & password', () => {
     const server = fakeServer();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
 
-    const result = Madauth.signIn({ email: ' grace@example.com ' });
+    const result = Madauth.showSignInDialog({ email: ' grace@example.com ' });
     await settle();
 
     expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('grace@example.com');
@@ -511,7 +511,7 @@ describe('<madauth-login> with e-mail & password', () => {
   it('signIn({ email }) keeps the address on the other views', async () => {
     fakeServer();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
-    void Madauth.signIn({ email: 'new@example.com' });
+    void Madauth.showSignInDialog({ email: 'new@example.com' });
     await settle();
 
     await click('[data-action="signup"]');
@@ -525,18 +525,18 @@ describe('<madauth-login> with e-mail & password', () => {
   it('signIn({ email }) replaces an address from an earlier visit', async () => {
     fakeServer();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
-    void Madauth.signIn({ email: 'grace@example.com' });
+    void Madauth.showSignInDialog({ email: 'grace@example.com' });
     await settle();
     // Typed over the prefilled address, then closed without sending the form.
     await fill({ email: 'typed@example.com' });
     login().close();
 
-    void Madauth.signIn({ email: 'grace@example.com' });
+    void Madauth.showSignInDialog({ email: 'grace@example.com' });
     await settle();
     expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('grace@example.com');
     login().close();
 
-    void Madauth.signIn({ email: 'ada@example.com' });
+    void Madauth.showSignInDialog({ email: 'ada@example.com' });
     await settle();
     expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('ada@example.com');
   });
@@ -560,7 +560,7 @@ describe('<madauth-login> with e-mail & password', () => {
     void openDialog([new GoogleFedcm({ autoPrompt: false })]);
     await settle();
     login().close();
-    void Madauth.signIn({ email: 'grace@example.com' });
+    void Madauth.showSignInDialog({ email: 'grace@example.com' });
     await settle();
 
     expect($<HTMLDialogElement>('dialog')!.open).toBe(true);
@@ -577,7 +577,7 @@ describe('<madauth-login> with e-mail & password', () => {
 
     await fill({ email: 'typed@example.com' });
     login().close();
-    void Madauth.signIn({});
+    void Madauth.showSignInDialog({});
     await settle();
     expect($<HTMLInputElement>('form.signin input[name="email"]')!.value).toBe('typed@example.com');
     expect(login().shadowRoot!.activeElement).not.toBe($('form.signin input[name="password"]'));
@@ -590,7 +590,7 @@ describe('<madauth-login> with e-mail & password', () => {
     await click('[data-action="forgot"]');
 
     $<HTMLButtonElement>('.close')!.click();
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
 
     expect($('h2')!.textContent).toBe('Sign in');

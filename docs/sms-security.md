@@ -14,7 +14,7 @@ Code: `issueVerification` and `consumeCode` in [`packages/server/src/users.ts`](
 
 ## Setting the phone up
 
-A user adds a number while signed in (`Madauth.setUpSms()`, or `Madauth.sms.setUp()` and `confirmSetup()` on a custom screen), or in the setup step of a sign-in whose policy requires a second factor they have not set up yet. The number must be given in international form (`+41 79 …`) and is stored as E.164; madAuth never shows it in full again, only its beginning and last two digits.
+A user adds a number while signed in (`Madauth.showSetUpSmsDialog()`, or `Madauth.sms.setUp()` and `confirmSetup()` on a custom screen), or in the setup step of a sign-in whose policy requires a second factor they have not set up yet. The number must be given in international form (`+41 79 …`) and is stored as E.164; madAuth never shows it in full again, only its beginning and last two digits.
 
 - The server sends a code to the new number and keeps the number in a signed, short-lived setup cookie (`madauth_sms_setup`, ten minutes, only sent to `/auth/sms`). Nothing is stored until the code proves that the number receives the SMS.
 - Replacing a number takes a code sent to the **current** number first, like removing it (`Madauth.sms.send()` while signed in, then `setUp({ phone, code })`): a stolen session alone must not swap the number for the thief's. The approval holds for ten minutes in the setup cookie, so a mistyped number or a code sent again costs no second approval.

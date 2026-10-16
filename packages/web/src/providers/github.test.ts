@@ -36,7 +36,7 @@ function $$(selector: string): Element[] {
 /** Opens the dialog on a server with GitHub sign-in; resolves to the pending signIn() result. */
 async function openDialog(providers: SignInProvider[], options: { locale?: string } = {}) {
   await Madauth.initialize({ serverUrl: SERVER, providers, ...options });
-  const result = Madauth.signIn();
+  const result = Madauth.showSignInDialog();
   await settle();
   return result;
 }
@@ -51,7 +51,7 @@ describe('GitHub', () => {
     expect(warnLog).toHaveBeenCalledWith('[madauth]', 'flow_not_enabled', expect.stringContaining('left out'));
     expect(errorLog).not.toHaveBeenCalled();
     expect(Madauth.github.renderButton(document.createElement('div'))).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     expect($('.github-slot')).toBeNull();
     expect($('form.signin')).not.toBeNull();
@@ -87,7 +87,7 @@ describe('GitHub', () => {
 
     expect(result).toEqual({ isSuccess: false, error: { code: 'cancelled', message: 'The GitHub sign-in was cancelled.' }, leftOut: [] });
     expect(location.href).toBe('https://app.example.com/page?x=1');
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     expect($('.error')?.getAttribute('data-code')).toBe('cancelled');
 

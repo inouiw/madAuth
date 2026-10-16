@@ -106,6 +106,8 @@ export class SiteStack extends Stack {
       githubClientId: props.githubClientId || undefined,
       secretsPath: SECRETS_PATH,
       webhook: { url: mailerUrl.url, events: EMAIL_LINK_EVENTS },
+      // The demo's example scopes for API keys, next to madAuth's own (demo/public/api-scopes.json).
+      environment: { API_KEY_SCOPES_URL: `${origin}/demo/api-scopes.json` },
       // A public demo: cap what abuse can cost.
       reservedConcurrentExecutions: 5,
       serverPackageDir: join(repoRoot, 'packages/server'),

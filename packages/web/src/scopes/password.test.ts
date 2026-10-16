@@ -243,7 +243,7 @@ describe('Madauth.password', () => {
     fakeServer();
     await init({ ui: 'custom' });
 
-    expect(await Madauth.signIn()).toMatchObject({ isSuccess: false, error: { code: 'invalid_options' } });
+    expect(await Madauth.showSignInDialog()).toMatchObject({ isSuccess: false, error: { code: 'invalid_options' } });
     expect(document.querySelector('madauth-login')).toBeNull();
   });
 

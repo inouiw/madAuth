@@ -402,7 +402,7 @@ describe('demo page', () => {
     // Between the claims and the authenticator app.
     expect(button.compareDocumentPosition($('.claims')) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     expect(button.compareDocumentPosition($('.authenticator')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(button.textContent.replace(/\s+/g, ' ').trim()).toBe('Manage Sign-In Methods Madauth.manageSignInMethods()');
+    expect(button.textContent.replace(/\s+/g, ' ').trim()).toBe('Manage Sign-In Methods Madauth.showManageSignInMethodsDialog()');
 
     button.click();
     const dialog = () => document.querySelector('madauth-login')?.shadowRoot;
@@ -410,7 +410,7 @@ describe('demo page', () => {
     await expect.poll(() => dialog()!.querySelector('[data-action="done"]')).not.toBeNull();
     dialog()!.querySelector<HTMLButtonElement>('[data-action="done"]')!.click();
     // Below the button, not in the authenticator app's box.
-    await expect.poll(() => $('#methods-output pre').textContent).toBe('Madauth.manageSignInMethods()\n{\n  "isSuccess": true\n}');
+    await expect.poll(() => $('#methods-output pre').textContent).toBe('Madauth.showManageSignInMethodsDialog()\n{\n  "isSuccess": true\n}');
     expect($('#methods-output').hidden).toBe(false);
     expect($('#output').textContent).not.toContain('manageSignInMethods');
     expect($('#methods-status').textContent).toBe('Google');

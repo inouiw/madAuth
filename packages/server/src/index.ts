@@ -13,6 +13,7 @@ export {
 } from './store/schema.js';
 export { columnName, createTablesSql, tableName, upgradeTablesSql, type SqlDialect } from './store/sql.js';
 export type { MadauthUser } from './user.js';
+export { MADAUTH_SCOPES, parseAppScopes, type ApiKeyInfo, type MadauthScope, type Scope } from './api-keys.js';
 export { ADMIN_ROLE, parseClaims, parseRoles, type Claims } from './claims.js';
 export {
   METHODS,

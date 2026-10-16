@@ -46,7 +46,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 9,
+  version: 10,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -153,6 +153,25 @@ export const madauthSchema = {
         codeHash: { type: 'string' },
         attempts: { type: 'number' },
         expiresAt: { type: 'number' },
+      },
+    },
+    /**
+     * An API key of a user (since version 10): what programs that call an API on the user's behalf send. The
+     * key itself is never stored: `hash` is its SHA-256, by which madAuth finds it.
+     */
+    apiKey: {
+      fields: {
+        id: { type: 'string', primaryKey: true },
+        userId: { type: 'string', index: true },
+        hash: { type: 'string', unique: true },
+        name: { type: 'string' },
+        /** Its scopes, separated by spaces, e.g. `madauth:claims:read orders:read`. */
+        scopes: { type: 'string' },
+        createdAt: { type: 'number' },
+        /** When it stops working; empty: never. */
+        expiresAt: { type: 'number', nullable: true },
+        /** When it was last used, to the hour; 0: never. */
+        lastUsedAt: { type: 'number' },
       },
     },
     /**

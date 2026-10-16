@@ -17,7 +17,7 @@ import { Madauth, GoogleFedcm, GitHub, Password, Passkey, Authenticator } from '
 
 Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Passkey(), new Authenticator()] });
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
-signInButton.onclick = () => Madauth.signIn();
+signInButton.onclick = () => Madauth.showSignInDialog();
 ```
 
 The server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 'https://auth.example.com'` to `initialize` if it runs elsewhere on the same site.

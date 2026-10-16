@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import { Admins } from './admins.js';
+import { ApiKeys, MADAUTH_SCOPES, ScopeCatalog, apiKeyInfo, grantedScopes, type MadauthScope } from './api-keys.js';
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
 import { importSigningKeys, type SigningKeys } from './keys.js';
@@ -40,6 +41,7 @@ import {
   type SignInMethod,
 } from './settings.js';
 import { methodRoutes } from './routes/methods.js';
+import { apiKeyNotFound, apiKeyRoutes, invalidApiKey, keyCaller } from './routes/api-keys.js';
 import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { deriveAuthenticatorKey } from './authenticator.js';
@@ -142,6 +144,8 @@ export function createApp(config: MadauthConfig): Hono {
   const methods = methodConfig(config);
   const settings = new Settings(config.store, initialMethods(methods));
   const admins = new Admins(settings, users);
+  const apiKeys = new ApiKeys(config.store);
+  const scopeCatalog = new ScopeCatalog(config.apiKeyScopesUrl, config.scopesFetch);
   const configured = (method: MethodId) => isConfigured(methods, method);
   const signsUp = (method: SignInMethod) => canSignUp(methods, method);
   const emailVerification = sendsVerificationEmails(config);
@@ -385,9 +389,11 @@ export function createApp(config: MadauthConfig): Hono {
     }),
   );
 
-  // Only the configured apps may start sign-ins or change the session.
+  // Only the configured apps may start sign-ins or change the session. A request with an API key (any
+  // `Authorization` header) comes from a program: no page makes a browser send that header to madAuth, since
+  // it isn't one CORS allows, and a program has no user's cookies.
   app.use('/auth/*', async (c, next) => {
-    if (c.req.method === 'POST' && !isAllowedOrigin(c.req.header('origin'))) {
+    if (c.req.method === 'POST' && c.req.header('authorization') === undefined && !isAllowedOrigin(c.req.header('origin'))) {
       return c.json({ error: 'forbidden_origin' }, 403);
     }
     await next();
@@ -432,6 +438,7 @@ export function createApp(config: MadauthConfig): Hono {
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, users, ctx.webhook);
   authenticatorRoutes(app, ctx, authenticatorKeys);
   passkeyRoutes(app, ctx);
+  apiKeyRoutes(app, ctx, apiKeys, scopeCatalog);
   // GitHub's authorization goes with the account, with the token kept from its last sign-in.
   methodRoutes(app, ctx, async (account) => {
     if (config.github && account.key.startsWith('github:')) await revokeGrant(config.github, tokenKey, account);
@@ -491,8 +498,30 @@ export function createApp(config: MadauthConfig): Hono {
 
   // --- Admin: claims, settings and resetting a user's sign-in ---
 
-  /** The admin's id and address if the request comes from one; otherwise the answer to send. */
-  const admin = async (c: Context): Promise<{ id: string; email: string } | { answer: Response }> => {
+  /**
+   * The admin's id and address if the request comes from one; otherwise the answer to send. A request with an
+   * API key (`Authorization: Bearer`) acts as the key's user, who must be an admin, and needs the key to have
+   * `scope`; `byApiKey` then names the key. Without `scope`, the route takes no keys.
+   */
+  const admin = async (
+    c: Context,
+    scope?: MadauthScope,
+  ): Promise<{ id: string; email: string; byApiKey?: { id: string; name: string } } | { answer: Response }> => {
+    if (c.req.header('authorization') !== undefined) {
+      if (!scope) return { answer: c.json({ error: 'forbidden', message: "API keys can't manage API keys: sign in as an admin." }, 403) };
+      const caller = await keyCaller(c, ctx, apiKeys);
+      if (!caller) return { answer: invalidApiKey(c) };
+      // The role and the scope are checked with the claims of now, like a session's.
+      const claims = claimsFromJson(caller.user.claims);
+      if (!isAdmin({ claims })) {
+        return { answer: c.json({ error: 'forbidden', message: `The API key's user does not have the role "${ADMIN_ROLE}".` }, 403) };
+      }
+      if (!grantedScopes(caller.key, MADAUTH_SCOPES, claims).includes(scope)) {
+        return { answer: c.json({ error: 'insufficient_scope', message: `The API key does not have the scope ${scope}.` }, 403) };
+      }
+      await apiKeys.markUsed(caller.key);
+      return { id: caller.user.id, email: caller.user.emailNormalized, byApiKey: { id: caller.key.id, name: caller.key.name } };
+    }
     // currentSession reads the claims from the store, not from the session token: a removed admin role
     // stops counting at once.
     const user = await currentSession(c);
@@ -504,12 +533,14 @@ export function createApp(config: MadauthConfig): Hono {
     }
     return { id: user.id, email };
   };
+  /** What an event made with an API key adds: the key, next to its user's address in `by`. */
+  const byApiKey = (caller: { byApiKey?: { id: string; name: string } }) => (caller.byApiKey ? { byApiKey: caller.byApiKey } : {});
   const invalidEmail = (c: Context) => c.json({ error: 'invalid_email', message: 'This is not a valid e-mail address.' }, 400);
   const noUser = (c: Context) => c.json({ error: 'user_not_found', message: 'No user has this e-mail address.' }, 404);
 
   // POST, so the address is not part of a URL that ends up in access logs.
   app.post('/auth/admin/claims/get', async (c) => {
-    const caller = await admin(c);
+    const caller = await admin(c, 'madauth:claims:read');
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     if (!isValidEmail(data.email)) return invalidEmail(c);
@@ -519,7 +550,7 @@ export function createApp(config: MadauthConfig): Hono {
   });
 
   app.post('/auth/admin/claims/set', async (c) => {
-    const caller = await admin(c);
+    const caller = await admin(c, 'madauth:claims:write');
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     if (!isValidEmail(data.email)) return invalidEmail(c);
@@ -545,7 +576,7 @@ export function createApp(config: MadauthConfig): Hono {
     const stored = Object.keys(claims).length ? JSON.stringify(claims) : null;
     await users.updateUser(user.id, { claims: stored });
     const email = user.emailNormalized;
-    await ctx.emit('user.claims_changed', { user: toMadauthUser({ ...user, claims: stored }), claims, by: caller.email });
+    await ctx.emit('user.claims_changed', { user: toMadauthUser({ ...user, claims: stored }), claims, by: caller.email, ...byApiKey(caller) });
     return c.json({ email, userId: user.id, claims });
   });
 
@@ -570,14 +601,14 @@ export function createApp(config: MadauthConfig): Hono {
   });
 
   app.post('/auth/admin/settings/get', async (c) => {
-    const caller = await admin(c);
+    const caller = await admin(c, 'madauth:settings:read');
     if ('answer' in caller) return caller.answer;
     const [methods, password] = await Promise.all([settings.methods(), settings.passwordRules()]);
     return c.json(settingsAnswer(methods, password));
   });
 
   app.post('/auth/admin/settings/set', async (c) => {
-    const caller = await admin(c);
+    const caller = await admin(c, 'madauth:settings:write');
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
@@ -620,7 +651,7 @@ export function createApp(config: MadauthConfig): Hono {
   // The way back for a user who lost every way in, whatever they had: they sign up again and keep their id.
   // See "Resetting a user's sign-in" in docs/server.md.
   app.post('/auth/admin/sign-in/reset', async (c) => {
-    const caller = await admin(c);
+    const caller = await admin(c, 'madauth:sign-in:reset');
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     if (!isValidEmail(data.email)) return invalidEmail(c);
@@ -630,7 +661,31 @@ export function createApp(config: MadauthConfig): Hono {
     // GitHub's authorization goes with its account, as when the user removes GitHub or deletes the account.
     const github = config.github;
     if (github) await Promise.all(removed.filter((account) => methodOf(account) === 'github').map((account) => revokeGrant(github, tokenKey, account)));
-    await ctx.emit('user.sign_in_reset', { user: toMadauthUser(user), by: caller.email });
+    await ctx.emit('user.sign_in_reset', { user: toMadauthUser(user), by: caller.email, ...byApiKey(caller) });
+    return c.json({ email: user.emailNormalized, userId: user.id });
+  });
+
+  // A user's API keys, e.g. to revoke one that leaked. Only with a session: a key never manages keys.
+  app.post('/auth/admin/api-keys/list', async (c) => {
+    const caller = await admin(c);
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    if (!isValidEmail(data.email)) return invalidEmail(c);
+    const user = await users.findByEmail(normalizeEmail(data.email));
+    if (!user) return noUser(c);
+    return c.json({ email: user.emailNormalized, userId: user.id, apiKeys: (await apiKeys.list(user.id)).map(apiKeyInfo) });
+  });
+
+  app.post('/auth/admin/api-keys/revoke', async (c) => {
+    const caller = await admin(c);
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    if (!isValidEmail(data.email)) return invalidEmail(c);
+    const user = await users.findByEmail(normalizeEmail(data.email));
+    if (!user) return noUser(c);
+    const key = typeof data.id === 'string' ? await apiKeys.revoke(user.id, data.id) : null;
+    if (!key) return apiKeyNotFound(c);
+    await ctx.emit('user.api_key_revoked', { user: toMadauthUser(user), apiKey: { id: key.id, name: key.name }, by: caller.email });
     return c.json({ email: user.emailNormalized, userId: user.id });
   });
 

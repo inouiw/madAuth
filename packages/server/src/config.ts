@@ -60,10 +60,17 @@ export interface MadauthConfig {
   password?: Record<string, never>;
   /** Where madAuth sends e-mails, sign-up checks and events (WEBHOOK_URL). */
   webhook?: WebhookSettings;
+  /**
+   * Where your app lists the scopes of its API, which API keys can have next to madAuth's own
+   * (API_KEY_SCOPES_URL). Without it, keys only have madAuth's scopes. See docs/api-keys.md.
+   */
+  apiKeyScopesUrl?: string;
   /** Test hook: resolves Google's signing keys. Defaults to Google's published JWKS. */
   jwksResolver?: JWTVerifyGetKey;
   /** Test hook: the fetch used for webhook calls. */
   webhookFetch?: typeof fetch;
+  /** Test hook: the fetch that reads API_KEY_SCOPES_URL. */
+  scopesFetch?: typeof fetch;
 }
 
 /** Whether the webhook sends the e-mails that confirm an address (`email.send_verification`), so people can sign up with one. */
@@ -109,6 +116,7 @@ export const envVars = {
   WEBHOOK_URL: false,
   WEBHOOK_SECRET: false,
   WEBHOOK_EVENTS: false,
+  API_KEY_SCOPES_URL: false,
   SESSION_TTL: false,
   SESSION_RENEWAL_TTL: false,
   COOKIE_DOMAIN: false,
@@ -278,6 +286,11 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
     throw new ConfigError(`INITIAL_ADMIN_EMAIL must be an e-mail address, e.g. you@example.com, but is "${initialAdminEmail}".`);
   }
 
+  const apiKeyScopesUrl = read('API_KEY_SCOPES_URL');
+  if (apiKeyScopesUrl && !isServiceUrl(apiKeyScopesUrl)) {
+    throw new ConfigError(`API_KEY_SCOPES_URL must be an https URL (http only for localhost) but is "${apiKeyScopesUrl}".`);
+  }
+
   const passkeyRpId = read('PASSKEY_RP_ID')?.toLowerCase();
   if (passkeyRpId && !allowedOrigins.some((origin) => isWithin(new URL(origin).hostname, passkeyRpId))) {
     throw new ConfigError(
@@ -298,6 +311,7 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
     github: githubClientId && githubClientSecret ? { clientId: githubClientId, clientSecret: githubClientSecret } : undefined,
     store,
     initialAdminEmail: initialAdminEmail ? normalizeEmail(initialAdminEmail) : undefined,
+    apiKeyScopesUrl,
     password,
     webhook,
   };
@@ -375,6 +389,12 @@ const REMOVED_TYPES: Record<string, string> = {
 
 /** Hosts that may be called over plain http, e.g. a receiver on the developer's machine. */
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'];
+
+/** Whether madAuth may call a URL: https, or http on this machine. */
+function isServiceUrl(value: string): boolean {
+  const url = URL.canParse(value) ? new URL(value) : null;
+  return !!url && (url.protocol === 'https:' || (url.protocol === 'http:' && LOCAL_HOSTS.includes(url.hostname)));
+}
 
 function webhookFromEnv(url: string | undefined, secret: string | undefined, events: string | undefined): WebhookSettings | undefined {
   if (!url) {

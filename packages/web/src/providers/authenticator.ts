@@ -7,7 +7,7 @@ import type { ProviderContext, SignInProvider } from './provider.js';
  * the app sign in on its own, and "Create account" with it when the server lets people sign up with it.
  *
  * Not needed for the app as a second factor: the code step after a password, Google, GitHub or e-mail link sign-in, the setup
- * (`Madauth.setUpAuthenticator()`) and the account methods of `Madauth.authenticator` work whenever the server has
+ * (`Madauth.showSetUpAuthenticatorDialog()`) and the account methods of `Madauth.authenticator` work whenever the server has
  * the app switched on, with or without this provider, so an admin's policy applies to every app.
  */
 export class Authenticator implements SignInProvider {

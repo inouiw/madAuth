@@ -14,6 +14,14 @@ export interface MadauthUser {
   amr?: string[];
 }
 
+/** The start of every API key, so a leaked one is recognisable, e.g. by secret scanning. */
+export const API_KEY_PREFIX = 'madauth_';
+
+/** The token of an `Authorization: Bearer …` header; undefined without one. */
+export function bearerTokenOf(header: string | null | undefined): string | undefined {
+  return header?.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : undefined;
+}
+
 /** Name of the cookie that holds the madAuth session JWT. */
 export const SESSION_COOKIE = 'madauth_session';
 

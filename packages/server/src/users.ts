@@ -473,7 +473,7 @@ export class Users {
 
   /**
    * Resets the sign-in of a user who lost every way in: removes all their accounts (sign-in methods and
-   * second factors) with the recovery codes, ends their sessions and the sign-ins that wait for a second step
+   * second factors) with the recovery codes and their API keys, ends their sessions and the sign-ins that wait for a second step
    * (a new session version), deletes their pending links and codes, counts wrong codes from zero, and marks
    * the address unconfirmed, so their next sign-up proves the inbox again; it records its own method
    * (`signUpMethod`, cleared here with the sign-up it was for). The user keeps their id, address, name, claims
@@ -488,6 +488,8 @@ export class Users {
     await this.endSignIns(userId);
     await this.clearVerifications(userId);
     await this.clearRecoveryCodes(userId);
+    // Keys act as the user too: whoever took the account over may have made some.
+    await this.store.delete('apiKey', { userId });
     return removed;
   }
 
@@ -622,6 +624,7 @@ export class Users {
       await this.store.delete('account', { userId: user.id });
       await this.store.delete('verification', { userId: user.id });
       await this.store.delete('recoveryCode', { userId: user.id });
+      await this.store.delete('apiKey', { userId: user.id });
     } catch (e) {
       console.error(`[madauth] Deleted user ${user.id}, but not all of their records: ${(e as Error).message}`);
     }

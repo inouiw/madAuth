@@ -1,6 +1,6 @@
 # Building your own login screen
 
-madAuth's dialog (`Madauth.signIn()`) is optional. Everything it does is available as methods, grouped by sign-in method, so you can build a login screen that fits your app. The dialog itself is built only on these methods.
+madAuth's dialog (`Madauth.showSignInDialog()`) is optional. Everything it does is available as methods, grouped by sign-in method, so you can build a login screen that fits your app. The dialog itself is built only on these methods.
 
 ```ts
 import { Madauth, GoogleFedcm, GitHub, Password, Passkey, Authenticator, EmailLink } from '@madauth/web';
@@ -9,7 +9,7 @@ Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password()
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 ```
 
-`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.signIn()`, `Madauth.setUpAuthenticator()`, `Madauth.setUpSms()`, `Madauth.setUpPasskey()` and `Madauth.manageSignInMethods()` return an `invalid_options` error.
+`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.showSignInDialog()`, `Madauth.showSetUpAuthenticatorDialog()`, `Madauth.showSetUpSmsDialog()`, `Madauth.showSetUpPasskeyDialog()`, `Madauth.showManageSignInMethodsDialog()` and `Madauth.showManageApiKeysDialog()` return an `invalid_options` error: the calls whose name starts with `show` and ends in `Dialog` open madAuth's dialog, the others only talk to the server.
 
 All methods resolve to a result object and never throw for expected failures:
 
@@ -300,6 +300,19 @@ With `policy.signUp`, `signUp({ email, name? })` creates an account that signs i
 | `remove(id)` | — | `only_method` (the user's last way in), `required_by_policy`, `reauth_required`, `method_not_found`, `no_session` |
 
 A user adds a method with its own call: `Madauth.passkey.add()`, `Madauth.password.add({ password })`, `Madauth.emailLink.add()`, the Google or GitHub button with `purpose: 'link'`, or the app's setup. Adding and removing need a sign-in within the last ten minutes: otherwise they fail with `reauth_required`, and the user signs in again first. The authenticator app is removed with `Madauth.authenticator.remove`, which takes a code. See [Several sign-in methods](sign-in-methods.md).
+
+## API keys: `Madauth.apiKeys`
+
+A user's keys for programs that call your API, or madAuth's admin API, in their name. See [API keys](api-keys.md).
+
+| Method | Resolves to | Errors |
+| --- | --- | --- |
+| `scopes()` | `{ scopes: [{ name, description, role, endpoints, allowed }] }`: madAuth's and your app's scopes; `allowed` says whether the signed-in user may give a key the scope, by their claims as stored | |
+| `list()` | `{ apiKeys: [{ id, name, scopes, createdAt, expiresAt, lastUsedAt }] }` | `no_session` |
+| `create({ name, scopes, expiresAt? })` | `{ key, apiKey }`: show `key` to the user to copy, it is never shown again | `invalid_options`, `invalid_scopes`, `scope_not_allowed`, `too_many_api_keys`, `reauth_required`, `temporarily_unavailable`, `no_session` |
+| `revoke(id)` | — | `api_key_not_found`, `no_session` |
+
+Making a key needs a sign-in within the last ten minutes, like adding a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. Offer only the scopes with `allowed`; the server refuses the others. `Madauth.admin.listApiKeys(email)` and `revokeApiKey(email, id)` let an admin revoke a user's key.
 
 ## Language
 

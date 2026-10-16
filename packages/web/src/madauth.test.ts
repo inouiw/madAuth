@@ -82,7 +82,7 @@ describe('Madauth.initialize', () => {
   it('I5: methods fail with not_initialized before initialize', async () => {
     fakeServer();
 
-    expect(await Madauth.signIn()).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });
+    expect(await Madauth.showSignInDialog()).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });
     expect(await Madauth.getSession()).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });
     expect(await Madauth.signOut()).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });
   });
@@ -223,19 +223,19 @@ describe('Madauth.deleteAccount', () => {
   });
 });
 
-describe('Madauth.signIn', () => {
+describe('Madauth.showSignInDialog', () => {
   it('I9: creates the dialog when the page has none, and reuses it', async () => {
     fakeServer();
     await Madauth.initialize({ serverUrl: SERVER, providers: [] });
 
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     const dialog = document.querySelector('madauth-login')!;
     expect(document.querySelectorAll('madauth-login')).toHaveLength(1);
     expect(dialog.shadowRoot!.querySelector('dialog')!.open).toBe(true);
 
     dialog.close();
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
     expect(document.querySelectorAll('madauth-login')).toHaveLength(1);
   });
@@ -247,7 +247,7 @@ describe('Madauth.signIn', () => {
     document.body.append(existing);
     await Madauth.initialize({ serverUrl: SERVER, providers: [] });
 
-    void Madauth.signIn();
+    void Madauth.showSignInDialog();
     await settle();
 
     expect(document.querySelectorAll('madauth-login')).toHaveLength(1);
@@ -259,12 +259,12 @@ describe('Madauth.signIn', () => {
     const gis = fakeGis();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm({ autoPrompt: false })] });
 
-    const cancelled = Madauth.signIn();
+    const cancelled = Madauth.showSignInDialog();
     await settle();
     document.querySelector('madauth-login')!.shadowRoot!.querySelector<HTMLButtonElement>('.close')!.click();
     expect(await cancelled).toMatchObject({ isSuccess: false, error: { code: 'cancelled' } });
 
-    const signedIn = Madauth.signIn();
+    const signedIn = Madauth.showSignInDialog();
     await settle();
     gis.signIn();
     expect(await signedIn).toEqual({ isSuccess: true, user: ada });
@@ -276,7 +276,7 @@ describe('Madauth.signIn', () => {
     fakeServer().down = true;
     await Madauth.initialize({ serverUrl: SERVER, providers: [] });
 
-    expect(await Madauth.signIn()).toMatchObject({ isSuccess: false, error: { code: 'network' } });
+    expect(await Madauth.showSignInDialog()).toMatchObject({ isSuccess: false, error: { code: 'network' } });
     expect(document.querySelector('madauth-login')).toBeNull();
   });
 });

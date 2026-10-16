@@ -12,6 +12,7 @@ import {
 import { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
 import type { ButtonApi } from './scopes/button.js';
 import type { SignInMethodInfo } from './scopes/methods.js';
+import type { ApiKeyInfo, ApiKeyScope } from './scopes/api-keys.js';
 import type { PasskeyInfo } from './scopes/passkey.js';
 import { pendingStepOf, secondStepOf, type PendingStep } from './providers/provider.js';
 import type { CodeOptions } from './scopes/authenticator.js';
@@ -31,7 +32,7 @@ export interface AuthenticatorEnabledDetail {
   recoveryCodes: string[];
 }
 
-/** `madauth-authenticator-failed`: the setup opened by `Madauth.setUpAuthenticator()` can't go on. */
+/** `madauth-authenticator-failed`: the setup opened by `Madauth.showSetUpAuthenticatorDialog()` can't go on. */
 export interface AuthenticatorFailedDetail {
   error: MadauthError;
 }
@@ -41,7 +42,7 @@ export interface SmsEnabledDetail {
   phone: string;
 }
 
-/** `madauth-sms-failed`: the setup opened by `Madauth.setUpSms()` can't go on. */
+/** `madauth-sms-failed`: the setup opened by `Madauth.showSetUpSmsDialog()` can't go on. */
 export interface SmsFailedDetail {
   error: MadauthError;
 }
@@ -69,12 +70,19 @@ type View =
   | 'passkey'
   | 'passkey-setup'
   | 'methods'
-  | 'add-password';
+  | 'add-password'
+  | 'api-keys'
+  | 'api-key-create'
+  | 'api-key-created';
 
-/** The views that change the signed-in user's methods: after signing in again, the dialog goes back to them. */
-const changeViews = ['passkey-setup', 'methods', 'add-password'] as const satisfies readonly View[];
+/** The views that change the signed-in user's methods or keys: after signing in again, the dialog goes back to them. */
+const changeViews = ['passkey-setup', 'methods', 'add-password', 'api-key-create'] as const satisfies readonly View[];
 type ChangeView = (typeof changeViews)[number];
 const isChangeView = (view: View): view is ChangeView => (changeViews as readonly View[]).includes(view);
+
+/** What a new API key's lifetime can be, in days; null: it never expires. */
+const API_KEY_LIFETIMES = [null, 30, 90, 365] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** How long the passkeys' autofill waits with one ceremony before it starts over: the server's lasts five minutes. */
 const CONDITIONAL_RENEW_MS = 4 * 60 * 1000;
@@ -183,7 +191,7 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
 /**
  * Modal sign-in dialog listing the login methods that are on: those whose provider was passed to
  * `Madauth.initialize` and not left out because the server doesn't offer them. Usually opened with
- * `Madauth.signIn()`, which creates it when the page has none; add it to your HTML yourself only to customize it.
+ * `Madauth.showSignInDialog()`, which creates it when the page has none; add it to your HTML yourself only to customize it.
  *
  * It is built only on the public `Madauth` API, so a custom login screen can do everything it does.
  *
@@ -206,6 +214,7 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
  * @csspart link - The text buttons, e.g. "Forgot password?".
  * @csspart qr - The QR code of the authenticator app's key (an inline SVG, dark on a white background).
  * @csspart codes - The list of recovery codes.
+ * @csspart api-key - A new API key, shown once to copy.
  */
 export class MadauthLogin extends LitElement {
   static override properties = {
@@ -226,6 +235,10 @@ export class MadauthLogin extends LitElement {
     factors: { state: true },
     passwordScore: { state: true },
     methodList: { state: true },
+    apiKeyList: { state: true },
+    apiKeyScopes: { state: true },
+    chosenScopes: { state: true },
+    newApiKey: { state: true },
   };
 
   /** Title shown at the top of the dialog. Default: "Sign in" in the dialog's language. */
@@ -297,6 +310,14 @@ export class MadauthLogin extends LitElement {
   private setupFactors?: SecondFactor[];
   /** The signed-in user's methods, in the methods view; undefined while they load. */
   private methodList?: SignInMethodInfo[];
+  /** The signed-in user's API keys, in the API keys view; undefined while they load. */
+  private apiKeyList?: ApiKeyInfo[];
+  /** The scopes the user may give a new key, in its form; undefined while they load. */
+  private apiKeyScopes?: ApiKeyScope[];
+  /** How many scopes the form of a new key has ticked: it is made with one at least. */
+  private chosenScopes = 0;
+  /** A key just made, shown this once. */
+  private newApiKey?: string;
   /** The view that changes the user's methods and asked them to sign in again: the dialog goes back to it after. */
   private reauthThen?: ChangeView;
   /** The passkey's setup or the app's was started from the methods view: it goes back there after. */
@@ -344,7 +365,7 @@ export class MadauthLogin extends LitElement {
 
   /**
    * Opens the dialog on the "Set up authenticator app" screen for the signed-in user. Usually called
-   * through `Madauth.setUpAuthenticator()`, which resolves once the recovery codes were shown.
+   * through `Madauth.showSetUpAuthenticatorDialog()`, which resolves once the recovery codes were shown.
    */
   async openAuthenticatorSetup(): Promise<void> {
     this.setupForSignIn = false;
@@ -425,7 +446,7 @@ export class MadauthLogin extends LitElement {
 
   /**
    * Opens the dialog on the "Create a passkey" screen for the signed-in user. Usually called through
-   * `Madauth.setUpPasskey()`, which resolves once the passkey is added.
+   * `Madauth.showSetUpPasskeyDialog()`, which resolves once the passkey is added.
    */
   async openPasskeySetup(): Promise<void> {
     this.setupForSignIn = false;
@@ -437,7 +458,7 @@ export class MadauthLogin extends LitElement {
 
   /**
    * Opens the dialog on the signed-in user's sign-in methods. Usually called through
-   * `Madauth.manageSignInMethods()`, which resolves when the dialog is closed.
+   * `Madauth.showManageSignInMethodsDialog()`, which resolves when the dialog is closed.
    */
   async openMethods(): Promise<void> {
     this.setupForSignIn = false;
@@ -451,8 +472,23 @@ export class MadauthLogin extends LitElement {
   }
 
   /**
+   * Opens the dialog on the signed-in user's API keys. Usually called through
+   * `Madauth.showManageApiKeysDialog()`, which resolves when the dialog is closed.
+   */
+  async openApiKeys(): Promise<void> {
+    this.setupForSignIn = false;
+    this.view = 'api-keys';
+    const ready = await this.show();
+    if (!ready.isSuccess) {
+      this.showError(ready.error);
+      return;
+    }
+    await this.loadApiKeys();
+  }
+
+  /**
    * Opens the dialog on the "Add your phone number" screen for the signed-in user. Usually called through
-   * `Madauth.setUpSms()`, which resolves once the number is confirmed.
+   * `Madauth.showSetUpSmsDialog()`, which resolves once the number is confirmed.
    */
   async openSmsSetup(): Promise<void> {
     this.setupForSignIn = false;
@@ -550,6 +586,10 @@ export class MadauthLogin extends LitElement {
     this.smsCodePurpose = 'signin';
     this.setupFactors = undefined;
     this.methodList = undefined;
+    this.apiKeyList = undefined;
+    this.apiKeyScopes = undefined;
+    this.chosenScopes = 0;
+    this.newApiKey = undefined;
     this.reauthThen = undefined;
     this.fromMethods = false;
     this.conditionalFailed = false;
@@ -583,6 +623,7 @@ export class MadauthLogin extends LitElement {
     if (!then || !this.dialog.open) return false;
     this.reauthThen = undefined;
     if (then === 'methods') this.backToMethods();
+    else if (then === 'api-key-create') void this.startApiKeyCreate();
     else this.goTo(then);
     return true;
   }
@@ -817,6 +858,12 @@ export class MadauthLogin extends LitElement {
         return s.methodsView.heading;
       case 'add-password':
         return s.addPassword.heading;
+      case 'api-keys':
+        return s.apiKeysView.heading;
+      case 'api-key-create':
+        return s.apiKeyCreate.heading;
+      case 'api-key-created':
+        return s.apiKeyCreated.heading;
       case 'signup':
         return s.createAccount;
       case 'check-inbox':
@@ -858,6 +905,7 @@ export class MadauthLogin extends LitElement {
       return this.view === 'signup' ? s.signUpUnavailable : this.view.startsWith('sms') ? s.smsUnavailable : s.emailsUnavailable;
     }
     if (error.code === 'email_unverified' && error.method === 'password') return s.confirmEmailFirst;
+    if (error.code === 'reauth_required' && this.view === 'api-key-create') return s.apiKeyCreate.reauth;
     if (error.code === 'invalid_credentials' && error.method === 'authenticator') return s.authenticatorInvalid;
     if (error.code === 'other_method' && error.methods?.length) {
       const names: Partial<Record<string, string>> = s.methodNames;
@@ -954,6 +1002,12 @@ export class MadauthLogin extends LitElement {
         return this.renderMethods();
       case 'add-password':
         return this.renderAddPassword();
+      case 'api-keys':
+        return this.renderApiKeys();
+      case 'api-key-create':
+        return this.renderApiKeyCreate();
+      case 'api-key-created':
+        return this.renderApiKeyCreated();
       default:
         return this.renderSignInView();
     }
@@ -1252,7 +1306,7 @@ export class MadauthLogin extends LitElement {
         return;
       }
       this.showError(result.error, 'authenticator');
-      // Nothing the user can do here: the caller of setUpAuthenticator() learns it as well.
+      // Nothing the user can do here: the caller of showSetUpAuthenticatorDialog() learns it as well.
       if (!this.setupForSignIn && (result.error.code === 'no_session' || result.error.code === 'method_disabled')) {
         const detail: AuthenticatorFailedDetail = { error: result.error };
         this.dispatchEvent(new CustomEvent('madauth-authenticator-failed', { detail, bubbles: true, composed: true }));
@@ -1437,7 +1491,7 @@ export class MadauthLogin extends LitElement {
         return;
       }
       this.showError(result.error);
-      // Nothing the user can do here: the caller of setUpSms() learns it as well.
+      // Nothing the user can do here: the caller of showSetUpSmsDialog() learns it as well.
       if (!this.setupForSignIn && (result.error.code === 'no_session' || result.error.code === 'method_disabled' || result.error.code === 'flow_not_enabled')) {
         const detail: SmsFailedDetail = { error: result.error };
         this.dispatchEvent(new CustomEvent('madauth-sms-failed', { detail, bubbles: true, composed: true }));
@@ -1806,6 +1860,197 @@ export class MadauthLogin extends LitElement {
     this.backToMethods('added');
   }
 
+  // --- The signed-in user's API keys ---
+
+  /** Loads the user's API keys into the list. */
+  private async loadApiKeys(): Promise<void> {
+    const result = await Madauth.apiKeys.list();
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      return;
+    }
+    this.apiKeyList = result.apiKeys;
+  }
+
+  /** To the list of API keys, loaded anew, with what changed as the notice. */
+  private backToApiKeys(notice?: 'revoked'): void {
+    this.newApiKey = undefined;
+    this.goTo('api-keys');
+    if (notice) this.notice = (strings) => strings.apiKeysView[notice];
+    void this.loadApiKeys();
+  }
+
+  /** The form of a new key, with the scopes the user may give it. */
+  private async startApiKeyCreate(): Promise<void> {
+    this.apiKeyScopes = undefined;
+    this.chosenScopes = 0;
+    this.goTo('api-key-create');
+    const result = await Madauth.apiKeys.scopes();
+    if (!result.isSuccess) {
+      // Back to the list, which can start again.
+      this.backToApiKeys();
+      this.showError(result.error);
+      return;
+    }
+    this.apiKeyScopes = result.scopes.filter((scope) => scope.allowed);
+  }
+
+  private renderApiKeys() {
+    const v = this.strings.apiKeysView;
+    const list = this.apiKeyList;
+    return html`
+      <p class="lead">${v.lead}</p>
+      ${!list
+        ? html`<p class="hint" role="status">${v.loading}</p>`
+        : list.length
+          ? html`<ul class="method-list">${list.map((key) => this.apiKeyRow(key))}</ul>`
+          : html`<p class="hint">${v.empty}</p>`}
+      ${list
+        ? html`<ul>
+            <li>
+              <button part="method" class="row" type="button" data-action="create-api-key" ?disabled=${this.busy} @click=${() => this.startApiKeyCreate()}>
+                <span class="label">${v.create}</span>
+                ${chevronIcon}
+              </button>
+            </li>
+          </ul>`
+        : null}
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="done" @click=${() => this.dialog.close()}>${v.done}</button>
+      </p>
+    `;
+  }
+
+  /** A key of the list: its name, scopes and dates, and a button that revokes it. */
+  private apiKeyRow(key: ApiKeyInfo) {
+    const v = this.strings.apiKeysView;
+    const expired = key.expiresAt !== null && key.expiresAt <= Date.now();
+    const details = [
+      key.scopes.join(', '),
+      key.lastUsedAt ? v.lastUsed(this.date(key.lastUsedAt)) : v.neverUsed,
+      key.expiresAt === null ? v.noExpiry : expired ? v.expired(this.date(key.expiresAt)) : v.expires(this.date(key.expiresAt)),
+    ];
+    return html`
+      <li class="method key-row" data-key=${key.id}>
+        <span class="method-text">
+          <span class="label">${key.name}</span>
+          <span class="hint">${details.join(' · ')}</span>
+        </span>
+        <button class="link" part="link" type="button" data-action="revoke" aria-label=${v.revokeLabel(key.name)} ?disabled=${this.busy}
+          @click=${() => this.onApiKeyRevoke(key)}>${v.revoke}</button>
+      </li>
+    `;
+  }
+
+  private async onApiKeyRevoke(key: ApiKeyInfo): Promise<void> {
+    const result = await this.run(() => Madauth.apiKeys.revoke(key.id));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      return;
+    }
+    this.backToApiKeys('revoked');
+  }
+
+  /** A new key: its name, the scopes the user may give it, and when it expires. */
+  private renderApiKeyCreate() {
+    const s = this.strings;
+    const c = s.apiKeyCreate;
+    const scopes = this.apiKeyScopes;
+    const back = html`<p class="links">
+      <button class="link" part="link" type="button" data-action="back-to-api-keys" @click=${() => this.backToApiKeys()}>${s.cancel}</button>
+    </p>`;
+    if (!scopes) return html`<p class="hint" role="status">${s.apiKeysView.loading}</p>${back}`;
+    if (!scopes.length) return html`<p class="lead">${c.noScopes}</p>${back}`;
+    return html`
+      <form part="form" class="api-key-create" @submit=${this.onApiKeyCreate}>
+        <div class="field">
+          <label for="api-key-name">${c.name}</label>
+          <input part="input" id="api-key-name" name="name" type="text" autocomplete="off" maxlength="64" required />
+          <p class="hint">${c.nameHint}</p>
+        </div>
+        <fieldset class="scopes">
+          <legend>${c.scopes}</legend>
+          ${scopes.map(
+            (scope) => html`
+              <label class="scope">
+                <input type="checkbox" name="scope" value=${scope.name} @change=${this.onScopeToggle} />
+                <span class="method-text">
+                  <span>${scope.description}</span>
+                  <code class="hint">${scope.name}</code>
+                </span>
+              </label>
+            `,
+          )}
+        </fieldset>
+        <div class="field">
+          <label for="api-key-expires">${c.expires}</label>
+          <select part="input" id="api-key-expires" name="expires">
+            ${API_KEY_LIFETIMES.map((days) => html`<option value=${days ?? ''}>${days === null ? c.never : c.inDays(days)}</option>`)}
+          </select>
+        </div>
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy || this.chosenScopes === 0}>
+          <span class="label">${c.create}</span>
+        </button>
+      </form>
+      ${back}
+    `;
+  }
+
+  private onScopeToggle(e: Event): void {
+    const form = (e.target as HTMLInputElement).form;
+    this.chosenScopes = form ? new FormData(form).getAll('scope').length : 0;
+  }
+
+  private async onApiKeyCreate(e: Event): Promise<void> {
+    e.preventDefault();
+    const data = new FormData(e.target as HTMLFormElement);
+    const days = Number(data.get('expires'));
+    const options = {
+      name: String(data.get('name') ?? '').trim(),
+      scopes: data.getAll('scope').map(String),
+      ...(days ? { expiresAt: Date.now() + days * DAY_MS } : {}),
+    };
+    const result = await this.run(() => Madauth.apiKeys.create(options));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      return;
+    }
+    this.newApiKey = result.key;
+    this.goTo('api-key-created');
+  }
+
+  /** The new key, shown this once to copy. */
+  private renderApiKeyCreated() {
+    const s = this.strings.apiKeyCreated;
+    return html`
+      <p class="lead">${s.lead}</p>
+      <code part="api-key" class="api-key">${this.newApiKey}</code>
+      <button part="method" class="submit" type="button" data-action="copy-api-key" @click=${() => this.copyApiKey()}>
+        <span class="label">${s.copy}</span>
+      </button>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="back-to-api-keys" @click=${() => this.backToApiKeys()}>${s.done}</button>
+      </p>
+    `;
+  }
+
+  private async copyApiKey(): Promise<void> {
+    const copied = await navigator.clipboard?.writeText(this.newApiKey ?? '').then(
+      () => true,
+      () => false,
+    );
+    if (copied) {
+      this.notice = (strings) => strings.apiKeyCreated.copied;
+      return;
+    }
+    // The page may not use the clipboard (e.g. in a frame): the key is selected for the user to copy.
+    const key = this.renderRoot.querySelector('.api-key');
+    if (key) getSelection()?.selectAllChildren(key);
+    this.notice = (strings) => strings.apiKeyCreated.copyByHand;
+  }
+
   // --- The e-mail link ---
 
   /** Asking for the sign-in e-mail: the address, and a button that sends the link and the code. */
@@ -2048,7 +2293,8 @@ export class MadauthLogin extends LitElement {
     }
 
     button,
-    input {
+    input,
+    select {
       font: inherit;
       letter-spacing: inherit;
       color: inherit;
@@ -2227,9 +2473,59 @@ export class MadauthLogin extends LitElement {
       background: var(--_field-bg);
     }
 
-    input:focus-visible {
+    input:focus-visible,
+    select:focus-visible {
       outline: 2px solid var(--_text);
       outline-offset: -1px;
+    }
+
+    select {
+      width: 100%;
+      height: var(--_control-height);
+      padding: 0 8px;
+      border: 1px solid var(--_subtle);
+      border-radius: var(--_control-radius);
+      background: var(--_field-bg);
+    }
+
+    /* The scopes of a new API key: a checkbox each, with what it allows and its name. */
+    .scopes {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      border: none;
+    }
+    .scopes legend {
+      margin-bottom: 6px;
+      padding: 0;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      line-height: 18px;
+    }
+    .scope {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: inherit;
+      font-weight: 400;
+      line-height: 1.4;
+    }
+    .scope input {
+      flex: none;
+      width: 16px;
+      height: 16px;
+      margin: 2px 0 0;
+    }
+
+    .api-key {
+      display: block;
+      padding: 12px 16px;
+      word-break: break-all;
+      user-select: all;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      border: 1px solid var(--_line);
+      border-radius: var(--_group-radius);
     }
 
     /* A password field and its eye button, which sits inside the field on the right. */

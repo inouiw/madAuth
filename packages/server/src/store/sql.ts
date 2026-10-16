@@ -108,6 +108,11 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
     version: 9,
     sql: (dialect) => `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('signUpMethod')} ${columnType(dialect, madauthSchema.models.user.fields.signUpMethod)};`,
   },
+  {
+    // API keys.
+    version: 10,
+    sql: (dialect) => createTablesSql(dialect, { version: 10, models: { apiKey: madauthSchema.models.apiKey } }),
+  },
 ];
 
 /**
