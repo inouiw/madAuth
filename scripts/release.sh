@@ -64,7 +64,7 @@ sha=$(git rev-parse HEAD)
 ci=$(gh run list --commit "$sha" --workflow ci.yml --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null || true)
 case "$ci" in
   "completed success") ;;
-  "") echo "release: could not read the CI run of ${sha:0:7} (is gh installed and logged in?): check it on GitHub before you go on." >&2 ;;
+  "") fail "Could not read the CI run of ${sha:0:7}: install the GitHub CLI (gh) and run gh auth login." ;;
   "null null") fail "CI has not run for ${sha:0:7} yet: wait until it has passed." ;;
   *) fail "CI of ${sha:0:7} is \"$ci\": wait until it has passed." ;;
 esac
@@ -80,16 +80,17 @@ read -r -p "Publish $version? [y/N] " answer || answer=""
 
 # --- The release. ---
 
-npm version "$version" -w packages/web -w packages/server --no-git-tag-version --loglevel=error >/dev/null
-git commit --quiet --all --message "Release $version"
-git tag "$tag"
+# What a failed step leaves is undone: the tree was clean and at $sha before.
+undo() {
+  git tag --delete "$tag" >/dev/null 2>&1 || true
+  git reset --quiet --hard "$sha"
+  fail "$1 The release commit and the tag were undone here; nothing was pushed."
+}
+npm version "$version" -w packages/web -w packages/server --no-git-tag-version --loglevel=error >/dev/null || undo "npm version failed."
+git commit --quiet --all --message "Release $version" || undo "The commit failed."
+git tag "$tag" || undo "The tag failed."
 # Both or neither: a tag without its commit on main, or the other way round, would be a release half made.
-if ! git push --atomic --quiet origin main "$tag"; then
-  git tag --delete "$tag" >/dev/null
-  git reset --quiet --hard HEAD~1
-  fail "The push was refused, so the release commit and the tag were undone here. Run git pull, then try again."
-fi
+git push --atomic --quiet origin main "$tag" || undo "The push was refused: run git pull, then try again."
 
-origin=$(git remote get-url origin | sed -E 's#^git@github\.com:#https://github.com/#; s#\.git$##')
-echo "Pushed $tag. The release and the deploy run at $origin/actions"
+echo "Pushed $tag. The release and the deploy run at $(gh repo view --json url --jq .url)/actions"
 if [[ "$version" == *-* ]]; then echo "Once published: npm install @madauth/web@next @madauth/server@next"; fi
