@@ -120,8 +120,8 @@ test('a receiver with the webhook secret, as before: no AWS IAM and no check for
 test('an AWS_IAM receiver needs an installed server that knows WEBHOOK_AUTH', () => {
   assert.equal(signsWebhooksWithIam('0.6.0-beta.1'), false);
   assert.equal(signsWebhooksWithIam('0.6.0-beta.2'), false);
-  assert.equal(signsWebhooksWithIam('0.6.0-beta.3'), true);
-  assert.equal(signsWebhooksWithIam('0.6.0'), true);
+  assert.equal(signsWebhooksWithIam('0.6.0'), false);
+  assert.equal(signsWebhooksWithIam('0.7.0-beta.1'), true);
 
   // The installed package, not this repository's (synth without serverPackageDir).
   const entry = import.meta.resolve('@madauth/server/aws-kms');
@@ -130,7 +130,7 @@ test('an AWS_IAM receiver needs an installed server that knows WEBHOOK_AUTH', ()
   if (signsWebhooksWithIam(installed)) {
     assert.doesNotThrow(() => synth(receiver, null));
   } else {
-    assert.throws(() => synth(receiver, null), { message: new RegExp(`needs a madAuth server newer than 0\\.6\\.0-beta\\.2.*@madauth/server ${installed.replaceAll('.', '\\.')} is installed`) });
+    assert.throws(() => synth(receiver, null), { message: new RegExp(`needs a madAuth server newer than 0\\.6\\.0,.*@madauth/server ${installed.replaceAll('.', '\\.')} is installed`) });
   }
   // Without AWS IAM, any version does.
   assert.doesNotThrow(() => synth(undefined, null));

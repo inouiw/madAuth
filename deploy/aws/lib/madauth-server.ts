@@ -62,7 +62,7 @@ export interface MadAuthServerProps {
      * The receiver's function, when `url` is its Function URL with AWS_IAM auth, in this account: madAuth signs the
      * calls with its role (WEBHOOK_AUTH=aws-iam), which may invoke the URL, instead of `<secretsPath>/WEBHOOK_SECRET`.
      * The receiver checks that the caller is {@link MadAuthServer.role}, e.g. the aws-ses-mailer with MADAUTH_ROLE_ARN.
-     * Needs a madAuth server newer than 0.6.0-beta.2: an older installed `@madauth/server` is refused at synth.
+     * Needs a madAuth server newer than 0.6.0: an older installed `@madauth/server` is refused at synth.
      */
     readonly awsIamReceiver?: lambda.IFunction;
   };
@@ -112,7 +112,7 @@ export class MadAuthServer extends Construct {
     const installed = awsIamReceiver && !props.serverPackageDir ? installedServerVersion() : undefined;
     if (installed && !signsWebhooksWithIam(installed)) {
       throw new Error(
-        `MadAuthServer: webhook.awsIamReceiver needs a madAuth server newer than 0.6.0-beta.2, which signs its webhook calls with its role (WEBHOOK_AUTH=aws-iam), but @madauth/server ${installed} is installed. Update it.`,
+        `MadAuthServer: webhook.awsIamReceiver needs a madAuth server newer than 0.6.0, which signs its webhook calls with its role (WEBHOOK_AUTH=aws-iam), but @madauth/server ${installed} is installed. Update it.`,
       );
     }
 
@@ -286,9 +286,9 @@ export class MadAuthServer extends Construct {
   }
 }
 
-/** Whether a version of @madauth/server knows WEBHOOK_AUTH=aws-iam: every one the dependency allows but the two before it. */
+/** Whether a version of @madauth/server knows WEBHOOK_AUTH=aws-iam: every one the dependency allows but the three before it. */
 export function signsWebhooksWithIam(version: string): boolean {
-  return !['0.6.0-beta.1', '0.6.0-beta.2'].includes(version);
+  return !['0.6.0-beta.1', '0.6.0-beta.2', '0.6.0'].includes(version);
 }
 
 /** The version of the installed @madauth/server, from the package.json above its `dist/aws-kms.js`. */
