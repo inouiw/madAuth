@@ -168,12 +168,15 @@ async function kmsCommand(command: 'kms-setup' | 'kms-rotate', env: Env, given?:
   if (!issuer || !URL.canParse(issuer)) {
     return { output: `${command} needs MADAUTH_ISSUER, the server's public address: the keys are named after its host. Use --env-file .env or set it.`, exitCode: 1 };
   }
-  const kms = given ?? (await kmsFromSdk());
-  if (!kms) return { output: `${command} needs the AWS SDK: npm install @aws-sdk/client-kms`, exitCode: 1 };
+  const sdk = given ? { kms: given } : await kmsFromSdk();
+  if ('problem' in sdk) return { output: `${command}: ${sdk.problem}`, exitCode: 1 };
+  const { kms } = sdk;
   const deployment = deploymentOf(issuer);
   if (command === 'kms-rotate') {
-    const done = await rotateKmsKeys(kms, deployment);
-    return { output: done.length ? done.join('\n') : `Nothing to rotate under ${aliasPrefix(deployment)}.`, exitCode: 0 };
+    // A failing exit code for the missing keys, so a scheduled rotator's failure is noticed.
+    const { done, problems } = await rotateKmsKeys(kms, deployment);
+    const output = [...done, ...problems];
+    return { output: output.length ? output.join('\n') : `Nothing to rotate under ${aliasPrefix(deployment)}.`, exitCode: problems.length ? 1 : 0 };
   }
   const done = await setUpKmsKeys(kms, deployment);
   const policy = JSON.stringify({ Version: '2012-10-17', Statement: serverKmsPolicy(deployment) }, null, 2);

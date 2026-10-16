@@ -392,11 +392,9 @@ async function keyServiceFromEnv(read: (name: keyof typeof envVars) => string | 
           '(from .env, or on AWS from the Parameter Store). What the switch ends is in "AWS KMS" in docs/server.md.',
       );
     }
-    const kms = await kmsFromSdk();
-    if (!kms) {
-      throw new ConfigError('MADAUTH_KEY_SERVICE=aws-kms needs the AWS SDK. Install it next to madAuth: npm install @aws-sdk/client-kms (AWS Lambda has it).');
-    }
-    const made = await createAwsKmsKeyService(kms, deploymentOf(issuer));
+    const sdk = await kmsFromSdk();
+    if ('problem' in sdk) throw new ConfigError(`MADAUTH_KEY_SERVICE=aws-kms: ${sdk.problem}. AWS Lambda has the SDK; elsewhere, install it next to madAuth.`);
+    const made = await createAwsKmsKeyService(sdk.kms, deploymentOf(issuer));
     if ('problem' in made) throw new ConfigError(`MADAUTH_KEY_SERVICE=aws-kms: ${made.problem}. See "AWS KMS" in docs/server.md.`);
     return made.keyService;
   }

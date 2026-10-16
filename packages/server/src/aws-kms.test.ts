@@ -47,6 +47,9 @@ describe('the AWS KMS key service', () => {
     // A backend verifies with the published key alone.
     expect((await jwtVerify(token, createLocalJWKSet({ keys: [published!] }))).payload.sub).toBe('usr_1');
     expect(await readToken(keys, ISSUER, 'madauth-test+jwt', token)).toMatchObject({ sub: 'usr_1' });
+    // A token longer than KMS signs as it is verifies too.
+    const long = await signToken(keys, ISSUER, 'madauth-test+jwt', { sub: 'usr_1', pad: 'x'.repeat(5000) }, 60);
+    expect((await jwtVerify(long, createLocalJWKSet({ keys: [published!] }))).payload.sub).toBe('usr_1');
   });
 
   it('KM3: hashes with the KMS hash key and encrypts bound to the purpose; values of the local key service read as nothing', async () => {
@@ -106,6 +109,13 @@ describe('setting up and rotating the KMS keys', () => {
       `${prefix}/signing/20261017T120000Z`,
     ]);
     expect(await setUpKmsKeys(kms, DEPLOYMENT, START + DAY)).toEqual([]);
+
+    // A setup that stopped before the current alias makes its key current, without a second one.
+    const signing = aliases.get(`${prefix}/signing`)!;
+    aliases.delete(`${prefix}/signing`);
+    expect(await setUpKmsKeys(kms, DEPLOYMENT, START + DAY)).toEqual([`The signing key ${signing} (${prefix}/signing/20261017T120000Z) is used from now on.`]);
+    expect(aliases.get(`${prefix}/signing`)).toBe(signing);
+    expect([...aliases.keys()].filter((name) => name.startsWith(`${prefix}/signing/`))).toHaveLength(1);
   });
 
   it('KR2: a key a year old gets a successor that is published first and used two hours later', async () => {
@@ -114,8 +124,8 @@ describe('setting up and rotating the KMS keys', () => {
     await setUpKmsKeys(kms, DEPLOYMENT, START);
     const first = aliases.get(`${prefix}/signing`)!;
 
-    expect(await rotateKmsKeys(kms, DEPLOYMENT, START + 364 * DAY)).toEqual([]);
-    const created = await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY);
+    expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 364 * DAY)).done).toEqual([]);
+    const { done: created } = await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY);
     expect(created).toEqual([expect.stringMatching(/^Created the signing key/), expect.stringMatching(/^Created the mac key/)]);
     // Published, not yet signing: the key service lists it after the one that signs.
     expect(aliases.get(`${prefix}/signing`)).toBe(first);
@@ -123,11 +133,11 @@ describe('setting up and rotating the KMS keys', () => {
     expect(await keys.verificationKeys()).toHaveLength(2);
     const before = await signToken(keys, ISSUER, 'madauth-test+jwt', { sub: 'usr_1' }, 60);
 
-    expect(await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + HOUR)).toEqual([]);
-    expect(await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + 2 * HOUR)).toEqual([
-      expect.stringMatching(/^The signing key key-\d+ is used from now on/),
-      expect.stringMatching(/^The mac key key-\d+ is used from now on/),
-    ]);
+    expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + HOUR)).done).toEqual([]);
+    expect(await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + 2 * HOUR)).toEqual({
+      done: [expect.stringMatching(/^The signing key key-\d+ is used from now on/), expect.stringMatching(/^The mac key key-\d+ is used from now on/)],
+      problems: [],
+    });
     expect(aliases.get(`${prefix}/signing`)).not.toBe(first);
     // A token of the old key still verifies; hashes are looked up under both keys.
     const after = await keyServiceOf(kms);
@@ -135,8 +145,8 @@ describe('setting up and rotating the KMS keys', () => {
     expect(await after.macs(new TextEncoder().encode('123456'))).toHaveLength(2);
   });
 
-  it('KR3: the old signing key is disabled once its sessions have expired; old hash keys stay', async () => {
-    const { kms, aliases, keys } = fakeKms();
+  it('KR3: the old signing key is disabled and its alias removed once its sessions have expired; old hash keys stay', async () => {
+    const { kms, aliases, keys, calls } = fakeKms();
     const prefix = aliasPrefix(DEPLOYMENT);
     await setUpKmsKeys(kms, DEPLOYMENT, START);
     const oldSigning = aliases.get(`${prefix}/signing`)!;
@@ -144,13 +154,18 @@ describe('setting up and rotating the KMS keys', () => {
     await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY);
     await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + 2 * HOUR);
 
-    expect(await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + 2 * HOUR + 31 * DAY)).toEqual([]);
-    expect(await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + 2 * HOUR + 32 * DAY)).toEqual([`Disabled the signing key ${oldSigning}: the sessions it signed have expired.`]);
+    expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + 2 * HOUR + 31 * DAY)).done).toEqual([]);
+    expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + 2 * HOUR + 32 * DAY)).done).toEqual([
+      `Disabled the signing key ${oldSigning} and removed ${prefix}/signing/20261017T120000Z: the sessions it signed have expired.`,
+    ]);
     expect(keys.get(oldSigning)!.enabled).toBe(false);
+    expect(aliases.has(`${prefix}/signing/20261017T120000Z`)).toBe(false);
     expect(keys.get(oldMac)!.enabled).toBe(true);
-    // A disabled key is published no more.
+    // A disabled key is published no more, and its public key not even asked for.
+    calls.length = 0;
     expect(await (await keyServiceOf(kms)).verificationKeys()).toHaveLength(1);
-    expect(await rotateKmsKeys(kms, DEPLOYMENT, START + 400 * DAY)).toEqual([]);
+    expect(calls).not.toContain(`publicKey ${oldSigning}`);
+    expect(await rotateKmsKeys(kms, DEPLOYMENT, START + 400 * DAY)).toEqual({ done: [], problems: [] });
   });
 
   it('KR4: a running server reads its keys again every five minutes, and keeps them when a read fails', async () => {

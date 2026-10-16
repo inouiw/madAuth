@@ -20,7 +20,7 @@ export interface Kms {
   aliases(): Promise<{ name: string; keyId: string }[]>;
   /** The public key (DER, SubjectPublicKeyInfo) of an asymmetric key; null if the key is disabled or going. */
   publicKey(keyId: string): Promise<Uint8Array | null>;
-  /** ECDSA with SHA-256 of `message`; the signature in DER. */
+  /** ECDSA with SHA-256 of `message`, of any length; the signature in DER. */
   sign(keyId: string, message: Uint8Array): Promise<Uint8Array>;
   /** HMAC-SHA256 of `message`. */
   mac(keyId: string, message: Uint8Array): Promise<Uint8Array>;
@@ -31,6 +31,7 @@ export interface Kms {
   createKey(kind: KmsKeyKind, description: string): Promise<string>;
   createAlias(name: string, keyId: string): Promise<void>;
   updateAlias(name: string, keyId: string): Promise<void>;
+  deleteAlias(name: string): Promise<void>;
   /** Whether the key can be used: enabled, not disabled or going. */
   enabled(keyId: string): Promise<boolean>;
   disableKey(keyId: string): Promise<void>;
@@ -112,7 +113,7 @@ async function publicJwk(spki: Uint8Array): Promise<JWK> {
   return { ...jwk, alg: SIGNING_ALG, use: 'sig', kid: await calculateJwkThumbprint(jwk) };
 }
 
-/** Messages KMS signs as they are; a longer one is hashed here and sent as its digest. */
+/** The longest message KMS signs as it is; a longer one is hashed here and sent as its digest. */
 const MAX_RAW_MESSAGE = 4096;
 
 /** How the stored values encrypted by KMS start, to tell them from the local key service's (`v1.`). */
@@ -189,8 +190,7 @@ export async function createAwsKmsKeyService(kms: Kms, deployment: string): Prom
     async sign(kid, data) {
       const keyId = (await current()).signers.get(kid);
       if (!keyId) throw new Error(`No KMS signing key has the kid ${kid}.`);
-      const message = data.length <= MAX_RAW_MESSAGE ? data : createHash('sha256').update(data).digest();
-      return derToJose(await kms.sign(keyId, message));
+      return derToJose(await kms.sign(keyId, data));
     },
     mac: async (data) => kms.mac((await current()).macKeys[0]!, data),
     macs: async (data) => Promise.all((await current()).macKeys.map((keyId) => kms.mac(keyId, data))),
@@ -220,11 +220,11 @@ const NOT_ITS_CIPHERTEXT = ['InvalidCiphertextException', 'IncorrectKeyException
 
 /**
  * The KMS operations through the AWS SDK (`@aws-sdk/client-kms`, which AWS Lambda's Node.js runtimes contain), with
- * the default credentials and region of the environment. Null if the SDK isn't installed.
+ * the default credentials and region of the environment; or, if the SDK can't be loaded, why.
  */
-export async function kmsFromSdk(): Promise<Kms | null> {
-  const sdk = await import('@aws-sdk/client-kms').catch(() => null);
-  if (!sdk) return null;
+export async function kmsFromSdk(): Promise<{ kms: Kms } | { problem: string }> {
+  const sdk = await import('@aws-sdk/client-kms').catch((e: Error) => e);
+  if (sdk instanceof Error) return { problem: `the AWS SDK could not be loaded: npm install @aws-sdk/client-kms (${sdk.message})` };
   const client = new sdk.KMSClient({});
   /** What a call answers, or its error when it is one of `expected`; other errors are thrown on. */
   const unless = async <T>(call: Promise<T>, expected: string[]): Promise<T | null> => {
@@ -233,7 +233,7 @@ export async function kmsFromSdk(): Promise<Kms | null> {
     if (expected.includes(result.name)) return null;
     throw result;
   };
-  return {
+  const kms: Kms = {
     async aliases() {
       const all: { name: string; keyId: string }[] = [];
       let marker: string | undefined;
@@ -247,7 +247,14 @@ export async function kmsFromSdk(): Promise<Kms | null> {
     publicKey: async (keyId) => (await unless(client.send(new sdk.GetPublicKeyCommand({ KeyId: keyId })), NOT_USABLE))?.PublicKey ?? null,
     async sign(keyId, message) {
       const raw = message.length <= MAX_RAW_MESSAGE;
-      const answer = await client.send(new sdk.SignCommand({ KeyId: keyId, Message: message, MessageType: raw ? 'RAW' : 'DIGEST', SigningAlgorithm: 'ECDSA_SHA_256' }));
+      const answer = await client.send(
+        new sdk.SignCommand({
+          KeyId: keyId,
+          Message: raw ? message : createHash('sha256').update(message).digest(),
+          MessageType: raw ? 'RAW' : 'DIGEST',
+          SigningAlgorithm: 'ECDSA_SHA_256',
+        }),
+      );
       return answer.Signature!;
     },
     mac: async (keyId, message) => (await client.send(new sdk.GenerateMacCommand({ KeyId: keyId, Message: message, MacAlgorithm: 'HMAC_SHA_256' }))).Mac!,
@@ -268,9 +275,13 @@ export async function kmsFromSdk(): Promise<Kms | null> {
     async updateAlias(name, keyId) {
       await client.send(new sdk.UpdateAliasCommand({ AliasName: name, TargetKeyId: keyId }));
     },
+    async deleteAlias(name) {
+      await client.send(new sdk.DeleteAliasCommand({ AliasName: name }));
+    },
     enabled: async (keyId) => (await client.send(new sdk.DescribeKeyCommand({ KeyId: keyId }))).KeyMetadata?.KeyState === 'Enabled',
     async disableKey(keyId) {
       await client.send(new sdk.DisableKeyCommand({ KeyId: keyId }));
     },
   };
+  return { kms };
 }

@@ -77,6 +77,9 @@ export function fakeKms() {
     async updateAlias(name, keyId) {
       aliases.set(name, keyId);
     },
+    async deleteAlias(name) {
+      aliases.delete(name);
+    },
     enabled: async (keyId) => !!keys.get(keyId)?.enabled,
     async disableKey(keyId) {
       calls.push(`disableKey ${keyId}`);

@@ -447,5 +447,8 @@ describe('kms-setup and kms-rotate', () => {
     expect((await runCli(['kms-setup'], noQuestions, env, kms)).output).toMatch(/^The keys under alias\/madauth\/auth-example-com exist already\./);
 
     expect(await runCli(['kms-rotate'], noQuestions, env, kms)).toEqual({ exitCode: 0, output: 'Nothing to rotate under alias/madauth/auth-example-com.' });
+    // Missing keys fail the run, so a scheduled rotator's failure is noticed.
+    aliases.delete('alias/madauth/auth-example-com/signing');
+    expect(await runCli(['kms-rotate'], noQuestions, env, kms)).toMatchObject({ exitCode: 1, output: expect.stringContaining('There is no signing key') });
   });
 });
