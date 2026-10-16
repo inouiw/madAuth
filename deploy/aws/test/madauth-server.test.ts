@@ -4,17 +4,21 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import type * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { MadAuthServer } from '../lib/madauth-server.js';
+import { fileURLToPath } from 'node:url';
+import { MadAuthServer, signsWebhooksWithIam } from '../lib/madauth-server.js';
 
 const MAILER_URL = 'https://abcdefghijklmnopqrstuvwxyz012345.lambda-url.eu-central-1.on.aws/';
+// This repository's server, which signs with AWS IAM whatever its version says.
+const SERVER_DIR = fileURLToPath(new URL('../../../packages/server', import.meta.url));
 
-function synth(receiver?: (stack: Stack) => lambda.IFunction) {
+function synth(receiver?: (stack: Stack) => lambda.IFunction, serverPackageDir: string | null = SERVER_DIR) {
   // Not bundled: the functions' code doesn't matter here.
   const app = new App({ context: { 'aws:cdk:bundling-stacks': [] } });
   const stack = new Stack(app, 'Test', { env: { account: '123456789012', region: 'eu-central-1' } });
   const awsIamReceiver = receiver?.(stack);
-  const server = new MadAuthServer(stack, 'MadAuth', { issuer: 'https://example.com', webhook: { url: MAILER_URL, awsIamReceiver } });
+  const server = new MadAuthServer(stack, 'MadAuth', { issuer: 'https://example.com', webhook: { url: MAILER_URL, awsIamReceiver }, serverPackageDir: serverPackageDir ?? undefined });
   const template = Template.fromStack(stack);
   const roleId = stack.getLogicalId(server.role.node.defaultChild as iam.CfnRole);
   return { stack, server, template, roleId };
@@ -111,4 +115,23 @@ test('a receiver with the webhook secret, as before: no AWS IAM and no check for
   template.hasResourceProperties('AWS::Lambda::Function', {
     Environment: { Variables: { SIGNING_KEY_PARAMETER: '/madauth/MADAUTH_SIGNING_KEY', WEBHOOK_SECRET_PARAMETER: Match.absent() } },
   });
+});
+
+test('an AWS_IAM receiver needs an installed server that knows WEBHOOK_AUTH', () => {
+  assert.equal(signsWebhooksWithIam('0.6.0-beta.1'), false);
+  assert.equal(signsWebhooksWithIam('0.6.0-beta.2'), false);
+  assert.equal(signsWebhooksWithIam('0.6.0-beta.3'), true);
+  assert.equal(signsWebhooksWithIam('0.6.0'), true);
+
+  // The installed package, not this repository's (synth without serverPackageDir).
+  const entry = import.meta.resolve('@madauth/server/aws-kms');
+  const installed = (JSON.parse(readFileSync(new URL('../package.json', entry), 'utf8')) as { version: string }).version;
+  const receiver = (scope: Stack) => lambda.Function.fromFunctionArn(scope, 'Mailer', 'arn:aws:lambda:eu-central-1:123456789012:function:madauth-mailer');
+  if (signsWebhooksWithIam(installed)) {
+    assert.doesNotThrow(() => synth(receiver, null));
+  } else {
+    assert.throws(() => synth(receiver, null), { message: new RegExp(`needs a madAuth server newer than 0\\.6\\.0-beta\\.2.*@madauth/server ${installed.replaceAll('.', '\\.')} is installed`) });
+  }
+  // Without AWS IAM, any version does.
+  assert.doesNotThrow(() => synth(undefined, null));
 });

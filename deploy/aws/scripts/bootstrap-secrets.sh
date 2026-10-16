@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Puts madAuth's secrets into the Parameter Store as SecureString parameters, once per deployment:
 #   scripts/bootstrap-secrets.sh [path]          (default path: /madauth)
-# It creates WEBHOOK_SECRET if it doesn't exist yet (not with WEBHOOK_AUTH=aws-iam, for a receiver whose Function URL
+# It creates WEBHOOK_SECRET if it doesn't exist yet, after asking (never with WEBHOOK_AUTH=aws-iam, for a receiver whose Function URL
 # has AWS_IAM auth: webhookFunctionArn in cdk.json), and asks for GOOGLE_CLIENT_SECRET
 # (leave it empty if you only use Google One Tap / FedCM) and GITHUB_CLIENT_SECRET (empty without GitHub sign-in). The values are never printed and never passed on a
 # command line (other processes can read those); they reach the AWS CLI through a file only you can read.
@@ -43,7 +43,11 @@ if [[ "${WEBHOOK_AUTH:-}" == "aws-iam" ]]; then
 elif exists WEBHOOK_SECRET; then
   echo "$path/WEBHOOK_SECRET exists, kept."
 else
-  npx --yes @madauth/server generate-webhook-secret | put WEBHOOK_SECRET
+  # Asked, since running the script again for another secret must not bring it back where AWS IAM replaced it.
+  read -r -p "Create $path/WEBHOOK_SECRET? Not with a receiver with AWS IAM (webhookFunctionArn in cdk.json). [Y/n] " create
+  if [[ ! "$create" =~ ^[Nn] ]]; then
+    npx --yes @madauth/server generate-webhook-secret | put WEBHOOK_SECRET
+  fi
 fi
 
 read -r -s -p "GOOGLE_CLIENT_SECRET (empty to skip): " google_secret

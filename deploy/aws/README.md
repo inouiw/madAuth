@@ -40,7 +40,7 @@ npx cdk bootstrap
 
 ## 2. Store the secrets
 
-The script creates the webhook secret, then asks for the Google client secret (leave it empty if you only use Google One Tap / FedCM) and the GitHub client secret (empty without GitHub sign-in; one without `githubClientId` is ignored). The values go straight into the Parameter Store, under `/madauth` by default:
+The script creates the webhook secret (after asking: answer `n` for a receiver with AWS IAM), then asks for the Google client secret (leave it empty if you only use Google One Tap / FedCM) and the GitHub client secret (empty without GitHub sign-in; one without `githubClientId` is ignored). The values go straight into the Parameter Store, under `/madauth` by default:
 
 ```bash
 scripts/bootstrap-secrets.sh /madauth
@@ -91,7 +91,7 @@ For Google's redirect flow, also add `https://example.com/auth/google/callback` 
 
 ## A webhook receiver with AWS IAM
 
-When the receiver is a Lambda function in the same account, e.g. the [aws-ses-mailer](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer), IAM replaces the webhook secret: the receiver's Function URL has `AWS_IAM` auth, so AWS refuses a call that the server's role didn't sign before the receiver runs, and the receiver accepts only that role. No secret is shared or stored (see [AWS IAM](../../docs/server.md#aws-iam)). It needs a madAuth server newer than 0.6.0-beta.2.
+When the receiver is a Lambda function in the same account, e.g. the [aws-ses-mailer](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer), IAM replaces the webhook secret: the receiver's Function URL has `AWS_IAM` auth, so AWS refuses a call that the server's role didn't sign before the receiver runs, and the receiver accepts only that role. No secret is shared or stored (see [AWS IAM](../../docs/server.md#aws-iam)). It needs a madAuth server newer than 0.6.0-beta.2: with an older `@madauth/server` installed, the template refuses to synthesize.
 
 The receiver needs the server's role and the server the receiver's function, so it takes three steps:
 

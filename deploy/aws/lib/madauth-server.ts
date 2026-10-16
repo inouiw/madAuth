@@ -9,7 +9,8 @@ import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The events a receiver that sends the e-mails handles, e.g. the aws-ses-mailer of madAuth-webhooks. */
@@ -61,7 +62,7 @@ export interface MadAuthServerProps {
      * The receiver's function, when `url` is its Function URL with AWS_IAM auth, in this account: madAuth signs the
      * calls with its role (WEBHOOK_AUTH=aws-iam), which may invoke the URL, instead of `<secretsPath>/WEBHOOK_SECRET`.
      * The receiver checks that the caller is {@link MadAuthServer.role}, e.g. the aws-ses-mailer with MADAUTH_ROLE_ARN.
-     * Needs a madAuth server newer than 0.6.0-beta.2.
+     * Needs a madAuth server newer than 0.6.0-beta.2: an older installed `@madauth/server` is refused at synth.
      */
     readonly awsIamReceiver?: lambda.IFunction;
   };
@@ -106,6 +107,14 @@ export class MadAuthServer extends Construct {
     // The Parameter Store wants hierarchies as /a/b: one leading slash, no trailing one.
     const secretsPath = `/${(props.secretsPath ?? '/madauth').replace(/^\/+|\/+$/g, '')}`;
     const awsIamReceiver = props.webhook?.awsIamReceiver;
+    // A server that doesn't know WEBHOOK_AUTH would ignore it and refuse to start without WEBHOOK_SECRET. A checkout
+    // (serverPackageDir) may be ahead of its version, so only the installed package is checked.
+    const installed = awsIamReceiver && !props.serverPackageDir ? installedServerVersion() : undefined;
+    if (installed && !signsWebhooksWithIam(installed)) {
+      throw new Error(
+        `MadAuthServer: webhook.awsIamReceiver needs a madAuth server newer than 0.6.0-beta.2, which signs its webhook calls with its role (WEBHOOK_AUTH=aws-iam), but @madauth/server ${installed} is installed. Update it.`,
+      );
+    }
 
     // One table with the string keys pk and sk; every read is strongly consistent, so no index is needed.
     this.table = new dynamodb.Table(this, 'Table', {
@@ -275,6 +284,17 @@ export class MadAuthServer extends Construct {
       description: "The madAuth server's role: the caller an AWS_IAM webhook receiver accepts, e.g. MADAUTH_ROLE_ARN of the aws-ses-mailer",
     });
   }
+}
+
+/** Whether a version of @madauth/server knows WEBHOOK_AUTH=aws-iam: every one the dependency allows but the two before it. */
+export function signsWebhooksWithIam(version: string): boolean {
+  return !['0.6.0-beta.1', '0.6.0-beta.2'].includes(version);
+}
+
+/** The version of the installed @madauth/server, from the package.json above its `dist/aws-kms.js`. */
+function installedServerVersion(): string {
+  const entry = fileURLToPath(import.meta.resolve('@madauth/server/aws-kms'));
+  return (JSON.parse(readFileSync(join(dirname(entry), '../package.json'), 'utf8')) as { version: string }).version;
 }
 
 /** The origin of an http(s) URL, or undefined. */

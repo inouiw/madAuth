@@ -76,11 +76,11 @@ export function createAwsIamSigner(sigv4: SigV4): WebhookSigner {
       headers: { ...headers, host: target.host },
       body,
     };
-    const signed = await sigv4.sign(request).catch((e: Error) => e);
-    if (signed instanceof Error) return { problem: `could not sign the call with AWS IAM: ${signed.message}` };
-    // fetch sends the same host itself, from the URL.
-    const { host: _host, ...sent } = signed.headers;
-    return { headers: sent };
+    return sigv4.sign(request).then(
+      // fetch sends the same host itself, from the URL.
+      ({ headers: { host: _host, ...sent } }) => ({ headers: sent }),
+      (e: unknown) => ({ problem: `could not sign the call with AWS IAM: ${e instanceof Error ? e.message : String(e)}` }),
+    );
   };
 }
 

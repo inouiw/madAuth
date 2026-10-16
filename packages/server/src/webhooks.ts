@@ -152,6 +152,8 @@ export function createWebhookClient(settings: WebhookSettings, fetchImpl: typeof
       const id = `msg_${randomUUID()}`;
       const timestamp = Math.floor(Date.now() / 1000);
       const body = JSON.stringify({ type, data });
+      // One time limit for the whole call: with AWS IAM, getting the credentials (e.g. from the instance metadata) counts too.
+      const signal = AbortSignal.timeout(timeoutMs);
       // The id and the time also with AWS IAM: the id tells a receiver that two calls are the same.
       const headers = { 'Content-Type': 'application/json', 'webhook-id': id, 'webhook-timestamp': String(timestamp) };
       const signed =
@@ -165,7 +167,7 @@ export function createWebhookClient(settings: WebhookSettings, fetchImpl: typeof
           method: 'POST',
           headers: signed.headers,
           body,
-          signal: AbortSignal.timeout(timeoutMs),
+          signal,
         });
       } catch (e) {
         const reason = (e as Error).name === 'TimeoutError' ? `no answer within ${timeoutMs} ms` : (e as Error).message;

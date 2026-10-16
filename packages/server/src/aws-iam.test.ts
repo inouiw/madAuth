@@ -67,6 +67,9 @@ describe('AWS IAM signer', () => {
     expect(await createAwsIamSigner(sigv4)({ url: 'https://abc.lambda-url.eu-central-1.on.aws/', headers: {}, body: '{}' })).toEqual({
       problem: 'could not sign the call with AWS IAM: Could not load credentials from any providers',
     });
+    // Also what isn't an Error.
+    const rejecting = createAwsIamSigner({ sign: () => Promise.reject('no role') });
+    expect(await rejecting({ url: 'https://abc.lambda-url.eu-central-1.on.aws/', headers: {}, body: '{}' })).toEqual({ problem: 'could not sign the call with AWS IAM: no role' });
   });
 
   it('loads the signer and the default credentials from the AWS SDK', async () => {

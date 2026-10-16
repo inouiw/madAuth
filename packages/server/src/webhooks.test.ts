@@ -139,6 +139,22 @@ describe('webhook client with AWS IAM (WEBHOOK_AUTH=aws-iam)', () => {
     expect(headers.get('authorization')).not.toBe((await expected(body.replace('a@example.com', 'b@example.com'))).headers.authorization);
   });
 
+  it('counts the signing, e.g. getting the credentials, into the time limit', async () => {
+    // As fetch does: an aborted signal fails at once.
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      if (init.signal?.aborted) throw init.signal.reason;
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    const slowSigner = async ({ headers }: { headers: Record<string, string> }) => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { headers };
+    };
+    const client = createWebhookClient({ url, events: new Set(WEBHOOK_TYPES), awsIam: slowSigner }, fetchImpl);
+
+    expect(await client.call('user.signing_up', {}, 20)).toEqual({ ok: false, reason: 'no answer within 20 ms' });
+    expect(await client.call('user.signing_up', {}, 1000)).toEqual({ ok: true, body: undefined });
+  });
+
   it('sends nothing when it can not sign, and says why', async () => {
     const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
     const client = createWebhookClient({ url, events: new Set(WEBHOOK_TYPES), awsIam: async () => ({ problem: 'could not sign the call with AWS IAM: no credentials' }) }, fetchImpl);
