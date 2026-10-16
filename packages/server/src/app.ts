@@ -43,6 +43,7 @@ import { methodRoutes } from './routes/methods.js';
 import { apiKeyNotFound, apiKeyRoutes, invalidApiKey, keyCaller } from './routes/api-keys.js';
 import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
+import { parseUserSearch, searchUsers } from './user-search.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 import { Users, factorsAmong, methodOf, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
@@ -492,7 +493,7 @@ export function createApp(config: MadauthConfig): Hono {
     return googleSub ? c.json({ googleSub }) : c.body(null, 204);
   });
 
-  // --- Admin: claims, settings and resetting a user's sign-in ---
+  // --- Admin: searching users, claims, settings and resetting a user's sign-in ---
 
   /**
    * The admin's id and address if the request comes from one; otherwise the answer to send. A request with an
@@ -533,6 +534,15 @@ export function createApp(config: MadauthConfig): Hono {
   const byApiKey = (caller: { byApiKey?: { id: string; name: string } }) => (caller.byApiKey ? { byApiKey: caller.byApiKey } : {});
   const invalidEmail = (c: Context) => c.json({ error: 'invalid_email', message: 'This is not a valid e-mail address.' }, 400);
   const noUser = (c: Context) => c.json({ error: 'user_not_found', message: 'No user has this e-mail address.' }, 404);
+
+  // POST, like every admin route: the terms (an address, a role) are personal data, kept out of URLs and logs.
+  app.post('/auth/admin/users/search', async (c) => {
+    const caller = await admin(c, 'madauth:users:read');
+    if ('answer' in caller) return caller.answer;
+    const parsed = parseUserSearch(await body(c));
+    if ('error' in parsed) return c.json(parsed, 400);
+    return c.json(await searchUsers(users, parsed.search));
+  });
 
   // POST, so the address is not part of a URL that ends up in access logs.
   app.post('/auth/admin/claims/get', async (c) => {

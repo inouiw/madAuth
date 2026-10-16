@@ -40,7 +40,7 @@ export type { PasskeyApi, PasskeyInfo, PasskeySignInOptions, PasskeySignUpOption
 export type { MethodsApi, SignInMethodInfo } from './scopes/methods.js';
 export type { ApiKeyInfo, ApiKeyScope, ApiKeysApi, CreateApiKeyOptions } from './scopes/api-keys.js';
 export type { ButtonRenderOptions } from './scopes/button.js';
-export type { AdminApi, Claims, MethodId, MethodSetting, MethodToSet, MethodsToSet, PasswordRules, Settings } from './scopes/admin.js';
+export type { AdminApi, Claims, FoundUser, MethodId, MethodSetting, MethodToSet, MethodsToSet, PasswordRules, Settings, UserSearch } from './scopes/admin.js';
 export type { RatePassword } from './strength.js';
 export {
   MadauthLogin,

@@ -728,6 +728,21 @@ export function fakeServer(): FakeServer {
         server.apiKeys.splice(index, 1);
         return json({ email, userId });
       }
+      // Every user in the order they signed up, a page at a time; the cursor is the last one's address.
+      case 'POST /auth/admin/users/search': {
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        const { role, limit = 50, cursor, method } = body as { role?: string; limit?: number; cursor?: string; method?: string };
+        if (method !== undefined) return json({ error: 'invalid_search', message: '"method" is not a filter' }, 400);
+        const all = [...server.accounts.keys()];
+        const from = cursor ? all.indexOf(cursor) + 1 : 0;
+        const roles = (address: string) => (server.claims.get(address)?.roles as string[] | undefined) ?? [];
+        const page = all.slice(from, from + limit);
+        const users = page
+          .filter((address) => !role || roles(address).includes(role))
+          .map((address) => ({ id: userFor(address).id, email: address, name: server.accounts.get(address)!.name ?? null, emailVerified: server.accounts.get(address)!.verified, claims: server.claims.get(address) ?? {}, methods: ['password'], signedUpAt: 1, pending: false }));
+        return json({ users, ...(from + limit < all.length ? { cursor: page.at(-1) } : {}) });
+      }
       case 'POST /auth/admin/sign-in/reset': {
         if (!server.user) return json({ error: 'no_session' }, 401);
         if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);

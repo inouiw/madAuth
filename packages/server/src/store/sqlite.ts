@@ -94,6 +94,17 @@ export function createSqliteAdapter(path: string): StoreAdapter {
       const w = whereSql(fields, where);
       return Number(db.prepare(`DELETE FROM ${tableName(model)}${w.sql}`).run(...w.params).changes);
     },
+
+    // In the order of the primary key, so a page goes on after `after` whether or not that record still exists.
+    async scan(model, { after, limit }) {
+      const fields = fieldsOf(model);
+      const id = column(fields, Object.keys(fields).find((field) => fields[field].primaryKey)!);
+      const from = after === undefined ? '' : ` WHERE ${id} > ?`;
+      return db
+        .prepare(`SELECT * FROM ${tableName(model)}${from} ORDER BY ${id} LIMIT ${Math.max(0, Math.floor(limit))}`)
+        .all(...(after === undefined ? [] : [after]))
+        .map((raw) => fromSql(fields, raw));
+    },
   };
 }
 

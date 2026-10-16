@@ -273,6 +273,11 @@ export class Users {
     return (await this.store.findOne('user', { id })) as StoredUser | null;
   }
 
+  /** A page of all users, for admins (user-search.ts): at most `limit`, after the user with the id `after`. */
+  async scan(after: string | undefined, limit: number): Promise<StoredUser[]> {
+    return (await this.store.scan('user', { ...(after === undefined ? {} : { after }), limit })) as unknown as StoredUser[];
+  }
+
   async passwordAccount(userId: string): Promise<StoredAccount | null> {
     return this.findAccountByKey(passwordAccountKey(userId));
   }

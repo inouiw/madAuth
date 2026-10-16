@@ -116,6 +116,24 @@ describe('Madauth.admin', () => {
     expect(await Madauth.admin.resetSignIn('grace@example.com')).toMatchObject({ isSuccess: false, error: { code: 'forbidden' } });
   });
 
+  it('an admin searches users page by page, with the filters in the body', async () => {
+    const server = fakeServer();
+    server.user = admin;
+    server.claims.set('grace@example.com', { roles: ['editor'] });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [] });
+
+    const first = await Madauth.admin.searchUsers({ role: 'editor', limit: 1 });
+    expect(first).toMatchObject({ isSuccess: true, users: [{ email: 'grace@example.com', claims: { roles: ['editor'] }, pending: false }] });
+    expect(server.requests.at(-1)).toMatchObject({ method: 'POST', url: `${SERVER}/auth/admin/users/search`, body: { role: 'editor', limit: 1 } });
+
+    const all = await Madauth.admin.searchUsers();
+    expect(all).toMatchObject({ isSuccess: true, users: expect.any(Array) });
+    expect(all.isSuccess && 'cursor' in all).toBe(false);
+    expect(await Madauth.admin.searchUsers({ method: 'passkey' } as never)).toMatchObject({ isSuccess: false, error: { code: 'invalid_search' } });
+    server.user = ada;
+    expect(await Madauth.admin.searchUsers({})).toMatchObject({ isSuccess: false, error: { code: 'forbidden' } });
+  });
+
   it('waits for initialize, and reports when madAuth is not set up', async () => {
     expect(await Madauth.admin.getClaims('grace@example.com')).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });
   });

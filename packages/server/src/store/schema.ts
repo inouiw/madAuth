@@ -25,6 +25,13 @@ export interface StoreAdapter {
    * to use a link or code only once, so it must be exact when two requests delete the same record.
    */
   delete(model: string, where: Where): Promise<number>;
+  /**
+   * The records of a model, a page at a time: at most `limit`, in an order the adapter chooses that stays the
+   * same, starting after the record whose id is `after` (which may be gone by now), or at the first one.
+   * Fewer than `limit` means there are no more. A record that exists for the whole scan is returned once;
+   * one added or deleted meanwhile may be or not. madAuth scans only for admins, e.g. to search users.
+   */
+  scan(model: string, opts: { after?: string; limit: number }): Promise<Row[]>;
 }
 
 export type FieldType = 'string' | 'number' | 'boolean';

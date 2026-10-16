@@ -250,5 +250,42 @@ export function storeAdapterContract(t: ContractRunner, createAdapter: () => Sto
       expect(await store.findMany('verification', { userId })).toEqual([]);
       expect(await store.findOne('verification', { id: other.id })).toEqual(other);
     });
+
+    it("scans a model's records page by page, each once and only that model's", async () => {
+      const store = await createAdapter();
+      const ours = [testUser({ name: 'Ada' }), testUser(), testUser(), testUser(), testUser()];
+      for (const user of ours) await store.create('user', user);
+      const verification = testVerification(String(ours[0]!.id));
+      await store.create('verification', verification);
+
+      // Small pages first, then large ones, so a shared database with many users is quick to go through.
+      const scanned: Row[] = [];
+      let after: string | undefined;
+      for (let pages = 0; ; pages++) {
+        const limit = pages < 3 ? 2 : 500;
+        const page = await store.scan('user', { after, limit });
+        expect(page.length <= limit).toBe(true);
+        scanned.push(...page);
+        if (page.length < limit) break;
+        after = String(page.at(-1)!.id);
+      }
+
+      const ids = scanned.map((row) => String(row.id));
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(ours.every((user) => ids.filter((id) => id === user.id).length === 1)).toBe(true);
+      expect(scanned.find((row) => row.id === ours[0]!.id)).toEqual(ours[0]);
+      expect(ids.includes(String(verification.id))).toBe(false);
+    });
+
+    it('scans on after a record that is gone as after one that is there', async () => {
+      const store = await createAdapter();
+      const gone = testUser();
+      for (const user of [gone, testUser(), testUser()]) await store.create('user', user);
+
+      const next = await store.scan('user', { after: String(gone.id), limit: 1 });
+      await store.delete('user', { id: gone.id });
+
+      expect(await store.scan('user', { after: String(gone.id), limit: 1 })).toEqual(next);
+    });
   });
 }
