@@ -3,10 +3,11 @@ declare module 'madauth-ses-mailer' {
   import type { SESv2Client } from '@aws-sdk/client-sesv2';
   import type { LambdaFunctionURLEvent, LambdaFunctionURLResult } from 'aws-lambda';
 
-  export function createMailer(options: {
-    secret: string;
-    from: string;
-    configurationSet?: string;
-    ses: Pick<SESv2Client, 'send'>;
-  }): (event: LambdaFunctionURLEvent) => Promise<LambdaFunctionURLResult>;
+  export function createMailer(
+    options: ({ secret: string } | { madauthRoleArn: string }) & {
+      from: string;
+      configurationSet?: string;
+      ses: Pick<SESv2Client, 'send'>;
+    },
+  ): (event: LambdaFunctionURLEvent) => Promise<LambdaFunctionURLResult>;
 }

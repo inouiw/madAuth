@@ -10,6 +10,7 @@ What it creates (`lib/madauth-server.ts`, the `MadAuthServer` construct):
 
 It deploys madAuth 0.6 or newer, the first that keeps its keys in AWS KMS.
 - **A Function URL.** madAuth checks the `Origin` of every request itself (`ALLOWED_ORIGINS`).
+- **For a webhook receiver whose Function URL has `AWS_IAM` auth** (`webhookFunctionArn`): the server's role may invoke it, and madAuth signs its calls with that role (`WEBHOOK_AUTH=aws-iam`) instead of a webhook secret. See [A webhook receiver with AWS IAM](#a-webhook-receiver-with-aws-iam).
 
 ## What you need
 
@@ -45,7 +46,11 @@ The script creates the webhook secret, then asks for the Google client secret (l
 scripts/bootstrap-secrets.sh /madauth
 ```
 
-Use the same `WEBHOOK_SECRET` for your webhook receiver.
+Use the same `WEBHOOK_SECRET` for your webhook receiver. A receiver with AWS IAM (see [below](#a-webhook-receiver-with-aws-iam)) needs no secret, and the deploy fails while there is one; for it, run the script with `WEBHOOK_AUTH=aws-iam`, which creates none:
+
+```bash
+WEBHOOK_AUTH=aws-iam scripts/bootstrap-secrets.sh /madauth
+```
 
 ## 3. Configure and deploy
 
@@ -59,6 +64,7 @@ Set your values in [`cdk.json`](cdk.json) under `context`:
 | `githubClientId` | `Iv1.0123456789abcdef` | Empty: no GitHub sign-in. With one, step 2 needs the client secret |
 | `secretsPath` | `/madauth` | Where step 2 stored the secrets |
 | `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: Google and GitHub sign-in only |
+| `webhookFunctionArn` | `arn:aws:lambda:eu-central-1:123456789012:function:madauth-mailer` | The receiver's function, when `webhookUrl` is its Function URL with `AWS_IAM` auth, in this account. Empty: the calls are signed with `WEBHOOK_SECRET`. See [A webhook receiver with AWS IAM](#a-webhook-receiver-with-aws-iam). |
 | `webhookEvents` | `email.send_verification,email.send_password_reset,email.send_already_registered` | What the receiver handles. This default turns on e-mail & password sign-in; add `email.send_signin_link` for the e-mail link. |
 | `environment` | `{ "INITIAL_ADMIN_EMAIL": "you@example.com" }` | More environment variables of the server, each under its own name, see [all settings](../../docs/server.md#configuration): `INITIAL_ADMIN_EMAIL` makes you the first admin (madAuth 0.6 or newer, see [Administration](#administration)), others are e.g. `PASSKEY_RP_ID`, `AUTHENTICATOR_ISSUER` or `SESSION_TTL`. |
 
@@ -83,9 +89,21 @@ madAuth's cookies must be first-party, so the browser should reach the server on
 
 For Google's redirect flow, also add `https://example.com/auth/google/callback` as an authorized redirect URI of the Google client. For GitHub sign-in, the OAuth App's authorization callback URL is `https://example.com/auth/github/callback`.
 
+## A webhook receiver with AWS IAM
+
+When the receiver is a Lambda function in the same account, e.g. the [aws-ses-mailer](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer), IAM replaces the webhook secret: the receiver's Function URL has `AWS_IAM` auth, so AWS refuses a call that the server's role didn't sign before the receiver runs, and the receiver accepts only that role. No secret is shared or stored (see [AWS IAM](../../docs/server.md#aws-iam)). It needs a madAuth server newer than 0.6.0-beta.2.
+
+The receiver needs the server's role and the server the receiver's function, so it takes three steps:
+
+1. Deploy madAuth as in step 3, without `webhookUrl` (or with your receiver as it is). The output `RoleArn` is the server's role.
+2. Deploy the receiver with `AWS_IAM` auth and that role, e.g. the aws-ses-mailer with `MadauthRoleArn` (see its README). Note its URL and its function's ARN.
+3. Set `webhookUrl` and `webhookFunctionArn` in `cdk.json` and deploy madAuth again. The server's role may now invoke the receiver through its URL (`lambda:InvokeFunctionUrl`, and `lambda:InvokeFunction` with `lambda:InvokedViaFunctionUrl`), and madAuth signs every call with it (`WEBHOOK_AUTH=aws-iam`).
+
+There must be no `<secretsPath>/WEBHOOK_SECRET`: madAuth refuses to start with a secret and `WEBHOOK_AUTH=aws-iam`, so the deploy fails while it exists, and the running server keeps working. To move an existing deployment, see [Switching the webhook receiver to AWS IAM](#switching-the-webhook-receiver-to-aws-iam).
+
 ## Using the construct in your own CDK app
 
-Copy `lib/madauth-server.ts`, `lambda/server.ts` and `lambda/keys.ts` into your app and add `@madauth/server` 0.6 or newer to its dependencies (the construct reads the KMS policy from it), or install this folder (`npm install <path>/deploy/aws`). Then use it:
+Copy `lib/madauth-server.ts`, `lambda/server.ts` and `lambda/keys.ts` into your app and add `@madauth/server` 0.6 or newer to its dependencies (the construct reads the KMS policy from it), and `@smithy/signature-v4` for `awsIamReceiver` (the server's bundle takes it from there), or install this folder (`npm install <path>/deploy/aws`). Then use it:
 
 ```ts
 import { EMAIL_LINK_EVENTS, MadAuthServer } from '@madauth/deploy-aws';
@@ -99,8 +117,21 @@ const madauth = new MadAuthServer(this, 'MadAuth', {
   webhook: { url: mailerUrl, events: EMAIL_LINK_EVENTS },
   reservedConcurrentExecutions: 10,
 });
-// madauth.functionUrl, madauth.function, madauth.table, madauth.keyManager
+// madauth.functionUrl, madauth.function, madauth.role, madauth.table, madauth.keyManager
 ```
+
+With a receiver in the same app, IAM replaces the webhook secret (see [above](#a-webhook-receiver-with-aws-iam)): its Function URL has `AWS_IAM` auth, `awsIamReceiver` lets the server's role invoke it, and the receiver learns the role, e.g. the aws-ses-mailer as `MADAUTH_ROLE_ARN`:
+
+```ts
+const mailerUrl = mailer.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
+const madauth = new MadAuthServer(this, 'MadAuth', {
+  issuer: 'https://example.com',
+  webhook: { url: mailerUrl.url, events: EMAIL_LINK_EVENTS, awsIamReceiver: mailer },
+});
+mailer.addEnvironment('MADAUTH_ROLE_ARN', madauth.role.roleArn);
+```
+
+[`site/infra/lib/site-stack.ts`](../../site/infra/lib/site-stack.ts) does this for madauth.com.
 
 A failed key rotation is an error of `keyManager`. To hear of it, alarm on its errors, e.g. to an SNS topic:
 
@@ -124,6 +155,25 @@ aws ssm delete-parameter --name /madauth/MADAUTH_SIGNING_KEY
 ```bash
 npx cdk deploy
 ```
+
+## Switching the webhook receiver to AWS IAM
+
+For a deployment whose receiver checks `WEBHOOK_SECRET`, to a receiver with AWS IAM as [above](#a-webhook-receiver-with-aws-iam). While the deploy fails because `<secretsPath>/WEBHOOK_SECRET` exists, the running server keeps working. Once you delete it, the running server can't start new instances, so deploy right away:
+
+1. Note the ARN of the receiver's function (in the Lambda console) and set it as `webhookFunctionArn` in `cdk.json`.
+2. Delete the secret and deploy:
+
+   ```bash
+   aws ssm delete-parameter --name /madauth/WEBHOOK_SECRET
+   ```
+
+   ```bash
+   npx cdk deploy
+   ```
+
+3. Deploy the receiver with `AWS_IAM` auth and the output `RoleArn`, e.g. the aws-ses-mailer with `MadauthRoleArn` and without `WebhookSecret`.
+
+From step 2 until step 3 is deployed, the receiver refuses madAuth's calls (they carry no secret's signature any more): no e-mail is sent, and with `user.signing_up` nobody signs up; users see that it failed and can try again. A receiver in the same CDK app (see the construct above) switches in the same deploy as the server.
 
 ## Administration
 

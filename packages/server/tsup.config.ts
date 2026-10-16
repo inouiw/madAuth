@@ -55,10 +55,17 @@ export default defineConfig([
     },
     clean: true,
   },
-  // Docker: the image has no node_modules, so the AWS SDKs for DATABASE_URL=dynamodb: and aws-kms are bundled as well.
+  // Docker: the image has no node_modules, so the AWS SDKs for DATABASE_URL=dynamodb:, aws-kms and WEBHOOK_AUTH=aws-iam are bundled as well.
   standalone({ main: 'src/main.ts' }, []),
-  // AWS Lambda: its Node.js runtimes contain the AWS SDK.
-  standalone({ lambda: 'src/entry/lambda.ts' }, ['@aws-sdk/client-dynamodb', '@aws-sdk/client-kms']),
-  // Azure Functions: the worker provides @azure/functions-core; the AWS SDKs are only needed for DATABASE_URL=dynamodb: and aws-kms.
-  standalone({ azure: 'src/entry/azure-main.ts' }, ['@azure/functions-core', '@aws-sdk/client-dynamodb', '@aws-sdk/client-kms']),
+  // AWS Lambda: its Node.js runtimes contain the AWS SDK (@aws-sdk/*). The signer of WEBHOOK_AUTH=aws-iam is bundled:
+  // the runtime has it only as a dependency of the SDK, which may change.
+  standalone({ lambda: 'src/entry/lambda.ts' }, ['@aws-sdk/client-dynamodb', '@aws-sdk/client-kms', '@aws-sdk/credential-provider-node']),
+  // Azure Functions: the worker provides @azure/functions-core; the AWS SDKs are only needed for DATABASE_URL=dynamodb:, aws-kms and aws-iam.
+  standalone({ azure: 'src/entry/azure-main.ts' }, [
+    '@azure/functions-core',
+    '@aws-sdk/client-dynamodb',
+    '@aws-sdk/client-kms',
+    '@aws-sdk/credential-provider-node',
+    '@smithy/signature-v4',
+  ]),
 ]);

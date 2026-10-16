@@ -1,4 +1,5 @@
 import type { JWTVerifyGetKey } from 'jose';
+import { awsIamSignerFromSdk, functionUrlRegion } from './aws-iam.js';
 import { createAwsKmsKeyService, deploymentOf, kmsFromSdk } from './aws-kms.js';
 import { createLocalKeyService, parseSigningKeys, type KeyService } from './key-service.js';
 import { generateSigningKey } from './keys.js';
@@ -11,6 +12,7 @@ import {
   WEBHOOK_TYPES,
   checkWebhookSecret,
   generateWebhookSecret,
+  type WebhookAuth,
   type WebhookSettings,
 } from './webhooks.js';
 
@@ -63,7 +65,7 @@ export interface MadauthConfig {
    * Its rules for new passwords are a setting, see `Settings.passwordRules`.
    */
   password?: Record<string, never>;
-  /** Where madAuth sends e-mails, sign-up checks and events (WEBHOOK_URL). */
+  /** Where madAuth sends e-mails, sign-up checks and events (WEBHOOK_URL), and how it signs them (WEBHOOK_SECRET or WEBHOOK_AUTH). */
   webhook?: WebhookSettings;
   /**
    * Where your app lists the scopes of its API, which API keys can have next to madAuth's own
@@ -121,6 +123,7 @@ export const envVars = {
   PASSKEY_RP_ID: false,
   WEBHOOK_URL: false,
   WEBHOOK_SECRET: false,
+  WEBHOOK_AUTH: false,
   WEBHOOK_EVENTS: false,
   API_KEY_SCOPES_URL: false,
   SESSION_TTL: false,
@@ -232,7 +235,7 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
   }
 
   // Validate the webhook before opening the store, so a configuration error doesn't leave a database open.
-  const webhook = webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_EVENTS'));
+  const webhook = await webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_AUTH'), read('WEBHOOK_EVENTS'));
   // E-mail & password sign-in needs its e-mails sent, so it is on exactly when the webhook handles them.
   const sendsEmails = !!webhook && REQUIRED_EMAIL_TYPES.every((type) => webhook.events.has(type));
   const password = sendsEmails ? {} : undefined;
@@ -434,9 +437,14 @@ function isServiceUrl(value: string): boolean {
   return !!url && (url.protocol === 'https:' || (url.protocol === 'http:' && LOCAL_HOSTS.includes(url.hostname)));
 }
 
-function webhookFromEnv(url: string | undefined, secret: string | undefined, events: string | undefined): WebhookSettings | undefined {
+async function webhookFromEnv(
+  url: string | undefined,
+  secret: string | undefined,
+  auth: string | undefined,
+  events: string | undefined,
+): Promise<WebhookSettings | undefined> {
   if (!url) {
-    if (secret || events) throw new ConfigError('WEBHOOK_SECRET and WEBHOOK_EVENTS need WEBHOOK_URL.');
+    if (secret || auth || events) throw new ConfigError('WEBHOOK_SECRET, WEBHOOK_AUTH and WEBHOOK_EVENTS need WEBHOOK_URL.');
     return undefined;
   }
   let parsed: URL;
@@ -449,16 +457,7 @@ function webhookFromEnv(url: string | undefined, secret: string | undefined, eve
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && LOCAL_HOSTS.includes(parsed.hostname))) {
     throw new ConfigError(`WEBHOOK_URL must be an https URL (http only for localhost) but is "${url}".`);
   }
-  if (!secret) {
-    throw new ConfigError(
-      'WEBHOOK_SECRET is not set. Here is a newly generated secret you can use (keep it secret; your ' +
-        `webhook receiver needs the same one):\n\nWEBHOOK_SECRET=${generateWebhookSecret()}\n`,
-    );
-  }
-  const problem = checkWebhookSecret(secret);
-  if (problem) {
-    throw new ConfigError(`WEBHOOK_SECRET ${problem}. Generate one with: npx @madauth/server generate-webhook-secret`);
-  }
+  const signing = await webhookSigning(parsed.href, secret, auth);
   // Nothing is sent that the receiver did not ask for: a type it does not know could make it answer with an
   // error, and an unanswered user.signing_up refuses every sign-up.
   const selected = new Set((events ?? '').split(',').map((e) => e.trim()).filter(Boolean));
@@ -482,7 +481,44 @@ function webhookFromEnv(url: string | undefined, secret: string | undefined, eve
         `Known types: ${WEBHOOK_TYPES.join(', ')}.`,
     );
   }
-  return { url: parsed.href, secret, events: selected };
+  return { url: parsed.href, events: selected, ...signing };
+}
+
+/**
+ * How the webhook calls are signed: with WEBHOOK_SECRET, or with WEBHOOK_AUTH=aws-iam with madAuth's AWS credentials,
+ * for a receiver behind a Lambda Function URL with AWS_IAM auth.
+ */
+async function webhookSigning(url: string, secret: string | undefined, auth: string | undefined): Promise<WebhookAuth> {
+  if (auth === 'aws-iam') {
+    // As with MADAUTH_KEY_SERVICE=aws-kms: no secret is left in a variable, where it would still let others call the receiver.
+    if (secret) {
+      throw new ConfigError(
+        'WEBHOOK_SECRET is set, but with WEBHOOK_AUTH=aws-iam madAuth signs the webhook calls with its AWS role and no secret: remove it ' +
+          '(from .env, or on AWS from the Parameter Store), and the receiver checks the caller instead. See "AWS IAM" in docs/server.md.',
+      );
+    }
+    const region = functionUrlRegion(url);
+    if (!region) {
+      throw new ConfigError(
+        `WEBHOOK_AUTH=aws-iam signs the calls for a Lambda Function URL with AWS_IAM auth, so WEBHOOK_URL must be one, e.g. https://<id>.lambda-url.<region>.on.aws/, but is "${url}".`,
+      );
+    }
+    const sdk = await awsIamSignerFromSdk(region);
+    if ('problem' in sdk) throw new ConfigError(`WEBHOOK_AUTH=aws-iam: ${sdk.problem}. AWS Lambda has the SDK; elsewhere, install it next to madAuth.`);
+    return { awsIam: sdk.signer };
+  }
+  if (auth) throw new ConfigError(`WEBHOOK_AUTH must be aws-iam, or not set to sign the calls with WEBHOOK_SECRET, but is "${auth}".`);
+  if (!secret) {
+    throw new ConfigError(
+      'WEBHOOK_SECRET is not set. Here is a newly generated secret you can use (keep it secret; your ' +
+        `webhook receiver needs the same one):\n\nWEBHOOK_SECRET=${generateWebhookSecret()}\n`,
+    );
+  }
+  const problem = checkWebhookSecret(secret);
+  if (problem) {
+    throw new ConfigError(`WEBHOOK_SECRET ${problem}. Generate one with: npx @madauth/server generate-webhook-secret`);
+  }
+  return { secret };
 }
 
 /** Whether `host` is `domain` or one of its subdomains, as WebAuthn requires of a page and its passkeys' domain. */

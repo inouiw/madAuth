@@ -37,7 +37,8 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `DATABASE_URL` | yes | Where the users are stored: `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). For other databases pass your own [store adapter](#custom-store-adapter) instead. |
 | `INITIAL_ADMIN_EMAIL` | no | Who signs in with this address gets the role `admin`, once the address is proven: confirmed by e-mail, or verified by Google or GitHub. Once per value; see [The first admin](#the-first-admin). |
 | `WEBHOOK_URL` | for the e-mail methods | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
-| `WEBHOOK_SECRET` | with `WEBHOOK_URL` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
+| `WEBHOOK_SECRET` | with `WEBHOOK_URL`, without `WEBHOOK_AUTH` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
+| `WEBHOOK_AUTH` | no | `aws-iam`: madAuth signs the webhook calls with its AWS role instead of `WEBHOOK_SECRET`, which must not be set then, for a receiver behind a Lambda Function URL with `AWS_IAM` auth. See [AWS IAM](#aws-iam). Not set: `WEBHOOK_SECRET` signs them. |
 | `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.send_verification` and `email.send_password_reset`, the e-mail link when they include `email.send_signin_link`, SMS codes when they include `sms.send_code`, e.g. `email.send_verification,email.send_password_reset,email.send_signin_link,email.send_already_registered,email.send_password_reset_no_password,sms.send_code`. |
 | `AUTHENTICATOR_ISSUER` | no | The name authenticator apps show next to the account, e.g. `My App`; the browser's passkey dialog shows it too (the WebAuthn relying party's name). Default: the host of the app that asked for the setup, e.g. `app.example.com`. See [Authenticator app](#authenticator-app). |
 | `PASSKEY_RP_ID` | no | The domain [passkeys](#passkeys) belong to, e.g. `example.com` so that they work on `app.example.com` and `www.example.com` alike. It must be the host of an app in `ALLOWED_ORIGINS` or a domain above it. Default: the host of the app that adds or uses the passkey, so a passkey works on that host only. Changing it later makes existing passkeys stop working, and locks out the users who sign in with passkeys alone until an admin [resets their sign-in](#resetting-a-users-sign-in) and they sign up again. |
@@ -150,7 +151,7 @@ Users are asked to grant the scope `user:email`, which lets madAuth read their e
 
 ## E-mail & password sign-in
 
-Set `WEBHOOK_URL`, `WEBHOOK_SECRET` and `WEBHOOK_EVENTS` with `email.send_verification` and `email.send_password_reset` among the events: e-mail & password sign-in is on exactly when your webhook sends those e-mails. The users are in `DATABASE_URL`: with `sqlite:<path>` in that SQLite file (with Docker, keep it on a volume; the `docker-compose.yml` does this), with `dynamodb:<table>` in a [DynamoDB table](#dynamodb).
+Set `WEBHOOK_URL`, `WEBHOOK_SECRET` (or `WEBHOOK_AUTH`, see [AWS IAM](#aws-iam)) and `WEBHOOK_EVENTS` with `email.send_verification` and `email.send_password_reset` among the events: e-mail & password sign-in is on exactly when your webhook sends those e-mails. The users are in `DATABASE_URL`: with `sqlite:<path>` in that SQLite file (with Docker, keep it on a volume; the `docker-compose.yml` does this), with `dynamodb:<table>` in a [DynamoDB table](#dynamodb).
 
 madAuth does not send e-mails itself: it hands each one to your [webhook](#webhooks) receiver. There are three: the address confirmation, the password reset, and a note to the owner when someone tries to sign up with an address that already has an account. The confirmation and reset e-mails contain a link to the app page that asked for them (its origin must be in `ALLOWED_ORIGINS`) and a 6-digit code, for when the e-mail is read on another device.
 
@@ -268,6 +269,8 @@ export const handler = createHandler({
 
 `register` (Azure Functions) and `start` (Node) take the same `env` option.
 
+A receiver that is a Lambda function too needs no webhook secret: see [AWS IAM](#aws-iam).
+
 ### Azure Functions
 
 Get `madauth-server-azure.mjs` (or `dist/standalone/azure.mjs`) as above, then deploy it as `azure.mjs`, the main file of a Node.js (v4 programming model) function app. It registers one HTTP function for all routes.
@@ -340,7 +343,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 
 ### Signatures
 
-Every call is signed in the [Standard Webhooks](https://www.standardwebhooks.com/) format, so you can use their libraries in many languages. The headers are `webhook-id`, `webhook-timestamp` and `webhook-signature` (`v1,` and the base64 HMAC-SHA256 of `<id>.<timestamp>.<body>`, keyed with the base64 part of `WEBHOOK_SECRET` after `whsec_`).
+With `WEBHOOK_SECRET`, every call is signed in the [Standard Webhooks](https://www.standardwebhooks.com/) format, so you can use their libraries in many languages. The headers are `webhook-id`, `webhook-timestamp` and `webhook-signature` (`v1,` and the base64 HMAC-SHA256 of `<id>.<timestamp>.<body>`, keyed with the base64 part of `WEBHOOK_SECRET` after `whsec_`).
 
 Verify each call against the **raw** body before you trust it, and reject calls older than five minutes. In JavaScript:
 
@@ -353,6 +356,36 @@ const { type, data } = JSON.parse(body);
 ```
 
 The calls contain e-mail links and codes, so `WEBHOOK_URL` must be https, except for a receiver on the same machine (`localhost`, `127.0.0.1`, or `host.docker.internal` from a Docker container). Calls with the same `webhook-id` are the same call; madAuth does not retry by itself.
+
+### AWS IAM
+
+When madAuth runs on AWS and the receiver is a Lambda function with a Function URL, IAM replaces the shared secret. With `WEBHOOK_AUTH=aws-iam`, madAuth signs each call with [Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html) (service `lambda`), with the credentials of its environment: on Lambda its function's role, elsewhere what the AWS SDK's default chain finds, e.g. the role of an ECS task or EC2 instance. The Function URL has `AWS_IAM` auth, so AWS refuses a call that isn't signed by a principal allowed to invoke it before the receiver runs. Nobody has a secret that could make the receiver act as if madAuth called: the role's credentials are temporary, AWS rotates them, and nobody copies them.
+
+- `WEBHOOK_URL` is the Function URL, `https://<id>.lambda-url.<region>.on.aws/`; madAuth signs for its region.
+- `WEBHOOK_SECRET` must not be set: madAuth refuses to start with both. The calls carry `webhook-id` and `webhook-timestamp` as before, and no `webhook-signature`.
+- madAuth's role needs both of these on the receiver's function (Lambda checks both for Function URLs made since October 2025):
+
+  ```json
+  [
+    {
+      "Effect": "Allow",
+      "Action": "lambda:InvokeFunctionUrl",
+      "Resource": "<the receiver's function ARN>",
+      "Condition": { "StringEquals": { "lambda:FunctionUrlAuthType": "AWS_IAM" } }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "lambda:InvokeFunction",
+      "Resource": "<the receiver's function ARN>",
+      "Condition": { "Bool": { "lambda:InvokedViaFunctionUrl": "true" } }
+    }
+  ]
+  ```
+
+- The receiver checks who called: AWS lets every principal of its account whose policy allows it invoke the URL, e.g. an admin, and passes the caller in the event (`requestContext.authorizer.iam.userArn`, for a role `arn:aws:sts::<account>:assumed-role/<role name>/<session>`). The [aws-ses-mailer](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer) accepts only madAuth's role, whose ARN it gets as `MADAUTH_ROLE_ARN`.
+- The two AWS SDK packages it takes are loaded only then: `@smithy/signature-v4` and `@aws-sdk/credential-provider-node`. The Lambda bundle and the Docker image have them; with the npm package elsewhere, install them next to madAuth.
+
+The [AWS template](../deploy/aws/README.md) sets this up for a receiver in the same account.
 
 ## Sessions
 

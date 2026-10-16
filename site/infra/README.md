@@ -8,7 +8,7 @@ The AWS CDK app behind https://madauth.com. One CloudFront distribution serves e
 | `/demo/` | the demo (`demo/dist`, built with `DEMO_BASE=/demo/`) in S3 |
 | `/auth/*`, `/.well-known/*` | the demo's madAuth server: the [`MadAuthServer`](../../deploy/aws/README.md) construct, the same template users get |
 
-E-mails (confirmation, password reset) go through the [aws-ses-mailer](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer) of madAuth-webhooks. It sends with SES from `noreply@madauth.com`.
+E-mails (confirmation, password reset) go through the [aws-ses-mailer](https://github.com/inouiw/madAuth-webhooks/tree/main/aws-ses-mailer) of madAuth-webhooks. It sends with SES from `noreply@madauth.com`. Its Function URL has `AWS_IAM` auth: the server signs each call with its role, and the mailer accepts only that role (`MADAUTH_ROLE_ARN`), so there is no webhook secret (see [AWS IAM](../../docs/server.md#aws-iam)).
 
 The app has four stacks:
 
@@ -23,7 +23,7 @@ The app has four stacks:
 
 Nothing in this folder is secret.
 
-- **Secrets** are SecureString parameters under `/madauth-site/` in the Parameter Store, read by the functions at runtime: the webhook secret, and the client secrets of the Google client and the GitHub OAuth App. The server's keys are in AWS KMS, created by the stack (see [deploy/aws](../../deploy/aws/README.md)); they carry no `Project` tag, so the budget doesn't count their $3 a month.
+- **Secrets** are SecureString parameters under `/madauth-site/` in the Parameter Store, read by the server at runtime: the client secrets of the Google client and the GitHub OAuth App. There is no webhook secret: the server calls the mailer with its role (AWS IAM), and the deploy fails while `/madauth-site/WEBHOOK_SECRET` exists. The server's keys are in AWS KMS, created by the stack (see [deploy/aws](../../deploy/aws/README.md)); they carry no `Project` tag, so the budget doesn't count their $3 a month.
 - **The account ID** comes from the AWS credentials. `cdk.context.json` and `cdk.out/` are not committed.
 - **Deploys** run only in the GitHub environment `site`, which has required reviewers. The deploy role trusts only that environment, so pull requests can't use it.
 - **Abuse limits:** the server runs with at most 5 concurrent executions and the mailer with at most 2. A budget alert fires at $8 of the $10/month budget. The budget counts only the costs tagged `Project=madauth-site`, the tag every resource of the four stacks carries, so the account's other projects don't trip it.
@@ -60,10 +60,10 @@ cd deploy/aws && npm ci && npm run build && cd ../../site/infra && npm ci
 
    **Create a GitHub OAuth App** too ([GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers)), with the homepage URL `https://madauth.com`, the redirect URI `https://madauth.com/auth/github/callback` and **Expire user access tokens** unticked, and put its client ID into `cdk.json` as `githubClientId`. Without one, the demo has no GitHub button.
 
-4. **Store the secrets.** When the script asks for the Google client secret and the GitHub client secret, enter the new ones:
+4. **Store the secrets.** When the script asks for the Google client secret and the GitHub client secret, enter the new ones (`WEBHOOK_AUTH=aws-iam`: no webhook secret, the mailer checks the server's role):
 
    ```bash
-   AWS_REGION=eu-central-1 ../../deploy/aws/scripts/bootstrap-secrets.sh /madauth-site
+   AWS_REGION=eu-central-1 WEBHOOK_AUTH=aws-iam ../../deploy/aws/scripts/bootstrap-secrets.sh /madauth-site
    ```
 
 5. **Deploy everything.** It needs a checkout of [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks), next to this repository by default; pass `-c webhooksDir=<path>` for another place:

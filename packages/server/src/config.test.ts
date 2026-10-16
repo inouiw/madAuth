@@ -174,6 +174,36 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, WEBHOOK_URL, WEBHOOK_SECRET: 'not-a-secret' })).rejects.toThrow(/WEBHOOK_SECRET must start with/);
   });
 
+  it('K7: WEBHOOK_AUTH=aws-iam signs the calls to a Function URL with AWS IAM, and takes no WEBHOOK_SECRET', async () => {
+    const url = 'https://abcdefghijklmnopqrstuvwxyz012345.lambda-url.eu-central-1.on.aws/';
+    const iam = { WEBHOOK_URL: url, WEBHOOK_AUTH: 'aws-iam', WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset' };
+
+    const config = await loadConfig({ ...env, ...iam, GOOGLE_CLIENT_ID: undefined });
+
+    expect(config.webhook).toEqual({ url, events: new Set(['email.send_verification', 'email.send_password_reset']), awsIam: expect.any(Function) });
+    expect(config.password).toEqual({});
+    // Both at once is refused, as MADAUTH_SIGNING_KEY is with aws-kms: no secret stays in a variable.
+    await expect(loadConfig({ ...env, ...iam, WEBHOOK_SECRET })).rejects.toThrow(
+      /WEBHOOK_SECRET is set, but with WEBHOOK_AUTH=aws-iam madAuth signs the webhook calls with its AWS role and no secret: remove it/,
+    );
+    // The region is the Function URL's.
+    await expect(loadConfig({ ...env, ...iam, WEBHOOK_URL: 'https://hooks.example.com/x' })).rejects.toThrow(
+      'WEBHOOK_AUTH=aws-iam signs the calls for a Lambda Function URL with AWS_IAM auth, so WEBHOOK_URL must be one, e.g. https://<id>.lambda-url.<region>.on.aws/, but is "https://hooks.example.com/x".',
+    );
+    await expect(loadConfig({ ...env, WEBHOOK_AUTH: 'aws-iam' })).rejects.toThrow(new ConfigError('WEBHOOK_SECRET, WEBHOOK_AUTH and WEBHOOK_EVENTS need WEBHOOK_URL.'));
+  });
+
+  it('K7: without WEBHOOK_AUTH the calls are signed with WEBHOOK_SECRET; another value is refused', async () => {
+    expect((await loadConfig({ ...env, ...hook })).webhook).toEqual({ url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: new Set(['email.send_verification', 'email.send_password_reset']) });
+    // Empty, as Docker's --env-file keeps it, it is not set.
+    expect((await loadConfig({ ...env, ...hook, WEBHOOK_AUTH: '""' })).webhook).toMatchObject({ secret: WEBHOOK_SECRET });
+    for (const value of ['secret', 'AWS-IAM', 'iam']) {
+      await expect(loadConfig({ ...env, ...hook, WEBHOOK_AUTH: value })).rejects.toThrow(
+        new ConfigError(`WEBHOOK_AUTH must be aws-iam, or not set to sign the calls with WEBHOOK_SECRET, but is "${value}".`),
+      );
+    }
+  });
+
   it('K7: the webhook must use https, except on the local machine', async () => {
     await expect(loadConfig({ ...env, ...hook, WEBHOOK_URL: 'http://hooks.example.com/x' })).rejects.toThrow(/must be an https URL/);
     for (const url of ['http://localhost:8790/webhook', 'http://127.0.0.1:8790/', 'http://host.docker.internal:8790/webhook']) {

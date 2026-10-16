@@ -21,7 +21,11 @@ export const EMAIL_EVENTS = ['email.send_verification', 'email.send_password_res
  */
 export const EMAIL_LINK_EVENTS = [...EMAIL_EVENTS, 'email.send_signin_link'] as const;
 
-/** How madAuth's Lambda functions are bundled: one ESM file, with the AWS SDK left to the runtime. */
+/**
+ * How madAuth's Lambda functions are bundled: one ESM file, with the AWS SDK (`@aws-sdk/*`) left to the runtime. The
+ * signer of WEBHOOK_AUTH=aws-iam (`@smithy/signature-v4`, a dependency of this package) is bundled: the runtime has
+ * it only as a part of the SDK, which may change.
+ */
 export const lambdaBundling: nodejs.BundlingOptions = {
   format: nodejs.OutputFormat.ESM,
   target: 'node22',
@@ -50,7 +54,17 @@ export interface MadAuthServerProps {
    * is on when the events include the e-mails; default: {@link EMAIL_EVENTS}. The e-mail link needs
    * `email.send_signin_link` as well, e.g. {@link EMAIL_LINK_EVENTS}. Without a webhook, Google and GitHub only.
    */
-  readonly webhook?: { readonly url: string; readonly events?: readonly string[] };
+  readonly webhook?: {
+    readonly url: string;
+    readonly events?: readonly string[];
+    /**
+     * The receiver's function, when `url` is its Function URL with AWS_IAM auth, in this account: madAuth signs the
+     * calls with its role (WEBHOOK_AUTH=aws-iam), which may invoke the URL, instead of `<secretsPath>/WEBHOOK_SECRET`.
+     * The receiver checks that the caller is {@link MadAuthServer.role}, e.g. the aws-ses-mailer with MADAUTH_ROLE_ARN.
+     * Needs a madAuth server newer than 0.6.0-beta.2.
+     */
+    readonly awsIamReceiver?: lambda.IFunction;
+  };
   /** More environment variables, e.g. `INITIAL_ADMIN_EMAIL`, `SESSION_TTL` or `AUTHENTICATOR_ISSUER` (see docs/server.md). */
   readonly environment?: Record<string, string>;
   /** Default: 512. madAuth needs at least 256 MB for password hashing; more memory is also more CPU. */
@@ -75,6 +89,8 @@ export class MadAuthServer extends Construct {
   readonly function: nodejs.NodejsFunction;
   readonly functionUrl: lambda.FunctionUrl;
   readonly table: dynamodb.Table;
+  /** The server's role: the caller an AWS_IAM receiver accepts (`webhook.awsIamReceiver`). */
+  readonly role: iam.IRole;
   /** Creates the KMS keys at the deploy and rotates them daily; a failed rotation is an error of this function. */
   readonly keyManager: nodejs.NodejsFunction;
 
@@ -89,6 +105,7 @@ export class MadAuthServer extends Construct {
     });
     // The Parameter Store wants hierarchies as /a/b: one leading slash, no trailing one.
     const secretsPath = `/${(props.secretsPath ?? '/madauth').replace(/^\/+|\/+$/g, '')}`;
+    const awsIamReceiver = props.webhook?.awsIamReceiver;
 
     // One table with the string keys pk and sk; every read is strongly consistent, so no index is needed.
     this.table = new dynamodb.Table(this, 'Table', {
@@ -108,6 +125,7 @@ export class MadAuthServer extends Construct {
       ...(props.googleClientId ? { GOOGLE_CLIENT_ID: props.googleClientId } : {}),
       ...(props.githubClientId ? { GITHUB_CLIENT_ID: props.githubClientId } : {}),
       ...(props.webhook ? { WEBHOOK_URL: props.webhook.url, WEBHOOK_EVENTS: (props.webhook.events ?? EMAIL_EVENTS).join(',') } : {}),
+      ...(awsIamReceiver ? { WEBHOOK_AUTH: 'aws-iam' } : {}),
       ...props.environment,
     };
 
@@ -133,6 +151,8 @@ export class MadAuthServer extends Construct {
       },
     });
 
+    this.role = this.function.role!;
+
     // Exactly what the DynamoDB store uses (see "DynamoDB" in docs/server.md): no batch writes, and Scan only
     // for admins searching users.
     this.table.grant(
@@ -154,12 +174,33 @@ export class MadAuthServer extends Construct {
       }),
     );
 
+    // The receiver's Function URL with AWS_IAM auth checks both actions. In the role's own policy, which is enough in
+    // the same account; grantInvokeUrl would add a permission to the receiver instead when it can't tell the accounts
+    // are the same, which fails for an imported function.
+    if (awsIamReceiver) {
+      const invokeUrl = [
+        new iam.PolicyStatement({
+          actions: ['lambda:InvokeFunctionUrl'],
+          resources: [awsIamReceiver.functionArn],
+          conditions: { StringEquals: { 'lambda:FunctionUrlAuthType': 'AWS_IAM' } },
+        }),
+        new iam.PolicyStatement({
+          actions: ['lambda:InvokeFunction'],
+          resources: [awsIamReceiver.functionArn],
+          conditions: { Bool: { 'lambda:InvokedViaFunctionUrl': true } },
+        }),
+      ];
+      for (const statement of invokeUrl) this.function.addToRolePolicy(statement);
+    }
+
     // The keys in AWS KMS, under aliases named after the issuer (see "AWS KMS" in docs/server.md). The server may
     // only use them; a function with a role of its own creates them at the deploy and rotates them every day, so
     // whatever takes over the server can't make a key that madAuth trusts.
     const deployment = deploymentOf(issuer);
     for (const statement of serverKmsPolicy(deployment)) this.function.addToRolePolicy(iam.PolicyStatement.fromJson(statement));
     const signingKeyParameter = `${secretsPath}/MADAUTH_SIGNING_KEY`;
+    // With AWS IAM, a webhook secret left in the Parameter Store would keep the server from starting: the deploy checks.
+    const webhookSecretParameter = awsIamReceiver ? `${secretsPath}/WEBHOOK_SECRET` : undefined;
     this.keyManager = new nodejs.NodejsFunction(this, 'Keys', {
       entry: fileURLToPath(new URL('../lambda/keys.ts', import.meta.url)),
       handler: 'handler',
@@ -167,7 +208,11 @@ export class MadAuthServer extends Construct {
       architecture: lambda.Architecture.ARM_64,
       memorySize: 256,
       timeout: Duration.minutes(1),
-      environment: { MADAUTH_ISSUER: issuer, SIGNING_KEY_PARAMETER: signingKeyParameter },
+      environment: {
+        MADAUTH_ISSUER: issuer,
+        SIGNING_KEY_PARAMETER: signingKeyParameter,
+        ...(webhookSecretParameter ? { WEBHOOK_SECRET_PARAMETER: webhookSecretParameter } : {}),
+      },
       // What was rotated when, for a year.
       logGroup: new logs.LogGroup(this, 'KeysLogs', {
         retention: logs.RetentionDays.ONE_YEAR,
@@ -193,8 +238,11 @@ export class MadAuthServer extends Construct {
         resources: [kmsArn('alias', `madauth/${deployment}/*`), kmsArn('key', '*')],
       }),
       new iam.PolicyStatement({ actions: ['kms:DescribeKey', 'kms:DisableKey'], resources: [kmsArn('key', '*')], conditions: deploymentAliases }),
-      // Whether the local key service's key is still there; its value isn't read.
-      new iam.PolicyStatement({ actions: ['ssm:GetParameters'], resources: [parameterArn(signingKeyParameter.slice(1))] }),
+      // Whether the local key service's key (and with AWS IAM the webhook secret) is still there; no value is read.
+      new iam.PolicyStatement({
+        actions: ['ssm:GetParameters'],
+        resources: [signingKeyParameter, ...(webhookSecretParameter ? [webhookSecretParameter] : [])].map((name) => parameterArn(name.slice(1))),
+      }),
     ];
     for (const statement of keyManagerStatements) this.keyManager.addToRolePolicy(statement);
     const provider = new cr.Provider(this, 'KeysProvider', {
@@ -207,7 +255,8 @@ export class MadAuthServer extends Construct {
     const keys = new CustomResource(this, 'KmsKeys', {
       serviceToken: provider.serviceToken,
       resourceType: 'Custom::MadAuthKmsKeys',
-      properties: { Deployment: deployment },
+      // A new property makes CloudFormation run the check again on the deploy that switches to AWS IAM.
+      properties: { Deployment: deployment, ...(awsIamReceiver ? { WebhookAuth: 'aws-iam' } : {}) },
     });
     // The server's new configuration only once its keys exist.
     this.function.node.addDependency(keys);
@@ -221,6 +270,10 @@ export class MadAuthServer extends Construct {
     this.functionUrl = this.function.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
 
     new CfnOutput(this, 'FunctionUrl', { value: this.functionUrl.url, description: 'The madAuth server' });
+    new CfnOutput(this, 'RoleArn', {
+      value: this.role.roleArn,
+      description: "The madAuth server's role: the caller an AWS_IAM webhook receiver accepts, e.g. MADAUTH_ROLE_ARN of the aws-ses-mailer",
+    });
   }
 }
 
