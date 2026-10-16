@@ -1,4 +1,5 @@
 import type { JWTVerifyGetKey } from 'jose';
+import { createAwsKmsKeyService, deploymentOf, kmsFromSdk } from './aws-kms.js';
 import { createLocalKeyService, parseSigningKeys, type KeyService } from './key-service.js';
 import { generateSigningKey } from './keys.js';
 import { isValidEmail, normalizeEmail } from './password.js';
@@ -107,7 +108,8 @@ export function methodConfig(config: MadauthConfig): MethodConfig {
 /** Every environment variable read by {@link loadConfig}, with whether it is required. */
 export const envVars = {
   MADAUTH_ISSUER: true,
-  MADAUTH_SIGNING_KEY: true,
+  MADAUTH_KEY_SERVICE: true,
+  MADAUTH_SIGNING_KEY: false,
   ALLOWED_ORIGINS: true,
   GOOGLE_CLIENT_ID: false,
   GOOGLE_CLIENT_SECRET: false,
@@ -172,7 +174,7 @@ function parseOrigin(name: string, value: string): string {
  * A variable's value, or undefined if it is empty. Docker's --env-file keeps quotes around values
  * (NAME='value'); Node's --env-file removes them.
  */
-const unquote = (value: string | undefined): string | undefined => value?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
+export const unquote = (value: string | undefined): string | undefined => value?.trim().replace(/^(['"])(.*)\1$/s, '$2').trim() || undefined;
 
 function readEnv(env: Record<string, string | undefined>, name: keyof typeof envVars): string | undefined {
   return unquote(env[name]);
@@ -207,20 +209,7 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
   parseOrigin('MADAUTH_ISSUER', issuerValue);
   const issuer = issuerValue.replace(/\/+$/, '');
 
-  const keyValue = read('MADAUTH_SIGNING_KEY');
-  if (!keyValue) {
-    const key = await generateSigningKey();
-    throw new ConfigError(
-      'MADAUTH_SIGNING_KEY is not set. Here is a newly generated key you can use ' +
-        '(keep it secret and use the same key on every instance):\n\n' +
-        `MADAUTH_SIGNING_KEY='${JSON.stringify(key)}'\n`,
-    );
-  }
-  const signingKeys = await parseSigningKeys(keyValue);
-  if ('problem' in signingKeys) {
-    throw new ConfigError(`MADAUTH_SIGNING_KEY ${signingKeys.problem}. Generate a key with: npx @madauth/server generate-key`);
-  }
-  const keyService = await createLocalKeyService(signingKeys.keys);
+  const keyService = await keyServiceFromEnv(read, issuer);
 
   const allowedOrigins = require('ALLOWED_ORIGINS')
     .split(',')
@@ -387,6 +376,54 @@ const RENAMED_TYPES: Record<string, string> = {
 const REMOVED_TYPES: Record<string, string> = {
   'user.created': 'user.created is gone: user.signed_up tells when a user can sign in (an unconfirmed sign-up is no user yet)',
 };
+
+/**
+ * The key service MADAUTH_KEY_SERVICE chooses: `aws-kms`, whose keys never leave KMS, or `local`, whose keys
+ * (MADAUTH_SIGNING_KEY) are in the process's memory. There is no default: the operator chooses where the keys are.
+ */
+async function keyServiceFromEnv(read: (name: keyof typeof envVars) => string | undefined, issuer: string): Promise<KeyService> {
+  const choice = read('MADAUTH_KEY_SERVICE');
+  const signingKey = read('MADAUTH_SIGNING_KEY');
+  if (choice === 'aws-kms') {
+    // A clean cut: no key in a variable, also not an old one to read what it made.
+    if (signingKey) {
+      throw new ConfigError(
+        'MADAUTH_SIGNING_KEY is set, but with MADAUTH_KEY_SERVICE=aws-kms the keys are in KMS and in no variable: remove it ' +
+          '(from .env, or on AWS from the Parameter Store). What the switch ends is in "AWS KMS" in docs/server.md.',
+      );
+    }
+    const sdk = await kmsFromSdk();
+    if ('problem' in sdk) throw new ConfigError(`MADAUTH_KEY_SERVICE=aws-kms: ${sdk.problem}. AWS Lambda has the SDK; elsewhere, install it next to madAuth.`);
+    const made = await createAwsKmsKeyService(sdk.kms, deploymentOf(issuer));
+    if ('problem' in made) throw new ConfigError(`MADAUTH_KEY_SERVICE=aws-kms: ${made.problem}. See "AWS KMS" in docs/server.md.`);
+    return made.keyService;
+  }
+  if (choice !== 'local') {
+    throw new ConfigError(
+      (choice ? `MADAUTH_KEY_SERVICE must be aws-kms or local, but is "${choice}". ` : 'MADAUTH_KEY_SERVICE is not set. ') +
+        'Choose where madAuth keeps its keys: aws-kms (in AWS KMS, where they never leave it; the AWS template sets it up) or ' +
+        `local (MADAUTH_SIGNING_KEY, in the server's memory${signingKey ? ': set MADAUTH_KEY_SERVICE=local to keep using yours' : ''}). ` +
+        'See "Key service" in docs/server.md.',
+    );
+  }
+  if (!signingKey) {
+    const key = await generateSigningKey();
+    throw new ConfigError(
+      'MADAUTH_SIGNING_KEY is not set. Here is a newly generated key you can use ' +
+        '(keep it secret and use the same key on every instance):\n\n' +
+        `MADAUTH_SIGNING_KEY='${JSON.stringify(key)}'\n`,
+    );
+  }
+  const signingKeys = await parseSigningKeys(signingKey);
+  if ('problem' in signingKeys) {
+    throw new ConfigError(`MADAUTH_SIGNING_KEY ${signingKeys.problem}. Generate a key with: npx @madauth/server generate-key`);
+  }
+  console.warn(
+    "[madauth] MADAUTH_KEY_SERVICE=local: madAuth's keys are in this process's memory, where whoever can read it can read them " +
+      'and sign sessions for anyone. A key service keeps them out, e.g. MADAUTH_KEY_SERVICE=aws-kms: see "Key service" in docs/server.md.',
+  );
+  return createLocalKeyService(signingKeys.keys);
+}
 
 /** Hosts that may be called over plain http, e.g. a receiver on the developer's machine. */
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'];

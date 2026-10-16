@@ -1,7 +1,9 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 import { parseArgs, parseEnv } from 'node:util';
-import { loadConfig } from './config.js';
+import { aliasPrefix, deploymentOf, kmsFromSdk, type Kms } from './aws-kms.js';
+import { loadConfig, unquote } from './config.js';
+import { rotateKmsKeys, serverKmsPolicy, setUpKmsKeys } from './kms-rotation.js';
 import { generateSigningKey } from './keys.js';
 import { isValidEmail, normalizeEmail } from './password.js';
 import { madauthSchema, type StoreAdapter } from './store/schema.js';
@@ -27,6 +29,12 @@ Commands:
   start                        Start the server on PORT (default ${PORT})
   generate-key                 Print a new private ES256 key to use as MADAUTH_SIGNING_KEY
   generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
+  kms-setup                    For MADAUTH_KEY_SERVICE=aws-kms without the AWS template (which does it itself):
+                               create this deployment's keys in AWS KMS with your own AWS credentials, under
+                               alias/madauth/<the host of MADAUTH_ISSUER>/, and print the IAM policy the
+                               server's role needs. Keys that exist already are kept.
+  kms-rotate                   Rotate those keys, with your AWS credentials; run it every day (the AWS
+                               template's rotator does). A key gets a successor once a year.
   schema [--dialect <name>] [--from <version>]
                                Print the SQL that creates madAuth's tables for a custom store adapter.
                                Dialects: postgres (default), mysql, sqlite. With --from, print only the
@@ -151,6 +159,41 @@ const terminalIo: CliIo = {
   },
 };
 
+/**
+ * kms-setup and kms-rotate, with the AWS credentials of whoever runs them: the server's role may only use the
+ * keys, never create them (see kms-rotation.ts).
+ */
+async function kmsCommand(command: 'kms-setup' | 'kms-rotate', env: Env, given?: Kms): Promise<CliResult> {
+  const issuer = unquote(env.MADAUTH_ISSUER);
+  if (!issuer || !URL.canParse(issuer)) {
+    return { output: `${command} needs MADAUTH_ISSUER, the server's public address: the keys are named after its host. Use --env-file .env or set it.`, exitCode: 1 };
+  }
+  const sdk = given ? { kms: given } : await kmsFromSdk();
+  if ('problem' in sdk) return { output: `${command}: ${sdk.problem}`, exitCode: 1 };
+  const { kms } = sdk;
+  const deployment = deploymentOf(issuer);
+  if (command === 'kms-rotate') {
+    // A failing exit code for the missing keys, so a scheduled rotator's failure is noticed.
+    const { done, problems } = await rotateKmsKeys(kms, deployment);
+    const output = [...done, ...problems];
+    return { output: output.length ? output.join('\n') : `Nothing to rotate under ${aliasPrefix(deployment)}.`, exitCode: problems.length ? 1 : 0 };
+  }
+  const done = await setUpKmsKeys(kms, deployment);
+  const policy = JSON.stringify({ Version: '2012-10-17', Statement: serverKmsPolicy(deployment) }, null, 2);
+  return {
+    output: [
+      ...(done.length ? done : [`The keys under ${aliasPrefix(deployment)} exist already.`]),
+      '',
+      "Give the server's role this policy, so it may use these keys and no others (it can't create keys or aliases):",
+      '',
+      policy,
+      '',
+      'Then set MADAUTH_KEY_SERVICE=aws-kms and remove MADAUTH_SIGNING_KEY. Rotate the keys every day with kms-rotate.',
+    ].join('\n'),
+    exitCode: 0,
+  };
+}
+
 /** Options may come before or after the command, as `--name value` or `--name=value`. */
 function parseCliArgs(args: string[]) {
   return parseArgs({
@@ -186,7 +229,7 @@ function parseCliArgs(args: string[]) {
 type CliOptions = ReturnType<typeof parseCliArgs>['values'];
 
 /** Runs a CLI command and returns what it prints. */
-export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = process.env): Promise<CliResult> {
+export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = process.env, kms?: Kms): Promise<CliResult> {
   let parsed: ReturnType<typeof parseCliArgs>;
   try {
     parsed = parseCliArgs(args);
@@ -223,6 +266,9 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
     }
     if (command === 'generate-webhook-secret') {
       return { output: generateWebhookSecret(), exitCode: 0 };
+    }
+    if (command === 'kms-setup' || command === 'kms-rotate') {
+      return await kmsCommand(command, env, kms);
     }
     if (command === 'schema') {
       const dialect = (options.dialect ?? 'postgres') as SqlDialect;
@@ -331,6 +377,11 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
       'MADAUTH_ISSUER',
       origin,
       'Public address of the madAuth server: the origin of your app, which proxies /auth and /.well-known to it.',
+    ),
+    variable(
+      'MADAUTH_KEY_SERVICE',
+      'local',
+      'Where the keys are: local, in the server memory from MADAUTH_SIGNING_KEY; on AWS use aws-kms, see docs/server.md.',
     ),
     // In single quotes, as JSON is full of double quotes. Node's parser removes them; Docker's --env-file
     // keeps them, and the server removes them then.

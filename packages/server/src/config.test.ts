@@ -1,6 +1,6 @@
 import { importJWK } from 'jose';
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ConfigError, envVars, loadConfig, methodConfig } from './config.js';
 import { CLIENT_ID, WEBHOOK_SECRET, WEBHOOK_URL, signingKey } from './test/helpers.js';
 import { createSqliteAdapter } from './store/sqlite.js';
@@ -8,6 +8,7 @@ import { checkWebhookSecret } from './webhooks.js';
 
 const env = {
   MADAUTH_ISSUER: 'https://auth.example.com/',
+  MADAUTH_KEY_SERVICE: 'local',
   MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
   ALLOWED_ORIGINS: 'https://app.example.com, https://admin.example.com/',
   GOOGLE_CLIENT_ID: CLIENT_ID,
@@ -68,6 +69,18 @@ describe('loadConfig', () => {
 
     expect((await config.keyService.verificationKeys())[0]).toMatchObject({ kid: signingKey.kid, x: signingKey.x });
     expect(config.google?.clientId).toBe(CLIENT_ID);
+  });
+
+  it('MADAUTH_KEY_SERVICE is required: aws-kms, or local with a warning; aws-kms takes no MADAUTH_SIGNING_KEY', async () => {
+    await expect(loadConfig({ ...env, MADAUTH_KEY_SERVICE: undefined })).rejects.toThrow(/MADAUTH_KEY_SERVICE is not set\..*set MADAUTH_KEY_SERVICE=local to keep using yours/s);
+    await expect(loadConfig({ ...env, MADAUTH_KEY_SERVICE: 'vault' })).rejects.toThrow(/MADAUTH_KEY_SERVICE must be aws-kms or local, but is "vault"/);
+    await expect(loadConfig({ ...env, MADAUTH_KEY_SERVICE: 'aws-kms' })).rejects.toThrow(
+      /MADAUTH_SIGNING_KEY is set, but with MADAUTH_KEY_SERVICE=aws-kms the keys are in KMS and in no variable: remove it/,
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await loadConfig(env);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("MADAUTH_KEY_SERVICE=local: madAuth's keys are in this process's memory"));
+    warn.mockRestore();
   });
 
   it('X6: names a missing variable', async () => {

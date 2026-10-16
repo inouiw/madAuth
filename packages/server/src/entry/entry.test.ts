@@ -10,6 +10,7 @@ import { APP_ORIGIN, CLIENT_ID, WEBHOOK_SECRET, WEBHOOK_URL, signingKey, testApp
 import { handleAzureRequest, parseSetCookie } from './azure-handler.js';
 
 vi.stubEnv('MADAUTH_ISSUER', 'https://auth.example.com');
+vi.stubEnv('MADAUTH_KEY_SERVICE', 'local');
 vi.stubEnv('MADAUTH_SIGNING_KEY', JSON.stringify(signingKey));
 vi.stubEnv('ALLOWED_ORIGINS', APP_ORIGIN);
 vi.stubEnv('GOOGLE_CLIENT_ID', CLIENT_ID);
@@ -97,6 +98,7 @@ describe('deployment entry points', () => {
     const { createHandler } = await import('./lambda.js');
     const settings = {
       MADAUTH_ISSUER: 'https://login.example.com',
+      MADAUTH_KEY_SERVICE: 'local',
       MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
       ALLOWED_ORIGINS: APP_ORIGIN,
       GOOGLE_CLIENT_ID: CLIENT_ID,

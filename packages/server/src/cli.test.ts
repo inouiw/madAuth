@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runCli, type CliIo } from './cli.js';
 import { loadConfig } from './config.js';
 import { DEV_WEBHOOK_RECEIVER_URL, checkWebhookSecret } from './webhooks.js';
+import { fakeKms } from './test/kms.js';
 
 const CLIENT_ID = '123-test.apps.googleusercontent.com';
 const EMAIL_TYPES = 'email.send_verification,email.send_password_reset,email.send_already_registered,email.send_password_reset_no_password';
@@ -52,7 +53,7 @@ describe('--env-file', () => {
 
     expect(after).toEqual({ exitCode: 1, output: 'MADAUTH_ISSUER: "not a url" is not a URL.' });
     expect(before).toEqual(after);
-    expect(environmentWins).toEqual({ exitCode: 1, output: expect.stringContaining('MADAUTH_SIGNING_KEY is not set') });
+    expect(environmentWins).toEqual({ exitCode: 1, output: expect.stringContaining('MADAUTH_KEY_SERVICE is not set') });
   });
 
   it('is an error when the file is missing or not named', async () => {
@@ -76,6 +77,7 @@ describe('init', () => {
     const env = readEnvFile(file);
     expect(env).toEqual({
       MADAUTH_ISSUER: 'http://localhost:5173',
+      MADAUTH_KEY_SERVICE: 'local',
       MADAUTH_SIGNING_KEY: expect.any(String),
       ALLOWED_ORIGINS: 'http://localhost:5173',
       DATABASE_URL: 'sqlite:./madauth.db',
@@ -147,6 +149,7 @@ describe('init', () => {
     // Google only: still a database, where every user is stored.
     expect(readEnvFile(googleOnly)).toEqual({
       MADAUTH_ISSUER: 'https://app.example.com',
+      MADAUTH_KEY_SERVICE: 'local',
       MADAUTH_SIGNING_KEY: expect.any(String),
       ALLOWED_ORIGINS: 'https://app.example.com',
       GOOGLE_CLIENT_ID: CLIENT_ID,
@@ -341,6 +344,7 @@ Next steps:
     expect(io.asked).toContain('GitHub client secret: ');
     expect(readEnvFile(file)).toEqual({
       MADAUTH_ISSUER: 'http://localhost:5173',
+      MADAUTH_KEY_SERVICE: 'local',
       MADAUTH_SIGNING_KEY: expect.any(String),
       ALLOWED_ORIGINS: 'http://localhost:5173',
       GITHUB_CLIENT_ID: 'Iv1.abc',
@@ -425,5 +429,26 @@ describe('usage', () => {
     const result = await runCli(['init', '--nope'], noQuestions);
 
     expect(result).toEqual({ exitCode: 1, output: expect.stringMatching(/^Unknown option '--nope'.*Usage:/s) });
+  });
+});
+
+describe('kms-setup and kms-rotate', () => {
+  it('K1: create the keys of the deployment named by MADAUTH_ISSUER, print the policy of the server role, and rotate', async () => {
+    const { kms, aliases } = fakeKms();
+    const env = { MADAUTH_ISSUER: 'https://auth.example.com' };
+
+    expect(await runCli(['kms-setup'], noQuestions, {}, kms)).toMatchObject({ exitCode: 1, output: expect.stringContaining('needs MADAUTH_ISSUER') });
+    const setUp = await runCli(['kms-setup'], noQuestions, env, kms);
+    expect(setUp.exitCode).toBe(0);
+    expect(setUp.output).toContain('Created the signing key');
+    expect(setUp.output).toContain('"kms:ResourceAliases": "alias/madauth/auth-example-com/*"');
+    expect(setUp.output).toContain('set MADAUTH_KEY_SERVICE=aws-kms and remove MADAUTH_SIGNING_KEY');
+    expect(aliases.has('alias/madauth/auth-example-com/encryption')).toBe(true);
+    expect((await runCli(['kms-setup'], noQuestions, env, kms)).output).toMatch(/^The keys under alias\/madauth\/auth-example-com exist already\./);
+
+    expect(await runCli(['kms-rotate'], noQuestions, env, kms)).toEqual({ exitCode: 0, output: 'Nothing to rotate under alias/madauth/auth-example-com.' });
+    // Missing keys fail the run, so a scheduled rotator's failure is noticed.
+    aliases.delete('alias/madauth/auth-example-com/signing');
+    expect(await runCli(['kms-rotate'], noQuestions, env, kms)).toMatchObject({ exitCode: 1, output: expect.stringContaining('There is no signing key') });
   });
 });

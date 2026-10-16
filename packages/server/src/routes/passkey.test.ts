@@ -550,6 +550,7 @@ describe('the domain of the passkeys', () => {
   it('PK16: PASSKEY_RP_ID shares passkeys across the apps of a domain, and must be one of them or above', async () => {
     const env = {
       MADAUTH_ISSUER: ISSUER,
+      MADAUTH_KEY_SERVICE: 'local',
       MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
       ALLOWED_ORIGINS: `${APP_ORIGIN},https://other.test`,
       DATABASE_URL: 'sqlite::memory:',

@@ -960,6 +960,7 @@ describe('signing up with the app alone', () => {
     // An app-only server: nothing but a webhook that sends email.send_verification.
     const config = await loadConfig({
       MADAUTH_ISSUER: ISSUER,
+      MADAUTH_KEY_SERVICE: 'local',
       MADAUTH_SIGNING_KEY: JSON.stringify(signingKey),
       ALLOWED_ORIGINS: APP_ORIGIN,
       DATABASE_URL: 'sqlite::memory:',

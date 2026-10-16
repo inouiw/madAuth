@@ -49,6 +49,10 @@
       "types": "./dist/store/dynamodb.d.ts",
       "import": "./dist/dynamodb.js"
     },
+    "./aws-kms": {
+      "types": "./dist/kms.d.ts",
+      "import": "./dist/aws-kms.js"
+    },
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
@@ -96,10 +100,14 @@
   },
   "peerDependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/client-kms": "^3.0.0",
     "@azure/functions": "^4.0.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-dynamodb": {
+      "optional": true
+    },
+    "@aws-sdk/client-kms": {
       "optional": true
     },
     "@azure/functions": {
@@ -108,6 +116,7 @@
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.1146.0",
+    "@aws-sdk/client-kms": "^3.1152.0",
     "@azure/functions": "^4.16.5",
     "@types/aws-lambda": "^8.10.164",
     "@types/node": "^26.6.4",

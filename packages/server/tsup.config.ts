@@ -29,6 +29,7 @@ export default defineConfig([
       verify: 'src/verify.ts',
       sqlite: 'src/store/sqlite.ts',
       dynamodb: 'src/store/dynamodb.ts',
+      'aws-kms': 'src/kms.ts',
       testing: 'src/testing.ts',
       webhook: 'src/webhook.ts',
       bin: 'src/bin.ts',
@@ -44,6 +45,7 @@ export default defineConfig([
         'src/verify.ts',
         'src/store/sqlite.ts',
         'src/store/dynamodb.ts',
+        'src/kms.ts',
         'src/testing.ts',
         'src/webhook.ts',
         'src/entry/node.ts',
@@ -53,10 +55,10 @@ export default defineConfig([
     },
     clean: true,
   },
-  // Docker: the image has no node_modules, so the AWS SDK for DATABASE_URL=dynamodb: is bundled as well.
+  // Docker: the image has no node_modules, so the AWS SDKs for DATABASE_URL=dynamodb: and aws-kms are bundled as well.
   standalone({ main: 'src/main.ts' }, []),
   // AWS Lambda: its Node.js runtimes contain the AWS SDK.
-  standalone({ lambda: 'src/entry/lambda.ts' }, ['@aws-sdk/client-dynamodb']),
-  // Azure Functions: the worker provides @azure/functions-core; the AWS SDK is only needed for DATABASE_URL=dynamodb:.
-  standalone({ azure: 'src/entry/azure-main.ts' }, ['@azure/functions-core', '@aws-sdk/client-dynamodb']),
+  standalone({ lambda: 'src/entry/lambda.ts' }, ['@aws-sdk/client-dynamodb', '@aws-sdk/client-kms']),
+  // Azure Functions: the worker provides @azure/functions-core; the AWS SDKs are only needed for DATABASE_URL=dynamodb: and aws-kms.
+  standalone({ azure: 'src/entry/azure-main.ts' }, ['@azure/functions-core', '@aws-sdk/client-dynamodb', '@aws-sdk/client-kms']),
 ]);
