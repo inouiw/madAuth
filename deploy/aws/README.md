@@ -6,9 +6,9 @@ What it creates (`lib/madauth-server.ts`, the `MadAuthServer` construct):
 
 - **A DynamoDB table** with the keys `pk` and `sk`. It is on-demand, has point-in-time recovery, and is kept when the stack is deleted.
 - **A Lambda function** (Node.js 22, arm64, 512 MB) that runs [`lambda/server.ts`](lambda/server.ts). It reads every parameter under the secrets path, e.g. `/madauth/WEBHOOK_SECRET`, as the environment variable of that name. The secrets therefore never appear in the function's configuration.
-- **Three keys in AWS KMS** that sign the sessions, hash the codes and encrypt the stored secrets (`MADAUTH_KEY_SERVICE=aws-kms`, see [AWS KMS](../../docs/server.md#aws-kms)). They never leave KMS, and the server's role may only use them. A second function with a role of its own, [`lambda/keys.ts`](lambda/keys.ts), creates them at the first deploy, checks them every day and rotates them once a year; a failed rotation is an error of that function (`keyManager`), which an alarm can watch. The keys are kept when the stack is deleted, like the table: without them nothing stored in it can be read. Each costs $1 a month, and every rotation, once a year, adds one.
+- **Three keys in AWS KMS** that sign the sessions, hash the codes and encrypt the stored secrets (`MADAUTH_KEY_SERVICE=aws-kms`, see [AWS KMS](../../docs/server.md#aws-kms)). They never leave KMS, and the server's role may only use them. A second function with a role of its own, [`lambda/keys.ts`](lambda/keys.ts), creates them at the first deploy, checks them every day and rotates them once a year; a failed rotation is an error of that function (`keyManager`), which an alarm can watch. The keys are kept when the stack is deleted, like the table: without them nothing stored in it can be read. Each costs $1 a month, and every rotation, once a year, adds one. They are named after the issuer: a new `issuer` gets new keys, which signs every user out, and the old ones stay, and cost, until you schedule their deletion in KMS.
 
-It deploys madAuth 0.3 or newer, which stores every user in the table, with or without e-mail & password sign-in.
+It deploys madAuth 0.6 or newer, the first that keeps its keys in AWS KMS.
 - **A Function URL.** madAuth checks the `Origin` of every request itself (`ALLOWED_ORIGINS`).
 
 ## What you need
@@ -85,7 +85,7 @@ For Google's redirect flow, also add `https://example.com/auth/google/callback` 
 
 ## Using the construct in your own CDK app
 
-Copy `lib/madauth-server.ts` and `lambda/server.ts` into your app, or install this folder (`npm install <path>/deploy/aws`). Then use it:
+Copy `lib/madauth-server.ts`, `lambda/server.ts` and `lambda/keys.ts` into your app and add `@madauth/server` 0.6 or newer to its dependencies (the construct reads the KMS policy from it), or install this folder (`npm install <path>/deploy/aws`). Then use it:
 
 ```ts
 import { EMAIL_LINK_EVENTS, MadAuthServer } from '@madauth/deploy-aws';
@@ -99,7 +99,16 @@ const madauth = new MadAuthServer(this, 'MadAuth', {
   webhook: { url: mailerUrl, events: EMAIL_LINK_EVENTS },
   reservedConcurrentExecutions: 10,
 });
-// madauth.functionUrl, madauth.function, madauth.table
+// madauth.functionUrl, madauth.function, madauth.table, madauth.keyManager
+```
+
+A failed key rotation is an error of `keyManager`. To hear of it, alarm on its errors, e.g. to an SNS topic:
+
+```ts
+madauth.keyManager.metricErrors({ period: Duration.days(1) }).createAlarm(this, 'KeyRotationFailed', {
+  threshold: 1,
+  evaluationPeriods: 1,
+}).addAlarmAction(new SnsAction(topic));
 ```
 
 `environment` adds more settings, e.g. `{ SESSION_TTL: '3600' }`; see [all settings](../../docs/server.md#configuration).
