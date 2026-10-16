@@ -91,7 +91,7 @@ export function parseUserSearch(data: Record<string, unknown>): { search: UserSe
 const signedUpAt = (user: StoredUser): number | null => (user.signedUpAt === 0 ? null : (user.signedUpAt ?? user.createdAt));
 
 /** Whether a user matches every filter of the search but the address. A pending sign-up has no time to match. */
-export function matches(user: StoredUser, search: UserSearch): boolean {
+function matches(user: StoredUser, search: UserSearch): boolean {
   const time = signedUpAt(user);
   return (
     (search.pending === undefined || search.pending === (time === null)) &&
