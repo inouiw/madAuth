@@ -23,7 +23,7 @@ The app has four stacks:
 
 Nothing in this folder is secret.
 
-- **Secrets** are SecureString parameters under `/madauth-site/` in the Parameter Store, read by the functions at runtime: the signing key, the webhook secret, and the client secrets of the Google client and the GitHub OAuth App.
+- **Secrets** are SecureString parameters under `/madauth-site/` in the Parameter Store, read by the functions at runtime: the webhook secret, and the client secrets of the Google client and the GitHub OAuth App. The server's keys are in AWS KMS, created by the stack (see [deploy/aws](../../deploy/aws/README.md)); they carry no `Project` tag, so the budget doesn't count their $3 a month.
 - **The account ID** comes from the AWS credentials. `cdk.context.json` and `cdk.out/` are not committed.
 - **Deploys** run only in the GitHub environment `site`, which has required reviewers. The deploy role trusts only that environment, so pull requests can't use it.
 - **Abuse limits:** the server runs with at most 5 concurrent executions and the mailer with at most 2. A budget alert fires at $8 of the $10/month budget. The budget counts only the costs tagged `Project=madauth-site`, the tag every resource of the four stacks carries, so the account's other projects don't trip it.

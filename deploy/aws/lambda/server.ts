@@ -1,6 +1,6 @@
 // The madAuth server on AWS Lambda. The settings are environment variables of the function, except the secrets:
 // every parameter under MADAUTH_SECRETS_PATH in the Parameter Store becomes the environment variable of its name,
-// e.g. /madauth/MADAUTH_SIGNING_KEY → MADAUTH_SIGNING_KEY. So the secrets never show in the function's configuration.
+// e.g. /madauth/WEBHOOK_SECRET → WEBHOOK_SECRET. So the secrets never show in the function's configuration.
 import { GetParametersByPathCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { createHandler } from '@madauth/server/lambda';
 

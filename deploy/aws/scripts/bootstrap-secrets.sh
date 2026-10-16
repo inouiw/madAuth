@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Puts madAuth's secrets into the Parameter Store as SecureString parameters, once per deployment:
 #   scripts/bootstrap-secrets.sh [path]          (default path: /madauth)
-# It creates MADAUTH_SIGNING_KEY and WEBHOOK_SECRET if they don't exist yet, and asks for GOOGLE_CLIENT_SECRET
+# It creates WEBHOOK_SECRET if it doesn't exist yet, and asks for GOOGLE_CLIENT_SECRET
 # (leave it empty if you only use Google One Tap / FedCM) and GITHUB_CLIENT_SECRET (empty without GitHub sign-in). The values are never printed and never passed on a
 # command line (other processes can read those); they reach the AWS CLI through a file only you can read.
 # Uses the AWS CLI's current credentials and region (aws configure / aws sso login, AWS_REGION).
@@ -27,10 +27,10 @@ put() {
   echo "Stored $path/$1"
 }
 
+# madAuth's keys are in AWS KMS, which the template creates; a signing key from before stops the deploy.
 if exists MADAUTH_SIGNING_KEY; then
-  echo "$path/MADAUTH_SIGNING_KEY exists, kept. (Replacing it signs every user out.)"
-else
-  npx --yes @madauth/server generate-key | put MADAUTH_SIGNING_KEY
+  echo "$path/MADAUTH_SIGNING_KEY is from a template before madAuth 0.6, which kept the keys here. They are in AWS KMS now,"
+  echo "and the deploy fails while it exists. Deleting it signs every user out: aws ssm delete-parameter --name $path/MADAUTH_SIGNING_KEY"
 fi
 
 if exists WEBHOOK_SECRET; then
