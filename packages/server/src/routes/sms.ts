@@ -120,7 +120,7 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
     /** The current number agreed in this request: its code was just sent, so the one to the new number may follow at once. */
     let justApproved = false;
     if (existing) {
-      const previous = await readToken<SetupClaims>(await ctx.keys, config.issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
+      const previous = await readToken<SetupClaims>(ctx.keys, config.issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
       const holds = previous?.sub === user.id && typeof previous.approved === 'number' && Date.now() - previous.approved < SETUP_TTL * 1000;
       if (holds) {
         approved = previous.approved;
@@ -134,7 +134,7 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
     }
     if (!justApproved && sentRecently(user)) return tooSoon(c);
     if (!(await sendCode(c, user, phone, 'setup', localeOf(data.locale)))) return smsUnavailable(c);
-    const token = await signToken(await ctx.keys, config.issuer, SETUP_TYP, { sub: user.id, phone, ...(approved ? { approved } : {}) }, SETUP_TTL);
+    const token = await signToken(ctx.keys, config.issuer, SETUP_TYP, { sub: user.id, phone, ...(approved ? { approved } : {}) }, SETUP_TTL);
     setCookie(c, SETUP_COOKIE, token, { ...cookie, maxAge: SETUP_TTL });
     // Nothing is stored until the code proves that the number receives the SMS.
     return c.json({ phone: maskPhone(phone) }, 202);
@@ -144,7 +144,7 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
     const who = await whoSetsUp(c, ctx, 'sms');
     if (who instanceof Response) return who;
     const { user, challenge } = who;
-    const setup = await readToken<SetupClaims>(await ctx.keys, config.issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
+    const setup = await readToken<SetupClaims>(ctx.keys, config.issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
     if (!setup || setup.sub !== user.id || typeof setup.phone !== 'string') {
       return error(c, 400, 'setup_expired', 'The setup has expired or was started in another browser. Please start again.');
     }

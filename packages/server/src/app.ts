@@ -5,11 +5,10 @@ import { Admins } from './admins.js';
 import { ApiKeys, MADAUTH_SCOPES, ScopeCatalog, apiKeyInfo, grantedScopes, type MadauthScope } from './api-keys.js';
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
-import { importSigningKeys, type SigningKeys } from './keys.js';
-import { deriveCodeKey, isValidEmail, normalizeEmail } from './password.js';
+import type { KeyService } from './key-service.js';
+import { isValidEmail, normalizeEmail } from './password.js';
 import { emailRoutes } from './routes/email.js';
 import { emailLinkRoutes } from './routes/email-link.js';
-import { deriveTokenKey } from './github.js';
 import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
 import { body, error } from './routes/helpers.js';
@@ -17,7 +16,7 @@ import { passwordRoutes } from './routes/password.js';
 import { clearChallenge, isSetupStep, setChallenge, type NextStep } from './routes/challenge.js';
 import { appOriginOf } from './routes/oauth.js';
 import { smsRoutes } from './routes/sms.js';
-import { authenticatorRoutes, checkCode, type AuthenticatorKeys } from './routes/authenticator.js';
+import { authenticatorRoutes, checkCode } from './routes/authenticator.js';
 import {
   METHODS,
   MAX_MIN_LENGTH,
@@ -44,7 +43,6 @@ import { methodRoutes } from './routes/methods.js';
 import { apiKeyNotFound, apiKeyRoutes, invalidApiKey, keyCaller } from './routes/api-keys.js';
 import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
-import { deriveAuthenticatorKey } from './authenticator.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
 import { Users, factorsAmong, methodOf, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
@@ -78,7 +76,8 @@ export interface SignIn {
 /** What the route modules share. */
 export interface AppContext {
   config: MadauthConfig;
-  keys: Promise<SigningKeys>;
+  /** Signs the tokens, hashes the codes and encrypts the secrets: see key-service.ts. */
+  keys: KeyService;
   /** Whether cookies get the Secure attribute (only when the issuer is https). */
   secure: boolean;
   isAllowedOrigin(origin: string | undefined): boolean;
@@ -135,12 +134,11 @@ export interface AppContext {
  */
 export function createApp(config: MadauthConfig): Hono {
   const { issuer, allowedOrigins, sessionTtlSeconds, renewalTtlSeconds, cookieDomain } = config;
-  const keys = importSigningKeys(config.signingKey);
+  const keys = config.keyService;
   // Browsers treat http://localhost as secure, but only mark cookies Secure when served over https.
   const secure = issuer.startsWith('https:');
   const isAllowedOrigin = (origin: string | undefined) => !!origin && allowedOrigins.includes(origin);
-  const codeKey = deriveCodeKey(config.signingKey.d!);
-  const users = new Users(config.store, codeKey);
+  const users = new Users(config.store, keys);
   const methods = methodConfig(config);
   const settings = new Settings(config.store, initialMethods(methods));
   const admins = new Admins(settings, users);
@@ -149,18 +147,15 @@ export function createApp(config: MadauthConfig): Hono {
   const configured = (method: MethodId) => isConfigured(methods, method);
   const signsUp = (method: SignInMethod) => canSignUp(methods, method);
   const emailVerification = sendsVerificationEmails(config);
-  const authenticatorKeys: AuthenticatorKeys = { secretKey: deriveAuthenticatorKey(config.signingKey.d!), codeKey };
-  const tokenKey = deriveTokenKey(config.signingKey.d!);
 
   /**
    * Sets the cookies of a session: the session token for app backends, the renewal token for this server
    * only, and the expiry time for the web library.
    */
   const issueSession = async (c: Context, user: MadauthUser, amr: string[], extra?: SessionExtra) => {
-    const signingKeys = await keys;
     const [sessionToken, renewalToken] = await Promise.all([
-      signSession(signingKeys, issuer, sessionTtlSeconds, user, amr, extra),
-      signRenewal(signingKeys, issuer, renewalTtlSeconds, user, amr, extra),
+      signSession(keys, issuer, sessionTtlSeconds, user, amr, extra),
+      signRenewal(keys, issuer, renewalTtlSeconds, user, amr, extra),
     ]);
     setCookie(c, SESSION_COOKIE, sessionToken, {
       path: '/',
@@ -199,7 +194,7 @@ export function createApp(config: MadauthConfig): Hono {
 
   /** The claims of a token in one of the request's cookies, or null if it is missing, expired or of another kind. */
   const tokenClaims = async (c: Context, cookie: string, typ: string) =>
-    readToken<SessionClaims>(await keys, issuer, typ, getCookie(c, cookie));
+    readToken<SessionClaims>(keys, issuer, typ, getCookie(c, cookie));
 
   /**
    * The user of these claims with their claims of now, and as stored; null if the session has ended: the user
@@ -402,9 +397,10 @@ export function createApp(config: MadauthConfig): Hono {
   app.get('/health', (c) => c.text('ok'));
 
   app.get('/.well-known/jwks.json', async (c) => {
-    const { publicJwk } = await keys;
+
     c.header('Cache-Control', 'public, max-age=3600');
-    return c.json({ keys: [publicJwk] });
+    // Every key that verifies tokens: also those signed before a rotation.
+    return c.json({ keys: await keys.verificationKeys() });
   });
 
   // The methods that are on right now, so the web library shows exactly those.
@@ -434,14 +430,14 @@ export function createApp(config: MadauthConfig): Hono {
   if (configured('email-link') && ctx.webhook) emailLinkRoutes(app, ctx, users, ctx.webhook);
   if (configured('sms') && ctx.webhook) smsRoutes(app, ctx, users, ctx.webhook);
   if (config.google) googleRoutes(app, ctx, config.google);
-  if (config.github) githubRoutes(app, ctx, config.github, tokenKey);
+  if (config.github) githubRoutes(app, ctx, config.github);
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, users, ctx.webhook);
-  authenticatorRoutes(app, ctx, authenticatorKeys);
+  authenticatorRoutes(app, ctx);
   passkeyRoutes(app, ctx);
   apiKeyRoutes(app, ctx, apiKeys, scopeCatalog);
   // GitHub's authorization goes with the account, with the token kept from its last sign-in.
   methodRoutes(app, ctx, async (account) => {
-    if (config.github && account.key.startsWith('github:')) await revokeGrant(config.github, tokenKey, account);
+    if (config.github && account.key.startsWith('github:')) await revokeGrant(config.github, keys, account);
   });
 
   app.get('/auth/session', async (c) => {
@@ -481,7 +477,7 @@ export function createApp(config: MadauthConfig): Hono {
       if (data.code === undefined && data.recoveryCode === undefined) {
         return error(c, 401, 'code_required', 'Enter a code from your authenticator app (or a recovery code) to delete your account.');
       }
-      const via = await checkCode(c, ctx, authenticatorKeys, stored, authenticator, data);
+      const via = await checkCode(c, ctx, stored, authenticator, data);
       if (via instanceof Response) return via;
     }
     // Read before the deletion: the web library revokes the app's access to this Google account with it.
@@ -490,7 +486,7 @@ export function createApp(config: MadauthConfig): Hono {
     const githubAccount = config.github ? await users.githubAccount(user.id) : null;
     // The user with all their sign-in methods: the session proves who they are, whichever way they signed in.
     const deleted = await users.deleteById(user.id);
-    if (deleted && config.github) await revokeGrant(config.github, tokenKey, githubAccount);
+    if (deleted && config.github) await revokeGrant(config.github, keys, githubAccount);
     clearSession(c);
     await ctx.emit('user.deleted', { user });
     return googleSub ? c.json({ googleSub }) : c.body(null, 204);
@@ -660,7 +656,7 @@ export function createApp(config: MadauthConfig): Hono {
     const removed = await users.resetSignIn(user.id);
     // GitHub's authorization goes with its account, as when the user removes GitHub or deletes the account.
     const github = config.github;
-    if (github) await Promise.all(removed.filter((account) => methodOf(account) === 'github').map((account) => revokeGrant(github, tokenKey, account)));
+    if (github) await Promise.all(removed.filter((account) => methodOf(account) === 'github').map((account) => revokeGrant(github, keys, account)));
     await ctx.emit('user.sign_in_reset', { user: toMadauthUser(user), by: caller.email, ...byApiKey(caller) });
     return c.json({ email: user.emailNormalized, userId: user.id });
   });

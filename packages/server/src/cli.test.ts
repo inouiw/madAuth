@@ -111,12 +111,13 @@ describe('init', () => {
 
       expect(config).toMatchObject({
         issuer: 'http://localhost:5173',
-        signingKey: { kty: 'EC', crv: 'P-256', d: expect.any(String) },
         allowedOrigins: ['http://localhost:5173'],
         google: undefined,
         password: {},
         webhook: { url: 'http://localhost:8790/webhook', events: new Set(EMAIL_TYPES.split(',')) },
       });
+      // The generated key, as the local key service.
+      expect(await config.keyService.verificationKeys()).toEqual([expect.objectContaining({ kty: 'EC', crv: 'P-256', alg: 'ES256' })]);
     }
   });
 

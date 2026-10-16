@@ -2,7 +2,6 @@
 import { createLocalJWKSet } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseClaims, parseRoles } from './claims.js';
-import { importSigningKeys } from './keys.js';
 import {
   APP_ORIGIN,
   ISSUER,
@@ -16,7 +15,7 @@ import {
   post,
   setClaims,
   signUpVerified,
-  signingKey,
+  keyService,
   testApp,
   verify,
   linkGoogleAsBefore,
@@ -93,7 +92,7 @@ describe('claims in the session', () => {
     expect((await res.json()).user).toMatchObject({ email: 'grace@example.com', claims: { roles: ['admin', 'editor'], plan: 'pro' } });
     const cookie = cookies(res).madauth_session.value;
     // Backends read them from the session without asking madAuth.
-    const { publicJwk } = await importSigningKeys(signingKey);
+    const publicJwk = (await keyService.verificationKeys())[0]!;
     const verifySession = createSessionVerifier({ issuer: ISSUER, jwks: createLocalJWKSet({ keys: [publicJwk] }) });
     expect((await verifySession(cookie))?.claims).toEqual({ roles: ['admin', 'editor'], plan: 'pro' });
     expect(hook.calls.at(-1)).toMatchObject({ type: 'user.signed_in', data: { user: { claims: { plan: 'pro' } } } });

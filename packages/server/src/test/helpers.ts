@@ -2,6 +2,7 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type JWTPayload
 import { vi } from 'vitest';
 import { createApp } from '../app.js';
 import type { MadauthConfig } from '../config.js';
+import { createLocalKeyService } from '../key-service.js';
 import { generateSigningKey } from '../keys.js';
 import { METHODS_SETTING, Settings, parseMethodSettings, type MethodId, type MethodSettings, type SecondFactorPolicy } from '../settings.js';
 import type { StoreAdapter } from '../store/schema.js';
@@ -40,12 +41,14 @@ export async function googleIdToken(
 }
 
 export const signingKey = await generateSigningKey();
+/** The local key service of `signingKey`, which the test apps use. */
+export const keyService = await createLocalKeyService([signingKey]);
 
 /** Google sign-in with an in-memory store; no e-mail & password and no webhook unless overridden. */
 export function testConfig(overrides: Partial<MadauthConfig> = {}): MadauthConfig {
   return {
     issuer: ISSUER,
-    signingKey,
+    keyService,
     allowedOrigins: [APP_ORIGIN],
     sessionTtlSeconds: 3600,
     renewalTtlSeconds: 30 * 24 * 3600,

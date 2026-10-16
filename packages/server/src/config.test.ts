@@ -43,7 +43,7 @@ describe('loadConfig', () => {
 
     expect(config).toEqual({
       issuer: 'https://auth.example.com',
-      signingKey,
+      keyService: expect.any(Object),
       allowedOrigins: ['https://app.example.com', 'https://admin.example.com'],
       sessionTtlSeconds: 28800,
       renewalTtlSeconds: 2592000,
@@ -55,6 +55,8 @@ describe('loadConfig', () => {
       webhook: undefined,
     });
     expect(await config.store.findOne('user', { id: 'x' })).toBeNull();
+    // The local key service, from MADAUTH_SIGNING_KEY.
+    expect((await config.keyService.verificationKeys()).map((key) => key.kid)).toEqual([signingKey.kid]);
   });
 
   it('needs DATABASE_URL: every user is stored, whichever way they sign in', async () => {
@@ -64,7 +66,7 @@ describe('loadConfig', () => {
   it('accepts values wrapped in quotes, as Docker’s --env-file passes them', async () => {
     const config = await loadConfig({ ...env, MADAUTH_SIGNING_KEY: `'${JSON.stringify(signingKey)}'`, GOOGLE_CLIENT_ID: `"${CLIENT_ID}"` });
 
-    expect(config.signingKey).toEqual(signingKey);
+    expect((await config.keyService.verificationKeys())[0]).toMatchObject({ kid: signingKey.kid, x: signingKey.x });
     expect(config.google?.clientId).toBe(CLIENT_ID);
   });
 
@@ -89,6 +91,12 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, MADAUTH_SIGNING_KEY: JSON.stringify(publicKey) })).rejects.toThrow(
       /MADAUTH_SIGNING_KEY must be a private EC P-256 JWK/,
     );
+    // A key set: each key private, none twice.
+    await expect(loadConfig({ ...env, MADAUTH_SIGNING_KEY: JSON.stringify({ keys: [signingKey, publicKey] }) })).rejects.toThrow(
+      /MADAUTH_SIGNING_KEY has a key \(number 2\) that must be a private EC P-256 JWK/,
+    );
+    await expect(loadConfig({ ...env, MADAUTH_SIGNING_KEY: JSON.stringify({ keys: [signingKey, signingKey] }) })).rejects.toThrow(/has the same key twice/);
+    await expect(loadConfig({ ...env, MADAUTH_SIGNING_KEY: JSON.stringify({ keys: [] }) })).rejects.toThrow(/must be a private JWK, or a set of them/);
   });
 
   it('rejects an invalid origin, client ID or session TTL', async () => {

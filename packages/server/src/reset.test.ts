@@ -1,8 +1,6 @@
 // Resetting the sign-in of a user who lost every way in: POST /auth/admin/sign-in/reset. Behaviour described in
 // "Resetting a user's sign-in" in docs/server.md; update the doc when changing it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { encrypt } from './crypto.js';
-import { deriveTokenKey } from './github.js';
 import { createSqliteAdapter } from './store/sqlite.js';
 import type { StoreAdapter } from './store/schema.js';
 import {
@@ -20,7 +18,7 @@ import {
   setMethods,
   signInWithGitHub,
   signUpVerified,
-  signingKey,
+  keyService,
   stubGitHub,
   verify,
   type TestMethods,
@@ -277,7 +275,7 @@ describe('resetting a user\'s sign-in', () => {
     await setClaims(store, 'admin@example.com', { roles: ['admin'] });
     await signUpVerified(app, hook);
     const [{ id: userId }] = await store.findMany('user', { emailNormalized: grace.email });
-    const token = encrypt(deriveTokenKey(signingKey.d!), Buffer.from('gho_meanwhile'));
+    const token = await keyService.encrypt('provider-token', Buffer.from('gho_meanwhile'));
     meanwhile = () => new Users(inner).linkAccount(String(userId), { key: 'github:7002', email: grace.email, secret: token, primary: false });
     const revoked = stubGitHub();
 

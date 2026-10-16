@@ -15,14 +15,12 @@ import {
   post,
   signInWithGitHub,
   signUpVerified,
-  signingKey,
+  keyService,
   startGitHub,
   stubGitHub,
   testApp,
   setMethods,
 } from '../test/helpers.js';
-import { decrypt } from '../crypto.js';
-import { deriveTokenKey } from '../github.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -30,7 +28,6 @@ afterEach(() => {
 });
 
 const GITHUB = { clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET };
-const tokenKey = deriveTokenKey(signingKey.d!);
 const session = (app: ReturnType<typeof testApp>, res: Response) => app.request('/auth/session', { headers: { Cookie: cookieHeader(res) } });
 
 describe('GitHub sign-in', () => {
@@ -155,7 +152,7 @@ describe('GitHub sign-in', () => {
     expect(user).toMatchObject({ email: 'ada@example.com', emailNormalized: 'ada@example.com', emailVerified: true, name: 'Ada Lovelace' });
     const [account] = await store.findMany('account', {});
     expect(account).toMatchObject({ userId: user.id, key: 'github:7001', email: 'ada@example.com' });
-    expect(decrypt(tokenKey, account.secret as string)?.toString()).toBe('gho_test');
+    expect(Buffer.from((await keyService.decrypt('provider-token', account.secret as string))!.plaintext).toString()).toBe('gho_test');
     expect((await (await session(app, res)).json()).user).toEqual({
       id: user.id,
       email: 'ada@example.com',
@@ -194,7 +191,7 @@ describe('GitHub sign-in', () => {
     expect(await store.findMany('user', {})).toHaveLength(1);
     const account = await store.findOne('account', { key: 'github:7001' });
     expect(account).toMatchObject({ userId: first.id, email: 'ada@newmail.example' });
-    expect(decrypt(tokenKey, account!.secret as string)?.toString()).toBe('gho_second');
+    expect(Buffer.from((await keyService.decrypt('provider-token', account!.secret as string))!.plaintext).toString()).toBe('gho_second');
   });
 
   it('O7: a GitHub sign-in never joins a user who signs in another way: the address is refused', async () => {

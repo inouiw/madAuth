@@ -27,7 +27,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | Variable | Required | Description |
 | --- | --- | --- |
 | `MADAUTH_ISSUER` | yes | Public base URL of the server, e.g. `https://auth.example.com`. Used as the JWT issuer and for the callbacks of the redirect flows, `<issuer>/auth/google/callback` and `<issuer>/auth/github/callback`. |
-| `MADAUTH_SIGNING_KEY` | yes | Private ES256 key (JWK JSON) used to sign sessions. Use the same key on every instance and keep it secret. The secrets of authenticator apps are encrypted with a key derived from it: a new key makes them unusable. |
+| `MADAUTH_SIGNING_KEY` | yes | Private ES256 key (JWK JSON) that signs the sessions; the keys that hash the codes and encrypt the stored secrets are derived from it. Or a set of keys, the newest first, to [rotate](#rotating-the-signing-key) it: `{"keys":[<new>,<old>]}`. Use the same value on every instance and keep it secret. |
 | `ALLOWED_ORIGINS` | yes | Comma-separated origins of your apps, e.g. `https://app.example.com`. Only these may call the server or be redirected back to. |
 | `GOOGLE_CLIENT_ID` | for Google | OAuth client ID of type "Web application", ending in `.apps.googleusercontent.com`. Turns on Google sign-in. |
 | `GOOGLE_CLIENT_SECRET` | no | Client secret of the same client. Enables the server-side redirect flow (`GoogleRedirect`); without it those routes return 404. |
@@ -55,6 +55,31 @@ At least one way to create users must be configured: `GOOGLE_CLIENT_ID`, `GITHUB
 ```bash
 npx @madauth/server generate-key
 ```
+
+madAuth does everything it needs a key for through a key service ([`key-service.ts`](../packages/server/src/key-service.ts)): it signs the tokens (sessions, renewals and the cookies of a sign-in under way), hashes the e-mail and recovery codes (HMAC-SHA256), and encrypts the authenticator secrets and GitHub tokens it must read again (AES-256-GCM). The built-in one holds its keys in the server's memory, made from `MADAUTH_SIGNING_KEY`: the signing key itself, and a hash key and an encryption key per purpose derived from it (HKDF). Whoever can read the server's memory can read them. Key services that keep the keys out of the process (AWS KMS first) are planned, see [#74](https://github.com/inouiw/madAuth/issues/74). With [`createApp`](#your-own-node-server) you can pass your own as `keyService`.
+
+#### Rotating the signing key
+
+`MADAUTH_SIGNING_KEY` can hold several keys: the first signs, hashes and encrypts, and every listed one still verifies tokens, finds code hashes and decrypts secrets. `/.well-known/jwks.json` publishes all of them, so backends with [`createSessionVerifier`](#verifying-the-session-in-your-backend) accept the tokens of each; they fetch the list again when they meet a key they don't know.
+
+1. **Publish the new key.** Generate one and add it after the current key, which still signs:
+
+   ```bash
+   MADAUTH_SIGNING_KEY='{"keys":[<current key>,<new key>]}'
+   ```
+
+   Deploy it to every instance and wait an hour: `/.well-known/jwks.json` may be cached that long (`Cache-Control: max-age=3600`), and a backend that hasn't seen the new key would refuse the sessions it signs. (`createSessionVerifier` also fetches the list again when it meets an unknown key, but a cache in between may still answer the old list.)
+2. **Let it sign.** Put the new key first and deploy again:
+
+   ```bash
+   MADAUTH_SIGNING_KEY='{"keys":[<new key>,<current key>]}'
+   ```
+
+   From then on, new sessions and renewals are signed with the new key, and existing ones keep working.
+3. **Data moves to the new key when it's used:** an authenticator secret is re-encrypted the next time its user enters a code, a GitHub token is replaced at the next sign-in, new recovery codes are hashed with the new key, and e-mail codes live minutes.
+4. **Remove the old key once nothing needs it.** Sessions need it until the last renewal it signed has expired (`SESSION_RENEWAL_TTL`, 30 days by default); removing it earlier signs those users out. Authenticator secrets, GitHub tokens and recovery codes that weren't used since need it as long as they exist: without it, those apps and recovery codes stop working (the log says so) and those GitHub grants can't be revoked. A pass that moves all stored data at once is planned.
+
+After a suspected leak, skip the wait and put the new key alone. Every session ends, the users whose authenticator app hasn't moved yet set it up again, and backends whose cached list lacks the new key refuse the new sessions until they fetch it again.
 
 ## Google Cloud Console setup
 
@@ -414,7 +439,7 @@ The authenticator app (TOTP, RFC 6238: Google Authenticator, 1Password, Microsof
 
 The session says how it was authenticated: `amr` is `["pwd", "otp"]`, `["google", "otp"]`, `["github", "otp"]`, `["email", "otp"]` or `["passkey", "otp"]` after the second step and `["otp"]` for the app alone, as `user.amr` in the web library and in [`createSessionVerifier`](#verifying-the-session-in-your-backend). A backend can require `otp` before a sensitive action.
 
-The secrets are stored encrypted with a key derived from `MADAUTH_SIGNING_KEY`: a copy of the database alone gives no codes, and a new signing key makes every enrolled app stop working until it is set up again. See [Authenticator app security](authenticator-security.md) for the rules in detail.
+The secrets are stored encrypted by the [key service](#signing-key): a copy of the database alone gives no codes. Rotating the signing key keeps them working (see [Rotating the signing key](#rotating-the-signing-key)); replacing it with an unrelated key makes every enrolled app stop working until it is set up again. See [Authenticator app security](authenticator-security.md) for the rules in detail.
 
 ## SMS codes
 

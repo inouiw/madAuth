@@ -2,7 +2,6 @@
 // REST API, and revoking the OAuth App's authorization. Every call carries a User-Agent, which
 // api.github.com insists on.
 
-import { deriveKey } from './crypto.js';
 
 const TOKEN_ENDPOINT = 'https://github.com/login/oauth/access_token';
 const API = 'https://api.github.com';
@@ -15,10 +14,6 @@ const TIMEOUT_MS = 10_000;
 /** How long revoking a grant may take: it happens while a user waits for their deletion. */
 const REVOKE_TIMEOUT_MS = 5_000;
 
-/** The key that encrypts the access tokens kept on the accounts (see crypto.ts): its own, apart from the authenticator secrets'. */
-export function deriveTokenKey(signingKeyD: string): Buffer {
-  return deriveKey(signingKeyD, 'madauth provider token');
-}
 
 /** What GitHub says about the account that signed in. */
 export interface GitHubAccount {

@@ -3,15 +3,16 @@ import { describe, expect, it } from 'vitest';
 import {
   HASH_PARAMS,
   checkPasswordPolicy,
-  deriveCodeKey,
+  codeHashes,
   generateCode,
-  hashCode,
   hashPassword,
   isValidEmail,
   normalizeEmail,
   verifyPassword,
 } from './password.js';
-import { signingKey } from './test/helpers.js';
+import { createLocalKeyService } from './key-service.js';
+import { generateSigningKey } from './keys.js';
+import { keyService } from './test/helpers.js';
 
 describe('password hashing', () => {
   it('P1: hashes are salted and verify only the right password', async () => {
@@ -89,12 +90,13 @@ describe('e-mail addresses and codes', () => {
     expect(isValidEmail(42)).toBe(false);
   });
 
-  it('generates 6-digit codes and stores them keyed by the signing key', () => {
+  it('generates 6-digit codes and stores them keyed by the key service', async () => {
     const codes = Array.from({ length: 50 }, generateCode);
     expect(codes.every((c) => /^\d{6}$/.test(c))).toBe(true);
 
-    const key = deriveCodeKey(signingKey.d!);
-    expect(hashCode(key, '123456')).toBe(hashCode(deriveCodeKey(signingKey.d!), '123456'));
-    expect(hashCode(key, '123456')).not.toBe(hashCode(deriveCodeKey('b3RoZXIta2V5'), '123456'));
+    const [hash] = await codeHashes(keyService, '123456');
+    expect(hash).toMatch(/^[\w-]{43}$/);
+    expect(await codeHashes(keyService, '123456')).toEqual([hash]);
+    expect(await codeHashes(await createLocalKeyService([await generateSigningKey()]), '123456')).not.toEqual([hash]);
   });
 });

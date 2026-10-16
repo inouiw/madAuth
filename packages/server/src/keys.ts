@@ -1,15 +1,6 @@
-import { calculateJwkThumbprint, exportJWK, generateKeyPair, importJWK, type JWK } from 'jose';
+import { calculateJwkThumbprint, exportJWK, generateKeyPair, type JWK } from 'jose';
 
 export const SIGNING_ALG = 'ES256';
-
-/** The madAuth signing key, ready to sign tokens and to publish its public half. */
-export interface SigningKeys {
-  privateKey: CryptoKey;
-  publicKey: CryptoKey;
-  /** Public JWK published at /.well-known/jwks.json. */
-  publicJwk: JWK;
-  kid: string;
-}
 
 /** Creates a new private ES256 JWK for MADAUTH_SIGNING_KEY. */
 export async function generateSigningKey(): Promise<JWK> {
@@ -18,22 +9,14 @@ export async function generateSigningKey(): Promise<JWK> {
   return { ...jwk, alg: SIGNING_ALG, kid: await calculateJwkThumbprint(jwk) };
 }
 
-/** Throws if `jwk` is not a private ES256 (P-256) key. */
-export function assertPrivateSigningJwk(jwk: JWK): void {
-  if (jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.d || !jwk.x || !jwk.y) {
-    throw new Error('must be a private EC P-256 JWK (kty "EC", crv "P-256", with d, x and y)');
-  }
+/** Why `jwk` is not a private ES256 (P-256) key, or null if it is one. */
+export function signingJwkProblem(jwk: unknown): string | null {
+  const { kty, crv, d, x, y } = (jwk && typeof jwk === 'object' ? jwk : {}) as JWK;
+  return kty === 'EC' && crv === 'P-256' && d && x && y ? null : 'must be a private EC P-256 JWK (kty "EC", crv "P-256", with d, x and y)';
 }
 
-export async function importSigningKeys(jwk: JWK): Promise<SigningKeys> {
-  assertPrivateSigningJwk(jwk);
-  const { d: _d, ...pub } = jwk;
-  const kid = jwk.kid ?? (await calculateJwkThumbprint(pub));
-  const publicJwk: JWK = { kty: pub.kty, crv: pub.crv, x: pub.x, y: pub.y, alg: SIGNING_ALG, use: 'sig', kid };
-  return {
-    privateKey: (await importJWK({ ...jwk, alg: SIGNING_ALG }, SIGNING_ALG)) as CryptoKey,
-    publicKey: (await importJWK(publicJwk, SIGNING_ALG)) as CryptoKey,
-    publicJwk,
-    kid,
-  };
+/** Throws if `jwk` is not a private ES256 (P-256) key. */
+export function assertPrivateSigningJwk(jwk: JWK): void {
+  const problem = signingJwkProblem(jwk);
+  if (problem) throw new Error(problem);
 }

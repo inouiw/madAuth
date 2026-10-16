@@ -1,8 +1,8 @@
 import type { Hono } from 'hono';
 import type { AppContext } from '../app.js';
+import type { KeyService } from '../key-service.js';
 import type { MadauthConfig } from '../config.js';
 import { exchangeGitHubCode, fetchGitHubAccount, revokeGitHubGrant } from '../github.js';
-import { decrypt, encrypt } from '../crypto.js';
 import { githubAccountKey, type StoredAccount } from '../users.js';
 import { finishLink, pkceChallenge, redirectBack, resolveProviderUser, startOAuth, takeOAuthState, type OAuthProvider } from './oauth.js';
 
@@ -17,10 +17,10 @@ type GitHubConfig = NonNullable<MadauthConfig['github']>;
 
 /**
  * GitHub sign-in: the server-side authorization-code flow with PKCE, the only one GitHub has. The access
- * token is kept on the account, encrypted with `tokenKey`, for one thing: revoking the OAuth App's
+ * token is kept on the account, encrypted by the key service, for one thing: revoking the OAuth App's
  * authorization when the user deletes their account.
  */
-export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig, tokenKey: Buffer): void {
+export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig): void {
   const callbackUrl = `${ctx.config.issuer}/auth/github/callback`;
 
   app.get('/auth/github/start', async (c) => {
@@ -60,7 +60,7 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig, t
     const result = await fetchGitHubAccount(token);
     if (!result.ok) return back(result.error);
     const { account } = result;
-    const profile = { key: githubAccountKey(account.id), email: account.email, name: account.name, secret: encrypt(tokenKey, Buffer.from(token)) };
+    const profile = { key: githubAccountKey(account.id), email: account.email, name: account.name, secret: await ctx.keys.encrypt('provider-token', Buffer.from(token)) };
 
     const linked = await finishLink(c, ctx, GITHUB, oauth, profile);
     if (linked) return linked;
@@ -79,14 +79,14 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig, t
  * user is deleted: madAuth then no longer appears under the user's authorized apps. Best effort: the
  * deletion goes ahead whatever happens here, and a failure is logged.
  */
-export async function revokeGrant(github: GitHubConfig, tokenKey: Buffer, account: StoredAccount | null): Promise<void> {
+export async function revokeGrant(github: GitHubConfig, keys: KeyService, account: StoredAccount | null): Promise<void> {
   if (!account) return;
-  const token = account.secret ? decrypt(tokenKey, account.secret) : null;
+  const token = account.secret ? await keys.decrypt('provider-token', account.secret) : null;
   if (!token) {
-    console.error(`[madauth] The GitHub token of user ${account.userId} can't be read (was MADAUTH_SIGNING_KEY changed?): the authorization stays at GitHub until the user removes it.`);
+    console.error(`[madauth] The GitHub token of user ${account.userId} can't be read (was its key removed from MADAUTH_SIGNING_KEY?): the authorization stays at GitHub until the user removes it.`);
     return;
   }
-  const status = await revokeGitHubGrant(github, token.toString());
+  const status = await revokeGitHubGrant(github, Buffer.from(token.plaintext).toString());
   // 204: revoked. 404: the token was gone already, e.g. the user removed the app at GitHub.
   if (status !== 204 && status !== 404) {
     console.error(`[madauth] GitHub did not revoke the authorization of user ${account.userId}${status ? ` (HTTP ${status})` : ''}: it stays until the user removes it.`);

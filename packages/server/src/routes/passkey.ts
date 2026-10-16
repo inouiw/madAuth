@@ -123,7 +123,7 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
 
   /** Starts a ceremony: the cookie with its challenge, the options for the browser as the answer. */
   const begin = async (c: Context, claims: CeremonyClaims, options: object) => {
-    const token = await signToken(await ctx.keys, config.issuer, CEREMONY_TYP, { ...claims }, CEREMONY_TTL);
+    const token = await signToken(ctx.keys, config.issuer, CEREMONY_TYP, { ...claims }, CEREMONY_TTL);
     setCookie(c, CEREMONY_COOKIE, token, { ...cookie, maxAge: CEREMONY_TTL });
     return c.json(options);
   };
@@ -134,7 +134,7 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
    * twice either: an accepted one is noted (see `Users.useCeremony`).
    */
   const finish = async (c: Context, purpose: Purpose, sub?: string): Promise<(CeremonyClaims & { exp: number }) | null> => {
-    const claims = await readToken<CeremonyClaims>(await ctx.keys, config.issuer, CEREMONY_TYP, getCookie(c, CEREMONY_COOKIE));
+    const claims = await readToken<CeremonyClaims>(ctx.keys, config.issuer, CEREMONY_TYP, getCookie(c, CEREMONY_COOKIE));
     if (!claims || claims.purpose !== purpose || claims.sub !== sub || typeof claims.challenge !== 'string') return null;
     deleteCookie(c, CEREMONY_COOKIE, cookie);
     return claims;

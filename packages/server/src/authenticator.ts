@@ -1,8 +1,8 @@
 // The authenticator app: its codes (TOTP, RFC 6238), how their secrets are kept, and recovery codes. See
 // docs/authenticator-security.md.
 import { createHmac, randomBytes, randomInt } from 'node:crypto';
-import { deriveKey } from './crypto.js';
-import { hashCode, safeEqual } from './password.js';
+import type { KeyService } from './key-service.js';
+import { codeHash, codeHashes, safeEqual } from './password.js';
 
 /** How long one code is valid, as authenticator apps expect. */
 export const TOTP_STEP_SECONDS = 30;
@@ -101,18 +101,6 @@ export function otpauthUri(options: { issuer: string; account: string; secret: U
   return `otpauth://totp/${issuer}:${account}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=${TOTP_DIGITS}&period=${TOTP_STEP_SECONDS}`;
 }
 
-/**
- * The key that encrypts the secrets at rest, derived from the signing key like the key for e-mail codes.
- * A secret must be readable to check codes, so a leaked database alone must not give it away. The label
- * keeps the app's name before madAuth 0.6: another one would derive another key, and no stored secret
- * could be read.
- */
-export function deriveAuthenticatorKey(signingKeyD: string): Buffer {
-  return deriveKey(signingKeyD, 'madauth totp secret');
-}
-
-/** The secrets at rest: see crypto.ts. */
-export { decrypt as decryptSecret, encrypt as encryptSecret } from './crypto.js';
 
 /** New recovery codes, e.g. `k7mxq-2bz4p`: ten characters of 32 each, in two groups. */
 export function generateRecoveryCodes(): string[] {
@@ -133,6 +121,11 @@ export function normalizeRecoveryCode(text: unknown): string | null {
 }
 
 /** What is stored for a recovery code: a keyed hash, like the e-mail codes, so a leaked database gives no usable code. */
-export function hashRecoveryCode(codeKey: Buffer, code: string): string {
-  return hashCode(codeKey, `recovery:${code}`);
+export function recoveryCodeHash(keys: KeyService, code: string): Promise<string> {
+  return codeHash(keys, `recovery:${code}`);
+}
+
+/** The hashes a stored recovery code may have: one per hash key, the newest first (see codeHashes). */
+export function recoveryCodeHashes(keys: KeyService, code: string): Promise<string[]> {
+  return codeHashes(keys, `recovery:${code}`);
 }

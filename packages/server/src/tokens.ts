@@ -1,5 +1,6 @@
-import { SignJWT, base64url, jwtVerify, type JWTPayload } from 'jose';
-import { SIGNING_ALG, type SigningKeys } from './keys.js';
+import { base64url, createLocalJWKSet, jwtVerify, type JWK, type JWTPayload, type JWTVerifyGetKey } from 'jose';
+import type { KeyService } from './key-service.js';
+import { SIGNING_ALG } from './keys.js';
 import { RENEWAL_TYP, SESSION_TYP, type MadauthUser } from './user.js';
 
 /** A random URL-safe string (32 bytes by default). */
@@ -7,39 +8,43 @@ export function randomString(bytes = 32): string {
   return base64url.encode(crypto.getRandomValues(new Uint8Array(bytes)));
 }
 
+const encodeJson = (value: object) => base64url.encode(JSON.stringify(value));
+
 /**
- * Signs a short-lived madAuth token. `typ` keeps the token kinds (session, nonce, OAuth state) apart,
- * so one can never be accepted as another.
+ * Signs a short-lived madAuth token with the key service's signing key of now. `typ` keeps the token kinds
+ * (session, nonce, OAuth state) apart, so one can never be accepted as another.
  */
-export async function signToken(
-  keys: SigningKeys,
-  issuer: string,
-  typ: string,
-  claims: JWTPayload,
-  ttlSeconds: number,
-): Promise<string> {
-  return new SignJWT(claims)
-    .setProtectedHeader({ alg: SIGNING_ALG, kid: keys.kid, typ })
-    .setIssuer(issuer)
-    .setIssuedAt()
-    .setExpirationTime(`${ttlSeconds}s`)
-    .sign(keys.privateKey);
+export async function signToken(keys: KeyService, issuer: string, typ: string, claims: JWTPayload, ttlSeconds: number): Promise<string> {
+  const [signing] = await keys.verificationKeys();
+  const kid = signing!.kid!;
+  const now = Math.floor(Date.now() / 1000);
+  const input = `${encodeJson({ alg: SIGNING_ALG, kid, typ })}.${encodeJson({ ...claims, iss: issuer, iat: now, exp: now + ttlSeconds })}`;
+  const signature = await keys.sign(kid, new TextEncoder().encode(input));
+  return `${input}.${base64url.encode(signature)}`;
 }
 
-/** Verifies a token from {@link signToken}. Returns null if it is invalid, expired or of another kind. */
+/** The verification keys by `kid`, built once per list the key service answers. */
+const keySets = new WeakMap<JWK[], JWTVerifyGetKey>();
+const keySetOf = (keys: JWK[]): JWTVerifyGetKey => {
+  const known = keySets.get(keys);
+  if (known) return known;
+  const set = createLocalJWKSet({ keys });
+  keySets.set(keys, set);
+  return set;
+};
+
+/** Verifies a token from {@link signToken}, with any of the key service's keys. Returns null if it is invalid, expired or of another kind. */
 export async function readToken<T extends JWTPayload>(
-  keys: SigningKeys,
+  keys: KeyService,
   issuer: string,
   typ: string,
   token: string | undefined,
 ): Promise<(T & { iat: number; exp: number }) | null> {
   if (!token) return null;
-  try {
-    const { payload } = await jwtVerify<T>(token, keys.publicKey, { issuer, typ, algorithms: [SIGNING_ALG] });
-    return payload as T & { iat: number; exp: number };
-  } catch {
-    return null;
-  }
+  const keySet = keySetOf(await keys.verificationKeys());
+  // jose answers every invalid token with an exception: they all mean "no token".
+  const verified = await jwtVerify<T>(token, keySet, { issuer, typ, algorithms: [SIGNING_ALG] }).catch(() => null);
+  return verified ? (verified.payload as T & { iat: number; exp: number }) : null;
 }
 
 /** Claims of a madAuth session JWT. */
@@ -68,7 +73,7 @@ export interface SessionExtra {
 }
 
 export function signSession(
-  keys: SigningKeys,
+  keys: KeyService,
   issuer: string,
   ttlSeconds: number,
   user: MadauthUser,
@@ -93,7 +98,7 @@ export function signSession(
  * which are read again at every renewal.
  */
 export function signRenewal(
-  keys: SigningKeys,
+  keys: KeyService,
   issuer: string,
   ttlSeconds: number,
   user: MadauthUser,

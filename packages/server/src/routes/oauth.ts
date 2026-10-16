@@ -73,7 +73,7 @@ export async function startOAuth(c: Context, ctx: AppContext, cookiePath: string
     locale: localeOf(c.req.query('locale')),
     ...(link ? { link } : {}),
   };
-  const token = await signToken(await ctx.keys, ctx.config.issuer, OAUTH_TYP, { ...oauth }, OAUTH_TTL);
+  const token = await signToken(ctx.keys, ctx.config.issuer, OAUTH_TYP, { ...oauth }, OAUTH_TTL);
   // Lax: the cookie must come back on the top-level redirect from the provider to /callback.
   setCookie(c, OAUTH_COOKIE, token, {
     path: cookiePath,
@@ -90,7 +90,7 @@ export async function startOAuth(c: Context, ctx: AppContext, cookiePath: string
  * has expired: the sign-in was started in another browser, or more than ten minutes ago.
  */
 export async function takeOAuthState(c: Context, ctx: AppContext, cookiePath: string): Promise<OAuthState | null> {
-  const oauth = await readToken<OAuthState & Record<string, unknown>>(await ctx.keys, ctx.config.issuer, OAUTH_TYP, getCookie(c, OAUTH_COOKIE));
+  const oauth = await readToken<OAuthState & Record<string, unknown>>(ctx.keys, ctx.config.issuer, OAUTH_TYP, getCookie(c, OAUTH_COOKIE));
   if (!oauth) return null;
   deleteCookie(c, OAUTH_COOKIE, { path: cookiePath, secure: ctx.secure });
   // The callback has no Origin: the app it returns to is the one the sign-in is for.
