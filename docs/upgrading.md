@@ -1,5 +1,9 @@
 # Upgrading
 
+## To 0.7
+
+- **The `docker-compose.yml` hardens the container:** a read-only file system with `/tmp` in memory, no capabilities, `no-new-privileges` and no core dumps. If you copied it or run `docker run`, add these settings; see [Hardening](server.md#hardening). The image starts Node with `--disable-sigusr1`, so `SIGUSR1` no longer opens its debugger.
+
 ## To 0.6
 
 0.6 adds passkeys, API keys and a search for users, lets a user have several sign-in methods, makes the settings of each method explicit, makes the first admin with `INITIAL_ADMIN_EMAIL` instead of the command line, calls the authenticator app `authenticator` instead of `totp`, and names the calls that open madAuth's dialog after it. What changes for you:

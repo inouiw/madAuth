@@ -13,6 +13,18 @@ services:
       - '8787:8787'
     volumes:
       - madauth-data:/data
+    # Hardening, see "Hardening" in docs/server.md: whoever can read the server's memory or plant a file can read
+    # its keys and every record.
+    # A read-only file system. The volume above stays writable, for the database and its WAL files.
+    read_only: true
+    tmpfs:
+      - /tmp # temporary files, in memory
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      core: 0 # no core dumps (soft and hard limit)
 
 volumes:
   madauth-data:
