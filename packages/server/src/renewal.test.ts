@@ -2,7 +2,6 @@
 // See "Sessions" in docs/server.md.
 import { createLocalJWKSet } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { importSigningKeys } from './keys.js';
 import {
   APP_ORIGIN,
   ISSUER,
@@ -15,7 +14,7 @@ import {
   setClaims,
   signInResponse,
   signUpVerified,
-  signingKey,
+  keyService,
   testApp,
 } from './test/helpers.js';
 import { createSessionVerifier } from './verify.js';
@@ -56,7 +55,7 @@ describe('the cookies of a session', () => {
   it('a renewal token is never accepted as a session, here or by a backend', async () => {
     const app = testApp();
     const renewal = cookies(await signInResponse(app)).madauth_renewal.value;
-    const { publicJwk } = await importSigningKeys(signingKey);
+    const publicJwk = (await keyService.verificationKeys())[0]!;
     const verifySession = createSessionVerifier({ issuer: ISSUER, jwks: createLocalJWKSet({ keys: [publicJwk] }) });
 
     expect((await check(app, `madauth_session=${renewal}`)).status).toBe(401);
@@ -148,7 +147,7 @@ describe('renewal', () => {
     const res = await check(app, renewalOnly(signedIn));
 
     expect((await res.json()).user.claims).toEqual({ roles: ['admin'] });
-    const { publicJwk } = await importSigningKeys(signingKey);
+    const publicJwk = (await keyService.verificationKeys())[0]!;
     const verifySession = createSessionVerifier({ issuer: ISSUER, jwks: createLocalJWKSet({ keys: [publicJwk] }) });
     expect((await verifySession(cookies(res).madauth_session.value))?.claims).toEqual({ roles: ['admin'] });
   });

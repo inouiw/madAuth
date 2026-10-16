@@ -1,5 +1,6 @@
-import type { JWK, JWTVerifyGetKey } from 'jose';
-import { assertPrivateSigningJwk, generateSigningKey } from './keys.js';
+import type { JWTVerifyGetKey } from 'jose';
+import { createLocalKeyService, parseSigningKeys, type KeyService } from './key-service.js';
+import { generateSigningKey } from './keys.js';
 import { isValidEmail, normalizeEmail } from './password.js';
 import type { MethodConfig } from './settings.js';
 import type { StoreAdapter } from './store/schema.js';
@@ -15,8 +16,11 @@ import {
 export interface MadauthConfig {
   /** Public base URL of the server (MADAUTH_ISSUER). */
   issuer: string;
-  /** Private ES256 JWK (MADAUTH_SIGNING_KEY). */
-  signingKey: JWK;
+  /**
+   * Signs the tokens, hashes the codes and encrypts the secrets (see key-service.ts). `loadConfig` makes the
+   * local one from MADAUTH_SIGNING_KEY: one private ES256 JWK, or a set of them, the newest first.
+   */
+  keyService: KeyService;
   /** App origins allowed to call the server (ALLOWED_ORIGINS). */
   allowedOrigins: string[];
   /** Lifetime of a session token in seconds (SESSION_TTL): how long backends accept it. */
@@ -212,14 +216,11 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
         `MADAUTH_SIGNING_KEY='${JSON.stringify(key)}'\n`,
     );
   }
-  let signingKey: JWK;
-  try {
-    signingKey = JSON.parse(keyValue) as JWK;
-    assertPrivateSigningJwk(signingKey);
-  } catch (e) {
-    const reason = e instanceof SyntaxError ? 'is not valid JSON' : (e as Error).message;
-    throw new ConfigError(`MADAUTH_SIGNING_KEY ${reason}. Generate one with: npx @madauth/server generate-key`);
+  const signingKeys = await parseSigningKeys(keyValue);
+  if ('problem' in signingKeys) {
+    throw new ConfigError(`MADAUTH_SIGNING_KEY ${signingKeys.problem}. Generate a key with: npx @madauth/server generate-key`);
   }
+  const keyService = await createLocalKeyService(signingKeys.keys);
 
   const allowedOrigins = require('ALLOWED_ORIGINS')
     .split(',')
@@ -300,7 +301,7 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
 
   return {
     issuer,
-    signingKey,
+    keyService,
     allowedOrigins,
     passkeyRpId,
     sessionTtlSeconds,

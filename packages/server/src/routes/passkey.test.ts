@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../config.js';
 import { readToken } from '../tokens.js';
 import { SESSION_TYP } from '../user.js';
-import { importSigningKeys } from '../keys.js';
 import { Users } from '../users.js';
 import {
   APP_ORIGIN,
@@ -17,6 +16,7 @@ import {
   post,
   setMethods,
   signUpVerified,
+  keyService,
   signingKey,
   type TestMethods,
 } from '../test/helpers.js';
@@ -70,7 +70,7 @@ async function withGrace(methods: TestMethods = { google: ON, password: ON, pass
 
 /** The session's claims, as a backend verifies them. */
 async function sessionClaims(res: Response) {
-  return readToken<{ amr: string[]; auth_time: number }>(await importSigningKeys(signingKey), ISSUER, SESSION_TYP, cookies(res).madauth_session.value);
+  return readToken<{ amr: string[]; auth_time: number }>(keyService, ISSUER, SESSION_TYP, cookies(res).madauth_session.value);
 }
 
 describe('adding a passkey', () => {

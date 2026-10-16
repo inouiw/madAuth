@@ -2,6 +2,7 @@
 import { createLocalJWKSet, jwtVerify } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../config.js';
+import { createLocalKeyService } from '../key-service.js';
 import { generateSigningKey } from '../keys.js';
 import {
   ALL_EVENTS,
@@ -529,7 +530,7 @@ describe('signing in with the app alone', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const otherKey = testApp({
       store,
-      signingKey: await generateSigningKey(),
+      keyService: await createLocalKeyService([await generateSigningKey()]),
       password: {},
       webhook: { url: WEBHOOK_URL, secret: WEBHOOK_SECRET, events: ALL_EVENTS },
       webhookFetch: hook.fetch,

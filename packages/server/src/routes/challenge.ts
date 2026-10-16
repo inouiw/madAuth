@@ -59,7 +59,7 @@ const cookieOptions = (secure: boolean) => ({ path: COOKIE_PATH, httpOnly: true,
 
 /** Sets the challenge cookie: the sign-in goes on with its second step within CHALLENGE_TTL. */
 export async function setChallenge(c: Context, ctx: AppContext, challenge: Challenge): Promise<void> {
-  const token = await signToken(await ctx.keys, ctx.config.issuer, CHALLENGE_TYP, { ...challenge }, CHALLENGE_TTL);
+  const token = await signToken(ctx.keys, ctx.config.issuer, CHALLENGE_TYP, { ...challenge }, CHALLENGE_TTL);
   setCookie(c, CHALLENGE_COOKIE, token, { ...cookieOptions(ctx.secure), maxAge: CHALLENGE_TTL });
 }
 
@@ -75,7 +75,7 @@ export function clearChallenge(c: Context, secure: boolean): void {
  * several can switch; `setup` needs `next` to be a setup step.
  */
 export async function readChallenge(c: Context, ctx: AppContext, step: SecondFactor | 'setup'): Promise<ChallengeClaims | null> {
-  const claims = await readToken<ChallengeClaims>(await ctx.keys, ctx.config.issuer, CHALLENGE_TYP, getCookie(c, CHALLENGE_COOKIE));
+  const claims = await readToken<ChallengeClaims>(ctx.keys, ctx.config.issuer, CHALLENGE_TYP, getCookie(c, CHALLENGE_COOKIE));
   if (!claims || typeof claims.sub !== 'string' || !Array.isArray(claims.amr)) return null;
   const factors = Array.isArray(claims.factors) ? claims.factors : [];
   const fits = step === 'setup' ? isSetupStep(claims.next) : factors.includes(step);

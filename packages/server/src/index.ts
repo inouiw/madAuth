@@ -1,6 +1,7 @@
 export { createApp, REDIRECT_ERROR_PARAM } from './app.js';
 export { ConfigError, envVars, loadConfig, type ConfigOverrides, type EntryOptions, type MadauthConfig } from './config.js';
 export { generateSigningKey } from './keys.js';
+export { createLocalKeyService, parseSigningKeys, type EncryptionPurpose, type KeyService } from './key-service.js';
 export {
   madauthSchema,
   type FieldDef,

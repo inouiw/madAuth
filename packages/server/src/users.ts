@@ -1,7 +1,8 @@
 // Everything madAuth stores, written once on top of the StoreAdapter. Routes never call the adapter directly.
 import { createHash, randomBytes } from 'node:crypto';
 import { claimsFromJson, type Claims } from './claims.js';
-import { generateCode, generateLinkToken, hashCode, hashLinkToken, safeEqual } from './password.js';
+import type { KeyService } from './key-service.js';
+import { codeHashes, generateCode, generateLinkToken, hashLinkToken, safeEqual } from './password.js';
 import { ALWAYS_SIGN_IN, FORMER_AUTHENTICATOR_ID, SIGN_IN_METHODS, type SecondFactor, type SignInMethod } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 import type { MadauthUser } from './user.js';
@@ -253,15 +254,15 @@ export interface NewAccount {
 }
 
 export class Users {
-  /** `codeKey` keys the e-mail codes (see deriveCodeKey); only needed to issue and check them. */
+  /** `keys` hash the e-mail and SMS codes (see codeHashes); only needed to issue and check them. */
   constructor(
     private readonly store: StoreAdapter,
-    private readonly codeKey?: Buffer,
+    private readonly keys?: KeyService,
   ) {}
 
-  private get key(): Buffer {
-    if (!this.codeKey) throw new Error('Users needs a code key to issue or check e-mail codes.');
-    return this.codeKey;
+  private hashes(code: string): Promise<string[]> {
+    if (!this.keys) throw new Error('Users needs the key service to issue or check codes.');
+    return codeHashes(this.keys, code);
   }
 
   async findByEmail(emailNormalized: string): Promise<StoredUser | null> {
@@ -581,14 +582,19 @@ export class Users {
   }
 
   /**
-   * Uses up the recovery code with this hash for the user's authenticator account. Resolves to false if it
-   * is not theirs, belongs to another setup than the account's, or was used already.
+   * Uses up the recovery code with one of these hashes (one per hash key, see codeHashes) for the user's
+   * authenticator account. Resolves to false if it is not theirs, belongs to another setup than the account's,
+   * or was used already.
    */
-  async consumeRecoveryCode(account: StoredAccount, hash: string): Promise<boolean> {
-    const record = await this.store.findOne('recoveryCode', { id: hash });
-    if (!record || record.userId !== account.userId || record.setupId !== (account.setupId ?? '')) return false;
-    // The delete count decides, so the same code sent twice is accepted once.
-    return (await this.store.delete('recoveryCode', { id: hash })) === 1;
+  async consumeRecoveryCode(account: StoredAccount, hashes: string[]): Promise<boolean> {
+    for (const hash of hashes) {
+      const record = await this.store.findOne('recoveryCode', { id: hash });
+      if (!record) continue;
+      if (record.userId !== account.userId || record.setupId !== (account.setupId ?? '')) return false;
+      // The delete count decides, so the same code sent twice is accepted once.
+      return (await this.store.delete('recoveryCode', { id: hash })) === 1;
+    }
+    return false;
   }
 
   /** How many recovery codes of the account's setup are left. */
@@ -684,7 +690,7 @@ export class Users {
       id: hashLinkToken(token),
       userId,
       purpose,
-      codeHash: hashCode(this.key, code),
+      codeHash: (await this.hashes(code))[0]!,
       attempts: 0,
       expiresAt: Date.now() + ttlMs,
     };
@@ -733,7 +739,7 @@ export class Users {
       if (count > MAX_WRONG_CODES) return { userId: null, locked: true };
       wrongCodes = count;
     }
-    if (!safeEqual(hashCode(this.key, code), record.codeHash)) {
+    if (!(await this.hashes(code)).some((hash) => safeEqual(hash, record.codeHash))) {
       if (attempts >= MAX_CODE_ATTEMPTS) await this.store.delete('verification', { id: record.id });
       return { userId: null, locked: counted && wrongCodes >= MAX_WRONG_CODES };
     }

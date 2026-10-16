@@ -73,7 +73,7 @@ Code: [`packages/server/src/routes/lockout.ts`](../packages/server/src/routes/lo
 The confirmation and reset e-mails contain a link and a 6-digit code. The link is the easiest way; the code helps when the e-mail is read on another device.
 
 - The link token is 32 random bytes. Only its SHA-256 is stored, so a copy of the database contains no usable links.
-- The code is stored as an HMAC-SHA256 with a key derived (HKDF) from the server's signing key. A plain hash of a 6-digit number could be reversed by trying all million values; without the signing key this is not possible.
+- The code is stored as an HMAC-SHA256 with the key service's hash key (derived from the signing key, see [Signing key](server.md#signing-key)). A plain hash of a 6-digit number could be reversed by trying all million values; without the key this is not possible.
 - The link and the code share one record. It expires after 24 hours for a confirmation and after 30 minutes for a reset.
 - They work once. The record is deleted when it is used, and the number of deleted records decides, so two requests with the same link can't both succeed.
 - After 5 wrong codes the record is deleted, and the link stops working too. Attempts sent at the same time count one by one.

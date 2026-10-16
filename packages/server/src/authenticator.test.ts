@@ -1,21 +1,19 @@
 // Behaviour described in docs/authenticator-security.md; update the doc when changing it.
 import { describe, expect, it } from 'vitest';
-import { deriveCodeKey } from './password.js';
-import { signingKey } from './test/helpers.js';
+import { createLocalKeyService } from './key-service.js';
+import { generateSigningKey } from './keys.js';
+import { keyService } from './test/helpers.js';
 import {
   RECOVERY_CODES,
   base32Decode,
   base32Encode,
-  decryptSecret,
-  deriveAuthenticatorKey,
-  encryptSecret,
   generateRecoveryCodes,
   generateTotpSecret,
-  hashRecoveryCode,
   hotp,
   normalizeRecoveryCode,
   otpauthUri,
   stepOf,
+  recoveryCodeHashes,
   totp,
   verifyTotp,
 } from './authenticator.js';
@@ -97,35 +95,29 @@ describe('codes', () => {
 });
 
 describe('secrets at rest', () => {
-  const key = deriveAuthenticatorKey(signingKey.d!);
-
-  it('U6: a secret is encrypted with a random IV and comes back only with the same key, untouched', () => {
+  it('U6: a secret is encrypted with a random IV and comes back only with the same key and purpose, untouched', async () => {
     const secret = generateTotpSecret();
-    const stored = encryptSecret(key, secret);
+    const stored = await keyService.encrypt('authenticator-secret', secret);
 
     expect(stored).toMatch(/^v1\.[\w-]+\.[\w-]+\.[\w-]+$/);
     expect(stored).not.toContain(base32Encode(secret));
-    expect(encryptSecret(key, secret)).not.toBe(stored);
-    expect(decryptSecret(key, stored)).toEqual(secret);
+    expect(await keyService.encrypt('authenticator-secret', secret)).not.toBe(stored);
+    expect(await keyService.decrypt('authenticator-secret', stored)).toEqual({ plaintext: new Uint8Array(secret), current: true });
 
-    expect(decryptSecret(deriveAuthenticatorKey(generateTotpSecret().toString('base64url')), stored)).toBe(null);
+    // Each purpose has a key of its own, and another signing key brings other keys.
+    expect(await keyService.decrypt('provider-token', stored)).toBe(null);
+    expect(await (await createLocalKeyService([await generateSigningKey()])).decrypt('authenticator-secret', stored)).toBe(null);
     const [version, iv, encrypted, tag] = stored.split('.');
     const flipped = Buffer.from(tag, 'base64url');
     flipped[0] ^= 1;
-    expect(decryptSecret(key, [version, iv, encrypted, flipped.toString('base64url')].join('.'))).toBe(null);
-    expect(decryptSecret(key, [version, iv, encrypted, tag, 'x'].join('.'))).toBe(null);
-    for (const malformed of ['', 'v2.a.b.c', 'v1.a.b', `v1.${iv}.${encrypted}.c`]) expect(decryptSecret(key, malformed)).toBe(null);
-  });
-
-  it('U6: the key is derived from the signing key and differs from the key for e-mail codes', () => {
-    expect(key).toHaveLength(32);
-    expect(deriveAuthenticatorKey(signingKey.d!)).toEqual(key);
-    expect(key.equals(deriveCodeKey(signingKey.d!))).toBe(false);
+    expect(await keyService.decrypt('authenticator-secret', [version, iv, encrypted, flipped.toString('base64url')].join('.'))).toBe(null);
+    expect(await keyService.decrypt('authenticator-secret', [version, iv, encrypted, tag, 'x'].join('.'))).toBe(null);
+    for (const malformed of ['', 'v2.a.b.c', 'v1.a.b', `v1.${iv}.${encrypted}.c`]) expect(await keyService.decrypt('authenticator-secret', malformed)).toBe(null);
   });
 });
 
 describe('recovery codes', () => {
-  it('U7: ten distinct codes of two groups, read back in any form, hashed with the code key', () => {
+  it('U7: ten distinct codes of two groups, read back in any form, hashed with the key service', async () => {
     const codes = generateRecoveryCodes();
 
     expect(codes).toHaveLength(RECOVERY_CODES);
@@ -141,8 +133,7 @@ describe('recovery codes', () => {
     expect(normalizeRecoveryCode('abcde-fghi0')).toBe(null);
     expect(normalizeRecoveryCode(123)).toBe(null);
 
-    const codeKey = deriveCodeKey(signingKey.d!);
-    expect(hashRecoveryCode(codeKey, normalized)).toBe(hashRecoveryCode(codeKey, normalized));
-    expect(hashRecoveryCode(codeKey, normalized)).not.toBe(hashRecoveryCode(codeKey, codes[1].replace('-', '')));
+    expect(await recoveryCodeHashes(keyService, normalized)).toEqual(await recoveryCodeHashes(keyService, normalized));
+    expect(await recoveryCodeHashes(keyService, normalized)).not.toEqual(await recoveryCodeHashes(keyService, codes[1].replace('-', '')));
   });
 });

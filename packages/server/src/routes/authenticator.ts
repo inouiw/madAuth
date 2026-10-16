@@ -10,12 +10,10 @@ import { readToken, signToken } from '../tokens.js';
 import {
   TOTP_WINDOW,
   base32Encode,
-  decryptSecret,
-  encryptSecret,
   generateRecoveryCodes,
   generateTotpSecret,
-  hashRecoveryCode,
   normalizeRecoveryCode,
+  recoveryCodeHashes,
   otpauthUri,
   verifyTotp,
 } from '../authenticator.js';
@@ -51,12 +49,6 @@ interface SetupClaims extends JWTPayload {
   approved?: number;
 }
 
-/** The keys of the authenticator app: one encrypts the secrets, the other (the e-mail codes' key) hashes the recovery codes. */
-export interface AuthenticatorKeys {
-  secretKey: Buffer;
-  codeKey: Buffer;
-}
-
 const cookieOptions = (secure: boolean) => ({ path: COOKIE_PATH, httpOnly: true, secure, sameSite: 'Strict' as const });
 
 /** How a code was given: from the app, or one of the recovery codes. */
@@ -70,7 +62,6 @@ export type CodeVia = 'authenticator' | 'recovery_code';
 export async function checkCode(
   c: Context,
   ctx: AppContext,
-  keys: AuthenticatorKeys,
   user: StoredUser,
   account: StoredAccount,
   data: Body,
@@ -82,7 +73,7 @@ export async function checkCode(
 
   if (typeof data.recoveryCode === 'string') {
     const code = normalizeRecoveryCode(data.recoveryCode);
-    if (!code || !(await users.consumeRecoveryCode(account, hashRecoveryCode(keys.codeKey, code)))) return wrong();
+    if (!code || !(await users.consumeRecoveryCode(account, await recoveryCodeHashes(ctx.keys, code)))) return wrong();
     await users.updateAccount(account.id, { failedAttempts: 0, lockedUntil: 0 });
     const remaining = await users.countRecoveryCodes(account);
     await ctx.emit('user.recovery_code_used', { user: toMadauthUser(user), remaining });
@@ -90,11 +81,14 @@ export async function checkCode(
   }
 
   if (typeof data.code !== 'string' || !account.secret) return wrong();
-  const secret = decryptSecret(keys.secretKey, account.secret);
-  if (!secret) {
-    console.error(`[madauth] The authenticator secret of user ${user.id} can't be read: was MADAUTH_SIGNING_KEY changed?`);
+  const decrypted = await ctx.keys.decrypt('authenticator-secret', account.secret);
+  if (!decrypted) {
+    console.error(`[madauth] The authenticator secret of user ${user.id} can't be read: was its key removed from MADAUTH_SIGNING_KEY?`);
     return wrong();
   }
+  const secret = Buffer.from(decrypted.plaintext);
+  // Encrypted with an older key: moved to the newest now, so that key can go once every secret has moved.
+  if (!decrypted.current) await users.updateAccount(account.id, { secret: await ctx.keys.encrypt('authenticator-secret', secret) });
   const step = verifyTotp(secret, data.code, Date.now(), TOTP_WINDOW);
   // A code works once: it must be later than the last accepted one, and the write decides between
   // requests sent at the same time.
@@ -102,7 +96,7 @@ export async function checkCode(
   return 'authenticator';
 }
 
-export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: AuthenticatorKeys): void {
+export function authenticatorRoutes(app: Hono, ctx: AppContext): void {
   const { config, secure, users } = ctx;
   const { issuer } = config;
   const cookie = cookieOptions(secure);
@@ -128,9 +122,10 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
 
 
   /** New recovery codes, with what is stored for them. */
-  const newRecoveryCodes = () => {
+  const newRecoveryCodes = async () => {
     const recoveryCodes = generateRecoveryCodes();
-    return { recoveryCodes, hashes: recoveryCodes.map((code) => hashRecoveryCode(keys.codeKey, normalizeRecoveryCode(code)!)) };
+    const hashes = await Promise.all(recoveryCodes.map(async (code) => (await recoveryCodeHashes(ctx.keys, normalizeRecoveryCode(code)!))[0]!));
+    return { recoveryCodes, hashes };
   };
 
   /** The name the app shows next to the account: AUTHENTICATOR_ISSUER, or the host of the app that asked. */
@@ -147,7 +142,7 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
     const existing = await users.authenticatorAccount(who.user.id);
     let approved: number | undefined;
     if (existing) {
-      const previous = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
+      const previous = await readToken<SetupClaims>(ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
       const holds = previous?.sub === who.user.id && typeof previous.approved === 'number' && Date.now() - previous.approved < SETUP_TTL * 1000;
       if (holds) {
         approved = previous.approved;
@@ -156,7 +151,7 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
         if (data.code === undefined && data.recoveryCode === undefined) {
           return error(c, 401, 'code_required', 'Enter a code from your current authenticator app (or a recovery code) to replace it.');
         }
-        const via = await checkCode(c, ctx, keys, who.user, existing, data);
+        const via = await checkCode(c, ctx, who.user, existing, data);
         if (via instanceof Response) return via;
         approved = Date.now();
       }
@@ -165,11 +160,11 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
     const claims = {
       sub: who.user.id,
       setup: newId('tsu'),
-      secret: encryptSecret(keys.secretKey, secret),
+      secret: await ctx.keys.encrypt('authenticator-secret', secret),
       ...(existing ? { replaces: existing.setupId } : {}),
       ...(approved ? { approved } : {}),
     };
-    const token = await signToken(await ctx.keys, issuer, SETUP_TYP, claims, SETUP_TTL);
+    const token = await signToken(ctx.keys, issuer, SETUP_TYP, claims, SETUP_TTL);
     setCookie(c, SETUP_COOKIE, token, { ...cookie, maxAge: SETUP_TTL });
     // Nothing is stored until the first code proves that the app has the secret.
     return c.json({ secret: base32Encode(secret), uri: otpauthUri({ issuer: issuerLabel(c), account: who.user.email, secret }) });
@@ -180,9 +175,12 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
     if (who instanceof Response) return who;
     const { challenge } = who;
     const data = await body(c);
-    const setup = await readToken<SetupClaims>(await ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
-    const secret =
-      setup && setup.sub === who.user.id && typeof setup.secret === 'string' && typeof setup.setup === 'string' ? decryptSecret(keys.secretKey, setup.secret) : null;
+    const setup = await readToken<SetupClaims>(ctx.keys, issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
+    const decrypted =
+      setup && setup.sub === who.user.id && typeof setup.secret === 'string' && typeof setup.setup === 'string'
+        ? await ctx.keys.decrypt('authenticator-secret', setup.secret)
+        : null;
+    const secret = decrypted ? Buffer.from(decrypted.plaintext) : null;
     if (!setup || !secret) return error(c, 400, 'setup_expired', 'The setup has expired or was started in another browser. Please start again.');
     const step = typeof data.code === 'string' ? verifyTotp(secret, data.code, Date.now(), TOTP_WINDOW) : null;
     // The setup cookie stays, so a mistyped code can be tried again.
@@ -196,7 +194,7 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
     // user who has a method already. If a sign-up got another method meanwhile, the sign-up's app is refused.
     const signUp = !!challenge && isSignUpStep(challenge);
     const user = signUp ? await reclaimConfirmation(users, who.user) : who.user;
-    const { recoveryCodes, hashes } = newRecoveryCodes();
+    const { recoveryCodes, hashes } = await newRecoveryCodes();
     await users.addRecoveryCodes(user.id, setup.setup, hashes);
     const patch = { secret: setup.secret, setupId: setup.setup, failedAttempts: 0, lockedUntil: 0, lastUsedStep: step };
     const replaced = setup.replaces === undefined ? null : await users.authenticatorApp(user.id);
@@ -227,7 +225,7 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
     // The app was removed meanwhile.
     const account = await users.authenticatorAccount(user.id);
     if (!account) return error(c, 401, 'challenge_expired', 'The sign-in has expired. Please sign in again.');
-    const via = await checkCode(c, ctx, keys, user, account, await body(c));
+    const via = await checkCode(c, ctx, user, account, await body(c));
     if (via instanceof Response) return via;
     return c.json({ user: await finishSignIn(c, ctx, user, challenge, 'otp', via) });
   });
@@ -242,7 +240,7 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
     // An unknown address, one without an app, one nobody confirmed, or a wrong code: all the same answer. With
     // the app allowed as a sign-in method, every user who has one signs in with it alone: the admin's decision.
     if (!user || !user.emailVerified || !account?.secret) return wrong();
-    const via = await checkCode(c, ctx, keys, user, account, data, wrong);
+    const via = await checkCode(c, ctx, user, account, data, wrong);
     if (via instanceof Response) return via;
     const result = await ctx.startSession(c, toMadauthUser(user), ['otp'], { method: 'authenticator', signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
     await ctx.emit('user.signed_in', { user: result, method: 'authenticator' });
@@ -259,7 +257,7 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
     const refused = await removalRefused(c, ctx, accounts, account, 'the authenticator app');
     if (refused) return refused;
     // Removing the app takes a current code: a stolen session alone can't switch the protection off.
-    const via = await checkCode(c, ctx, keys, user, account, await body(c));
+    const via = await checkCode(c, ctx, user, account, await body(c));
     if (via instanceof Response) return via;
     const removed = await removeAccount(c, ctx, accounts, account);
     if (removed instanceof Response) return removed;
@@ -274,9 +272,9 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext, keys: Authentica
     if (!user) return noSession(c);
     const account = await users.authenticatorAccount(user.id);
     if (!account) return error(c, 400, 'no_authenticator', 'No authenticator app is set up.');
-    const via = await checkCode(c, ctx, keys, user, account, await body(c));
+    const via = await checkCode(c, ctx, user, account, await body(c));
     if (via instanceof Response) return via;
-    const { recoveryCodes, hashes } = newRecoveryCodes();
+    const { recoveryCodes, hashes } = await newRecoveryCodes();
     await users.replaceRecoveryCodes(account, hashes);
     return c.json({ recoveryCodes });
   });

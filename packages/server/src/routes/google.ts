@@ -48,7 +48,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
   app.post('/auth/google/nonce', async (c) => {
     if (!(await ctx.enabled(c, 'google'))) return disabled(c);
     const nonce = randomString();
-    const token = await signToken(await keys, issuer, NONCE_TYP, { nonce }, NONCE_TTL);
+    const token = await signToken(keys, issuer, NONCE_TYP, { nonce }, NONCE_TTL);
     setCookie(c, NONCE_COOKIE, token, {
       path: COOKIE_PATH,
       httpOnly: true,
@@ -64,7 +64,7 @@ export function googleRoutes(app: Hono, ctx: AppContext, google: NonNullable<Mad
     if (typeof body.credential !== 'string' || !body.credential) {
       return c.json({ error: 'verification_failed', message: 'credential is missing' }, 400);
     }
-    const nonceClaims = await readToken<{ nonce: string }>(await keys, issuer, NONCE_TYP, getCookie(c, NONCE_COOKIE));
+    const nonceClaims = await readToken<{ nonce: string }>(keys, issuer, NONCE_TYP, getCookie(c, NONCE_COOKIE));
     if (!nonceClaims) {
       return c.json({ error: 'verification_failed', message: 'nonce cookie missing or expired' }, 401);
     }

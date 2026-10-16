@@ -20,7 +20,7 @@ Code: `useAuthenticatorStep` in [`packages/server/src/users.ts`](../packages/ser
 
 ## Secrets at rest
 
-A TOTP secret must be readable to check codes, so it can't be hashed like a password. It is stored encrypted with AES-256-GCM under a key derived (HKDF) from the server's signing key, with a random IV per secret: a copy of the database alone gives no codes, and a tampered record is refused. The price is that a new `MADAUTH_SIGNING_KEY` makes every enrolled app stop working, with an error in the log; the users set their app up again. Keep the key.
+A TOTP secret must be readable to check codes, so it can't be hashed like a password. It is stored encrypted with AES-256-GCM by the key service ([Signing key](server.md#signing-key)), with a random IV per secret: a copy of the database alone gives no codes, and a tampered record is refused. After a [rotation of the signing key](server.md#rotating-the-signing-key), a secret under the old key still works and is re-encrypted with the new one the next time its user enters a code. Without the key it was encrypted with, the app stops working, with an error in the log; its user sets it up again.
 
 Code: `deriveAuthenticatorKey`, `encryptSecret` and `decryptSecret` in [`authenticator.ts`](../packages/server/src/authenticator.ts).
 
@@ -39,7 +39,7 @@ Code: `/auth/authenticator/setup` and `/auth/authenticator/confirm` in [`routes/
 
 Setting the app up gives the user ten recovery codes, shown once: ten lower-case letters and digits from 2 to 7 each (no 0, 1, 8 or 9, which are easy to misread), in two groups of five. Each signs in once in place of a code from the app, wherever a code is asked for.
 
-- Only a keyed hash of each code is stored (HMAC-SHA256 with the key derived from the signing key), so a copy of the database gives no codes. The delete count decides when a code is used, so the same code sent twice signs in once.
+- Only a keyed hash of each code is stored (HMAC-SHA256 with the key service's hash key; after a rotation, codes made under the old key still work), so a copy of the database gives no codes. The delete count decides when a code is used, so the same code sent twice signs in once.
 - Using one tells your webhook how many are left (`user.recovery_code_used`), so your app can remind the user to get new ones. New codes replace the whole set and take a current code.
 - A user who lost both the phone and the codes needs an admin, who [resets their sign-in](server.md#resetting-a-users-sign-in): every method and factor goes, and the user signs up again. Nothing in madAuth hands such a user a way in by e-mail on its own: the inbox is what a password reset proves, and the app exists to ask for more than the inbox. So the admin checks who is asking first: after a reset, the inbox is all it takes.
 

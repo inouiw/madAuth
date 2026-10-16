@@ -1,5 +1,6 @@
 // Password hashing and the checks around it. See docs/password-security.md.
-import { createHash, createHmac, hkdfSync, randomBytes, randomInt, scrypt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomInt, scrypt, timingSafeEqual } from 'node:crypto';
+import type { KeyService } from './key-service.js';
 import type { PasswordRules, PasswordScore } from './settings.js';
 import { passwordScore } from './strength.js';
 
@@ -113,15 +114,12 @@ export function generateCode(): string {
 }
 
 /**
- * The key for {@link hashCode}, derived from the signing key. A 6-digit code has only a million values,
- * so a plain hash could be reversed from a leaked database; a keyed HMAC can't without the signing key.
+ * What is stored for a code: its keyed hash (the key service's HMAC). A 6-digit code has only a million
+ * values, so a plain hash could be reversed from a leaked database; a keyed one can't without the key. One
+ * hash per hash key, the newest first: the first is stored, and a stored code is found as any of them.
  */
-export function deriveCodeKey(signingKeyD: string): Buffer {
-  return Buffer.from(hkdfSync('sha256', Buffer.from(signingKeyD, 'base64url'), '', 'madauth e-mail code', 32));
-}
-
-export function hashCode(key: Buffer, code: string): string {
-  return createHmac('sha256', key).update(code).digest('base64url');
+export async function codeHashes(keys: KeyService, code: string): Promise<string[]> {
+  return (await keys.mac(new TextEncoder().encode(code))).map((tag) => Buffer.from(tag).toString('base64url'));
 }
 
 /** Compares two strings in constant time. */
