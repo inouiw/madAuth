@@ -65,6 +65,7 @@ ci=$(gh run list --commit "$sha" --workflow ci.yml --json status,conclusion --jq
 case "$ci" in
   "completed success") ;;
   "") echo "release: could not read the CI run of ${sha:0:7} (is gh installed and logged in?): check it on GitHub before you go on." >&2 ;;
+  "null null") fail "CI has not run for ${sha:0:7} yet: wait until it has passed." ;;
   *) fail "CI of ${sha:0:7} is \"$ci\": wait until it has passed." ;;
 esac
 

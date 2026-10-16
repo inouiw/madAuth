@@ -4,25 +4,21 @@ A release publishes `@madauth/web` and `@madauth/server` to npm, the server imag
 
 ## Publishing a release
 
-Both packages share one version. Set it, commit, and push a matching tag:
+Both packages share one version. On `main`, up to date with GitHub, run the release script with the new version:
 
 ```bash
-npm version 0.2.0 -w packages/web -w packages/server --no-git-tag-version
+npm run release 0.6.0
 ```
 
-```bash
-git commit -am "Release 0.2.0"
-```
+It checks first and changes nothing until every check passes:
 
-```bash
-git tag v0.2.0
-```
+- you are on `main`, the working tree is clean, and `main` is the same as `origin/main`;
+- the version is a version, newer than the current one, and its tag doesn't exist yet;
+- CI passed for the commit (with `gh`; without it, the script says so and you check on GitHub). The release workflow runs the tests again, but the deploy of madauth.com starts at the same time without them.
 
-```bash
-git push origin main v0.2.0
-```
+Then it asks, and on `y` sets both packages to the version (`npm version … -w packages/web -w packages/server --no-git-tag-version`, which updates `package-lock.json` too), commits `Release <version>`, tags `v<version>` and pushes `main` and the tag together (`git push --atomic`). If the push is refused, e.g. because `main` moved meanwhile, it undoes the commit and the tag. `npm run release 0.6.0 --dry-run` runs the checks only. The script is [`scripts/release.sh`](../scripts/release.sh).
 
-A version with a suffix, e.g. `0.2.0-beta.1`, is a prerelease: npm publishes it under the `next` tag, so `npm install` keeps installing the last stable version, and the image doesn't move `latest`.
+A version with a suffix, e.g. `0.6.0-beta.1`, is a prerelease: npm publishes it under the `next` tag, so `npm install` keeps installing the last stable version, and the image doesn't move `latest`.
 
 The workflow stops before publishing anything if the tag doesn't match both package versions, or if the type check or the tests fail.
 

@@ -29,6 +29,7 @@ madAuth/
 ├── demo/             # Demo app, served at madauth.com/demo
 ├── site/             # madauth.com landing page
 ├── deploy/aws/       # User-facing AWS CDK template for running the server
+├── scripts/          # The release script (npm run release <version>, see docs/releasing.md)
 └── docs/             # User-facing documentation
 ```
 
