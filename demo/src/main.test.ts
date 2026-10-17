@@ -123,6 +123,11 @@ vi.stubGlobal(
         if (email === sessionUser?.email) sessionUser = null;
         return json({ email, userId: email === ada.email ? ada.id : 'usr_2' });
       }
+      case 'POST /auth/admin/providers/list': {
+        const roles = (sessionUser?.claims as { roles?: string[] } | undefined)?.roles ?? [];
+        if (!roles.includes('admin')) return json({ error: 'forbidden', message: 'Only admins can do this.' }, 403);
+        return json({ providers: [], callbackBase: 'https://auth.example.com/auth/providers/' });
+      }
       case 'POST /auth/admin/settings/get':
         await holdSettings;
         return json({ methods: settings });
@@ -493,6 +498,11 @@ describe('demo page', () => {
     expect(request('setSettings')).toContain('Call getSettings first.');
     const paths = vi.mocked(fetch).mock.calls.slice(requestsBefore).map(([url]) => new URL(String(url)).pathname);
     expect(paths).not.toContain('/auth/admin/settings/get');
+    // The providers' dialog doesn't open for him: the response says why.
+    $<HTMLButtonElement>('#admin-dialog').click();
+    await expect.poll(() => $('#admin-output').hidden).toBe(false);
+    expect($('#admin-output pre').textContent).toContain('"code": "forbidden"');
+    expect(document.querySelector('madauth-login')?.shadowRoot?.querySelector('dialog')?.open ?? false).toBe(false);
 
     $<HTMLButtonElement>('#sign-out').click();
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
