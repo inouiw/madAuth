@@ -79,14 +79,23 @@ describe('<madauth-login> with madAuth', () => {
     return login;
   }
 
-  it('W1: offers Google only when a Google provider is registered', async () => {
-    fakeServer().codeFlow = true;
+  it('W1: offers Google whenever the server has its redirect sign-in, whether or not the app passes the provider', async () => {
+    const server = fakeServer();
+    server.codeFlow = true;
+    vi.spyOn(window.location, 'assign').mockImplementation(() => {});
     await Madauth.initialize({ serverUrl: SERVER, providers: [] });
     let login = await open();
-    expect(login.shadowRoot!.querySelector('[data-method="google"], .google-slot')).toBeNull();
+    expect(login.shadowRoot!.querySelector('.google-slot button')).not.toBeNull();
     login.remove();
 
-    vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+    // Switched off on the server, it isn't shown, passed or not.
+    server.methods.google = false;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [] });
+    login = await open();
+    expect(login.shadowRoot!.querySelector('.google-slot')).toBeNull();
+    login.remove();
+    server.methods.google = true;
+
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleRedirect()] });
     login = await open();
     login.shadowRoot!.querySelector<HTMLButtonElement>('.google-slot button')!.click();

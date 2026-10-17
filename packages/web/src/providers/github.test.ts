@@ -79,6 +79,33 @@ describe('GitHub', () => {
     expect(gisScripts()).toHaveLength(0);
   });
 
+  it('B8: the dialog shows a button for every provider the server offers, also one the app didn’t pass, with its name', async () => {
+    const server = fakeServer();
+    server.github = true;
+    server.providerNames.github = 'GitHub Enterprise';
+
+    void openDialog([new Password()]);
+    await settle();
+
+    expect($('.github-slot button')?.textContent).toBe('Continue with GitHub Enterprise');
+    Madauth.setLocale('de');
+    expect($('.github-slot button')?.textContent).toBe('Weiter mit GitHub Enterprise');
+  });
+
+  it('B8: Google gets its button by itself only with the redirect sign-in; One Tap the app passes', async () => {
+    fakeServer();
+    void openDialog([new Password()]);
+    await settle();
+    expect($('.google-slot')).toBeNull();
+
+    resetAll();
+    fakeServer().codeFlow = true;
+    void openDialog([new Password()]);
+    await settle();
+    expect($('.google-slot button')?.textContent).toBe('Continue with Google');
+    expect(gisScripts()).toHaveLength(0);
+  });
+
   it('B3: a failed GitHub sign-in is reported as GitHub’s on the return, in the configured language, and the URL is tidied', async () => {
     fakeServer().github = true;
     history.replaceState(null, '', '/page?x=1#madauth_error=cancelled&madauth_method=github');
@@ -155,6 +182,8 @@ describe('GitHub', () => {
     expect($('.others h3')).not.toBeNull();
     login().close();
 
+    // A server that offers GitHub shows its button anyway (B8): here it doesn't.
+    server.github = false;
     void openDialog([new Authenticator()]);
     await settle();
     expect($('.others h3')).toBeNull();

@@ -31,7 +31,9 @@ export function renderRedirectButton(
   const label = button.querySelector('span')!;
   const setLabel = () => {
     const s = stringsFor(ctx.locale);
-    label.textContent = options.purpose === 'link' ? s.methodsView.connect(s.methodNames[method]) : s.methods[method].label;
+    // The name an admin gave the provider, e.g. "GitHub Enterprise"; the method's own name on older servers.
+    const name = ctx.config.providers?.find((p) => p.id === method)?.name ?? s.methodNames[method];
+    label.textContent = options.purpose === 'link' ? s.methodsView.connect(name) : s.continueWith(name);
   };
   setLabel();
   const stopFollowingLocale = ctx.onLocaleChanged(setLabel);

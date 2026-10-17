@@ -55,6 +55,8 @@ export interface FakeServer {
   password: boolean;
   emailLink: boolean;
   codeFlow: boolean;
+  /** The names admins gave the providers, as GET /auth/config lists them. */
+  providerNames: { google: string; github: string };
   /** E-mail & password accounts by e-mail address; grace@example.com (verified) exists. */
   accounts: Map<string, FakeAccount>;
   /** The webhook can't take e-mails over: sign-up and the e-mail requests answer 503. */
@@ -131,6 +133,7 @@ export function fakeServer(): FakeServer {
     password: true,
     emailLink: true,
     codeFlow: false,
+    providerNames: { google: 'Google', github: 'GitHub' },
     accounts: new Map([['grace@example.com', { password: 'correct horse battery', verified: true, name: 'Grace Hopper' }]]),
     mails: [],
     emailsDown: false,
@@ -257,6 +260,7 @@ export function fakeServer(): FakeServer {
           emailLink: server.emailLink && server.methods['email-link'] ? { secondFactor: server.policy['email-link'] } : null,
           sms: server.methods.sms,
           passkey: server.passkey ? { signUp: false, ...server.passkey } : null,
+          providers: (['google', 'github'] as const).filter((kind) => server[kind] && server.methods[kind]).map((kind) => ({ id: kind, kind, name: server.providerNames[kind] })),
         });
       // --- Passkeys ---
       case 'POST /auth/passkey/signin/options':
@@ -727,6 +731,25 @@ export function fakeServer(): FakeServer {
         if (index < 0) return json({ error: 'api_key_not_found', message: 'gone' }, 404);
         server.apiKeys.splice(index, 1);
         return json({ email, userId });
+      }
+      // The providers as the admin API answers them: an admin adds GitHub, renames it, removes it.
+      case 'POST /auth/admin/providers/list':
+      case 'POST /auth/admin/providers/add':
+      case 'POST /auth/admin/providers/update':
+      case 'POST /auth/admin/providers/remove': {
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        const data = body as unknown as { id?: string; kind?: 'google' | 'github'; name?: string; clientId?: string; clientSecret?: string | null };
+        const info = (kind: 'google' | 'github') => ({ id: kind, kind, name: server.providerNames[kind], clientId: `${kind}-client`, hasClientSecret: true, callbackUrl: `${SERVER}/auth/providers/${kind}/callback`, createdAt: 1, updatedAt: 1 });
+        const action = url.pathname.split('/').at(-1);
+        if (action === 'list') return json({ providers: (['google', 'github'] as const).filter((kind) => server[kind]).map(info) });
+        const kind = (action === 'add' ? data.kind : data.id) as 'google' | 'github';
+        if (kind !== 'google' && kind !== 'github') return json({ error: 'invalid_provider', message: 'kind' }, 400);
+        if (action === 'add' && server[kind]) return json({ error: 'provider_exists', message: 'exists' }, 409);
+        if (action !== 'add' && !server[kind]) return json({ error: 'provider_not_found', message: 'none' }, 404);
+        if (data.name) server.providerNames[kind] = data.name;
+        server[kind] = action !== 'remove';
+        return json(action === 'remove' ? { provider: info(kind), usersWithoutSignIn: 0 } : { provider: info(kind) });
       }
       // Every user in the order they signed up, a page at a time; the cursor is the last one's address.
       case 'POST /auth/admin/users/search': {

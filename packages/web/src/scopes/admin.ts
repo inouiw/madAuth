@@ -53,6 +53,31 @@ export interface Settings {
  */
 export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 
+/** The kinds of sign-in providers: each exists once, with its kind as its id. */
+export type ProviderKind = 'google' | 'github';
+
+/** A sign-in provider as the admin API answers it: never its secret, only whether it has one. */
+export interface ProviderInfo {
+  id: string;
+  kind: ProviderKind;
+  /** What the sign-in dialog's button says: "Continue with <name>". */
+  name: string;
+  clientId: string;
+  hasClientSecret: boolean;
+  /** What the provider's console must list as the redirect URI (Google) or the callback URL (GitHub). */
+  callbackUrl: string;
+  /** Milliseconds since 1970. */
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** What an admin sets of a provider: `clientSecret` in plain text, `null` to remove it (Google only), left out to keep it. */
+export interface ProviderChanges {
+  name?: string;
+  clientId?: string;
+  clientSecret?: string | null;
+}
+
 /** What `searchUsers` looks for; every filter given must match. */
 export interface UserSearch {
   /** Users whose `claims.roles` hold this role. */
@@ -135,6 +160,22 @@ export interface AdminApi {
    * it may be outdated by the time it is shown. Fails with `forbidden`, `invalid_email` or `invalid_search`.
    */
   searchUsers(search?: UserSearch): Promise<Result<{ users: FoundUser[]; cursor?: string }>>;
+  /** The sign-in providers, without their secrets. Fails with `forbidden`. */
+  listProviders(): Promise<Result<{ providers: ProviderInfo[] }>>;
+  /**
+   * Adds a sign-in provider: Google (its client ID; a client secret for the redirect sign-in) or GitHub (its client
+   * ID and secret). It is off until switched on with `setSettings`. Needs a sign-in within the last ten minutes.
+   * Fails with `forbidden`, `reauth_required`, `invalid_provider` or `provider_exists`.
+   */
+  addProvider(provider: { kind: ProviderKind } & ProviderChanges): Promise<Result<{ provider: ProviderInfo }>>;
+  /** Changes a provider; needs a recent sign-in. Fails with `forbidden`, `reauth_required`, `invalid_provider` or `provider_not_found`. */
+  updateProvider(id: string, changes: ProviderChanges): Promise<Result<{ provider: ProviderInfo }>>;
+  /**
+   * Removes a provider; needs a recent sign-in. Its users' accounts stay, so adding it again brings their sign-ins
+   * back; `usersWithoutSignIn` says how many users signed in with nothing else. Fails with `forbidden`,
+   * `reauth_required` or `provider_not_found`.
+   */
+  removeProvider(id: string): Promise<Result<{ provider: ProviderInfo; usersWithoutSignIn: number }>>;
 }
 
 export function createAdminApi(core: Core): AdminApi {
@@ -157,5 +198,10 @@ export function createAdminApi(core: Core): AdminApi {
     revokeApiKey: (email, id) => call('api-keys/revoke', { email, id }, (data: { userId: string }) => ({ userId: data.userId })),
     searchUsers: (search = {}) =>
       call('users/search', { ...search }, (data: { users: FoundUser[]; cursor?: string }) => ({ users: data.users, ...(data.cursor ? { cursor: data.cursor } : {}) })),
+    listProviders: () => call('providers/list', {}, (data: { providers: ProviderInfo[] }) => ({ providers: data.providers })),
+    addProvider: (provider) => call('providers/add', { ...provider }, (data: { provider: ProviderInfo }) => ({ provider: data.provider })),
+    updateProvider: (id, changes) => call('providers/update', { id, ...changes }, (data: { provider: ProviderInfo }) => ({ provider: data.provider })),
+    removeProvider: (id) =>
+      call('providers/remove', { id }, (data: { provider: ProviderInfo; usersWithoutSignIn: number }) => ({ provider: data.provider, usersWithoutSignIn: data.usersWithoutSignIn })),
   };
 }

@@ -13,8 +13,8 @@ const buttonColors = {
 
 /**
  * GitHub sign-in: the server-side authorization-code flow, the only one GitHub has. The browser is
- * redirected to GitHub and back, and the madAuth server exchanges the code. Needs GITHUB_CLIENT_ID and
- * GITHUB_CLIENT_SECRET on the server. Enables `Madauth.github` and the "Continue with GitHub" button in
+ * redirected to GitHub and back, and the madAuth server exchanges the code. Needs a GitHub provider on the
+ * server, which an admin adds. Enables `Madauth.github` and the "Continue with GitHub" button in
  * the sign-in dialog. A failed sign-in, or one that goes on with a second step, is reported by
  * `Madauth.initialize` on the return.
  */
@@ -27,7 +27,7 @@ export class GitHub implements SignInProvider {
     if (!ctx.config.github) {
       return fail(
         'flow_not_enabled',
-        'The madAuth server does not offer GitHub sign-in: set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET there, and an admin lists the method in the settings (Madauth.admin.setSettings).',
+        'The madAuth server does not offer GitHub sign-in: an admin adds a GitHub provider (Madauth.admin.addProvider) and switches it on in the settings (Madauth.admin.setSettings).',
       );
     }
     return ok();

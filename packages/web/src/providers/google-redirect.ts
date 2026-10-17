@@ -17,7 +17,7 @@ const buttonColors = {
 
 /**
  * Google sign-in with the server-side authorization-code flow (like Cognito): the browser is redirected
- * to Google and back, and the madAuth server exchanges the code. Needs GOOGLE_CLIENT_SECRET on the server.
+ * to Google and back, and the madAuth server exchanges the code. Needs a Google provider with a client secret on the server.
  * A failed sign-in, or one that goes on with a second step, is reported by `Madauth.initialize` on the return.
  */
 export class GoogleRedirect implements SignInProvider {
@@ -29,7 +29,7 @@ export class GoogleRedirect implements SignInProvider {
     if (!ctx.config.google?.codeFlow) {
       return fail(
         'flow_not_enabled',
-        'GoogleRedirect needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the madAuth server. Set them there, or use GoogleFedcm.',
+        'GoogleRedirect needs a Google provider with a client secret on the madAuth server, switched on: an admin adds it (Madauth.admin.addProvider). Or use GoogleFedcm.',
       );
     }
     return ok();

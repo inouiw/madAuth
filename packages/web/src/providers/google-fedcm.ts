@@ -32,7 +32,7 @@ export class GoogleFedcm implements SignInProvider {
     this.#ctx = ctx;
     this.#button = undefined;
     if (!ctx.config.google) {
-      return fail('flow_not_enabled', 'The madAuth server has no GOOGLE_CLIENT_ID, so Google sign-in is off.');
+      return fail('flow_not_enabled', 'The madAuth server has no Google provider that is on, so Google sign-in is off: an admin adds it (Madauth.admin.addProvider).');
     }
     try {
       this.#gis = await loadGis();

@@ -11,6 +11,8 @@ import {
 import { takeHashParam } from './hash.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
 import { isLoginMethodId, type LoginMethodId } from './methods.js';
+import { GitHub } from './providers/github.js';
+import { GoogleRedirect } from './providers/google-redirect.js';
 import { FACTOR_STEPS, pendingStepOf, type DeletedAccount, type PendingStep, type ProviderContext, type ServerConfig, type SignInProvider } from './providers/provider.js';
 import { fail, isSecondFactor, ok, toErrorCode, type MadauthError, type MadauthUser, type Result } from './result.js';
 import type { Core } from './scopes/core.js';
@@ -273,6 +275,19 @@ function handleRedirectReturn(ctx: ProviderContext): 'google' | 'github' | undef
   return undefined;
 }
 
+/**
+ * The providers for the sign-in providers the server offers that the app didn't pass: GitHub's redirect, and
+ * Google's when the server has its code flow (a client secret). Google's One Tap the app passes itself
+ * (`new GoogleFedcm()`), since it loads Google's script and prompts on page load.
+ */
+function automaticProviders(config: ServerConfig, passed: Map<LoginMethodId, SignInProvider>): SignInProvider[] {
+  return (config.providers ?? []).flatMap((offered): SignInProvider[] => {
+    if (passed.has(offered.id as LoginMethodId)) return [];
+    if (offered.kind === 'github') return [new GitHub()];
+    return offered.kind === 'google' && config.google?.codeFlow ? [new GoogleRedirect()] : [];
+  });
+}
+
 async function initialize(target: State, run: number): Promise<{ ready: Result; result: InitializeResult }> {
   const { serverUrl, providers } = target;
   const call = <T>(path: string, init?: RequestInit): Promise<HttpResult<T>> => request<T>(serverUrl, path, init);
@@ -328,6 +343,8 @@ async function initialize(target: State, run: number): Promise<{ ready: Result; 
     },
     signInContinues: continueSignIn,
   };
+  // Every sign-in provider the server offers gets its button, also when the app didn't pass it.
+  for (const provider of automaticProviders(config.data, providers)) providers.set(provider.method, provider);
   await handleVerifyLink(ctx);
   await handleSignInLink(ctx, providers);
   const linked = handleRedirectReturn(ctx);
