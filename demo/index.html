@@ -52,12 +52,12 @@
         </div>
       </div>
       <p id="flow-note" class="note" hidden>
-        This madAuth server isn't configured for the redirect flow: it needs <code>GOOGLE_CLIENT_ID</code> and
-        <code>GOOGLE_CLIENT_SECRET</code>. Until then, the dialog has no Google button.
+        This madAuth server isn't configured for the redirect flow: it needs a Google provider with a client secret,
+        which an admin adds with <code>Madauth.admin.addProvider</code>. Until then, the dialog has no Google button.
       </p>
       <p id="github-note" class="note" hidden>
-        This madAuth server isn't configured for GitHub sign-in: it needs <code>GITHUB_CLIENT_ID</code> and
-        <code>GITHUB_CLIENT_SECRET</code> from a GitHub OAuth App. Until then, the dialog has no GitHub button.
+        This madAuth server has no GitHub provider: an admin adds one with the client ID and secret of a GitHub OAuth
+        App, with <code>Madauth.admin.addProvider</code>. Until then, the dialog has no GitHub button.
       </p>
 
       <button id="sign-in" type="button">Sign in</button>
@@ -238,6 +238,34 @@
             <div class="api-detail" hidden>
               <p>Revokes one of them, e.g. one that leaked: it stops working at once. The id (<code>key_…</code>) is in <code>listApiKeys</code>.</p>
               <label>E-mail <input data-param="email" type="email" autocomplete="off" spellcheck="false" /></label>
+              <label>Id <input data-param="id" type="text" autocomplete="off" spellcheck="false" /></label>
+            </div>
+          </li>
+          <li class="api-method" data-call="listProviders">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.listProviders()</button>
+            <div class="api-detail" hidden>
+              <p>The sign-in providers, Google and GitHub: their client IDs, whether they have a client secret (never the secret), and the callback URL each one's console must list.</p>
+            </div>
+          </li>
+          <li class="api-method" data-call="addProvider">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.addProvider(provider)</button>
+            <div class="api-detail" hidden>
+              <p>Adds Google (its client ID; a client secret for the redirect sign-in) or GitHub (the client ID and secret of an OAuth App). It is off until you switch it on in <code>setSettings</code>; then its button is in the dialog. Needs a sign-in within the last ten minutes.</p>
+              <label>Provider (JSON) <textarea data-param="provider" data-json rows="3" spellcheck="false">{ "kind": "github", "clientId": "", "clientSecret": "" }</textarea></label>
+            </div>
+          </li>
+          <li class="api-method" data-call="updateProvider">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.updateProvider(id, changes)</button>
+            <div class="api-detail" hidden>
+              <p>Changes a provider's name (the button says "Continue with" it), client ID or client secret; <code>"clientSecret": null</code> removes Google's.</p>
+              <label>Id <input data-param="id" type="text" autocomplete="off" spellcheck="false" value="github" /></label>
+              <label>Changes (JSON) <textarea data-param="changes" data-json rows="2" spellcheck="false">{ "name": "GitHub" }</textarea></label>
+            </div>
+          </li>
+          <li class="api-method" data-call="removeProvider">
+            <button type="button" class="api-row" aria-expanded="false">Madauth.admin.removeProvider(id)</button>
+            <div class="api-detail" hidden>
+              <p>Removes a provider. Its users' accounts stay, so adding it again brings their sign-ins back; the answer says how many users have no other way to sign in meanwhile. The page asks first.</p>
               <label>Id <input data-param="id" type="text" autocomplete="off" spellcheck="false" /></label>
             </div>
           </li>

@@ -45,7 +45,7 @@ Every question is also an option, so a script needs no prompts. `--yes` takes th
 npx @madauth/server init --yes --app-url http://localhost:3000
 ```
 
-The options are `--app-url`, `--google-client-id`, `--google-client-secret`, `--github-client-id`, `--github-client-secret`, `--password` or `--no-password`, `--authenticator` or `--no-authenticator`, `--email-link` or `--no-email-link`, `--sms` or `--no-sms`, `--database`, `--webhook-url` and `--initial-admin-email`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
+The options are `--app-url`, `--password` or `--no-password`, `--authenticator` or `--no-authenticator`, `--email-link` or `--no-email-link`, `--sms` or `--no-sms`, `--database`, `--webhook-url` and `--initial-admin-email`. `init` does not overwrite an existing file: pass `--force` to allow it, or `--out <path>` to write another file.
 
 ## 3. Start the server
 
@@ -104,7 +104,7 @@ Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
 signInButton.onclick = () => Madauth.showSignInDialog();
 ```
 
-With Google sign-in, add your app URL under **Authorized JavaScript origins** in the Google Cloud Console (for `http://localhost:5173`, add `http://localhost` as well). For the redirect flow, also add `<app URL>/auth/google/callback` under **Authorized redirect URIs**. With GitHub sign-in, the OAuth App's authorization callback URL is `<app URL>/auth/github/callback`.
+Google and GitHub sign-in are [providers](server.md#providers) in the store, not settings in `.env`. Until the first admin exists, the server prints a setup token at its start, with which you add them ([First setup](server.md#first-setup)); afterwards an admin does it with `Madauth.admin.addProvider`. The dialog then shows their buttons by itself. With Google, add your app URL under **Authorized JavaScript origins** in the Google Cloud Console (for `http://localhost:5173`, add `http://localhost` as well), and for the redirect flow `<app URL>/auth/providers/google/callback` under **Authorized redirect URIs**. With GitHub, the OAuth App's callback URL is `<app URL>/auth/providers/github/callback`.
 
 ## 7. Sign up once
 

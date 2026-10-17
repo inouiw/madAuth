@@ -25,7 +25,7 @@ Code: `recentUser` in [`routes/helpers.ts`](../packages/server/src/routes/helper
 
 ## Google and GitHub
 
-A signed-in user adds Google or GitHub through the provider's own sign-in: the button with `purpose: 'link'` (the dialog's "Connect …"). With One Tap / FedCM, the browser gets an ID token and `POST /auth/google/link` adds it; with the redirect flows, `/start?link=1` remembers the user in the flow's state, the callback checks that the same user is still signed in at that browser, adds the account and returns with `#madauth_linked=google`. The provider's account may have another address than the user: it signs in by its own id (`sub`, GitHub's user id), and its address is noted on the account. An account that signs in another user stays theirs (`409 account_taken`).
+A signed-in user adds Google or GitHub through the provider's own sign-in: the button with `purpose: 'link'` (the dialog's "Connect …"). With One Tap / FedCM, the browser gets an ID token and `POST /auth/providers/google/link` adds it; with the redirect flows, `/start?link=1` remembers the user in the flow's state, the callback checks that the same user is still signed in at that browser, adds the account and returns with `#madauth_linked=google`. The provider's account may have another address than the user: it signs in by its own id (`sub`, GitHub's user id), and its address is noted on the account. An account that signs in another user stays theirs (`409 account_taken`).
 
 Removing GitHub takes its authorization back at GitHub, with the token kept from its last sign-in, as deleting the account does. Removing Google leaves the app among the user's connected apps at Google.
 

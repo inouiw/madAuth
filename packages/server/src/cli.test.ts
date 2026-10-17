@@ -139,44 +139,34 @@ describe('init', () => {
   });
 
   it('takes the answers given as options instead of the defaults', async () => {
-    const googleOnly = tempFile();
+    const minimal = tempFile();
     const both = tempFile();
-    const init = (...args: string[]) => runCli(['init', '--yes', '--google-client-id', CLIENT_ID, ...args], noQuestions);
+    const init = (...args: string[]) => runCli(['init', '--yes', ...args], noQuestions);
 
-    await init('--app-url', 'https://app.example.com/login', '--google-client-secret=shh', '--no-password', '--out', googleOnly);
+    await init('--app-url', 'https://app.example.com/login', '--no-password', '--out', minimal);
     await init('--password', '--database', 'dynamodb:users', '--webhook-url', 'https://hooks.example.com/madauth', '--out', both);
 
-    // Google only: still a database, where every user is stored.
-    expect(readEnvFile(googleOnly)).toEqual({
+    // No sign-in method yet (providers come with the setup token), and still a database, where every user is stored.
+    expect(readEnvFile(minimal)).toEqual({
       MADAUTH_ISSUER: 'https://app.example.com',
       MADAUTH_KEY_SERVICE: 'local',
       MADAUTH_SIGNING_KEY: expect.any(String),
       ALLOWED_ORIGINS: 'https://app.example.com',
-      GOOGLE_CLIENT_ID: CLIENT_ID,
-      GOOGLE_CLIENT_SECRET: 'shh',
       DATABASE_URL: 'sqlite:./madauth.db',
       PORT: '8787',
     });
-    expect(readEnvFile(both)).toMatchObject({
-      GOOGLE_CLIENT_ID: CLIENT_ID,
-      DATABASE_URL: 'dynamodb:users',
-      WEBHOOK_URL: 'https://hooks.example.com/madauth',
-    });
-    expect(readEnvFile(both)).not.toHaveProperty('GOOGLE_CLIENT_SECRET');
+    expect(readEnvFile(both)).toMatchObject({ DATABASE_URL: 'dynamodb:users', WEBHOOK_URL: 'https://hooks.example.com/madauth' });
   });
 
   it('asks, in order, what no option answers, and takes the default for an empty answer', async () => {
     const file = tempFile();
-    const io = answering({ 'App URL': 'http://localhost:3000/', 'Google client ID': CLIENT_ID, 'Google client secret': 'shh' });
+    const io = answering({ 'App URL': 'http://localhost:3000/' });
 
     const { exitCode } = await runCli(['init', '--out', file, '--webhook-url', 'http://localhost:9999/hook'], io);
 
     expect(exitCode).toBe(0);
     expect(io.asked).toEqual([
       'App URL, the address your users open',
-      'Google client ID (empty: no Google sign-in)',
-      'Google client secret (empty: no redirect flow): ',
-      'GitHub client ID (empty: no GitHub sign-in)',
       'E-mail & password sign-in? (yes/no)',
       'Sign-up with the authenticator app alone, without a password? (yes/no)',
       'Passwordless sign-in with an e-mail link? (yes/no)',
@@ -187,8 +177,6 @@ describe('init', () => {
     expect(readEnvFile(file)).not.toHaveProperty('INITIAL_ADMIN_EMAIL');
     expect(readEnvFile(file)).toMatchObject({
       MADAUTH_ISSUER: 'http://localhost:3000',
-      GOOGLE_CLIENT_ID: CLIENT_ID,
-      GOOGLE_CLIENT_SECRET: 'shh',
       DATABASE_URL: 'sqlite:./madauth.db',
       WEBHOOK_URL: 'http://localhost:9999/hook',
     });
@@ -202,8 +190,8 @@ describe('init', () => {
 
     expect(exitCode).toBe(0);
     expect(readEnvFile(file).INITIAL_ADMIN_EMAIL).toBe('Grace@Example.com');
-    expect(output).toContain('5. Sign up with grace@example.com in your app: you get the role admin (INITIAL_ADMIN_EMAIL)');
-    expect(output).toContain('6. Never commit');
+    expect(output).toContain('6. Sign up with grace@example.com in your app: you get the role admin (INITIAL_ADMIN_EMAIL)');
+    expect(output).toContain('7. Never commit');
     // As an option, and refused when it is no address.
     const given = tempFile();
     expect(await runCli(['init', '--yes', '--initial-admin-email', 'ada@example.com', '--out', given], noQuestions)).toMatchObject({ exitCode: 0 });
@@ -228,26 +216,17 @@ describe('init', () => {
     expect(output).not.toContain('set-methods');
   });
 
-  it('needs at least one sign-in method', async () => {
+  it('writes a server without any sign-in method, whose providers come with the setup token', async () => {
     const file = tempFile();
     const io = answering({ 'E-mail & password': 'no' });
 
     const answered = await runCli(['init', '--out', file], io);
-    const withOptions = await runCli(['init', '--yes', '--no-password', '--out', file], noQuestions);
 
-    // Without a client ID its secret is not asked for; without any method, nothing more.
-    expect(io.asked).toEqual([
-      'App URL, the address your users open',
-      'Google client ID (empty: no Google sign-in)',
-      'GitHub client ID (empty: no GitHub sign-in)',
-      'E-mail & password sign-in? (yes/no)',
-      'Sign-up with the authenticator app alone, without a password? (yes/no)',
-      'Passwordless sign-in with an e-mail link? (yes/no)',
-      'SMS codes as a second factor, sent by your webhook receiver? (yes/no)',
-    ]);
-    expect(answered).toEqual({ exitCode: 1, output: expect.stringContaining('No sign-in method is chosen') });
-    expect(withOptions).toEqual(answered);
-    expect(existsSync(file)).toBe(false);
+    expect(answered.exitCode).toBe(0);
+    expect(readEnvFile(file)).not.toHaveProperty('WEBHOOK_URL');
+    expect(answered.output).toContain('Madauth.initialize({ providers: [] });');
+    expect(answered.output).toContain('the server prints a setup token when it starts');
+    expect(answered.output).not.toContain('webhook receiver');
   });
 
   it('does not overwrite a file without --force, and says so before it asks anything', async () => {
@@ -274,7 +253,6 @@ describe('init', () => {
 
     expect(await init('--app-url', 'localhost:5173')).toEqual(failsWith('The app URL must be an http(s) URL'));
     expect(await init('--database', 'postgres://db/madauth')).toEqual(failsWith('sqlite:<path> or dynamodb:<table>'));
-    expect(await init('--google-client-id', 'abc')).toEqual(failsWith('GOOGLE_CLIENT_ID must end with'));
     expect(await init('--webhook-url', 'http://hooks.example.com/x')).toEqual(failsWith('WEBHOOK_URL must be an https URL'));
     expect(existsSync(file)).toBe(false);
   });
@@ -315,74 +293,27 @@ Next steps:
      Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
      signInButton.onclick = () => Madauth.showSignInDialog();
 
-5. Never commit ${file}: it holds the signing key and your secrets. Production needs an https app URL
+5. Google and GitHub sign-in are providers in the store; the sign-in dialog shows a button for each one that is on.
+   Until the first admin exists, the server prints a setup token when it starts. Add a provider with it, e.g.:
+
+     curl -X POST http://localhost:8787/auth/admin/providers/add -H 'Authorization: Bearer <setup token>' \\
+       -H 'Content-Type: application/json' -d '{"kind":"google","clientId":"<client ID>","clientSecret":"<client secret>"}'
+
+   Register what it answers as callbackUrl in your Google OAuth client (Authorized redirect URIs; JavaScript origins: http://localhost:5173 and http://localhost)
+   or GitHub OAuth App (Authorization callback URL), and switch the provider on with /auth/admin/settings/set.
+   Later an admin does this with Madauth.admin.addProvider. See "Providers" in docs/server.md.
+
+6. Never commit ${file}: it holds the signing key and your secrets. Production needs an https app URL
    and a signing key of its own: run init again for it.`);
   });
 
-  it('prints the next steps for Google sign-in in the browser (FedCM / One Tap)', async () => {
-    const args = ['init', '--yes', '--google-client-id', CLIENT_ID, '--no-password', '--out', tempFile()];
+  it('O14: Google and GitHub are no options any more: they are providers in the store', async () => {
+    const https = await runCli(['init', '--yes', '--app-url', 'https://app.example.com', '--out', tempFile()], noQuestions);
+    // Google wants http://localhost next to the origin with its port only for development.
+    expect(https.output).toContain('JavaScript origins: https://app.example.com)');
 
-    const { output } = await runCli(args, noQuestions);
-
-    expect(output).toContain("import { Madauth, GoogleFedcm } from '@madauth/web';");
-    expect(output).toContain('Madauth.initialize({ providers: [new GoogleFedcm()] });');
-    expect(output).toContain('4. In the Google Cloud Console');
-    expect(output).toContain('Authorized JavaScript origins: http://localhost:5173 and http://localhost\n');
-    expect(output).toContain('5. Never commit');
-    expect(output).not.toContain('redirect URIs');
-    expect(output).not.toContain('webhook receiver');
-  });
-
-  it('O14: takes a GitHub OAuth App as id and secret, writes both, and prints the GitHub step', async () => {
-    const file = tempFile();
-    const io = answering({ 'App URL': 'https://app.example.com', 'GitHub client ID': 'Iv1.abc', 'GitHub client secret': 'shh2', 'E-mail & password': 'no' });
-
-    const asked = await runCli(['init', '--out', file], io);
-    const { output } = await runCli(['init', '--yes', '--github-client-id', 'Iv1.abc', '--github-client-secret', 'shh2', '--no-password', '--out', file, '--force'], noQuestions);
-
-    expect(asked.exitCode).toBe(0);
-    expect(io.asked).toContain('GitHub client secret: ');
-    expect(readEnvFile(file)).toEqual({
-      MADAUTH_ISSUER: 'http://localhost:5173',
-      MADAUTH_KEY_SERVICE: 'local',
-      MADAUTH_SIGNING_KEY: expect.any(String),
-      ALLOWED_ORIGINS: 'http://localhost:5173',
-      GITHUB_CLIENT_ID: 'Iv1.abc',
-      GITHUB_CLIENT_SECRET: 'shh2',
-      DATABASE_URL: 'sqlite:./madauth.db',
-      PORT: '8787',
-    });
-    expect(output).toContain("import { Madauth, GitHub } from '@madauth/web';");
-    expect(output).toContain('Madauth.initialize({ providers: [new GitHub()] });');
-    expect(output).toContain('4. In your GitHub OAuth App (https://github.com/settings/developers), set:');
-    expect(output).toContain('Authorization callback URL: http://localhost:5173/auth/providers/github/callback');
-    expect(output).not.toContain('Google Cloud Console');
-  });
-
-  it('O14: GitHub sign-in needs both the client ID and the secret', async () => {
-    const file = tempFile();
-    const init = (...args: string[]) => runCli(['init', '--yes', '--out', file, ...args], noQuestions);
-    const failsWith = (text: string) => ({ exitCode: 1, output: expect.stringContaining(text) });
-
-    expect(await init('--github-client-id', 'Iv1.abc')).toEqual(failsWith('needs the client secret'));
-    expect(await init('--github-client-secret', 'shh2')).toEqual(failsWith('--github-client-secret needs a GitHub client ID'));
-    expect(existsSync(file)).toBe(false);
-    // Asked for, an empty secret is refused the same way.
-    const io = answering({ 'GitHub client ID': 'Iv1.abc' });
-    expect(await runCli(['init', '--out', file], io)).toEqual(failsWith('needs the client secret'));
-  });
-
-  it('prints the next steps for the Google redirect flow with e-mail & password sign-in', async () => {
-    const google = ['--google-client-id', CLIENT_ID, '--google-client-secret', 'shh'];
-
-    const { output } = await runCli(['init', '--yes', '--app-url', 'https://app.example.com', ...google, '--out', tempFile()], noQuestions);
-
-    expect(output).toContain(`2. madAuth hands its e-mails to your webhook receiver.`);
-    expect(output).toContain("import { Madauth, GoogleRedirect, Password } from '@madauth/web';");
-    expect(output).toContain('Madauth.initialize({ providers: [new GoogleRedirect(), new Password()] });');
-    expect(output).toContain('Authorized JavaScript origins: https://app.example.com\n');
-    expect(output).toContain('Authorized redirect URIs: https://app.example.com/auth/providers/google/callback');
-    expect(output).toContain('6. Never commit');
+    const old = await runCli(['init', '--yes', '--google-client-id', CLIENT_ID, '--out', tempFile()], noQuestions);
+    expect(old).toEqual({ exitCode: 1, output: expect.stringContaining("Unknown option '--google-client-id'") });
   });
 });
 
