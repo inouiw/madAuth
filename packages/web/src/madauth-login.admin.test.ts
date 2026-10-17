@@ -106,6 +106,14 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
       methods: { google: { allowAsSignInMethod: true, secondFactor: 'none' }, password: { allowAsSignInMethod: true }, gitlab: { allowAsSignInMethod: true, secondFactor: 'optional' } },
     });
 
+    // Opening listed the providers once: to find out whether Grace may see them.
+    expect(sent(server, '/auth/admin/providers/list').length).toBe(2);
+    expect($('.callback-url')).toBeNull();
+    await click('[data-provider="gitlab"]');
+    expect($('.callback-url')!.getAttribute('aria-labelledby')).toBe('callback-url-label');
+    expect(text('#callback-url-label')).toBe('Callback URL');
+    await click('[data-action="back-to-providers"]');
+
     await click('[data-action="done"]');
     expect(await result).toEqual({ isSuccess: true });
   });

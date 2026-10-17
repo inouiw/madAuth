@@ -560,7 +560,10 @@ export class MadauthLogin extends LitElement {
       this.showError(ready.error);
       return;
     }
-    await this.loadAdmin();
+    // The providers are listed already: only the settings, for their states.
+    const settings = await Madauth.admin.getSettings();
+    if (settings.isSuccess) this.adminSettings = settings.methods;
+    else this.showError(settings.error);
   }
 
   /**
@@ -2336,8 +2339,8 @@ export class MadauthLogin extends LitElement {
           : null}
         ${callbackUrl
           ? html`<div class="field">
-              <span class="field-label">${v.callbackUrl}</span>
-              <code part="callback-url" class="api-key callback-url">${callbackUrl}</code>
+              <span class="field-label" id="callback-url-label">${v.callbackUrl}</span>
+              <code part="callback-url" class="api-key callback-url" role="group" aria-labelledby="callback-url-label">${callbackUrl}</code>
               <p class="hint">
                 ${v.callbackHint}
                 <button class="link" part="link" type="button" data-action="copy-callback-url" ?disabled=${oidc && !id}
@@ -2354,8 +2357,8 @@ export class MadauthLogin extends LitElement {
         ${oidc
           ? editing
             ? html`<div class="field">
-                <span class="field-label">${v.issuer}</span>
-                <code class="api-key issuer">${d.issuer}</code>
+                <span class="field-label" id="issuer-label">${v.issuer}</span>
+                <code class="api-key issuer" role="group" aria-labelledby="issuer-label">${d.issuer}</code>
               </div>`
             : html`<div class="field">
                 <label for="provider-issuer">${v.issuer}</label>
