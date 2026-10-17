@@ -74,7 +74,7 @@ describe('deployment entry points', () => {
       emailLink: null,
       sms: false,
       passkey: null,
-      providers: [{ id: 'google', kind: 'google', name: 'Google' }],
+      providers: [{ id: 'google', kind: 'google', name: 'Google', secondFactor: 'none' }],
     });
     expect(nonce).toMatchObject({ statusCode: 200 });
     expect((nonce as { cookies: string[] }).cookies[0]).toMatch(/^madauth_nonce=/);

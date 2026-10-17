@@ -1,8 +1,8 @@
-// What the providers with a redirect sign-in share (`GoogleRedirect`, `GitHub`): the "Continue with …"
-// button that starts it, and the start itself. The server does the rest and sends the user back.
+// What the providers with a redirect sign-in share (`GoogleRedirect`, `GitHub`, `OpenIdConnect`): the
+// "Continue with …" button that starts it, and the start itself. The server does the rest and sends the user back.
 import type { LoginMethodId } from '../methods.js';
-import { stringsFor } from '../strings.js';
-import type { ButtonOptions, ProviderContext } from './provider.js';
+import { stringsFor, type Strings } from '../strings.js';
+import type { ButtonOptions, ProviderContext, ServerConfig } from './provider.js';
 
 /** How a provider's button looks: its mark, its colours in both themes, and the font of the label. */
 export interface RedirectButtonStyle {
@@ -11,6 +11,15 @@ export interface RedirectButtonStyle {
   colors: Record<'light' | 'dark', { background: string; color: string; border: string }>;
   /** The CSS `font` shorthand of the label. */
   font: string;
+}
+
+/**
+ * How the texts name a method: a provider by the name an admin gave it, e.g. "GitHub Enterprise" (by its own
+ * name on servers before 0.7, which have only Google and GitHub); one of madAuth's own as `methodNames` does.
+ */
+export function methodName(config: ServerConfig | undefined, method: LoginMethodId, s: Strings): string {
+  const names: Partial<Record<string, string>> = s.methodNames;
+  return config?.providers?.find((p) => p.id === method)?.name ?? names[method] ?? method;
 }
 
 /**
@@ -31,8 +40,7 @@ export function renderRedirectButton(
   const label = button.querySelector('span')!;
   const setLabel = () => {
     const s = stringsFor(ctx.locale);
-    // The name an admin gave the provider, e.g. "GitHub Enterprise"; the method's own name on older servers.
-    const name = ctx.config.providers?.find((p) => p.id === method)?.name ?? s.methodNames[method];
+    const name = methodName(ctx.config, method, s);
     label.textContent = options.purpose === 'link' ? s.methodsView.connect(name) : s.continueWith(name);
   };
   setLabel();

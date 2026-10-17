@@ -30,6 +30,7 @@ describe('@madauth/web', () => {
         'onAuthStateChanged',
         'passkey',
         'password',
+        'provider',
         'sessionReady',
         'setLocale',
         'showManageApiKeysDialog',
@@ -52,6 +53,8 @@ describe('@madauth/web', () => {
     );
     expect(Object.keys(madauth.Madauth.google)).toEqual(['renderButton']);
     expect(Object.keys(madauth.Madauth.github)).toEqual(['renderButton']);
+    expect(Object.keys(madauth.Madauth.provider('gitlab')).sort()).toEqual(['renderButton', 'signIn']);
+    expectTypeOf(madauth.Madauth.provider('gitlab')).toEqualTypeOf<madauth.ProviderApi>();
     expect(Object.keys(madauth.Madauth.authenticator).sort()).toEqual(
       ['confirmSetup', 'newRecoveryCodes', 'pendingStep', 'policy', 'remove', 'sendVerificationEmail', 'signIn', 'signUp', 'startSetup', 'status', 'verify', 'verifyEmail'].sort(),
     );

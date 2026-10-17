@@ -80,6 +80,8 @@ export interface MadauthConfig {
   webhookFetch?: typeof fetch;
   /** Test hook: the fetch that reads API_KEY_SCOPES_URL. */
   scopesFetch?: typeof fetch;
+  /** Fetches what OpenID Connect providers publish and answer (discovery, keys, tokens, userinfo); for tests. Default: `fetch`. */
+  oidcFetch?: typeof fetch;
 }
 
 /** Whether the webhook sends the e-mails that confirm an address (`email.send_verification`), so people can sign up with one. */

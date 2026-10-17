@@ -269,6 +269,22 @@ if (result.isSuccess) result.remove();
 
 With `purpose: 'link'` it says "Connect GitHub" and adds GitHub to the signed-in user's methods, like Google's: the page comes back with `linked: 'github'` in the result of `Madauth.initialize`. It renders a "Continue with GitHub" button (GitHub's mark, black on white or white on dark) that starts the server's redirect flow: the browser goes to GitHub and comes back to the page, without its hash. The user then arrives through `onAuthStateChanged`. A sign-in that failed is returned by `initialize` (e.g. `cancelled`, `email_unverified` for a GitHub account without a verified address, `other_method` when the address signs in another way), and one that goes on with a second factor is in `Madauth.authenticator.pendingStep` with `method: 'github'`. The button is labelled in English or German, see [Language](#language).
 
+## Any provider: `Madauth.provider(id)`
+
+Every provider the server offers, by its id: the [OpenID Connect providers](server.md#openid-connect-provider-setup) an admin added (e.g. `gitlab`), and Google and GitHub too. madAuth registers them by itself, so `initialize` needs nothing for them (Google's One Tap aside: `new GoogleFedcm()`).
+
+```ts
+const result = Madauth.provider('gitlab').renderButton(document.querySelector('#gitlab-button')!, { theme: 'auto' });
+// Or, from a button of your own:
+await Madauth.provider('gitlab').signIn(); // the browser goes to the provider and back
+```
+
+- `renderButton(container, options?)` renders a "Continue with <name>" button, with the name an admin gave the provider, in the dialog's colours with a neutral sign-in mark (nothing is loaded from the provider). Google's and GitHub's buttons are the ones of `Madauth.google` and `Madauth.github`. It takes the same options, and can be called before `initialize` has finished: when the server turns out not to offer the provider, `onResult` gets `flow_not_enabled`.
+- `signIn({ purpose? })` starts the redirect without a button of madAuth's. It fails with `flow_not_enabled` when the server doesn't offer the provider, or when it signs in without a redirect here (Google with `GoogleFedcm`).
+- Like GitHub's, the result arrives after the return: the user through `onAuthStateChanged`, a failure (e.g. `cancelled`, `email_unverified`, `other_method`) from `initialize`, a second step in `Madauth.authenticator.pendingStep` with the provider's id as `method`. With `purpose: 'link'` it adds the provider to the signed-in user's methods, and the page comes back with `linked: '<id>'`.
+
+The ids the server offers, with their names, are in `GET /auth/config` (`providers`). The method of an OpenID Connect provider is its id: in `amr`, in the user's [methods](#a-users-sign-in-methods-madauthmethods) and in the TypeScript type `LoginMethodId`, which is any string besides madAuth's own ids (`BuiltInMethodId`).
+
 ## Passkeys: `Madauth.passkey`
 
 Signing in or up with a passkey alone needs `new Passkey()` in `initialize` and a server that allows it; the second step, adding and renaming work whenever the server has passkeys on (`available`).
@@ -299,7 +315,7 @@ With `policy.signUp`, `signUp({ email, name? })` creates an account that signs i
 | `list()` | `{ methods: [{ id, method, signIn, removable, createdAt, email?, name?, lastUsedAt? }] }` | `no_session` |
 | `remove(id)` | — | `only_method` (the user's last way in), `required_by_policy`, `reauth_required`, `method_not_found`, `no_session` |
 
-A user adds a method with its own call: `Madauth.passkey.add()`, `Madauth.password.add({ password })`, `Madauth.emailLink.add()`, the Google or GitHub button with `purpose: 'link'`, or the app's setup. Adding and removing need a sign-in within the last ten minutes: otherwise they fail with `reauth_required`, and the user signs in again first. The authenticator app is removed with `Madauth.authenticator.remove`, which takes a code. See [Several sign-in methods](sign-in-methods.md).
+A user adds a method with its own call: `Madauth.passkey.add()`, `Madauth.password.add({ password })`, `Madauth.emailLink.add()`, a provider's button with `purpose: 'link'` (Google, GitHub, `Madauth.provider(id)`), or the app's setup. Adding and removing need a sign-in within the last ten minutes: otherwise they fail with `reauth_required`, and the user signs in again first. The authenticator app is removed with `Madauth.authenticator.remove`, which takes a code. See [Several sign-in methods](sign-in-methods.md).
 
 ## API keys: `Madauth.apiKeys`
 

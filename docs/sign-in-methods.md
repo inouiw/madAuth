@@ -4,11 +4,11 @@ How a user gets more than one way to sign in, and loses one, for app developers 
 
 ## Signing up with one, adding more
 
-A user signs up with one method: a password, Google, GitHub, the e-mail link, the authenticator app, or a passkey (the app and a passkey alone confirm the address by e-mail first, see [Signing up with a passkey](passkey-security.md#signing-up-with-a-passkey)). While signed in, they can add more: a passkey, a password, the e-mail link, Google, GitHub, the app. Each of them then signs the user in, as long as the admin allows the method as a sign-in method (`allowAsSignInMethod`). A user with a password and a passkey can sign in with either; one with Google and the app (allowed on its own) with either.
+A user signs up with one method: a password, Google, GitHub, an OpenID Connect provider, the e-mail link, the authenticator app, or a passkey (the app and a passkey alone confirm the address by e-mail first, see [Signing up with a passkey](passkey-security.md#signing-up-with-a-passkey)). While signed in, they can add more: a passkey, a password, the e-mail link, Google, GitHub, an OpenID Connect provider, the app. Each of them then signs the user in, as long as the admin allows the method as a sign-in method (`allowAsSignInMethod`). A user with a password and a passkey can sign in with either; one with Google and the app (allowed on its own) with either.
 
 A method is only ever added while signed in, never by signing in:
 
-- A sign-in with a method the user doesn't have, for their address, is refused as before: `403 other_method` names how the address signs in (`methods`), and an e-mail link or a password sign-up for it gets `email.send_already_registered`. Whoever controls a Google or GitHub account with the user's address must not get past their password, their passkeys or their app. See [GitHub sign-in security](github-security.md#a-method-signs-in-only-users-who-have-it).
+- A sign-in with a method the user doesn't have, for their address, is refused as before: `403 other_method` names how the address signs in (`methods`), and an e-mail link or a password sign-up for it gets `email.send_already_registered`. Whoever controls a Google, GitHub or OpenID Connect account with the user's address must not get past their password, their passkeys or their app. See [GitHub sign-in security](github-security.md#a-method-signs-in-only-users-who-have-it).
 - The one takeover that remains is of a sign-up nobody finished, as before: nobody has proven it.
 
 So adding a method needs both: the signed-in user, and the method itself (the provider's sign-in, the passkey's ceremony, the new password, the inbox the user's address already proved).
@@ -23,15 +23,15 @@ A first authenticator app needs it too while the app is allowed as a sign-in met
 
 Code: `recentUser` in [`routes/helpers.ts`](../packages/server/src/routes/helpers.ts), `auth_time` in [`tokens.ts`](../packages/server/src/tokens.ts).
 
-## Google and GitHub
+## Google, GitHub and OpenID Connect providers
 
-A signed-in user adds Google or GitHub through the provider's own sign-in: the button with `purpose: 'link'` (the dialog's "Connect …"). With One Tap / FedCM, the browser gets an ID token and `POST /auth/providers/google/link` adds it; with the redirect flows, `/start?link=1` remembers the user in the flow's state, the callback checks that the same user is still signed in at that browser, adds the account and returns with `#madauth_linked=google`. The provider's account may have another address than the user: it signs in by its own id (`sub`, GitHub's user id), and its address is noted on the account. An account that signs in another user stays theirs (`409 account_taken`).
+A signed-in user adds Google, GitHub or an OpenID Connect provider through the provider's own sign-in: the button with `purpose: 'link'` (the dialog's "Connect …"). With One Tap / FedCM, the browser gets an ID token and `POST /auth/providers/google/link` adds it; with the redirect flows, `/start?link=1` remembers the user in the flow's state, the callback checks that the same user is still signed in at that browser, adds the account and returns with `#madauth_linked=google`. The provider's account may have another address than the user: it signs in by its own id (`sub`, GitHub's user id), and its address is noted on the account (`email` in `GET /auth/methods`). An account that signs in another user stays theirs (`409 account_taken`).
 
 Removing GitHub takes its authorization back at GitHub, with the token kept from its last sign-in, as deleting the account does. Removing Google leaves the app among the user's connected apps at Google.
 
 ## Removing a method
 
-`POST /auth/methods/remove` (`Madauth.methods.remove(id)`) removes a password, Google, GitHub, the e-mail link or a passkey. The authenticator app takes a code from it (`Madauth.authenticator.remove`), and the phone one sent to it.
+`POST /auth/methods/remove` (`Madauth.methods.remove(id)`) removes a password, Google, GitHub, an OpenID Connect provider, the e-mail link or a passkey. The authenticator app takes a code from it (`Madauth.authenticator.remove`), and the phone one sent to it.
 
 - **Not the last way in.** A method can't go when the user would have no method left that the admin allows as a sign-in method (`403 only_method`): nobody could sign in as them, and a sign-up for their address could take the user over. A method switched off by the admin doesn't count, nor one the server is not configured for (e.g. GitHub without its OAuth App). A user who can't sign in now anyway (every method of theirs is switched off) is not locked out by the removal.
 - **Not the last second factor a policy requires.** See [Passkey security](passkey-security.md#removing-a-passkey).
@@ -46,7 +46,7 @@ Code: `resetSignIn` in [`users.ts`](../packages/server/src/users.ts), `/auth/adm
 
 ## What the webhook is told
 
-`user.method_added` and `user.method_removed`, with the `method` (and for a passkey its `id` and `name`, for Google and GitHub the provider's `email`). Setting up or removing the app or a phone stays `user.second_factor_enabled` and `user.second_factor_disabled`. A reset is one `user.sign_in_reset`, with the admin as `by`, not a removal per method.
+`user.method_added` and `user.method_removed`, with the `method` (and for a passkey its `id` and `name`, for a provider the provider's `email`). Setting up or removing the app or a phone stays `user.second_factor_enabled` and `user.second_factor_disabled`. A reset is one `user.sign_in_reset`, with the admin as `by`, not a removal per method.
 
 ## Not covered yet
 

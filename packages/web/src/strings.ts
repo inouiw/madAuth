@@ -1,4 +1,4 @@
-import type { LoginMethodId } from './methods.js';
+import type { BuiltInMethodId } from './methods.js';
 import type { MadauthErrorCode } from './result.js';
 
 /**
@@ -17,6 +17,8 @@ export const en = {
   /** The sign-in methods: `label` is the text of the button, `description` its tooltip. */
   /** The button of a sign-in provider, with the name an admin gave it. */
   continueWith: (name: string) => `Continue with ${name}`,
+  /** The tooltip of that button for an OpenID Connect provider. */
+  useAccount: (name: string) => `Use your ${name} account`,
   methods: {
     google: { label: 'Continue with Google', description: 'Use your Google account' },
     github: { label: 'Continue with GitHub', description: 'Use your GitHub account' },
@@ -24,7 +26,7 @@ export const en = {
     authenticator: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
     'email-link': { label: 'Email link', description: 'Passwordless sign-in by email' },
     passkey: { label: 'Passkey', description: 'Sign in with your fingerprint, face or screen lock' },
-  } satisfies Record<LoginMethodId, { label: string; description: string }>,
+  } satisfies Record<BuiltInMethodId, { label: string; description: string }>,
 
   // Fields
   email: 'Email',
@@ -191,7 +193,7 @@ export const en = {
   methodsView: {
     heading: 'Sign-in methods',
     lead: 'These are the ways you sign in. Add another one, so you can still sign in if you lose one.',
-    labels: { google: 'Google', github: 'GitHub', password: 'Password', authenticator: 'Authenticator app', 'email-link': 'Email link', passkey: 'Passkey' } satisfies Record<LoginMethodId, string>,
+    labels: { google: 'Google', github: 'GitHub', password: 'Password', authenticator: 'Authenticator app', 'email-link': 'Email link', passkey: 'Passkey' } satisfies Record<BuiltInMethodId, string>,
     /** Next to a method the server allows only as a second factor. */
     secondFactorOnly: 'As a second factor',
     lastUsed: (date: string) => `Last used ${date}`,
@@ -339,6 +341,7 @@ export const de: Strings = {
   or: 'oder',
   otherWays: 'Weitere Anmeldemöglichkeiten',
   continueWith: (name: string) => `Weiter mit ${name}`,
+  useAccount: (name: string) => `Mit Ihrem ${name}-Konto anmelden`,
   methods: {
     google: { label: 'Weiter mit Google', description: 'Mit Ihrem Google-Konto anmelden' },
     github: { label: 'Weiter mit GitHub', description: 'Mit Ihrem GitHub-Konto anmelden' },

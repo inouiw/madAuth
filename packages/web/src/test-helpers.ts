@@ -95,8 +95,10 @@ export interface FakeServer {
   passkey: { signIn: boolean; signUp?: boolean; secondFactor: SecondFactorPolicy } | null;
   /** The passkeys, by credential id: whose, their account id and name. */
   passkeys: Map<string, { email: string; id: string; name: string }>;
-  /** Google, GitHub and the e-mail link the users added while signed in, by e-mail address. */
-  linked: Map<string, Set<'google' | 'github' | 'email-link'>>;
+  /** Google, GitHub, OpenID Connect providers and the e-mail link the users added while signed in, by e-mail address. */
+  linked: Map<string, Set<string>>;
+  /** The OpenID Connect providers that are on, with their names and policies. */
+  oidc: { id: string; name: string; secondFactor: SecondFactorPolicy }[];
   /** The user signed in more than ten minutes ago: changing a method answers `reauth_required`. */
   staleSignIn: boolean;
   /** A setup under way (the setup cookie); set to undefined to simulate its expiry. */
@@ -161,6 +163,7 @@ export function fakeServer(): FakeServer {
     passkey: null,
     passkeys: new Map(),
     linked: new Map(),
+    oidc: [],
     staleSignIn: false,
     apiScopes: [
       { name: 'madauth:claims:read', description: "Read a user's claims and roles", role: 'admin', endpoints: ['POST /auth/admin/claims/get'] },
@@ -260,7 +263,10 @@ export function fakeServer(): FakeServer {
           emailLink: server.emailLink && server.methods['email-link'] ? { secondFactor: server.policy['email-link'] } : null,
           sms: server.methods.sms,
           passkey: server.passkey ? { signUp: false, ...server.passkey } : null,
-          providers: (['google', 'github'] as const).filter((kind) => server[kind] && server.methods[kind]).map((kind) => ({ id: kind, kind, name: server.providerNames[kind] })),
+          providers: [
+            ...(['google', 'github'] as const).filter((kind) => server[kind] && server.methods[kind]).map((kind) => ({ id: kind, kind, name: server.providerNames[kind], secondFactor: server.policy[kind] })),
+            ...server.oidc.map((provider) => ({ ...provider, kind: 'oidc' })),
+          ],
         });
       // --- Passkeys ---
       case 'POST /auth/passkey/signin/options':
@@ -385,7 +391,7 @@ export function fakeServer(): FakeServer {
         const passkey = [...server.passkeys.entries()].find(([, p]) => p.id === id && p.email === user);
         if (passkey) server.passkeys.delete(passkey[0]);
         else if (id === 'acc_password' && server.accounts.get(user)?.password) server.accounts.get(user)!.password = '';
-        else if (id?.startsWith('acc_') && server.linked.get(user)?.delete(id.slice(4) as 'google')) {
+        else if (id?.startsWith('acc_') && server.linked.get(user)?.delete(id.slice(4))) {
           // removed
         } else return json({ error: 'method_not_found', message: 'gone' }, 404);
         return json({});

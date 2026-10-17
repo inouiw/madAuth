@@ -2,15 +2,17 @@ import { LitElement, css, html, nothing, type PropertyValues, type TemplateResul
 import {
   Madauth,
   currentLocale,
+  isProviderMethod,
+  nameOfMethod,
   onLocaleChanged,
   providerFor,
+  providerMethods,
   readyForDialog,
   takePendingError,
   takePendingStep,
   type SignInOptions,
 } from './madauth.js';
-import { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
-import type { ButtonApi } from './scopes/button.js';
+import { isBuiltInMethodId, loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
 import type { SignInMethodInfo } from './scopes/methods.js';
 import type { ApiKeyInfo, ApiKeyScope } from './scopes/api-keys.js';
 import type { PasskeyInfo } from './scopes/passkey.js';
@@ -160,8 +162,14 @@ const passkeyIcons = html`
   </span>
 `;
 
-/** The scopes that render a provider's button (Google, GitHub), by method: the dialog stays on the public API. */
-const buttonScopes: Partial<Record<LoginMethodId, () => ButtonApi>> = { google: () => Madauth.google, github: () => Madauth.github };
+/** The icon of an OpenID Connect provider's method in the list of the user's methods: no provider's logo. */
+const signInIcon = html`
+  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="m10 17 5-5-5-5" />
+    <path d="M15 12H3" />
+    <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+  </svg>
+`;
 
 /** Icons of the methods in the rows: under "Other ways to sign in", and in the list of the user's methods. */
 const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
@@ -550,8 +558,9 @@ export class MadauthLogin extends LitElement {
       const method = slot.dataset.button as LoginMethodId;
       const link = slot.dataset.purpose === 'link';
       const onResult = link ? (result: Result<{ user: MadauthUser }>) => this.onLinked(result) : (result: Result<{ user: MadauthUser }>) => this.finish(method, result);
-      const rendered = buttonScopes[method]?.().renderButton(slot, { purpose: link ? 'link' : 'signin', onResult });
-      if (rendered?.isSuccess) this.buttons.set(slot, { method, remove: rendered.remove });
+      // Through the public API, as a custom login screen would.
+      const rendered = Madauth.provider(method).renderButton(slot, { purpose: link ? 'link' : 'signin', onResult });
+      if (rendered.isSuccess) this.buttons.set(slot, { method, remove: rendered.remove });
     }
   }
 
@@ -908,10 +917,9 @@ export class MadauthLogin extends LitElement {
     if (error.code === 'reauth_required' && this.view === 'api-key-create') return s.apiKeyCreate.reauth;
     if (error.code === 'invalid_credentials' && error.method === 'authenticator') return s.authenticatorInvalid;
     if (error.code === 'other_method' && error.methods?.length) {
-      const names: Partial<Record<string, string>> = s.methodNames;
       // The provider that was refused, when a provider's sign-in got the error.
-      const instead = error.method === 'google' || error.method === 'github' ? s.methodNames[error.method] : undefined;
-      return s.otherMethod(error.methods.map((method) => names[method] ?? method).join(s.orList), instead);
+      const instead = error.method && isProviderMethod(error.method) ? nameOfMethod(error.method, s) : undefined;
+      return s.otherMethod(error.methods.map((method) => nameOfMethod(method, s)).join(s.orList), instead);
     }
     const texts: Partial<Record<MadauthErrorCode, string>> = s.errors;
     return texts[error.code] ?? s.errorFallback;
@@ -1032,10 +1040,10 @@ export class MadauthLogin extends LitElement {
 
   private renderSignInView() {
     const offered = this.offered;
-    // The passkey's button comes first, then the providers with a button of their own (Google, GitHub), in the order of loginMethods.
+    // The passkey's button comes first, then the providers with a button of their own, see providerSlots.
     const passkey = offered.find((m) => m.id === 'passkey');
     const branded = offered.filter((m) => !!providerFor(m.id)?.renderButton);
-    const buttons = [...(passkey ? [this.renderPasskeyButton(passkey)] : []), ...branded.map((m) => this.renderButtonSlot(m))];
+    const buttons = [...(passkey ? [this.renderPasskeyButton(passkey)] : []), ...this.providerSlots(branded)];
     const password = offered.find((m) => m.id === 'password');
     const others = offered.filter((m) => !branded.includes(m) && m !== password && m !== passkey);
     const s = this.strings;
@@ -1069,9 +1077,16 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
-  private renderButtonSlot(m: LoginMethod) {
-    // The provider's button is rendered here through its scope (Madauth.google, Madauth.github), see syncButtons.
-    return html`<div class="button-slot ${m.id}-slot" data-button=${m.id} title=${this.strings.methods[m.id].description}></div>`;
+  /** The slots of the providers' buttons: Google and GitHub among `branded`, then the OpenID Connect providers in the server's order. */
+  private providerSlots(branded: LoginMethod[]) {
+    return [...branded.map((m) => m.id), ...(this.usable ? providerMethods() : [])].map((method) => this.renderButtonSlot(method));
+  }
+
+  private renderButtonSlot(method: LoginMethodId) {
+    const s = this.strings;
+    const title = isBuiltInMethodId(method) ? s.methods[method].description : s.useAccount(nameOfMethod(method, s));
+    // The provider's button is rendered here through Madauth.provider(method), see syncButtons.
+    return html`<div class="button-slot ${method}-slot" data-button=${method} title=${title}></div>`;
   }
 
   private renderPassword(m: LoginMethod) {
@@ -1109,7 +1124,7 @@ export class MadauthLogin extends LitElement {
     const hint = this.primary === 'authenticator' ? s.authenticatorSignUpHint : this.primary === 'passkey' ? s.passkeySignUpHint : null;
     // A provider (Google, GitHub) signs up a new user as well, so its button is offered here too: this form
     // makes an account with a password (or the app, or a passkey) only.
-    const branded = this.offered.filter((m) => !!providerFor(m.id)?.renderButton);
+    const slots = this.providerSlots(this.offered.filter((m) => !!providerFor(m.id)?.renderButton));
     // The switch between a password and a passkey, when both sign people up here.
     const instead =
       this.primary === 'password' && this.passkeySignUpAvailable
@@ -1118,7 +1133,7 @@ export class MadauthLogin extends LitElement {
           ? html`<button class="link" part="link" type="button" data-action="use-password-signup" @click=${() => this.startSignUp('password')}>${s.passwordSignUpInstead}</button>`
           : null;
     return html`
-      ${branded.length ? html`<div class="buttons">${branded.map((m) => this.renderButtonSlot(m))}</div><div class="divider">${s.or}</div>` : null}
+      ${slots.length ? html`<div class="buttons">${slots}</div><div class="divider">${s.or}</div>` : null}
       ${hint ? html`<p class="hint">${hint}</p>` : null}
       <form part="form" class="signup" @submit=${this.onSignUp}>
         ${this.emailField({ withPassword })}
@@ -1164,7 +1179,7 @@ export class MadauthLogin extends LitElement {
   /** The methods whose sign-in asks for a second factor, but `except`, as a sentence names them: e.g. "Google or a password". */
   private secondFactorAsks(except?: LoginMethodId): string {
     const s = this.strings;
-    return (Madauth.authenticator.policy?.secondFactorFor ?? []).filter((method) => method !== except).map((method) => s.methodNames[method]).join(s.orList);
+    return (Madauth.authenticator.policy?.secondFactorFor ?? []).filter((method) => method !== except).map((method) => nameOfMethod(method, s)).join(s.orList);
   }
 
   /** What was typed into {@link codeField}, as the scope takes it. */
@@ -1719,14 +1734,16 @@ export class MadauthLogin extends LitElement {
     // The last method that signs the user in can't go (the server refuses it): no button for it.
     const signsIn = list?.filter((m) => m.signIn) ?? [];
     const lastWayIn = (m: SignInMethodInfo) => m.signIn && signsIn.length === 1;
-    const config = (method: 'google' | 'github') => providerFor(method)?.renderButton && !has(method);
+    // The providers the user can connect, each with its button.
+    const connectable = ['google', 'github', ...providerMethods()].filter((method) => providerFor(method)?.renderButton && !has(method));
+    const labelOf = (method: LoginMethodId) => (isBuiltInMethodId(method) ? v.labels[method] : nameOfMethod(method, s));
     return html`
       <p class="lead">${v.lead}</p>
       ${list
         ? html`
             <ul class="method-list">
               ${list.map((m) => {
-                const label = m.method === 'passkey' && m.name ? m.name : v.labels[m.method];
+                const label = m.method === 'passkey' && m.name ? m.name : labelOf(m.method);
                 const details = [
                   m.method === 'passkey' ? v.labels.passkey : m.email,
                   m.method === 'passkey' ? (m.lastUsedAt ? v.lastUsed(this.date(m.lastUsedAt)) : v.neverUsed) : undefined,
@@ -1734,7 +1751,7 @@ export class MadauthLogin extends LitElement {
                 ].filter(Boolean);
                 return html`
                   <li class="method" data-method=${m.method}>
-                    ${rowIcons[m.method] ?? null}
+                    ${rowIcons[m.method] ?? (isBuiltInMethodId(m.method) ? null : signInIcon)}
                     <span class="method-text">
                       <span class="label">${label}</span>
                       ${details.length ? html`<span class="hint">${details.join(' · ')}</span>` : null}
@@ -1775,11 +1792,9 @@ export class MadauthLogin extends LitElement {
                     })}</li>`
                   : null}
               </ul>
-              ${config('google') || config('github')
+              ${connectable.length
                 ? html`<div class="buttons">
-                    ${(['google', 'github'] as const)
-                      .filter((m) => config(m))
-                      .map((m) => html`<div class="button-slot ${m}-slot" data-button=${m} data-purpose="link" title=${v.connect(s.methodNames[m])}></div>`)}
+                    ${connectable.map((m) => html`<div class="button-slot ${m}-slot" data-button=${m} data-purpose="link" title=${v.connect(nameOfMethod(m, s))}></div>`)}
                   </div>`
                 : null}
             </section>
@@ -2084,8 +2099,8 @@ export class MadauthLogin extends LitElement {
 
   private renderForgot() {
     const s = this.strings;
-    // Users of a provider (Google, GitHub) have no password to reset: name the ones offered here.
-    const providerNames = (['google', 'github'] as const).filter((id) => providerFor(id)).map((id) => s.methodNames[id]);
+    // Users of a provider (Google, GitHub, an OpenID Connect provider) have no password to reset: name the ones offered here.
+    const providerNames = ['google', 'github', ...providerMethods()].filter((id) => providerFor(id)).map((id) => nameOfMethod(id, s));
     return html`
       <p class="lead">${s.forgotLead}</p>
       ${providerNames.length ? html`<p class="hint">${s.forgotProviderHint(providerNames.join(s.orList))}</p>` : null}

@@ -21,8 +21,8 @@ export interface MethodSetting {
 /** How an admin switches a method on: both settings, always. */
 export interface MethodToSet {
   /**
-   * Whether it signs users in on its own. Google, GitHub, password and the e-mail link always do (`true`),
-   * SMS codes never (`false`); the authenticator app and passkeys either do, or are only a second factor.
+   * Whether it signs users in on its own. Google, GitHub, the OpenID Connect providers, password and the
+   * e-mail link always do (`true`), SMS codes never (`false`); the authenticator app and passkeys either do, or are only a second factor.
    */
   allowAsSignInMethod: boolean;
   /** Whether a sign-in with it asks for a second factor; `none` for a method that does not sign in. */
@@ -38,8 +38,8 @@ export interface PasswordRules {
   minScore: number;
 }
 
-/** The ids of the methods in the settings. */
-export type MethodId = 'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey' | 'sms';
+/** The ids of the methods in the settings: madAuth's own, and those of the OpenID Connect providers an admin added. */
+export type MethodId = 'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey' | 'sms' | (string & {});
 
 export interface Settings {
   methods: Record<MethodId, MethodSetting>;
@@ -53,8 +53,11 @@ export interface Settings {
  */
 export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 
-/** The kinds of sign-in providers: each exists once, with its kind as its id. */
-export type ProviderKind = 'google' | 'github';
+/**
+ * The kinds of sign-in providers. Google and GitHub exist once each, with the kind as the id; `oidc`, an
+ * OpenID Connect provider (e.g. GitLab, Keycloak, Okta), as often as needed, each with an id of its own.
+ */
+export type ProviderKind = 'google' | 'github' | 'oidc';
 
 /** A sign-in provider as the admin API answers it: never its secret, only whether it has one. */
 export interface ProviderInfo {
@@ -64,11 +67,17 @@ export interface ProviderInfo {
   name: string;
   clientId: string;
   hasClientSecret: boolean;
-  /** What the provider's console must list as the redirect URI (Google) or the callback URL (GitHub). */
+  /** What the provider's console must list as the redirect URI (Google, OpenID Connect) or the callback URL (GitHub). */
   callbackUrl: string;
   /** Milliseconds since 1970. */
   createdAt: number;
   updatedAt: number;
+  /** OpenID Connect: the issuer, whose discovery document says where the rest is. */
+  issuer?: string;
+  /** OpenID Connect: the scopes asked for beyond `openid email profile`. */
+  scopes?: string[];
+  /** OpenID Connect: whether its addresses count as verified without `email_verified`. */
+  trustEmail?: boolean;
 }
 
 /** What an admin sets of a provider: `clientSecret` in plain text, `null` to remove it (Google only), left out to keep it. */
@@ -76,7 +85,17 @@ export interface ProviderChanges {
   name?: string;
   clientId?: string;
   clientSecret?: string | null;
+  /** OpenID Connect: the scopes to ask for beyond `openid email profile`, separated by spaces, e.g. `'read_user'`. */
+  scopes?: string;
+  /**
+   * OpenID Connect: whether its addresses count as verified without `email_verified` in its claims (default
+   * `false`). Only for a provider whose addresses its operator verifies, e.g. the company's own.
+   */
+  trustEmail?: boolean;
 }
+
+/** A new provider: Google or GitHub by its kind, an OpenID Connect provider with its id, name and issuer. */
+export type NewProvider = ({ kind: 'google' | 'github' } | { kind: 'oidc'; id: string; name: string; issuer: string; clientId: string; clientSecret: string }) & ProviderChanges;
 
 /** What `searchUsers` looks for; every filter given must match. */
 export interface UserSearch {
@@ -163,12 +182,18 @@ export interface AdminApi {
   /** The sign-in providers, without their secrets. Fails with `forbidden`. */
   listProviders(): Promise<Result<{ providers: ProviderInfo[] }>>;
   /**
-   * Adds a sign-in provider: Google (its client ID; a client secret for the redirect sign-in) or GitHub (its client
-   * ID and secret). It is off until switched on with `setSettings`. Needs a sign-in within the last ten minutes.
-   * Fails with `forbidden`, `reauth_required`, `invalid_provider` or `provider_exists`.
+   * Adds a sign-in provider: Google (its client ID; a client secret for the redirect sign-in), GitHub (its client
+   * ID and secret), or an OpenID Connect provider (an id of its own, e.g. `gitlab`, which becomes its method's;
+   * its name, issuer, client ID and secret). The server reads an OpenID Connect provider's discovery document
+   * first, and refuses it with `invalid_provider` when that fails. A provider is off until switched on with
+   * `setSettings`. Needs a sign-in within the last ten minutes. Fails with `forbidden`, `reauth_required`,
+   * `invalid_provider` or `provider_exists`.
    */
-  addProvider(provider: { kind: ProviderKind } & ProviderChanges): Promise<Result<{ provider: ProviderInfo }>>;
-  /** Changes a provider; needs a recent sign-in. Fails with `forbidden`, `reauth_required`, `invalid_provider` or `provider_not_found`. */
+  addProvider(provider: NewProvider): Promise<Result<{ provider: ProviderInfo }>>;
+  /**
+   * Changes a provider; an OpenID Connect provider's issuer can't change (its accounts belong to it). Needs a
+   * recent sign-in. Fails with `forbidden`, `reauth_required`, `invalid_provider` or `provider_not_found`.
+   */
   updateProvider(id: string, changes: ProviderChanges): Promise<Result<{ provider: ProviderInfo }>>;
   /**
    * Removes a provider; needs a recent sign-in. Its users' accounts stay, so adding it again brings their sign-ins

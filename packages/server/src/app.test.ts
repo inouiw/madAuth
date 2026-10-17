@@ -279,7 +279,7 @@ describe('code (redirect) flow', () => {
       emailLink: null,
       sms: false,
       passkey: null,
-      providers: [{ id: 'google', kind: 'google', name: 'Google' }],
+      providers: [{ id: 'google', kind: 'google', name: 'Google', secondFactor: 'none' }],
     });
     // The FedCM flow still works.
     expect((await getNonce(app)).nonce).toBeTruthy();
@@ -387,7 +387,7 @@ describe('public endpoints', () => {
       emailLink: null,
       sms: false,
       passkey: null,
-      providers: [{ id: 'google', kind: 'google', name: 'Google' }],
+      providers: [{ id: 'google', kind: 'google', name: 'Google', secondFactor: 'none' }],
     });
   });
 

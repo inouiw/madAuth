@@ -4,7 +4,7 @@ import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { JWTPayload } from 'jose';
 import type { AppContext } from '../app.js';
-import type { SecondFactor, SignInMethod } from '../settings.js';
+import type { SecondFactor } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import { toMadauthUser, type StoredUser } from '../users.js';
 import type { MadauthUser } from '../user.js';
@@ -46,7 +46,8 @@ export interface Challenge {
   sub: string;
   sv: number;
   amr: string[];
-  method: SignInMethod;
+  /** The method of the first step: madAuth's own id, or an OpenID Connect provider's id. */
+  method: string;
   next: NextStep;
   factors: SecondFactor[];
   setup?: SecondFactor[];

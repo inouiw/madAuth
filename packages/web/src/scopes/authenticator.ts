@@ -1,3 +1,4 @@
+import type { LoginMethodId } from '../methods.js';
 import { Authenticator } from '../providers/authenticator.js';
 import type { PendingStep } from '../providers/provider.js';
 import { qrSvg } from '../qr.js';
@@ -37,8 +38,11 @@ export interface AuthenticatorPolicy {
   signIn: boolean;
   /** People can sign up with the app alone. */
   signUp: boolean;
-  /** The methods that ask for a second factor once one is set up (`optional`) or always (`required`). */
-  secondFactorFor: ('google' | 'github' | 'password' | 'email-link' | 'passkey')[];
+  /**
+   * The methods that ask for a second factor once one is set up (`optional`) or always (`required`): of
+   * `google`, `github`, `password`, `email-link` and `passkey`, and the OpenID Connect providers' ids.
+   */
+  secondFactorFor: LoginMethodId[];
 }
 
 /**
@@ -181,6 +185,9 @@ export function createAuthenticatorApi(core: Core): AuthenticatorApi {
       const secondFactorFor: AuthenticatorPolicy['secondFactorFor'] = [];
       if (config.google && config.google.secondFactor !== 'none') secondFactorFor.push('google');
       if (config.github && config.github.secondFactor !== 'none') secondFactorFor.push('github');
+      for (const provider of config.providers ?? []) {
+        if (provider.kind === 'oidc' && provider.secondFactor && provider.secondFactor !== 'none') secondFactorFor.push(provider.id);
+      }
       if (config.password && config.password.secondFactor !== 'none') secondFactorFor.push('password');
       if (config.emailLink && config.emailLink.secondFactor !== 'none') secondFactorFor.push('email-link');
       if (config.passkey?.signIn && config.passkey.secondFactor !== 'none') secondFactorFor.push('passkey');

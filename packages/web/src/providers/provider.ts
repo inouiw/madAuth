@@ -35,9 +35,10 @@ export interface ServerConfig {
   passkey?: { signIn: boolean; signUp: boolean; secondFactor: SecondFactorPolicy } | null;
   /**
    * The sign-in providers that are on, with the names admins gave them; the dialog shows a button for each.
-   * Absent from servers before madAuth 0.7.
+   * `oidc`: an OpenID Connect provider, whose id is its method's. Absent from servers before madAuth 0.7, and
+   * `secondFactor` from 0.7.0-beta.1.
    */
-  providers?: { id: string; kind: 'google' | 'github'; name: string }[];
+  providers?: { id: string; kind: 'google' | 'github' | 'oidc'; name: string; secondFactor?: SecondFactorPolicy }[];
 }
 
 /** What a sign-in still needs after its first step, and which sign-in it is. */
@@ -135,6 +136,8 @@ export interface SignInProvider {
   setup(ctx: ProviderContext): Promise<Result>;
   /** Renders the provider's sign-in button into `container`. Returns a function that removes it. */
   renderButton?(container: HTMLElement, options: ButtonOptions): () => void;
+  /** A redirect provider: sends the browser to the provider's sign-in; with `link`, it adds the provider to the signed-in user's methods. */
+  redirect?(link: boolean): void;
   /** Someone signed in, with this or another method. */
   onSignedIn?(): void;
   onSignedOut?(): void;

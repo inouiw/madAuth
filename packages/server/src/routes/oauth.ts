@@ -6,6 +6,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { base64url } from 'jose';
 import type { AppContext } from '../app.js';
 import { normalizeEmail } from '../password.js';
+import { nameOfMethod } from '../providers.js';
 import { signInPredicate, type SecondFactor, type SignInMethod } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
 import { toMadauthUser, type StoredUser } from '../users.js';
@@ -120,7 +121,7 @@ export function appOriginOf(c: Context): string | undefined {
  * set), with the error, or with the second step the sign-in goes on with and which second factors can
  * finish it (the challenge cookie is set). `method` names the sign-in in the hash in the last two cases.
  */
-export function redirectBack(c: Context, returnTo: string, method: SignInMethod): (error?: string, next?: NextStep, factors?: SecondFactor[]) => Response {
+export function redirectBack(c: Context, returnTo: string, method: string): (error?: string, next?: NextStep, factors?: SecondFactor[]) => Response {
   return (error, next, factors = []) => {
     const url = new URL(returnTo);
     if (error) url.hash = `${REDIRECT_ERROR_PARAM}=${error}&${REDIRECT_METHOD_PARAM}=${method}`;
@@ -132,7 +133,8 @@ export function redirectBack(c: Context, returnTo: string, method: SignInMethod)
 
 /** A sign-in provider whose profiles {@link resolveProviderUser} resolves: its method id, and its name for messages. */
 export interface OAuthProvider {
-  method: SignInMethod;
+  /** Its method: madAuth's own id, or an OpenID Connect provider's id. */
+  method: string;
   name: string;
 }
 
@@ -151,7 +153,7 @@ export type SignInResult =
   | { ok: true; user: StoredUser }
   | { ok: false; error: 'signup_rejected' | 'temporarily_unavailable'; message: string }
   /** The address belongs to a user who signs in another way; `methods` says how. */
-  | { ok: false; error: 'other_method'; message: string; methods: SignInMethod[] };
+  | { ok: false; error: 'other_method'; message: string; methods: string[] };
 
 /** How a message names each method when it says how an address signs in. A method without a name here does not compile. */
 const METHOD_NAMES = {
@@ -205,7 +207,7 @@ export async function resolveProviderUser(
       if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) {
         const now = await ctx.methods();
         const methods = await users.signInMethods(existing.id, signInPredicate(now.configured, now.settings));
-        const how = methods.map((method) => METHOD_NAMES[method]).join(' or ');
+        const how = methods.map((method) => nameOfMethod(METHOD_NAMES, now.providers, method)).join(' or ');
         return {
           ok: false,
           error: 'other_method',

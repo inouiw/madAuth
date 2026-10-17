@@ -21,7 +21,8 @@ let sessionUser: DemoUser | null = null;
 let signInAs: DemoUser = ada;
 /** A method as the admin API answers it. */
 const method = (enabled: boolean, allowAsSignInMethod = enabled, secondFactor = 'none', configured = true) => ({ configured, enabled, allowAsSignInMethod, secondFactor });
-let settings = {
+/** The settings as the fake server has them; an OpenID Connect provider's id is a method too. */
+let settings: Record<'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey' | 'sms', ReturnType<typeof method>> & Record<string, ReturnType<typeof method>> = {
   google: method(true),
   github: method(true),
   password: method(false, false, 'optional'),
@@ -132,7 +133,17 @@ vi.stubGlobal(
           return json({ error: 'invalid_settings', message: 'At least one sign-in method must stay on.' }, 400);
         }
         const of = (id: string) => method(!!methods[id], !!methods[id]?.allowAsSignInMethod, methods[id]?.secondFactor ?? 'none');
-        settings = { google: of('google'), github: of('github'), password: of('password'), authenticator: of('authenticator'), 'email-link': of('email-link'), passkey: of('passkey'), sms: of('sms') };
+        const providers = Object.keys(settings).filter((id) => !['google', 'github', 'password', 'authenticator', 'email-link', 'passkey', 'sms'].includes(id));
+        settings = {
+          ...Object.fromEntries(providers.map((id) => [id, of(id)])),
+          google: of('google'),
+          github: of('github'),
+          password: of('password'),
+          authenticator: of('authenticator'),
+          'email-link': of('email-link'),
+          passkey: of('passkey'),
+          sms: of('sms'),
+        };
         return json({ methods: settings });
       }
     }
@@ -486,6 +497,36 @@ describe('demo page', () => {
     $<HTMLButtonElement>('#sign-out').click();
     await expect.poll(() => $('#sign-in').hidden).toBe(false);
     signInAs = ada;
+  });
+
+  it('gives each OpenID Connect provider in the settings a row after GitHub, which switches it on with its policy', async () => {
+    settings.gitlab = method(false);
+    gis.callback!({ credential: 'token' });
+    await expect.poll(() => execute('setSettings').disabled).toBe(false);
+
+    const rows = () => [...document.querySelectorAll<HTMLElement>('table.methods tr')].map((tr) => tr.querySelector('input')!.id);
+    expect(rows().slice(0, 3)).toEqual(['method-google', 'method-github', 'method-gitlab']);
+    expect($('tr[data-provider="gitlab"]').textContent).toContain('gitlab (OpenID Connect)');
+    expect($<HTMLInputElement>('#method-gitlab').checked).toBe(false);
+    open('setSettings');
+    $<HTMLInputElement>('#method-gitlab').checked = true;
+    changed($('#method-gitlab'));
+    $<HTMLSelectElement>('#policy-gitlab').value = 'optional';
+    changed($('#policy-gitlab'));
+    const sent = JSON.parse(request('setSettings')!.split('\n').slice(1).join('\n')) as { methods: Record<string, unknown> };
+    expect(sent.methods.gitlab).toEqual({ allowAsSignInMethod: true, secondFactor: 'optional' });
+    execute('setSettings').click();
+
+    await expect.poll(() => settings.gitlab?.enabled).toBe(true);
+    expect(settings.gitlab?.secondFactor).toBe('optional');
+    // Shown again from the answer, once.
+    await expect.poll(() => response('setSettings')).toContain('"gitlab"');
+    expect(document.querySelectorAll('tr[data-provider="gitlab"]')).toHaveLength(1);
+    expect($<HTMLInputElement>('#method-gitlab').checked).toBe(true);
+
+    delete settings.gitlab;
+    $<HTMLButtonElement>('#sign-out').click();
+    await expect.poll(() => $('#sign-in').hidden).toBe(false);
   });
 
   it('leaves the boxes as the user set them when setSettings is refused', async () => {
