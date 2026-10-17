@@ -158,6 +158,12 @@ export interface AdminApi {
    */
   setSettings(settings: { methods?: MethodsToSet; password?: Partial<PasswordRules> }): Promise<Result<Settings>>;
   /**
+   * Switches one method on with `setting`, or off with `null`, leaving the others as they are: the server changes
+   * its entry in the stored list, so what another admin changes meanwhile stays. Checked like `setSettings`.
+   * Fails with `forbidden` or `invalid_settings`.
+   */
+  setMethod(method: MethodId, setting: MethodToSet | null): Promise<Result<Settings>>;
+  /**
    * Resets the sign-in of the user with this e-mail address, who lost every way in or a second factor:
    * removes all their sign-in methods and second factors, ends their sessions and marks the address
    * unconfirmed. They sign up again with any method that is on and keep their id, claims and roles. Check
@@ -223,6 +229,7 @@ export function createAdminApi(core: Core): AdminApi {
     setClaims: (email, value) => call('claims/set', { email, claims: value }, claims),
     getSettings: () => call('settings/get', {}, settings),
     setSettings: (value) => call('settings/set', { methods: value.methods, password: value.password }, settings),
+    setMethod: (method, setting) => call('settings/method', { method, setting }, settings),
     resetSignIn: (email) => call('sign-in/reset', { email }, (data: { userId: string }) => ({ userId: data.userId })),
     listApiKeys: (email) => call('api-keys/list', { email }, (data: { userId: string; apiKeys: ApiKeyInfo[] }) => ({ userId: data.userId, apiKeys: data.apiKeys })),
     revokeApiKey: (email, id) => call('api-keys/revoke', { email, id }, (data: { userId: string }) => ({ userId: data.userId })),

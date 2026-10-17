@@ -2466,21 +2466,17 @@ export class MadauthLogin extends LitElement {
   }
 
   /**
-   * Switches the provider on with the form's policy, or off. The settings list every method that is on, so they
-   * are read right before, and sent back with only this one changed.
+   * Switches the provider on with the form's policy, or off, if that changed: only its entry of the settings,
+   * which the server changes in the stored list, so another admin's change meanwhile stays.
    */
   private async switchProvider(id: string, draft: ProviderDraft): Promise<Result> {
-    const settings = await Madauth.admin.getSettings();
-    if (!settings.isSuccess) return settings;
-    const current = settings.methods[id];
+    const current = this.adminSettings?.[id];
     const unchanged = !!current?.enabled === draft.on && (!draft.on || current?.secondFactor === draft.secondFactor);
     if (unchanged) return { isSuccess: true };
-    const others = Object.entries(settings.methods)
-      .filter(([method, setting]) => method !== id && setting.enabled)
-      .map(([method, setting]) => [method, { allowAsSignInMethod: setting.allowAsSignInMethod, secondFactor: setting.secondFactor }] as const);
-    const methods = Object.fromEntries(draft.on ? [...others, [id, { allowAsSignInMethod: true, secondFactor: draft.secondFactor }] as const] : others);
-    const set = await Madauth.admin.setSettings({ methods });
-    return set.isSuccess ? { isSuccess: true } : set;
+    const set = await Madauth.admin.setMethod(id, draft.on ? { allowAsSignInMethod: true, secondFactor: draft.secondFactor } : null);
+    if (!set.isSuccess) return set;
+    this.adminSettings = set.methods;
+    return { isSuccess: true };
   }
 
   /** Counts the users who sign in with the provider alone, for the confirmation of its removal. */
@@ -2502,7 +2498,7 @@ export class MadauthLogin extends LitElement {
     const v = s.adminView;
     return html`
       <p class="lead" data-stranded=${removal.usersWithoutSignIn}>${v.stranded(removal.usersWithoutSignIn)}</p>
-      <p class="hint">${v.removeLead}</p>
+      <p class="hint">${v.removeLead(removal.provider.kind === 'oidc')}</p>
       <button part="method" class="submit" type="button" data-action="confirm-remove" ?disabled=${this.busy} @click=${() => this.onRemoveProvider(removal.provider)}>
         <span class="label">${v.remove}</span>
       </button>

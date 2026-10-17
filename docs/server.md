@@ -142,7 +142,7 @@ Google, GitHub and [OpenID Connect](#openid-connect-provider-setup) sign-in are 
 - **Change one** with `updateProvider(id, { name, clientId, clientSecret })`, each optional, and an OpenID Connect provider's `scopes` and `trustEmail`; `clientSecret: null` removes Google's. The kind, the id and an OpenID Connect provider's issuer don't change: its accounts belong to it.
 - **Remove one** with `removeProvider(id)`. Its users' accounts stay, so adding it again brings their sign-ins back; the answer's `usersWithoutSignIn` says how many users have no other way in meanwhile. It goes out of the [sign-in settings](#sign-in-methods) as well: added again, it is off until switched on, like a new provider. An OpenID Connect provider's id comes back only with its issuer (see below).
 
-**In the admin dialog:** `Madauth.showAdminDialog()` does all of this in madAuth's dialog. It lists the providers with their state ("On, second factor optional" / "Off"), adds one (Google, GitHub or an OpenID Connect provider, showing the callback URL to register as the id is typed), changes one, switches it on or off with its second-factor policy in the same form (it sends the methods setting back with only that provider changed), and removes one after a confirmation that says how many users sign in with it alone. It asks the admin to sign in again when a change needs it. For a user without the role `admin`, or nobody signed in, it resolves to `forbidden` or `no_session` and doesn't open.
+**In the admin dialog:** `Madauth.showAdminDialog()` does all of this in madAuth's dialog. It lists the providers with their state ("On, second factor optional" / "Off"), adds one (Google, GitHub or an OpenID Connect provider, showing the callback URL to register as the id is typed), changes one, switches it on or off with its second-factor policy in the same form (with `setMethod`, which changes only that provider's entry), and removes one after a confirmation that says how many users sign in with it alone. It asks the admin to sign in again when a change needs it. For a user without the role `admin`, or nobody signed in, it resolves to `forbidden` or `no_session` and doesn't open.
 
 Changing providers takes an admin's session (no API key) with a sign-in within the last ten minutes. Listing them (`listProviders()`, `POST /auth/admin/providers/list`) and a dry run of a removal (`removeProvider(id, { dryRun: true })`, which only counts the users who sign in with nothing else) also work with an API key with the scope `madauth:providers:read`. Each change sends `provider.added`, `provider.changed` or `provider.removed` to the webhook (opt in with `WEBHOOK_EVENTS`), with the admin's address as `by`.
 
@@ -595,6 +595,13 @@ const result = await Madauth.admin.getSettings();
 // { isSuccess: true, methods: { google: { configured, enabled, allowAsSignInMethod, secondFactor }, github: { … }, … } }
 ```
 
+To switch one method on or off without sending the whole list, `setMethod` changes only its entry, so what another admin changes meanwhile stays (`POST /auth/admin/settings/method`):
+
+```ts
+await Madauth.admin.setMethod('gitlab', { allowAsSignInMethod: true, secondFactor: 'optional' });
+await Madauth.admin.setMethod('gitlab', null); // off
+```
+
 ## Password rules
 
 The rules for new passwords, at sign-up, at a reset and when a user adds a password, are a setting too, so admins change them while the server runs and the ready-made bundles need no code for them:
@@ -953,6 +960,7 @@ Your app lists the scopes of its API at `API_KEY_SCOPES_URL`; see [API keys](api
 | `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims`, 403 `own_admin_role` (it would take the role `admin` from the caller, see [The first admin](#the-first-admin)) |
 | `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, allowAsSignInMethod, secondFactor }, github: { … }, password: { … }, authenticator: { … }, 'email-link': { … }, passkey: { … }, sms: { … } }, password: { minLength, minScore } }`, for admins. See [Sign-in methods](#sign-in-methods) and [Password rules](#password-rules). |
 | `POST /auth/admin/settings/set` | `{ methods?: { <id>: { allowAsSignInMethod, secondFactor } }, password?: { minLength?, minScore? } }`, one or both (`methods` is the list of the methods that are on, each with both settings; what `password` leaves out takes its default) → the same; 400 `invalid_settings` when a setting doesn't fit its method, a policy has no second factor that is on, or no method that creates users would stay on, and then nothing is changed |
+| `POST /auth/admin/settings/method` | `{ method, setting }`, `setting` as in `settings/set` or `null` (off) → like `settings/set`: changes only that method's entry in the stored list, so what another admin changes meanwhile stays; checked like `settings/set` (400 `invalid_settings`) |
 | `POST /auth/admin/providers/list` | `{}` → `{ providers: [{ id, kind, name, clientId, hasClientSecret, callbackUrl, createdAt, updatedAt }], callbackBase }` (`callbackBase`: `<MADAUTH_ISSUER>/auth/providers/`, a new provider's callback URL is `<callbackBase><id>/callback`), for admins (an API key needs `madauth:providers:read`), or with the [setup token](#first-setup). See [Providers](#providers). |
 | `POST /auth/admin/providers/add` | `{ kind, name?, clientId, clientSecret? }`, for `oidc` also `{ id, name, issuer, scopes?, trustEmail? }` → `{ provider }`: adds a provider, off until switched on (an OpenID Connect provider only when its discovery document can be read); an admin's session with a sign-in within ten minutes (401 `reauth_required`; an API key gets 403 `forbidden`), or the setup token; 400 `invalid_provider`, 409 `provider_exists`, 401 `invalid_setup_token` |
 | `POST /auth/admin/providers/update` | `{ id, name?, clientId?, clientSecret?, scopes?, trustEmail? }` (`clientSecret: null` removes Google's; `scopes` and `trustEmail` for `oidc`) → `{ provider }`; like `add`, and 404 `provider_not_found` |

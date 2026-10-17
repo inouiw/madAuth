@@ -151,6 +151,8 @@ describe('Madauth.admin', () => {
     // A dry run counts, and leaves the provider.
     expect(await Madauth.admin.removeProvider('github', { dryRun: true })).toMatchObject({ isSuccess: true, usersWithoutSignIn: 0 });
     expect(server.requests.at(-1)!.body).toEqual({ id: 'github', dryRun: true });
+    expect(await Madauth.admin.setMethod('github', { allowAsSignInMethod: true, secondFactor: 'none' })).toMatchObject({ isSuccess: true, methods: { github: { enabled: true } } });
+    expect(server.requests.at(-1)).toMatchObject({ path: '/auth/admin/settings/method', body: { method: 'github', setting: { allowAsSignInMethod: true, secondFactor: 'none' } } });
     expect(await Madauth.admin.removeProvider('github')).toMatchObject({ isSuccess: true, usersWithoutSignIn: 0 });
     expect(server.requests.at(-1)!.body).toEqual({ id: 'github' });
     expect(await Madauth.admin.removeProvider('github')).toMatchObject({ isSuccess: false, error: { code: 'provider_not_found' } });

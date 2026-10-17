@@ -704,9 +704,21 @@ export function fakeServer(): FakeServer {
         return json({ email, userId: userFor(email).id, claims: server.claims.get(email) ?? {} });
       }
       case 'POST /auth/admin/settings/get':
-      case 'POST /auth/admin/settings/set': {
+      case 'POST /auth/admin/settings/set':
+      case 'POST /auth/admin/settings/method': {
         if (!server.user) return json({ error: 'no_session' }, 401);
         if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        // One method: the list as it is, with only that method changed; answered like the others.
+        if (url.pathname.endsWith('/method')) {
+          if (server.settingsRefused) return json({ error: 'invalid_settings', message: server.settingsRefused }, 400);
+          const { method, setting } = body as unknown as { method: string; setting: { allowAsSignInMethod: boolean; secondFactor: SecondFactorPolicy } | null };
+          const provider = server.oidc.find((p) => p.id === method);
+          if (provider) Object.assign(provider, { on: !!setting, secondFactor: setting?.secondFactor ?? 'none' });
+          else if (method === 'google' || method === 'github' || method === 'password' || method === 'email-link') {
+            server.methods[method] = !!setting;
+            server.policy[method] = setting?.secondFactor ?? 'none';
+          } else return json({ error: 'invalid_settings', message: `"${method}" is no sign-in method of this server` }, 400);
+        }
         if (url.pathname.endsWith('/set')) {
           const { password } = body as { password?: { minLength?: number; minScore?: number } };
           if (password) server.passwordRules = { minLength: password.minLength ?? 8, minScore: password.minScore ?? 2 };

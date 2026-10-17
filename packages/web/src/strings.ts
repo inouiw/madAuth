@@ -299,7 +299,8 @@ export const en = {
     removed: 'Removed.',
     done: 'Done',
     removeHeading: (name: string) => `Remove ${name}?`,
-    removeLead: 'Its users’ accounts stay: adding it again with the same issuer brings their sign-ins back.',
+    /** `withIssuer`: an OpenID Connect provider, whose accounts come back only with its issuer. */
+    removeLead: (withIssuer: boolean) => `Its users’ accounts stay: adding it again${withIssuer ? ' with the same issuer' : ''} brings their sign-ins back.`,
     /** How many users sign in with the provider and nothing else. */
     stranded: (count: number) =>
       count === 0
@@ -633,7 +634,7 @@ export const de: Strings = {
     removed: 'Entfernt.',
     done: 'Fertig',
     removeHeading: (name) => `${name} entfernen?`,
-    removeLead: 'Die Konten seiner Nutzer bleiben: Fügen Sie ihn mit demselben Aussteller wieder hinzu, können sie sich wieder anmelden.',
+    removeLead: (withIssuer) => `Die Konten seiner Nutzer bleiben: Fügen Sie ihn${withIssuer ? ' mit demselben Aussteller' : ''} wieder hinzu, können sie sich wieder anmelden.`,
     stranded: (count) =>
       count === 0
         ? 'Alle, die sich damit anmelden, haben noch einen anderen Weg.'

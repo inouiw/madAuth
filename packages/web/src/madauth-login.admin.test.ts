@@ -101,10 +101,9 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     expect(sent(server, '/auth/admin/providers/add')).toEqual([
       { kind: 'oidc', id: 'gitlab', name: 'GitLab', issuer: 'https://gitlab.com', clientId: 'gl-client', clientSecret: 'gl-secret', scopes: 'read_user', trustEmail: false },
     ]);
-    // The settings go back with every method as it was, and the new one on.
-    expect(sent(server, '/auth/admin/settings/set').at(-1)).toMatchObject({
-      methods: { google: { allowAsSignInMethod: true, secondFactor: 'none' }, password: { allowAsSignInMethod: true }, gitlab: { allowAsSignInMethod: true, secondFactor: 'optional' } },
-    });
+    // Only its entry of the settings: the server changes it in the stored list.
+    expect(sent(server, '/auth/admin/settings/method')).toEqual([{ method: 'gitlab', setting: { allowAsSignInMethod: true, secondFactor: 'optional' } }]);
+    expect(sent(server, '/auth/admin/settings/set')).toEqual([]);
 
     // Opening listed the providers once: to find out whether Grace may see them.
     expect(sent(server, '/auth/admin/providers/list').length).toBe(2);
@@ -136,14 +135,14 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
 
     expect(text('.notice')).toBe('Saved.');
     expect(sent(server, '/auth/admin/providers/update')).toEqual([{ id: 'gitlab', name: 'GitLab EE' }]);
-    expect(Object.keys((sent(server, '/auth/admin/settings/set').at(-1) as { methods: object }).methods)).not.toContain('gitlab');
+    expect(sent(server, '/auth/admin/settings/method')).toEqual([{ method: 'gitlab', setting: null }]);
     expect(rows()).toContain('GitLab EE OpenID Connect · gitlab · Off');
 
     // Nothing changed: nothing is sent.
     await click('[data-provider="gitlab"]');
     await save();
     expect(sent(server, '/auth/admin/providers/update')).toHaveLength(1);
-    expect(sent(server, '/auth/admin/settings/set')).toHaveLength(1);
+    expect(sent(server, '/auth/admin/settings/method')).toHaveLength(1);
   });
 
   it('DA3: a removal is confirmed with how many users sign in with the provider alone, counted before anything is removed', async () => {
@@ -156,6 +155,7 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     await click('[data-action="remove-provider"]');
     expect(text('h2')).toBe('Remove GitLab?');
     expect(text('.lead')).toBe('2 users sign in with it alone and can’t sign in until it is back, or an admin resets their sign-in.');
+    expect(text('.hint')).toBe('Its users’ accounts stay: adding it again with the same issuer brings their sign-ins back.');
     expect(sent(server, '/auth/admin/providers/remove')).toEqual([{ id: 'gitlab', dryRun: true }]);
     expect(server.oidc).toHaveLength(1);
 

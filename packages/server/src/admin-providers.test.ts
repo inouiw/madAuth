@@ -127,6 +127,26 @@ describe('admins manage the providers', () => {
     expect(await json(call(made, 'remove', { id: 'github', dryRun: 'yes' }, { Cookie: made.cookie }))).toMatchObject({ error: 'invalid_options' });
     expect(await json(call(made, 'remove', { id: 'gitlab', dryRun: true }, { Cookie: made.cookie }))).toMatchObject({ error: 'provider_not_found' });
   });
+
+  it('AP10: settings/method changes one method in the stored list, keeps the others as they are, and is checked like the whole list', async () => {
+    const made = await withAdmin();
+    await call(made, 'add', GITHUB, { Cookie: made.cookie });
+    await setMethods(made.store, { password: ON, passkey: ON });
+    const method = (body: unknown) => json(post(made.app, '/auth/admin/settings/method', body, { Cookie: made.cookie }));
+    const stored = async () => (await json(post(made.app, '/auth/admin/settings/get', {}, { Cookie: made.cookie }))).methods;
+
+    expect((await method({ method: 'github', setting: { allowAsSignInMethod: true, secondFactor: 'optional' } })).methods.github).toMatchObject({ enabled: true, secondFactor: 'optional' });
+    // Meanwhile another admin switched passkeys off: the next change keeps that.
+    await setMethods(made.store, { password: ON, github: { allowAsSignInMethod: true, secondFactor: 'optional' } });
+    await method({ method: 'github', setting: null });
+    expect(await stored()).toMatchObject({ password: { enabled: true }, passkey: { enabled: false }, github: { enabled: false } });
+
+    expect(await method({ method: 'github', setting: { allowAsSignInMethod: true } })).toMatchObject({ error: 'invalid_settings' });
+    expect(await method({ method: 'gitlab', setting: ON })).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('"gitlab" is no sign-in method of this server') });
+    // The last sign-in method stays on, as with setSettings.
+    expect(await method({ method: 'password', setting: null })).toMatchObject({ error: 'invalid_settings' });
+    expect((await stored()).password).toMatchObject({ enabled: true });
+  });
 });
 
 describe('the setup token, while no admin exists', () => {

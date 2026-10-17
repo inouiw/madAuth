@@ -763,6 +763,34 @@ export function createApp(config: MadauthConfig): Hono {
     return c.json(settingsAnswer(now, next ?? now.settings, password));
   });
 
+  // One method's entry, changed in the stored list itself: what another admin changes meanwhile stays.
+  app.post('/auth/admin/settings/method', async (c) => {
+    const caller = await adminOrSetup(c, 'madauth:settings:write', false);
+    if ('answer' in caller) return caller.answer;
+    const { method, setting } = await body(c);
+    const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
+    const parsed = typeof method === 'string' && setting !== null ? parseMethodSettings({ [method]: setting }) : null;
+    if (typeof method !== 'string' || (setting !== null && parsed === null)) {
+      return invalid(
+        `Pass a method's id and its setting, { "method": "gitlab", "setting": { "allowAsSignInMethod": true | false, "secondFactor": ${SECOND_FACTOR_POLICIES.map((p) => `"${p}"`).join(' | ')} } }, or "setting": null to switch it off.`,
+      );
+    }
+    const now = await ctx.methods(c);
+    // Checked against the list as stored at the moment of the write, which the retries of a concurrent change read anew.
+    let wrong: string | null = null;
+    const changed = await settings.changeMethods(
+      (current) => {
+        const next = { ...Object.fromEntries(Object.entries(current).filter(([id]) => id !== method)), ...(parsed ?? {}) };
+        wrong = checkMethodSettings(next, now);
+        return wrong ? null : next;
+      },
+      caller.by,
+      now.settings,
+    );
+    if (!changed) return invalid(wrong ?? 'The settings could not be changed.');
+    return c.json(settingsAnswer(now, changed, await settings.passwordRules()));
+  });
+
   // --- Admin: the sign-in providers (see providers.ts) ---
 
   /** A provider as the admin API answers it: never its secret, only whether it has one. */
