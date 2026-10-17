@@ -1,6 +1,7 @@
 import { serve } from '@hono/node-server';
 import { createApp } from '../app.js';
 import { loadConfig, resolveEnv, type EntryOptions } from '../config.js';
+import { announceSetupOf } from '../setup.js';
 
 export type StartOptions = EntryOptions;
 
@@ -12,6 +13,7 @@ export async function start(opts: StartOptions = {}): Promise<void> {
   const { env: source, ...overrides } = opts;
   const env = await resolveEnv(source);
   const config = await loadConfig(env, overrides);
+  await announceSetupOf(config);
   const port = Number(env.PORT?.trim() || 8787);
   serve({ fetch: createApp(config).fetch, port });
   console.log(`madAuth server listening on port ${port} (issuer ${config.issuer})`);

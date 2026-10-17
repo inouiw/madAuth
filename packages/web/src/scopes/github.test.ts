@@ -31,7 +31,7 @@ describe('Madauth.github.renderButton', () => {
 
     expect(rendered.isSuccess).toBe(true);
     expect(el.querySelector('button')!.textContent).toBe('Continue with GitHub');
-    expect(assign).toHaveBeenCalledExactlyOnceWith(`${SERVER}/auth/github/start?return_to=${encodeURIComponent('https://app.example.com/page')}&locale=${encodeURIComponent(navigator.language)}`);
+    expect(assign).toHaveBeenCalledExactlyOnceWith(`${SERVER}/auth/providers/github/start?return_to=${encodeURIComponent('https://app.example.com/page')}&locale=${encodeURIComponent(navigator.language)}`);
     if (rendered.isSuccess) rendered.remove();
     expect(el.childElementCount).toBe(0);
   });

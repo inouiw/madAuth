@@ -101,11 +101,10 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext): void {
   const { config, secure, users } = ctx;
   const { issuer } = config;
   const cookie = cookieOptions(secure);
-  const methodsNow = (c: Context) => ctx.methods(c);
-
   // Every route: an admin switched the authenticator app off, on its own and as a second factor.
   app.use(`${COOKIE_PATH}/*`, async (c, next) => {
-    if (!isOn('authenticator', ctx.configured, await methodsNow(c))) {
+    const now = await ctx.methods(c);
+    if (!isOn('authenticator', now.configured, now.settings)) {
       return error(c, 403, 'method_disabled', 'The authenticator app is switched off.');
     }
     await next();

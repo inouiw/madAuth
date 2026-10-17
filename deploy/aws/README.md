@@ -40,7 +40,7 @@ npx cdk bootstrap
 
 ## 2. Store the secrets
 
-The script creates the webhook secret (after asking: answer `n` for a receiver with AWS IAM), then asks for the Google client secret (leave it empty if you only use Google One Tap / FedCM) and the GitHub client secret (empty without GitHub sign-in; one without `githubClientId` is ignored). The values go straight into the Parameter Store, under `/madauth` by default:
+The script creates the webhook secret (after asking: answer `n` for a receiver with AWS IAM). It goes straight into the Parameter Store, under `/madauth` by default. Google and GitHub are no secrets of the deployment: an admin adds them later as providers (step 5).
 
 ```bash
 scripts/bootstrap-secrets.sh /madauth
@@ -60,10 +60,8 @@ Set your values in [`cdk.json`](cdk.json) under `context`:
 | --- | --- | --- |
 | `issuer` | `https://example.com` | Your app's origin (`MADAUTH_ISSUER`). Required. |
 | `allowedOrigins` | `https://example.com,https://admin.example.com` | Comma-separated. Default: the issuer |
-| `googleClientId` | `123….apps.googleusercontent.com` | Empty: no Google sign-in |
-| `githubClientId` | `Iv1.0123456789abcdef` | Empty: no GitHub sign-in. With one, step 2 needs the client secret |
 | `secretsPath` | `/madauth` | Where step 2 stored the secrets |
-| `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: Google and GitHub sign-in only |
+| `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: no e-mails, so people sign in only through the providers an admin adds (step 5) |
 | `webhookFunctionArn` | `arn:aws:lambda:eu-central-1:123456789012:function:madauth-mailer` | The receiver's function, when `webhookUrl` is its Function URL with `AWS_IAM` auth, in this account. Empty: the calls are signed with `WEBHOOK_SECRET`. See [A webhook receiver with AWS IAM](#a-webhook-receiver-with-aws-iam). |
 | `webhookEvents` | `email.send_verification,email.send_password_reset,email.send_already_registered` | What the receiver handles. This default turns on e-mail & password sign-in; add `email.send_signin_link` for the e-mail link. |
 | `environment` | `{ "INITIAL_ADMIN_EMAIL": "you@example.com" }` | More environment variables of the server, each under its own name, see [all settings](../../docs/server.md#configuration): `INITIAL_ADMIN_EMAIL` makes you the first admin (madAuth 0.6 or newer, see [Administration](#administration)), others are e.g. `PASSKEY_RP_ID`, `AUTHENTICATOR_ISSUER` or `SESSION_TTL`. |
@@ -87,7 +85,16 @@ madAuth's cookies must be first-party, so the browser should reach the server on
 - **CloudFront:** add the Function URL as an origin with two behaviors for these paths. Use the cache policy `CachingDisabled`, the origin request policy `AllViewerExceptHostHeader` and all HTTP methods. [`site/infra/lib/site-stack.ts`](../../site/infra/lib/site-stack.ts) does exactly this for madauth.com.
 - **Another reverse proxy** (nginx, Caddy, your framework's dev proxy): forward the two paths to the Function URL. Send the Function URL's own `Host` header, and pass the `Origin` and `Cookie` headers through.
 
-For Google's redirect flow, also add `https://example.com/auth/google/callback` as an authorized redirect URI of the Google client. For GitHub sign-in, the OAuth App's authorization callback URL is `https://example.com/auth/github/callback`.
+## 5. Add Google or GitHub
+
+Google and GitHub sign-in are providers in madAuth's store, which an admin adds through the admin API; the sign-in dialog then shows their buttons by itself. Until the first admin exists, the server prints a setup token in its log at every start (in CloudWatch, the function's log group): `[madauth] No admin yet. This setup token …`. With it, add a provider and switch it on:
+
+```bash
+curl -X POST https://example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' -H 'Content-Type: application/json' \
+  -d '{"kind":"github","clientId":"Ov23li…","clientSecret":"…"}'
+```
+
+The answer's `callbackUrl` is what the provider needs: `https://example.com/auth/providers/google/callback` as an authorized redirect URI of the Google client, `https://example.com/auth/providers/github/callback` as the OAuth App's authorization callback URL. Then switch it on with `POST /auth/admin/settings/set` (see [Providers](../../docs/server.md#providers)), and sign in with `INITIAL_ADMIN_EMAIL`, which makes you the first admin and ends the setup. After that, admins change providers with `Madauth.admin.addProvider` and the like.
 
 ## A webhook receiver with AWS IAM
 
@@ -110,8 +117,6 @@ import { EMAIL_LINK_EVENTS, MadAuthServer } from '@madauth/deploy-aws';
 
 const madauth = new MadAuthServer(this, 'MadAuth', {
   issuer: 'https://example.com',
-  googleClientId: '123.apps.googleusercontent.com',
-  githubClientId: 'Iv1.0123456789abcdef',
   secretsPath: '/madauth',
   // The e-mails of e-mail & password and of the e-mail link; EMAIL_EVENTS without the e-mail link.
   webhook: { url: mailerUrl, events: EMAIL_LINK_EVENTS },
@@ -143,6 +148,18 @@ madauth.keyManager.metricErrors({ period: Duration.days(1) }).createAlarm(this, 
 ```
 
 `environment` adds more settings, e.g. `{ SESSION_TTL: '3600' }`; see [all settings](../../docs/server.md#configuration).
+
+## Upgrading from a template before madAuth 0.7
+
+The template's `googleClientId` and `githubClientId` are gone: Google and GitHub are providers in the store, which an admin adds (step 5). So after the upgrade, Google and GitHub sign-in are off until an admin adds them, with the client IDs from `cdk.json` and the secrets from the Google Cloud Console and the GitHub OAuth App. Their routes moved too: update the redirect URI at Google and the callback URL at GitHub to `https://example.com/auth/providers/google/callback` and `…/auth/providers/github/callback`. Then delete the old secrets, which nothing reads any more:
+
+```bash
+aws ssm delete-parameter --name /madauth/GOOGLE_CLIENT_SECRET
+```
+
+```bash
+aws ssm delete-parameter --name /madauth/GITHUB_CLIENT_SECRET
+```
 
 ## Upgrading from a template before madAuth 0.6
 

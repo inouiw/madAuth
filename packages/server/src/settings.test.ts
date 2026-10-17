@@ -147,10 +147,11 @@ describe('parseMethodSettings', () => {
 describe('Settings', () => {
   it('keeps a JSON value per id and replaces it', async () => {
     const { store } = passwordApp();
-    const settings = new Settings(store, { google: signIn() });
+    const settings = new Settings(store);
+    const initial = { google: signIn() };
 
     expect(await settings.get('methods')).toBeUndefined();
-    expect(await settings.methods()).toEqual({ google: signIn() });
+    expect(await settings.methods(initial)).toEqual({ google: signIn() });
     await settings.set('methods', { google: signIn() }, null);
     await settings.set('methods', { password: signIn('required') }, 'grace@example.com');
 
@@ -191,9 +192,9 @@ describe('Settings', () => {
   it('a value stored by madAuth before 0.6 keeps its meaning after the upgrade', async () => {
     const { store } = passwordApp();
     await store.create('setting', { id: 'methods', value: '{"google":{},"password":{"secondFactor":"optional"}}', updatedAt: 1, updatedBy: null });
-    const settings = new Settings(store, { google: signIn() });
+    const settings = new Settings(store);
 
-    expect(await settings.methods()).toEqual({ google: signIn(), password: signIn('optional'), authenticator: factorOnly });
+    expect(await settings.methods({ google: signIn() })).toEqual({ google: signIn(), password: signIn('optional'), authenticator: factorOnly });
   });
 
   it('a list saved with the app as totp, its id before 0.6, is read with authenticator in its place; a change saves authenticator', async () => {
@@ -223,14 +224,15 @@ describe('Settings', () => {
     const { store } = passwordApp();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await store.create('setting', { id: 'methods', value: '{"password":false}', updatedAt: 1, updatedBy: null });
-    const settings = new Settings(store, { google: signIn(), password: signIn() });
+    const settings = new Settings(store);
+    const initial = { google: signIn(), password: signIn() };
 
-    expect(await settings.methods()).toEqual({ google: signIn(), password: signIn() });
-    expect(await settings.methods()).toEqual({ google: signIn(), password: signIn() });
+    expect(await settings.methods(initial)).toEqual({ google: signIn(), password: signIn() });
+    expect(await settings.methods(initial)).toEqual({ google: signIn(), password: signIn() });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain('Madauth.admin.setSettings');
     // The next change replaces it.
-    await settings.changeMethods((current) => ({ ...current, authenticator: signIn() }), null);
+    await settings.changeMethods((current) => ({ ...current, authenticator: signIn() }), null, initial);
     expect(await settings.methods()).toEqual({ google: signIn(), password: signIn(), authenticator: signIn() });
   });
 
@@ -301,11 +303,11 @@ describe('switching sign-in methods off and on', () => {
     await settingsApi(app, cookie, 'set', { methods: { password: signIn() } });
 
     expect(await config(app)).toMatchObject({ google: null, password: { minLength: 8 } });
-    const nonce = await app.request('/auth/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } });
+    const nonce = await app.request('/auth/providers/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } });
     expect(nonce.status).toBe(403);
     expect(await nonce.json()).toMatchObject({ error: 'method_disabled' });
     // The redirect flow's start sends the browser back to the app: it is on its way, and a JSON error would strand it.
-    const start = await app.request(`/auth/google/start?return_to=${encodeURIComponent(APP_ORIGIN)}`);
+    const start = await app.request(`/auth/providers/google/start?return_to=${encodeURIComponent(APP_ORIGIN)}`);
     expect(start.status).toBe(302);
     expect(start.headers.get('location')).toBe(`${APP_ORIGIN}/#madauth_error=method_disabled&madauth_method=google`);
   });
@@ -332,6 +334,7 @@ describe('switching sign-in methods off and on', () => {
       emailLink: null,
       sms: false,
       passkey: null,
+      providers: [{ id: 'google', kind: 'google', name: 'Google' }],
     });
   });
 

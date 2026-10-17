@@ -82,10 +82,10 @@ describe('Google users', () => {
     expect(await store.findMany('user', {})).toHaveLength(2);
     expect((await (await post(app, '/auth/password/signin', { email: 'ada@example.com', password: 'correct horse battery' })).json()).user.id).toBe(password.id);
     // The redirect flow refuses the same way.
-    const started = await app.request(`/auth/google/start?return_to=${encodeURIComponent(`${APP_ORIGIN}/page`)}`);
+    const started = await app.request(`/auth/providers/google/start?return_to=${encodeURIComponent(`${APP_ORIGIN}/page`)}`);
     const location = new URL(started.headers.get('location')!);
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id_token: await googleIdToken({ nonce: location.searchParams.get('nonce')! }) })));
-    const back = await app.request(`/auth/google/callback?code=c&state=${location.searchParams.get('state')}`, {
+    const back = await app.request(`/auth/providers/google/callback?code=c&state=${location.searchParams.get('state')}`, {
       headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` },
     });
     expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_error=other_method&madauth_method=google`);
@@ -211,11 +211,11 @@ describe('Google users', () => {
   it('the sign-up guard can refuse a Google sign-up in the redirect flow too', async () => {
     const { app, hook, store } = passwordApp();
     hook.respond = (call) => (call.type === 'user.signing_up' ? { allow: false, message: 'No' } : undefined);
-    const started = await app.request(`/auth/google/start?return_to=${encodeURIComponent(`${APP_ORIGIN}/page`)}`);
+    const started = await app.request(`/auth/providers/google/start?return_to=${encodeURIComponent(`${APP_ORIGIN}/page`)}`);
     const location = new URL(started.headers.get('location')!);
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id_token: await googleIdToken({ nonce: location.searchParams.get('nonce')! }) })));
 
-    const res = await app.request(`/auth/google/callback?code=c&state=${location.searchParams.get('state')}`, {
+    const res = await app.request(`/auth/providers/google/callback?code=c&state=${location.searchParams.get('state')}`, {
       headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` },
     });
 

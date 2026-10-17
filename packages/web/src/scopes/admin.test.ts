@@ -134,6 +134,24 @@ describe('Madauth.admin', () => {
     expect(await Madauth.admin.searchUsers({})).toMatchObject({ isSuccess: false, error: { code: 'forbidden' } });
   });
 
+  it('an admin adds, lists, renames and removes a provider', async () => {
+    const server = fakeServer();
+    server.user = admin;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [] });
+
+    expect(await Madauth.admin.addProvider({ kind: 'github', clientId: 'Ov23liAbc', clientSecret: 'gh-secret' })).toMatchObject({
+      isSuccess: true,
+      provider: { id: 'github', kind: 'github', hasClientSecret: true, callbackUrl: `${SERVER}/auth/providers/github/callback` },
+    });
+    expect(server.requests.at(-1)).toMatchObject({ method: 'POST', url: `${SERVER}/auth/admin/providers/add`, body: { kind: 'github', clientId: 'Ov23liAbc', clientSecret: 'gh-secret' } });
+    expect(await Madauth.admin.addProvider({ kind: 'github', clientId: 'x' })).toMatchObject({ isSuccess: false, error: { code: 'provider_exists' } });
+    expect(await Madauth.admin.updateProvider('github', { name: 'GitHub Enterprise' })).toMatchObject({ isSuccess: true, provider: { name: 'GitHub Enterprise' } });
+    expect(server.requests.at(-1)!.body).toEqual({ id: 'github', name: 'GitHub Enterprise' });
+    expect((await Madauth.admin.listProviders()).isSuccess && (await Madauth.admin.listProviders())).toMatchObject({ providers: [{ id: 'google' }, { id: 'github' }] });
+    expect(await Madauth.admin.removeProvider('github')).toMatchObject({ isSuccess: true, usersWithoutSignIn: 0 });
+    expect(await Madauth.admin.removeProvider('github')).toMatchObject({ isSuccess: false, error: { code: 'provider_not_found' } });
+  });
+
   it('waits for initialize, and reports when madAuth is not set up', async () => {
     expect(await Madauth.admin.getClaims('grace@example.com')).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });
   });

@@ -203,7 +203,8 @@ export async function resolveProviderUser(
     const existing = await users.findByEmail(emailNormalized);
     if (existing) {
       if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) {
-        const methods = await users.signInMethods(existing.id, signInPredicate(ctx.configured, await ctx.settings.methods()));
+        const now = await ctx.methods();
+        const methods = await users.signInMethods(existing.id, signInPredicate(now.configured, now.settings));
         const how = methods.map((method) => METHOD_NAMES[method]).join(' or ');
         return {
           ok: false,

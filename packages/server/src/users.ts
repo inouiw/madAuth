@@ -273,6 +273,23 @@ export class Users {
     return (await this.store.findOne('user', { id })) as StoredUser | null;
   }
 
+  /**
+   * How many users have an account of `method` and none whose method `otherSignsIn`: they sign in only with
+   * `method`. Reads every account, page by page: for admins, when a provider is removed.
+   */
+  async countSigningInOnlyWith(method: string, otherSignsIn: (method: string) => boolean): Promise<number> {
+    const page = 200;
+    const methodsOfUser = new Map<string, string[]>();
+    let after: string | undefined;
+    for (;;) {
+      const accounts = (await this.store.scan('account', { ...(after === undefined ? {} : { after }), limit: page })) as unknown as StoredAccount[];
+      for (const account of accounts) methodsOfUser.set(account.userId, [...(methodsOfUser.get(account.userId) ?? []), methodOf(account)]);
+      if (accounts.length < page) break;
+      after = accounts.at(-1)!.id;
+    }
+    return [...methodsOfUser.values()].filter((methods) => methods.includes(method) && !methods.some(otherSignsIn)).length;
+  }
+
   /** A page of all users, for admins (user-search.ts): at most `limit`, after the user with the id `after`. */
   async scan(after: string | undefined, limit: number): Promise<StoredUser[]> {
     return (await this.store.scan('user', { ...(after === undefined ? {} : { after }), limit })) as unknown as StoredUser[];

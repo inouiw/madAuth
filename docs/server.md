@@ -26,14 +26,11 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `MADAUTH_ISSUER` | yes | Public base URL of the server, e.g. `https://auth.example.com`. Used as the JWT issuer and for the callbacks of the redirect flows, `<issuer>/auth/google/callback` and `<issuer>/auth/github/callback`. |
+| `MADAUTH_ISSUER` | yes | Public base URL of the server, e.g. `https://auth.example.com`. Used as the JWT issuer and for the callbacks of the redirect flows, `<issuer>/auth/providers/google/callback` and `<issuer>/auth/providers/github/callback`. |
 | `MADAUTH_KEY_SERVICE` | yes | Where madAuth keeps its keys: `aws-kms`, in AWS KMS, where they never leave it (see [AWS KMS](#aws-kms)), or `local`, in the server's memory, from `MADAUTH_SIGNING_KEY`. There is no default: see [Key service](#key-service). |
 | `MADAUTH_SIGNING_KEY` | with `local` | Private ES256 key (JWK JSON) that signs the sessions; the keys that hash the codes and encrypt the stored secrets are derived from it. Or a set of keys, the newest first, to [rotate](#rotating-the-signing-key) it: `{"keys":[<new>,<old>]}`. Use the same value on every instance and keep it secret. |
 | `ALLOWED_ORIGINS` | yes | Comma-separated origins of your apps, e.g. `https://app.example.com`. Only these may call the server or be redirected back to. |
-| `GOOGLE_CLIENT_ID` | for Google | OAuth client ID of type "Web application", ending in `.apps.googleusercontent.com`. Turns on Google sign-in. |
-| `GOOGLE_CLIENT_SECRET` | no | Client secret of the same client. Enables the server-side redirect flow (`GoogleRedirect`); without it those routes return 404. |
-| `GITHUB_CLIENT_ID` | for GitHub | Client ID of an OAuth App, see [GitHub OAuth App setup](#github-oauth-app-setup). Turns on GitHub sign-in, together with the secret. |
-| `GITHUB_CLIENT_SECRET` | for GitHub | Client secret of the same OAuth App. GitHub only has the server-side redirect flow, so it is needed. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | no | From madAuth before 0.7: imported once into the [providers](#providers) in the store when it has none of that kind, and ignored when it has one; either way the log says to remove them. Google and GitHub are providers now, which admins manage. |
 | `DATABASE_URL` | yes | Where the users are stored: `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). For other databases pass your own [store adapter](#custom-store-adapter) instead. |
 | `INITIAL_ADMIN_EMAIL` | no | Who signs in with this address gets the role `admin`, once the address is proven: confirmed by e-mail, or verified by Google or GitHub. Once per value; see [The first admin](#the-first-admin). |
 | `WEBHOOK_URL` | for the e-mail methods | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
@@ -48,7 +45,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `COOKIE_DOMAIN` | no | Cookie domain, e.g. `.example.com`, so backends on sibling subdomains receive the session cookie. By default the cookie belongs to the server's host only. |
 | `PORT` | no | Port for the Node / Docker server. Default `8787`. |
 
-At least one way to create users must be configured: `GOOGLE_CLIENT_ID`, `GITHUB_CLIENT_ID` with its secret, or a webhook that sends the e-mails (e-mail & password sign-in needs `email.send_verification` and `email.send_password_reset` among its events, the e-mail link needs `email.send_signin_link`, sign-up with the authenticator app alone needs `email.send_verification`), or both. Which configured methods are on, and whether they ask for the authenticator app, admins set while the server runs, see [Sign-in methods](#sign-in-methods).
+A server needs no sign-in method to start. Google and GitHub are [providers](#providers) in the store, which an admin adds, or, before the first admin exists, whoever has the [setup token](#first-setup). The e-mail methods come with a webhook that sends the e-mails: e-mail & password sign-in needs `email.send_verification` and `email.send_password_reset` among its events, the e-mail link needs `email.send_signin_link`, sign-up with the authenticator app alone needs `email.send_verification`. Which configured methods are on, and whether they ask for the authenticator app, admins set while the server runs, see [Sign-in methods](#sign-in-methods).
 
 ### Key service
 
@@ -133,19 +130,63 @@ npx @madauth/server generate-key
 
 After a suspected leak, skip the wait and put the new key alone. Every session ends, the users whose authenticator app hasn't moved yet set it up again, and backends whose cached list lacks the new key refuse the new sessions until they fetch it again.
 
-## Google Cloud Console setup
+## Providers
+
+Google and GitHub sign-in are providers: madAuth keeps them in its store, as the setting `providers`, and admins add, change and remove them through the admin API while the server runs, for every instance at once. A provider's client secret is encrypted by the [key service](#key-service), so the store alone doesn't reveal it, and the admin API never answers it, only whether one is set.
+
+- **Add one** with `Madauth.admin.addProvider({ kind: 'google', clientId, clientSecret })` or `{ kind: 'github', clientId, clientSecret }` (`POST /auth/admin/providers/add`). Each kind exists once, with its kind as its id. Google's client secret is optional: without it, Google signs in with One Tap / FedCM only (`GoogleFedcm`), with it, also with the redirect flow (`GoogleRedirect`). GitHub needs it: it only has the redirect flow.
+- **It is off until switched on** in the [sign-in settings](#sign-in-methods), with its own policy for a second factor. On a server whose settings were never saved, the methods that are on are saved as they are first, so adding a provider switches nothing else on or off.
+- **The sign-in dialog shows its button by itself.** `GET /auth/config` lists the providers that are on, with their names, and the button says "Continue with <name>". GitHub's and Google's redirect buttons appear whether or not the app passes `new GitHub()` or `new GoogleRedirect()`. Google's One Tap the app passes itself (`new GoogleFedcm()`), since it loads Google's script and prompts.
+- **The answer gives the callback URL** to register at the provider: `<MADAUTH_ISSUER>/auth/providers/<id>/callback`.
+- **Change one** with `updateProvider(id, { name, clientId, clientSecret })`, each optional; `clientSecret: null` removes Google's. The kind and the id don't change.
+- **Remove one** with `removeProvider(id)`. Its users' accounts stay, so adding it again brings their sign-ins back; the answer's `usersWithoutSignIn` says how many users have no other way in meanwhile.
+
+Changing providers takes an admin's session (no API key) with a sign-in within the last ten minutes. Listing them (`listProviders()`, `POST /auth/admin/providers/list`) also works with an API key with the scope `madauth:providers:read`. Each change sends `provider.added`, `provider.changed` or `provider.removed` to the webhook (opt in with `WEBHOOK_EVENTS`), with the admin's address as `by`.
+
+Code: [`providers.ts`](../packages/server/src/providers.ts).
+
+### First setup
+
+A new deployment has no admin, so nobody could sign in to add the first provider. While no admin exists, the server prints a setup token in its log at every start:
+
+```
+[madauth] No admin yet. This setup token configures the sign-in providers and settings until the first admin exists: send it as "Authorization: Bearer madauth_setup_…" to POST /auth/admin/providers/* and /auth/admin/settings/*, then sign in as you@example.com (INITIAL_ADMIN_EMAIL), which makes you the first admin and ends the setup.
+```
+
+With it, add a provider and switch it on (`methods` lists every method that is on, see [Sign-in methods](#sign-in-methods)):
+
+```bash
+curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+  -H 'Content-Type: application/json' -d '{"kind":"google","clientId":"…apps.googleusercontent.com","clientSecret":"…"}'
+```
+
+```bash
+curl -X POST https://app.example.com/auth/admin/settings/set -H 'Authorization: Bearer madauth_setup_…' \
+  -H 'Content-Type: application/json' -d '{"methods":{"google":{"allowAsSignInMethod":true,"secondFactor":"none"}}}'
+```
+
+Then sign in with the address in `INITIAL_ADMIN_EMAIL`, which makes you the first admin (see [The first admin](#the-first-admin)).
+
+- The token works on the provider and settings calls of the admin API only, not on users, claims, API keys or resets, and needs no recent sign-in. Its changes have `by: null` and `bySetupToken: true` in their webhook events.
+- It is computed with the key service's hash key, so every instance prints the same one and nothing is stored; it changes when that key is rotated.
+- The setup closes for good, recorded in the setting `setup`, once the first admin exists: `INITIAL_ADMIN_EMAIL` was applied, an admin used the admin API, or, on a deployment from before 0.7, a user with the role `admin` is in the store. Then the token stops working and isn't printed any more.
+- Whoever can read the server's log during the setup can configure a provider, so keep the setup short: sign in as the first admin right after adding the provider.
+
+Code: [`setup.ts`](../packages/server/src/setup.ts).
+
+### Google Cloud Console setup
 
 1. Open [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials) and create an **OAuth client ID** of type **Web application**.
 2. Under **Authorized JavaScript origins**, add every origin your app runs on (e.g. `https://app.example.com`, and `http://localhost:3000` plus `http://localhost` for development). The FedCM / One Tap flow needs only this.
-3. For the redirect flow, add `<MADAUTH_ISSUER>/auth/google/callback` under **Authorized redirect URIs** and set `GOOGLE_CLIENT_SECRET`.
-4. Set `GOOGLE_CLIENT_ID` to the client ID.
+3. For the redirect flow, add `<MADAUTH_ISSUER>/auth/providers/google/callback` under **Authorized redirect URIs**, and give the provider the client secret.
+4. Add the provider with the client ID (see [Providers](#providers)).
 
-## GitHub OAuth App setup
+### GitHub OAuth App setup
 
 1. Open [GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers) and register a **New OAuth App** (an OAuth App, not a GitHub App: madAuth only needs to know who signs in).
-2. Set the **Homepage URL** to your app and a **Redirect URI** of `<MADAUTH_ISSUER>/auth/github/callback`, e.g. `https://app.example.com/auth/github/callback` (an OAuth App takes up to ten, so one app can serve `http://localhost:3000/auth/github/callback` for development as well; a production app of its own keeps the secrets apart). Leave **Allow wildcard matching** and **Enable Device Flow** off.
+2. Set the **Homepage URL** to your app and a **Redirect URI** of `<MADAUTH_ISSUER>/auth/providers/github/callback`, e.g. `https://app.example.com/auth/providers/github/callback` (an OAuth App takes up to ten, so one app can serve `http://localhost:3000/auth/providers/github/callback` for development as well; a production app of its own keeps the secrets apart). Leave **Allow wildcard matching** and **Enable Device Flow** off.
 3. Untick **Expire user access tokens**, which GitHub ticks by default: madAuth keeps the token to revoke the app's authorization when a user deletes their account, and an expiring token (eight hours) could not do that any more.
-4. Generate a client secret and set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Both are needed: GitHub only has the server-side redirect flow, in which the server exchanges the code.
+4. Generate a client secret and add the provider with the client ID and the secret (see [Providers](#providers)). Both are needed: GitHub only has the server-side redirect flow, in which the server exchanges the code.
 
 Users are asked to grant the scope `user:email`, which lets madAuth read their e-mail addresses: it takes the primary one if GitHub has verified it, else another verified one, and refuses an account without one (`email_unverified`). The public address on the profile is not used. The access token is kept on the user's account, encrypted like the authenticator secrets, for one thing: revoking the OAuth App's authorization when the user deletes their account. See [GitHub security](github-security.md).
 
@@ -363,6 +404,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `user.sign_in_reset` | An admin [reset the sign-in](#resetting-a-users-sign-in) of a user: their methods and second factors are gone, and they sign up again | `user`, `by` (the admin's address), `byApiKey { id, name }` (when the admin used an API key) | the same | the same |
 | `user.api_key_created` | A user made an [API key](api-keys.md) | `user`, `apiKey { id, name, scopes, createdAt, expiresAt, lastUsedAt }` (never the key itself) | the same | the same |
 | `user.api_key_revoked` | A user or an admin revoked one | `user`, `apiKey { id, name }`, `by` (the admin's address, when an admin revoked it) | the same | the same |
+| `provider.added`, `provider.changed`, `provider.removed` | An admin, or the [setup token](#first-setup), added, changed or removed a [sign-in provider](#providers) | `provider { id, kind, name, clientId, hasClientSecret, callbackUrl, createdAt, updatedAt }` (never its secret), `by` (the admin's address; null for the setup token, with `bySetupToken: true`) | the same | the same |
 
 - The prefix says what a call is: `email.send_*` and `sms.send_*` hand over a message for you to send, `user.signing_up` asks you to decide, and the other `user.*` types tell you what happened.
 - A user signs up with one method and can [add more](sign-in-methods.md) while signed in (`user.method_added`). The authenticator app and SMS codes are told as second factors (`user.second_factor_*`), whether or not the app also signs in on its own; setting up or replacing the app a user signed up with is part of their sign-up (`user.signed_up`), so no `user.second_factor_*` is sent for it, nor `user.method_added` for the passkey a user signs up with.
@@ -487,7 +529,7 @@ madAuth has these methods, named by these ids in the settings:
 | `authenticator` | The [authenticator app](#authenticator-app): on its own (the e-mail address and a code from the app), and as a second factor | `Authenticator`, `Madauth.authenticator`, `Madauth.showSetUpAuthenticatorDialog()` |
 | `sms` | [SMS codes](sms-security.md): a second factor only | `Madauth.sms`, `Madauth.showSetUpSmsDialog()` |
 
-Which methods the server can offer is configured at start: `GOOGLE_CLIENT_ID` for Google, `GITHUB_CLIENT_ID` with its secret for GitHub, the webhook that sends the e-mails for password sign-in, for the e-mail link and for sign-up with the app or a passkey alone, and `sms.send_code` for SMS codes; the app and passkeys need nothing but the store. Which of them are on is a setting in the database that admins change while the server runs, at once and for every instance: the list of the methods that are on, each with two settings, both always given. A method that is not in the list is off.
+Which methods the server can offer: Google and GitHub when they are [providers](#providers) in the store, the webhook that sends the e-mails for password sign-in, for the e-mail link and for sign-up with the app or a passkey alone, and `sms.send_code` for SMS codes; the app and passkeys need nothing but the store. Which of them are on is a setting in the database that admins change while the server runs, at once and for every instance: the list of the methods that are on, each with two settings, both always given. A method that is not in the list is off.
 
 | Setting | Values | |
 | --- | --- | --- |
@@ -824,13 +866,13 @@ Your app lists the scopes of its API at `API_KEY_SCOPES_URL`; see [API keys](api
 | Method & path | Description |
 | --- | --- |
 | `GET /auth/config` | Public settings for the web library: `{ google: { clientId, codeFlow, secondFactor } \| null, github: { secondFactor } \| null, password: { minLength, minScore, secondFactor } \| null, authenticator: { signIn, signUp } \| null, email: { verification }, emailLink: { secondFactor } \| null, sms, passkey: { signIn, signUp, secondFactor } \| null }` (`sms`: whether SMS codes are on as a second factor; `signIn`: whether the app or passkeys sign in on their own; `signUp`: whether people can sign up with them alone). A method is `null` when it is not configured or [switched off](#sign-in-methods). |
-| `POST /auth/google/nonce` | Starts a FedCM / One Tap sign-in: returns `{ nonce }` and sets a 5-minute nonce cookie |
-| `POST /auth/google/verify` | `{ credential, locale? }` (Google ID token) → `{ user }` and the session cookie, or the [second step](#the-second-step); 403 `signup_rejected` (a first sign-in the sign-up check refused), 403 `other_method` (the address signs in another way; `methods` says how), 503 `temporarily_unavailable` |
-| `POST /auth/google/link` | `{ credential }` (an ID token, with the nonce cookie), signed in within ten minutes → `{}`: adds the Google account to the user's [methods](sign-in-methods.md); 401 `reauth_required` or `no_session`, 409 `account_taken` (it signs in another user) |
-| `GET /auth/google/start?return_to=` | Starts the redirect flow (needs `GOOGLE_CLIENT_SECRET`); with `&link=1`, for a user signed in within ten minutes, it adds the Google account to their methods instead |
-| `GET /auth/google/callback` | Google redirects here; redirects back to `return_to`, to `return_to#madauth_error=<code>`, or to `return_to#madauth_next=passkey` / `authenticator` / `sms` / `second-factor-setup` (`passkey-setup` for the passkey of a sign-up with one, which no redirect flow reaches today) for the second step, with `&madauth_factors=passkey,authenticator,sms` naming the factors that can finish it (or be set up); `&madauth_method=google` names the method in both cases. After `link=1`: `return_to#madauth_linked=google`, or the error (`account_taken`, `reauth_required`, `no_session`) |
-| `GET /auth/github/start?return_to=` | Starts GitHub's redirect flow; `&link=1` adds GitHub to the signed-in user's methods, like Google's |
-| `GET /auth/github/callback` | GitHub redirects here; redirects back like Google's callback, with `&madauth_method=github`; `email_unverified` when the GitHub account has no verified e-mail address |
+| `POST /auth/providers/google/nonce` | Starts a FedCM / One Tap sign-in: returns `{ nonce }` and sets a 5-minute nonce cookie |
+| `POST /auth/providers/google/verify` | `{ credential, locale? }` (Google ID token) → `{ user }` and the session cookie, or the [second step](#the-second-step); 403 `signup_rejected` (a first sign-in the sign-up check refused), 403 `other_method` (the address signs in another way; `methods` says how), 503 `temporarily_unavailable` |
+| `POST /auth/providers/google/link` | `{ credential }` (an ID token, with the nonce cookie), signed in within ten minutes → `{}`: adds the Google account to the user's [methods](sign-in-methods.md); 401 `reauth_required` or `no_session`, 409 `account_taken` (it signs in another user) |
+| `GET /auth/providers/google/start?return_to=` | Starts the redirect flow (needs the Google provider's client secret); with `&link=1`, for a user signed in within ten minutes, it adds the Google account to their methods instead |
+| `GET /auth/providers/google/callback` | Google redirects here; redirects back to `return_to`, to `return_to#madauth_error=<code>`, or to `return_to#madauth_next=passkey` / `authenticator` / `sms` / `second-factor-setup` (`passkey-setup` for the passkey of a sign-up with one, which no redirect flow reaches today) for the second step, with `&madauth_factors=passkey,authenticator,sms` naming the factors that can finish it (or be set up); `&madauth_method=google` names the method in both cases. After `link=1`: `return_to#madauth_linked=google`, or the error (`account_taken`, `reauth_required`, `no_session`) |
+| `GET /auth/providers/github/start?return_to=` | Starts GitHub's redirect flow; `&link=1` adds GitHub to the signed-in user's methods, like Google's |
+| `GET /auth/providers/github/callback` | GitHub redirects here; redirects back like Google's callback, with `&madauth_method=github`; `email_unverified` when the GitHub account has no verified e-mail address |
 | `POST /auth/password/signin` | `{ email, password }` → `{ user }` and the session cookie, or the second step; 401 `invalid_credentials`, 403 `email_unverified`, 429 `too_many_attempts` |
 | `POST /auth/password/signup` | `{ email, password, name?, redirectTo, locale? }` → 202, and the confirmation e-mail; 400 `invalid_email` or `weak_password`, 403 `signup_rejected`, 503 `temporarily_unavailable` |
 | `POST /auth/password/add` | `{ password }`, signed in within ten minutes → `{}`: adds a password to the user's methods; 400 `weak_password`, 401 `reauth_required` or `no_session`, 409 `already_added` |
@@ -877,6 +919,10 @@ Your app lists the scopes of its API at `API_KEY_SCOPES_URL`; see [API keys](api
 | `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user; also 400 `invalid_claims`, 403 `own_admin_role` (it would take the role `admin` from the caller, see [The first admin](#the-first-admin)) |
 | `POST /auth/admin/settings/get` | `{}` → `{ methods: { google: { configured, enabled, allowAsSignInMethod, secondFactor }, github: { … }, password: { … }, authenticator: { … }, 'email-link': { … }, passkey: { … }, sms: { … } }, password: { minLength, minScore } }`, for admins. See [Sign-in methods](#sign-in-methods) and [Password rules](#password-rules). |
 | `POST /auth/admin/settings/set` | `{ methods?: { <id>: { allowAsSignInMethod, secondFactor } }, password?: { minLength?, minScore? } }`, one or both (`methods` is the list of the methods that are on, each with both settings; what `password` leaves out takes its default) → the same; 400 `invalid_settings` when a setting doesn't fit its method, a policy has no second factor that is on, or no method that creates users would stay on, and then nothing is changed |
+| `POST /auth/admin/providers/list` | `{}` → `{ providers: [{ id, kind, name, clientId, hasClientSecret, callbackUrl, createdAt, updatedAt }] }`, for admins (an API key needs `madauth:providers:read`), or with the [setup token](#first-setup). See [Providers](#providers). |
+| `POST /auth/admin/providers/add` | `{ kind, name?, clientId, clientSecret? }` → `{ provider }`: adds a provider, off until switched on; an admin's session with a sign-in within ten minutes (401 `reauth_required`; an API key gets 403 `forbidden`), or the setup token; 400 `invalid_provider`, 409 `provider_exists`, 401 `invalid_setup_token` |
+| `POST /auth/admin/providers/update` | `{ id, name?, clientId?, clientSecret? }` (`clientSecret: null` removes Google's) → `{ provider }`; like `add`, and 404 `provider_not_found` |
+| `POST /auth/admin/providers/remove` | `{ id }` → `{ provider, usersWithoutSignIn }`: removes a provider, its users' accounts stay; like `update` |
 | `POST /auth/admin/sign-in/reset` | `{ email }` → `{ email, userId }`: removes all of the user's sign-in methods and second factors, ends their sessions and marks the address unconfirmed, for admins; they sign up again. See [Resetting a user's sign-in](#resetting-a-users-sign-in). |
 | `POST /auth/admin/api-keys/list` | `{ email }` → `{ email, userId, apiKeys }`: the user's [API keys](api-keys.md), for admins with a session (an API key gets 403 `forbidden`) |
 | `POST /auth/admin/api-keys/revoke` | `{ email, id }` → `{ email, userId }`; 404 `api_key_not_found` |

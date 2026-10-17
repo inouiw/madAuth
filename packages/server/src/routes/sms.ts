@@ -57,7 +57,8 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
 
   // Every route: an admin switched SMS codes off.
   app.use(`${ROUTE_PATH}/*`, async (c, next) => {
-    if (!isOn('sms', ctx.configured, await ctx.methods(c))) return error(c, 403, 'method_disabled', 'SMS codes are switched off.');
+    const now = await ctx.methods(c);
+    if (!isOn('sms', now.configured, now.settings)) return error(c, 403, 'method_disabled', 'SMS codes are switched off.');
     await next();
   });
 

@@ -75,9 +75,9 @@ async function withAdminAndGrace(methods: TestMethods = everything) {
 async function addEverything({ app, hook }: Made, cookie: string) {
   expect((await post(app, '/auth/email-link/add', {}, { Cookie: cookie })).status).toBe(200);
 
-  const started = await app.request(`/auth/github/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`, { headers: { Cookie: cookie } });
+  const started = await app.request(`/auth/providers/github/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`, { headers: { Cookie: cookie } });
   const state = new URL(started.headers.get('location')!).searchParams.get('state')!;
-  const linked = await app.request(`/auth/github/callback?code=c&state=${state}`, { headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}; ${cookie}` } });
+  const linked = await app.request(`/auth/providers/github/callback?code=c&state=${state}`, { headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}; ${cookie}` } });
   expect(linked.headers.get('location')).toContain('madauth_linked=github');
 
   const options = await post(app, '/auth/passkey/register/options', {}, { Cookie: cookie });

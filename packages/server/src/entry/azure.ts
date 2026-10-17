@@ -2,6 +2,7 @@ import { app, type HttpRequest } from '@azure/functions';
 import type { Hono } from 'hono';
 import { createApp } from '../app.js';
 import { loadConfig, resolveEnv, type EntryOptions } from '../config.js';
+import { announceSetupOf } from '../setup.js';
 import { handleAzureRequest } from './azure-handler.js';
 
 /**
@@ -19,7 +20,10 @@ export function register(options: EntryOptions = {}): void {
     handler: async (request: HttpRequest) => {
       appPromise ??= resolveEnv(env)
         .then((loaded) => loadConfig(loaded, overrides))
-        .then(createApp);
+        .then(async (config) => {
+          await announceSetupOf(config);
+          return createApp(config);
+        });
       appPromise.catch(() => (appPromise = undefined));
       return handleAzureRequest(await appPromise, request);
     },

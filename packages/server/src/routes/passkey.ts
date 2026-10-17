@@ -107,7 +107,8 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
 
   // Every route: an admin switched passkeys off.
   app.use(`${ROUTE_PATH}/*`, async (c, next) => {
-    if (!isOn('passkey', ctx.configured, await ctx.methods(c))) return error(c, 403, 'method_disabled', 'Passkeys are switched off.');
+    const now = await ctx.methods(c);
+    if (!isOn('passkey', now.configured, now.settings)) return error(c, 403, 'method_disabled', 'Passkeys are switched off.');
     await next();
   });
 

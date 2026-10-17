@@ -118,8 +118,10 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, SESSION_TTL: '5' })).rejects.toThrow(/SESSION_TTL/);
   });
 
-  it('A14: needs at least one sign-in method', async () => {
-    await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined })).rejects.toThrow(/No sign-in method.*GOOGLE_CLIENT_ID.*WEBHOOK_URL/s);
+  it('A14: starts without any sign-in method: providers are added in the store, first with the setup token', async () => {
+    const config = await loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined });
+    expect(config.google).toBeUndefined();
+    expect(config.password).toBeUndefined();
   });
 
   const hook = { WEBHOOK_URL, WEBHOOK_SECRET, WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset' };
@@ -136,7 +138,6 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, GITHUB_CLIENT_ID: 'Iv1.abc' })).rejects.toThrow(/GITHUB_CLIENT_ID needs GITHUB_CLIENT_SECRET/);
     // A secret alone is ignored, like Google's: a secrets store may hold one for a server that has GitHub off.
     expect((await loadConfig({ ...env, GITHUB_CLIENT_SECRET: 'shh' })).github).toBeUndefined();
-    await expect(loadConfig({ ...env, GOOGLE_CLIENT_ID: undefined })).rejects.toThrow(/No sign-in method.*GITHUB_CLIENT_ID/s);
   });
 
   it('A14: turns on e-mail & password sign-in with a webhook that sends the e-mails', async () => {
@@ -235,7 +236,7 @@ describe('loadConfig', () => {
     expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'email.send_password_reset,email.send_verification' })).password).toEqual({});
     // A receiver that only wants events, on a Google-only server.
     expect((await loadConfig({ ...env, ...hook, WEBHOOK_EVENTS: 'user.signed_in' })).password).toBeUndefined();
-    await expect(loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, WEBHOOK_EVENTS: 'user.signed_in' })).rejects.toThrow(/No sign-in method/);
+    expect((await loadConfig({ ...env, ...hook, GOOGLE_CLIENT_ID: undefined, WEBHOOK_EVENTS: 'user.signed_in' })).password).toBeUndefined();
   });
 
   it('K6: the e-mail link is configured exactly when email.send_signin_link is among the events, and counts as a way to create users', async () => {

@@ -1,6 +1,7 @@
 import { handle, type LambdaContext, type LambdaEvent } from 'hono/aws-lambda';
 import { createApp } from '../app.js';
 import { loadConfig, resolveEnv, type EntryOptions } from '../config.js';
+import { announceSetupOf } from '../setup.js';
 
 export type LambdaHandler = (event: LambdaEvent, context: LambdaContext) => ReturnType<ReturnType<typeof handle>>;
 
@@ -15,7 +16,10 @@ export function createHandler(options: EntryOptions = {}): LambdaHandler {
   return async (event, context) => {
     handlerPromise ??= resolveEnv(env)
       .then((loaded) => loadConfig(loaded, overrides))
-      .then((config) => handle(createApp(config)));
+      .then(async (config) => {
+        await announceSetupOf(config);
+        return handle(createApp(config));
+      });
     handlerPromise.catch(() => (handlerPromise = undefined));
     return (await handlerPromise)(event, context);
   };

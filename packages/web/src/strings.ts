@@ -15,6 +15,8 @@ export const en = {
   or: 'or',
   otherWays: 'Other ways to sign in',
   /** The sign-in methods: `label` is the text of the button, `description` its tooltip. */
+  /** The button of a sign-in provider, with the name an admin gave it. */
+  continueWith: (name: string) => `Continue with ${name}`,
   methods: {
     google: { label: 'Continue with Google', description: 'Use your Google account' },
     github: { label: 'Continue with GitHub', description: 'Use your GitHub account' },
@@ -336,6 +338,7 @@ export const de: Strings = {
   close: 'Schließen',
   or: 'oder',
   otherWays: 'Weitere Anmeldemöglichkeiten',
+  continueWith: (name: string) => `Weiter mit ${name}`,
   methods: {
     google: { label: 'Weiter mit Google', description: 'Mit Ihrem Google-Konto anmelden' },
     github: { label: 'Weiter mit GitHub', description: 'Mit Ihrem GitHub-Konto anmelden' },

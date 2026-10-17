@@ -28,6 +28,7 @@ madAuth's scopes, one per admin task, need the role `admin`:
 | `madauth:settings:write` | `POST /auth/admin/settings/set` |
 | `madauth:sign-in:reset` | `POST /auth/admin/sign-in/reset` |
 | `madauth:users:read` | `POST /auth/admin/users/search` |
+| `madauth:providers:read` | `POST /auth/admin/providers/list` |
 
 **A key never does more than its user may.** A user gives a key only scopes whose role they hold (`403 scope_not_allowed`), and every use checks again with the user's roles of now: a scope whose role the user lost, or that your app no longer lists, stops counting, and comes back with the role. So a key doesn't keep a power its user lost.
 

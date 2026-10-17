@@ -1,4 +1,4 @@
-// GitHub sign-in: GET /auth/github/start and GET /auth/github/callback. See "HTTP API" in docs/server.md
+// GitHub sign-in: GET /auth/providers/github/start and GET /auth/providers/github/callback. See "HTTP API" in docs/server.md
 // and docs/github-security.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -37,7 +37,7 @@ describe('GitHub sign-in', () => {
     expect(res.status).toBe(302);
     expect(location.origin + location.pathname).toBe('https://github.com/login/oauth/authorize');
     const params = Object.fromEntries(location.searchParams);
-    expect(params).toMatchObject({ client_id: GITHUB_CLIENT_ID, redirect_uri: `${ISSUER}/auth/github/callback`, scope: 'user:email', code_challenge_method: 'S256' });
+    expect(params).toMatchObject({ client_id: GITHUB_CLIENT_ID, redirect_uri: `${ISSUER}/auth/providers/github/callback`, scope: 'user:email', code_challenge_method: 'S256' });
     expect(params.state).toBeTruthy();
     expect(params.nonce).toBeUndefined();
     // The challenge is the SHA-256 of the verifier kept in the (signed) cookie, which comes back on the callback only.
@@ -45,7 +45,7 @@ describe('GitHub sign-in', () => {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload.verifier));
     expect(params.code_challenge).toBe(Buffer.from(digest).toString('base64url'));
     expect(payload.returnTo).toBe(`${APP_ORIGIN}/page?x=1`);
-    expect(cookies(res).madauth_oauth.attrs).toMatchObject({ path: '/auth/github', httponly: true, samesite: 'Lax' });
+    expect(cookies(res).madauth_oauth.attrs).toMatchObject({ path: '/auth/providers/github', httponly: true, samesite: 'Lax' });
   });
 
   it('O1: refuses a return_to outside ALLOWED_ORIGINS, and has no routes without GITHUB_CLIENT_ID', async () => {
@@ -59,7 +59,7 @@ describe('GitHub sign-in', () => {
     const app = githubApp();
     stubGitHub();
 
-    expect((await app.request('/auth/github/callback?code=c&state=s')).status).toBe(400);
+    expect((await app.request('/auth/providers/github/callback?code=c&state=s')).status).toBe(400);
     const mismatch = await githubCallback(app, await startGitHub(app), 'code=c&state=forged');
     const cancelled = await githubCallback(app, await startGitHub(app), 'error=access_denied');
     const other = await githubCallback(app, await startGitHub(app), 'error=application_suspended');
@@ -87,7 +87,7 @@ describe('GitHub sign-in', () => {
       client_id: GITHUB_CLIENT_ID,
       client_secret: GITHUB_CLIENT_SECRET,
       code: 'c',
-      redirect_uri: `${ISSUER}/auth/github/callback`,
+      redirect_uri: `${ISSUER}/auth/providers/github/callback`,
       code_verifier: payload.verifier,
     });
     // The API is called with the token, and with a User-Agent, which api.github.com insists on.

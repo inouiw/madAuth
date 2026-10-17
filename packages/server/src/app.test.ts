@@ -92,7 +92,7 @@ describe('Google ID token verification (shared by both flows)', () => {
 describe('FedCM / One Tap flow', () => {
   it('F1: returns a random nonce with a signed, HttpOnly, short-lived cookie', async () => {
     const app = testApp();
-    const first = await app.request('/auth/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } });
+    const first = await app.request('/auth/providers/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } });
     const second = await getNonce(app);
 
     const { nonce } = (await first.json()) as { nonce: string };
@@ -135,21 +135,21 @@ describe('FedCM / One Tap flow', () => {
   it('F4: rejects requests from origins that are not allowed', async () => {
     const app = testApp();
 
-    const res = await app.request('/auth/google/nonce', {
+    const res = await app.request('/auth/providers/google/nonce', {
       method: 'POST',
       headers: { Origin: 'https://evil.example' },
     });
 
     expect(res.status).toBe(403);
     expect(res.headers.get('access-control-allow-origin')).toBeNull();
-    const noOrigin = await app.request('/auth/google/nonce', { method: 'POST' });
+    const noOrigin = await app.request('/auth/providers/google/nonce', { method: 'POST' });
     expect(noOrigin.status).toBe(403);
   });
 
   it('F4: grants CORS with credentials to allowed origins only', async () => {
     const app = testApp();
     const preflight = (origin: string) =>
-      app.request('/auth/google/verify', {
+      app.request('/auth/providers/google/verify', {
         method: 'OPTIONS',
         headers: { Origin: origin, 'Access-Control-Request-Method': 'POST' },
       });
@@ -163,7 +163,7 @@ describe('FedCM / One Tap flow', () => {
 
 describe('code (redirect) flow', () => {
   async function start(app = testApp(), returnTo = `${APP_ORIGIN}/page?x=1#old`) {
-    const res = await app.request(`/auth/google/start?return_to=${encodeURIComponent(returnTo)}`);
+    const res = await app.request(`/auth/providers/google/start?return_to=${encodeURIComponent(returnTo)}`);
     const location = new URL(res.headers.get('location') ?? 'about:blank');
     return { app, res, location, cookie: `madauth_oauth=${cookies(res).madauth_oauth?.value}` };
   }
@@ -190,7 +190,7 @@ describe('code (redirect) flow', () => {
     const params = Object.fromEntries(location.searchParams);
     expect(params).toMatchObject({
       client_id: CLIENT_ID,
-      redirect_uri: `${ISSUER}/auth/google/callback`,
+      redirect_uri: `${ISSUER}/auth/providers/google/callback`,
       response_type: 'code',
       scope: 'openid email profile',
       code_challenge_method: 'S256',
@@ -216,7 +216,7 @@ describe('code (redirect) flow', () => {
   it('R3: rejects a mismatched state', async () => {
     const { app, cookie } = await start();
 
-    const res = await app.request('/auth/google/callback?code=abc&state=wrong', { headers: { Cookie: cookie } });
+    const res = await app.request('/auth/providers/google/callback?code=abc&state=wrong', { headers: { Cookie: cookie } });
 
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page?x=1#madauth_error=verification_failed&madauth_method=google`);
@@ -228,7 +228,7 @@ describe('code (redirect) flow', () => {
     const nonce = location.searchParams.get('nonce')!;
     const bodies = stubTokenEndpoint(() => googleIdToken({ nonce }));
 
-    const res = await app.request(`/auth/google/callback?code=the-code&state=${location.searchParams.get('state')}`, {
+    const res = await app.request(`/auth/providers/google/callback?code=the-code&state=${location.searchParams.get('state')}`, {
       headers: { Cookie: cookie },
     });
 
@@ -239,7 +239,7 @@ describe('code (redirect) flow', () => {
       code: 'the-code',
       client_id: CLIENT_ID,
       client_secret: 'test-secret',
-      redirect_uri: `${ISSUER}/auth/google/callback`,
+      redirect_uri: `${ISSUER}/auth/providers/google/callback`,
       grant_type: 'authorization_code',
     });
     expect(bodies[0].get('code_verifier')).toMatch(/^[\w-]{43}$/);
@@ -249,7 +249,7 @@ describe('code (redirect) flow', () => {
     const { app, location, cookie } = await start();
     stubTokenEndpoint(() => googleIdToken({ nonce: 'another-nonce' }));
 
-    const res = await app.request(`/auth/google/callback?code=c&state=${location.searchParams.get('state')}`, {
+    const res = await app.request(`/auth/providers/google/callback?code=c&state=${location.searchParams.get('state')}`, {
       headers: { Cookie: cookie },
     });
 
@@ -260,7 +260,7 @@ describe('code (redirect) flow', () => {
   it('reports a sign-in the user cancelled at Google', async () => {
     const { app, cookie } = await start();
 
-    const res = await app.request('/auth/google/callback?error=access_denied', { headers: { Cookie: cookie } });
+    const res = await app.request('/auth/providers/google/callback?error=access_denied', { headers: { Cookie: cookie } });
 
     expect(res.headers.get('location')).toBe(`${APP_ORIGIN}/page?x=1#madauth_error=cancelled&madauth_method=google`);
   });
@@ -268,8 +268,8 @@ describe('code (redirect) flow', () => {
   it('R6: is disabled without GOOGLE_CLIENT_SECRET', async () => {
     const app = testApp({ google: { clientId: CLIENT_ID } });
 
-    expect((await app.request(`/auth/google/start?return_to=${APP_ORIGIN}/`)).status).toBe(404);
-    expect((await app.request('/auth/google/callback')).status).toBe(404);
+    expect((await app.request(`/auth/providers/google/start?return_to=${APP_ORIGIN}/`)).status).toBe(404);
+    expect((await app.request('/auth/providers/google/callback')).status).toBe(404);
     expect(await (await app.request('/auth/config')).json()).toEqual({
       google: { clientId: CLIENT_ID, codeFlow: false, secondFactor: 'none' },
       github: null,
@@ -279,6 +279,7 @@ describe('code (redirect) flow', () => {
       emailLink: null,
       sms: false,
       passkey: null,
+      providers: [{ id: 'google', kind: 'google', name: 'Google' }],
     });
     // The FedCM flow still works.
     expect((await getNonce(app)).nonce).toBeTruthy();
@@ -386,6 +387,7 @@ describe('public endpoints', () => {
       emailLink: null,
       sms: false,
       passkey: null,
+      providers: [{ id: 'google', kind: 'google', name: 'Google' }],
     });
   });
 

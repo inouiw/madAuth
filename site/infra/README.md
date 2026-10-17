@@ -23,7 +23,7 @@ The app has four stacks:
 
 Nothing in this folder is secret.
 
-- **Secrets** are SecureString parameters under `/madauth-site/` in the Parameter Store, read by the server at runtime: the client secrets of the Google client and the GitHub OAuth App. There is no webhook secret: the server calls the mailer with its role (AWS IAM), and the deploy fails while `/madauth-site/WEBHOOK_SECRET` exists. The server's keys are in AWS KMS, created by the stack (see [deploy/aws](../../deploy/aws/README.md)); they carry no `Project` tag, so the budget doesn't count their $3 a month.
+- **Secrets**: the server keeps none in the Parameter Store. Its keys are in AWS KMS, created by the stack (see [deploy/aws](../../deploy/aws/README.md)); they carry no `Project` tag, so the budget doesn't count their $3 a month. There is no webhook secret: the server calls the mailer with its role (AWS IAM), and the deploy fails while `/madauth-site/WEBHOOK_SECRET` exists. The client secrets of the Google client and the GitHub OAuth App are in the providers in DynamoDB, encrypted by KMS.
 - **The account ID** comes from the AWS credentials. `cdk.context.json` and `cdk.out/` are not committed.
 - **Deploys** run only in the GitHub environment `site`, which has required reviewers. The deploy role trusts only that environment, so pull requests can't use it.
 - **Abuse limits:** the server runs with at most 5 concurrent executions and the mailer with at most 2. A budget alert fires at $8 of the $10/month budget. The budget counts only the costs tagged `Project=madauth-site`, the tag every resource of the four stacks carries, so the account's other projects don't trip it.
@@ -54,13 +54,13 @@ cd deploy/aws && npm ci && npm run build && cd ../../site/infra && npm ci
 
 3. **Create a Google OAuth client** in the Google Cloud Console (Web application):
    - Authorized JavaScript origin: `https://madauth.com`.
-   - Authorized redirect URI: `https://madauth.com/auth/google/callback`.
+   - Authorized redirect URI: `https://madauth.com/auth/providers/google/callback`.
 
-   Put its client ID into `cdk.json` as `googleClientId` and commit it; client IDs are public.
+   **Create a GitHub OAuth App** too ([GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers)), with the homepage URL `https://madauth.com`, the redirect URI `https://madauth.com/auth/providers/github/callback` and **Expire user access tokens** unticked. Without one, the demo has no GitHub button.
 
-   **Create a GitHub OAuth App** too ([GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers)), with the homepage URL `https://madauth.com`, the redirect URI `https://madauth.com/auth/github/callback` and **Expire user access tokens** unticked, and put its client ID into `cdk.json` as `githubClientId`. Without one, the demo has no GitHub button.
+   Both are added as providers after the deploy (step 6). madauth.com's are the Google client `644214582-l1r8ltvhodf6r9g6fani7lkna6jjkonu.apps.googleusercontent.com` and the OAuth App `Ov23li2uG4jiIjo0voxj`; client IDs are public.
 
-4. **Store the secrets.** When the script asks for the Google client secret and the GitHub client secret, enter the new ones (`WEBHOOK_AUTH=aws-iam`: no webhook secret, the mailer checks the server's role):
+4. **Store the secrets.** The server needs none of its own any more (`WEBHOOK_AUTH=aws-iam`: no webhook secret, the mailer checks the server's role); the script only checks that no old ones are left:
 
    ```bash
    AWS_REGION=eu-central-1 WEBHOOK_AUTH=aws-iam ../../deploy/aws/scripts/bootstrap-secrets.sh /madauth-site
@@ -72,7 +72,9 @@ cd deploy/aws && npm ci && npm run build && cd ../../site/infra && npm ci
    npx cdk deploy --all -c alertEmail=you@example.com
    ```
 
-6. **Activate the cost allocation tag**, so the budget sees the costs. The key `Project` appears in the billing data up to 24 hours after the deploy; then run:
+6. **Add Google and GitHub** as providers. Until the first admin exists, the server's log (CloudWatch, `MadAuthSite-MadAuthFunction…`) shows a setup token; with it, or later as an admin on madauth.com/demo (`Madauth.admin.addProvider`), add both with their client IDs and secrets, and switch them on with `setSettings`. See [Providers](../../docs/server.md#providers).
+
+7. **Activate the cost allocation tag**, so the budget sees the costs. The key `Project` appears in the billing data up to 24 hours after the deploy; then run:
 
    ```bash
    aws ce update-cost-allocation-tags-status --cost-allocation-tags-status TagKey=Project,Status=Active
@@ -80,9 +82,9 @@ cd deploy/aws && npm ci && npm run build && cd ../../site/infra && npm ci
 
    Until it is active, the budget counts nothing (Billing → Cost allocation tags shows the status).
 
-7. **Leave the SES sandbox.** In the SES console (eu-central-1), go to **Account dashboard** → **Request production access**. Until AWS grants it, e-mails only reach verified addresses.
+8. **Leave the SES sandbox.** In the SES console (eu-central-1), go to **Account dashboard** → **Request production access**. Until AWS grants it, e-mails only reach verified addresses.
 
-8. **Set up GitHub deploys:**
+9. **Set up GitHub deploys:**
    - Create the environment `site` with yourself as required reviewer. Limit it to tags `v*` and the branch `main`.
    - Add the variable `AWS_DEPLOY_ROLE_ARN` (the output `DeployRoleArn` of `MadAuthSiteGithub`) and the secret `ALERT_EMAIL`.
    - If the account already has a GitHub OIDC provider (an account can only have one), deploy `MadAuthSiteGithub` with `-c githubOidcProviderArn=<its ARN>`.

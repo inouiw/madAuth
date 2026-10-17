@@ -403,6 +403,32 @@ const methods: Record<string, ApiMethod> = {
     (values) => ({ email: values.email.trim(), id: values.id.trim() }),
     ({ email, id }) => Madauth.admin.revokeApiKey(email, id),
   ),
+  listProviders: api(
+    () => undefined,
+    () => Madauth.admin.listProviders(),
+  ),
+  // A kind or field the server doesn't have is answered with invalid_provider.
+  addProvider: api(
+    (values) => {
+      const parsed = parseJson(values.provider, '{ "kind": "github", "clientId": "…", "clientSecret": "…" }');
+      return 'error' in parsed ? parsed.error : { provider: parsed.value };
+    },
+    // Sent as typed: the server checks it.
+    ({ provider }) => Madauth.admin.addProvider(provider as unknown as Parameters<typeof Madauth.admin.addProvider>[0]),
+  ),
+  updateProvider: api(
+    (values) => {
+      const parsed = parseJson(values.changes, '{ "name": "GitHub Enterprise" }');
+      return 'error' in parsed ? parsed.error : { id: values.id.trim(), changes: parsed.value };
+    },
+    ({ id, changes }) => Madauth.admin.updateProvider(id, changes),
+  ),
+  // One click would be too easy: everyone who signs in with it alone can't, until it is added again.
+  removeProvider: api(
+    (values) => ({ id: values.id.trim() }),
+    async ({ id }) =>
+      confirm(`Remove the provider "${id}"? Its sign-in stops for everyone until it is added again; their accounts stay.`) ? Madauth.admin.removeProvider(id) : 'Cancelled.',
+  ),
   getSettings: api(
     () => undefined,
     () => Madauth.admin.getSettings().then(showSettings),

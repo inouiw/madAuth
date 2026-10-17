@@ -9,7 +9,7 @@ import { decrypt, deriveKey, encrypt } from './crypto.js';
 import { SIGNING_ALG, assertPrivateSigningJwk, signingJwkProblem } from './keys.js';
 
 /** What a value is encrypted for: each purpose has keys of its own, so one kind can never be read as another. */
-export type EncryptionPurpose = 'authenticator-secret' | 'provider-token';
+export type EncryptionPurpose = 'authenticator-secret' | 'provider-token' | 'provider-secret';
 
 export interface KeyService {
   /**
@@ -36,12 +36,14 @@ export interface KeyService {
 }
 
 /**
- * The labels the local keys of each purpose are derived with. They are those of madAuth before the key service,
- * so what was stored then is read as it is; another label would derive another key.
+ * The labels the local keys of each purpose are derived with. The first two are those of madAuth before the key
+ * service, so what was stored then is read as it is; another label would derive another key. `provider-secret`
+ * is the client secrets of the sign-in providers (providers.ts); `provider-token`, a user's token at a provider.
  */
 const ENCRYPTION_LABELS: Record<EncryptionPurpose, string> = {
   'authenticator-secret': 'madauth totp secret',
   'provider-token': 'madauth provider token',
+  'provider-secret': 'madauth provider client secret',
 };
 const MAC_LABEL = 'madauth e-mail code';
 
@@ -68,6 +70,7 @@ async function localKey(jwk: JWK): Promise<LocalKey> {
     encryptionKeys: {
       'authenticator-secret': deriveKey(d!, ENCRYPTION_LABELS['authenticator-secret']),
       'provider-token': deriveKey(d!, ENCRYPTION_LABELS['provider-token']),
+      'provider-secret': deriveKey(d!, ENCRYPTION_LABELS['provider-secret']),
     },
   };
 }

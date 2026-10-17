@@ -1,5 +1,5 @@
 // A stack with only the madAuth server. Configure it in cdk.json ("context") or with -c, e.g.
-//   npx cdk deploy -c issuer=https://example.com -c googleClientId=123.apps.googleusercontent.com
+//   npx cdk deploy -c issuer=https://example.com -c webhookUrl=https://abc.lambda-url.eu-central-1.on.aws/
 // "environment" holds more environment variables of the server, each under its own name (docs/server.md), e.g.
 //   -c 'environment={"INITIAL_ADMIN_EMAIL":"you@example.com"}'
 import { App, Stack } from 'aws-cdk-lib';
@@ -42,8 +42,6 @@ const awsIamReceiver = context('webhookFunctionArn') ? lambda.Function.fromFunct
 new MadAuthServer(stack, 'MadAuth', {
   issuer: context('issuer'),
   allowedOrigins: list('allowedOrigins'),
-  googleClientId: context('googleClientId') || undefined,
-  githubClientId: context('githubClientId') || undefined,
   secretsPath: context('secretsPath') || undefined,
   webhook: context('webhookUrl') ? { url: context('webhookUrl'), events: list('webhookEvents'), awsIamReceiver } : undefined,
   environment: map('environment'),

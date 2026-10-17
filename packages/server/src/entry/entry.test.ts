@@ -62,7 +62,7 @@ describe('deployment entry points', () => {
     const { handler } = await import('./lambda.js');
 
     const config = await handler(apiGatewayV2Event('GET', '/auth/config'), {} as LambdaContext);
-    const nonce = await handler(apiGatewayV2Event('POST', '/auth/google/nonce', { origin: APP_ORIGIN }), {} as LambdaContext);
+    const nonce = await handler(apiGatewayV2Event('POST', '/auth/providers/google/nonce', { origin: APP_ORIGIN }), {} as LambdaContext);
 
     expect(config).toMatchObject({ statusCode: 200 });
     expect(JSON.parse((config as { body: string }).body)).toEqual({
@@ -74,6 +74,7 @@ describe('deployment entry points', () => {
       emailLink: null,
       sms: false,
       passkey: null,
+      providers: [{ id: 'google', kind: 'google', name: 'Google' }],
     });
     expect(nonce).toMatchObject({ statusCode: 200 });
     expect((nonce as { cookies: string[] }).cookies[0]).toMatch(/^madauth_nonce=/);
@@ -149,7 +150,7 @@ describe('deployment entry points', () => {
     const app = testApp();
     const request = new HttpRequest({
       method: 'POST',
-      url: 'https://madauth.azurewebsites.net/auth/google/nonce',
+      url: 'https://madauth.azurewebsites.net/auth/providers/google/nonce',
       headers: { origin: APP_ORIGIN },
     });
 
@@ -158,7 +159,7 @@ describe('deployment entry points', () => {
     expect(response.status).toBe(200);
     expect(JSON.parse(new TextDecoder().decode(response.body as Uint8Array))).toHaveProperty('nonce');
     expect(response.cookies).toEqual([
-      expect.objectContaining({ name: 'madauth_nonce', path: '/auth/google', httpOnly: true, secure: true, sameSite: 'Strict', maxAge: 300 }),
+      expect.objectContaining({ name: 'madauth_nonce', path: '/auth/providers/google', httpOnly: true, secure: true, sameSite: 'Strict', maxAge: 300 }),
     ]);
     expect((response.headers as Headers).get('set-cookie')).toBeNull();
   });

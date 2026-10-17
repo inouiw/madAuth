@@ -1,6 +1,8 @@
 // Several sign-in methods per user: a signed-in user adds and removes them. Behaviour described in
 // docs/sign-in-methods.md; update the doc when changing it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Providers } from '../providers.js';
+import { Settings } from '../settings.js';
 import { Users } from '../users.js';
 import {
   APP_ORIGIN,
@@ -16,6 +18,7 @@ import {
   startGitHub,
   stubGitHub,
   githubCallback,
+  keyService,
   verify,
   type TestMethods,
 } from '../test/helpers.js';
@@ -57,7 +60,7 @@ async function googleSignIn(app: App, claims: Record<string, unknown> = {}) {
 /** Adds the Google account of `claims` to the signed-in user, as the web library does with One Tap. */
 async function linkGoogle(app: App, cookie: string, claims: Record<string, unknown> = {}) {
   const { nonce, cookie: nonceCookie } = await getNonce(app);
-  return post(app, '/auth/google/link', { credential: await googleIdToken({ nonce, ...claims }) }, { Cookie: `${cookie}; ${nonceCookie}` });
+  return post(app, '/auth/providers/google/link', { credential: await googleIdToken({ nonce, ...claims }) }, { Cookie: `${cookie}; ${nonceCookie}` });
 }
 
 const methodsOf = async (app: App, cookie: string) =>
@@ -149,11 +152,11 @@ describe('adding a sign-in method', () => {
     const { app, hook, cookie } = await withGrace();
     const github = stubGitHub({ emails: [{ email: 'gh@example.com', primary: true, verified: true }] });
 
-    const started = await app.request(`/auth/github/start?link=1&return_to=${encodeURIComponent(`${APP_ORIGIN}/account`)}`, { headers: { Cookie: cookie } });
+    const started = await app.request(`/auth/providers/github/start?link=1&return_to=${encodeURIComponent(`${APP_ORIGIN}/account`)}`, { headers: { Cookie: cookie } });
     expect(started.status).toBe(302);
     const state = new URL(started.headers.get('location')!).searchParams.get('state')!;
     const oauth = `madauth_oauth=${cookies(started).madauth_oauth.value}`;
-    const back = await app.request(`/auth/github/callback?code=c&state=${state}`, { headers: { Cookie: `${oauth}; ${cookie}` } });
+    const back = await app.request(`/auth/providers/github/callback?code=c&state=${state}`, { headers: { Cookie: `${oauth}; ${cookie}` } });
 
     expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/account#madauth_linked=github`);
     // No new session: she is signed in already.
@@ -169,17 +172,17 @@ describe('adding a sign-in method', () => {
     const { app, cookie } = await withGrace();
     stubGitHub({ emails: GITHUB_EMAILS });
 
-    const anonymous = await app.request(`/auth/github/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`);
+    const anonymous = await app.request(`/auth/providers/github/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`);
     expect(anonymous.headers.get('location')).toBe(`${APP_ORIGIN}/#madauth_error=no_session&madauth_method=github`);
 
-    const started = await app.request(`/auth/github/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`, { headers: { Cookie: cookie } });
+    const started = await app.request(`/auth/providers/github/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`, { headers: { Cookie: cookie } });
     const state = new URL(started.headers.get('location')!).searchParams.get('state')!;
     // The callback comes in a browser without her session.
-    const back = await app.request(`/auth/github/callback?code=c&state=${state}`, { headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` } });
+    const back = await app.request(`/auth/providers/github/callback?code=c&state=${state}`, { headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` } });
     expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/#madauth_error=no_session&madauth_method=github`);
 
     advance(11 * 60_000);
-    const late = await app.request(`/auth/google/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`, { headers: { Cookie: cookie } });
+    const late = await app.request(`/auth/providers/google/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`, { headers: { Cookie: cookie } });
     expect(late.headers.get('location')).toBe(`${APP_ORIGIN}/#madauth_error=reauth_required&madauth_method=google`);
   });
 });
@@ -218,14 +221,14 @@ describe('removing a sign-in method', () => {
   });
 
   it('M10: a method the server is not configured for does not count as a way in, though it is listed', async () => {
-    const { store, cookie } = await withGrace();
+    const { app, store, cookie } = await withGrace();
     const [{ id: userId }] = await store.findMany('user', {});
     await new Users(store).linkAccount(userId as string, { key: 'github:7001', email: 'grace@example.com', primary: false });
-    // The same store, served without a GitHub OAuth App; the settings still list GitHub.
-    const withoutGitHub = passwordApp({ store });
-    const [password] = await methodsOf(withoutGitHub.app, cookie);
+    // An admin removed the GitHub provider; the settings still list GitHub.
+    await new Providers(new Settings(store), keyService).remove('github', null);
+    const [password] = await methodsOf(app, cookie);
 
-    expect(await (await post(withoutGitHub.app, '/auth/methods/remove', { id: password.id }, { Cookie: cookie })).json()).toMatchObject({ error: 'only_method' });
+    expect(await (await post(app, '/auth/methods/remove', { id: password.id }, { Cookie: cookie })).json()).toMatchObject({ error: 'only_method' });
   });
 
   it('M11: allowed as a sign-in method, a first authenticator app needs a recent sign-in too; only as a second factor, it doesn\'t', async () => {
@@ -251,9 +254,9 @@ describe('removing a sign-in method', () => {
   it('M9: removing GitHub takes back its authorization at GitHub; the app is removed with a code of its own', async () => {
     const { app, cookie } = await withGrace({ ...everything, authenticator: { allowAsSignInMethod: false, secondFactor: 'none' } });
     const github = stubGitHub();
-    const started = await app.request(`/auth/github/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`, { headers: { Cookie: cookie } });
+    const started = await app.request(`/auth/providers/github/start?link=1&return_to=${encodeURIComponent(APP_ORIGIN)}`, { headers: { Cookie: cookie } });
     const state = new URL(started.headers.get('location')!).searchParams.get('state')!;
-    await app.request(`/auth/github/callback?code=c&state=${state}`, { headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}; ${cookie}` } });
+    await app.request(`/auth/providers/github/callback?code=c&state=${state}`, { headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}; ${cookie}` } });
     const linked = (await methodsOf(app, cookie)).find((m) => m.method === 'github')!;
 
     expect((await post(app, '/auth/methods/remove', { id: linked.id }, { Cookie: cookie })).status).toBe(200);

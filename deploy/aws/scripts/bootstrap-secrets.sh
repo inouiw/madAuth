@@ -2,9 +2,9 @@
 # Puts madAuth's secrets into the Parameter Store as SecureString parameters, once per deployment:
 #   scripts/bootstrap-secrets.sh [path]          (default path: /madauth)
 # It creates WEBHOOK_SECRET if it doesn't exist yet, after asking (never with WEBHOOK_AUTH=aws-iam, for a receiver whose Function URL
-# has AWS_IAM auth: webhookFunctionArn in cdk.json), and asks for GOOGLE_CLIENT_SECRET
-# (leave it empty if you only use Google One Tap / FedCM) and GITHUB_CLIENT_SECRET (empty without GitHub sign-in). The values are never printed and never passed on a
-# command line (other processes can read those); they reach the AWS CLI through a file only you can read.
+# has AWS_IAM auth: webhookFunctionArn in cdk.json). The value is never printed and never passed on a command line
+# (other processes can read those); it reaches the AWS CLI through a file only you can read. Google and GitHub
+# are no secrets of the deployment any more: an admin adds them as providers (see "Providers" in docs/server.md).
 # Uses the AWS CLI's current credentials and region (aws configure / aws sso login, AWS_REGION).
 set -euo pipefail
 
@@ -50,14 +50,9 @@ else
   fi
 fi
 
-read -r -s -p "GOOGLE_CLIENT_SECRET (empty to skip): " google_secret
-echo
-if [[ -n "$google_secret" ]]; then
-  printf '%s' "$google_secret" | put GOOGLE_CLIENT_SECRET
-fi
-
-read -r -s -p "GITHUB_CLIENT_SECRET (empty to skip): " github_secret
-echo
-if [[ -n "$github_secret" ]]; then
-  printf '%s' "$github_secret" | put GITHUB_CLIENT_SECRET
-fi
+# Google and GitHub from a template before madAuth 0.7: their client IDs are gone from cdk.json, so these are read by nobody.
+for name in GOOGLE_CLIENT_SECRET GITHUB_CLIENT_SECRET; do
+  if exists "$name"; then
+    echo "$path/$name is from a template before madAuth 0.7 and no longer used: add the provider in the admin API, then delete it: aws ssm delete-parameter --name $path/$name"
+  fi
+done

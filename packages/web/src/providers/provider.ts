@@ -33,6 +33,11 @@ export interface ServerConfig {
    * before madAuth 0.6.
    */
   passkey?: { signIn: boolean; signUp: boolean; secondFactor: SecondFactorPolicy } | null;
+  /**
+   * The sign-in providers that are on, with the names admins gave them; the dialog shows a button for each.
+   * Absent from servers before madAuth 0.7.
+   */
+  providers?: { id: string; kind: 'google' | 'github'; name: string }[];
 }
 
 /** What a sign-in still needs after its first step, and which sign-in it is. */

@@ -63,7 +63,7 @@ describe('Madauth.google.renderButton', () => {
 
     expect(el.querySelector('button')!.textContent).toBe('Continue with Google');
     expect(assign).toHaveBeenCalledExactlyOnceWith(
-      `${SERVER}/auth/google/start?return_to=${encodeURIComponent('https://app.example.com/page')}&locale=${encodeURIComponent(navigator.language)}`,
+      `${SERVER}/auth/providers/google/start?return_to=${encodeURIComponent('https://app.example.com/page')}&locale=${encodeURIComponent(navigator.language)}`,
     );
   });
 

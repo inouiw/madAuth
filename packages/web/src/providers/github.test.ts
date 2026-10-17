@@ -75,7 +75,34 @@ describe('GitHub', () => {
     $<HTMLButtonElement>('.github-slot button')!.click();
 
     // The locale goes along, for the sign-up check's message.
-    expect(assign).toHaveBeenCalledExactlyOnceWith(`${SERVER}/auth/github/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}&locale=${encodeURIComponent(navigator.language)}`);
+    expect(assign).toHaveBeenCalledExactlyOnceWith(`${SERVER}/auth/providers/github/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}&locale=${encodeURIComponent(navigator.language)}`);
+    expect(gisScripts()).toHaveLength(0);
+  });
+
+  it('B8: the dialog shows a button for every provider the server offers, also one the app didn’t pass, with its name', async () => {
+    const server = fakeServer();
+    server.github = true;
+    server.providerNames.github = 'GitHub Enterprise';
+
+    void openDialog([new Password()]);
+    await settle();
+
+    expect($('.github-slot button')?.textContent).toBe('Continue with GitHub Enterprise');
+    Madauth.setLocale('de');
+    expect($('.github-slot button')?.textContent).toBe('Weiter mit GitHub Enterprise');
+  });
+
+  it('B8: Google gets its button by itself only with the redirect sign-in; One Tap the app passes', async () => {
+    fakeServer();
+    void openDialog([new Password()]);
+    await settle();
+    expect($('.google-slot')).toBeNull();
+
+    resetAll();
+    fakeServer().codeFlow = true;
+    void openDialog([new Password()]);
+    await settle();
+    expect($('.google-slot button')?.textContent).toBe('Continue with Google');
     expect(gisScripts()).toHaveLength(0);
   });
 
@@ -155,6 +182,8 @@ describe('GitHub', () => {
     expect($('.others h3')).not.toBeNull();
     login().close();
 
+    // A server that offers GitHub shows its button anyway (B8): here it doesn't.
+    server.github = false;
     void openDialog([new Authenticator()]);
     await settle();
     expect($('.others h3')).toBeNull();
