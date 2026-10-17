@@ -188,7 +188,10 @@ export function legacyAppProblem(value: unknown): string | null {
   );
 }
 
-/** What decides whether the server has what a method needs. `MadauthConfig` has these fields. */
+/**
+ * What decides whether the server has what a method needs: the providers in the store (Google, GitHub), and what
+ * the server's configuration has (the webhook's e-mails and SMS).
+ */
 export interface MethodConfig {
   google?: object;
   github?: object;
@@ -247,11 +250,7 @@ export class Settings {
   private warnedRules = false;
   private warnedLegacy = false;
 
-  /** `initial` is what counts until the methods are set, see {@link initialMethods}. */
-  constructor(
-    private readonly store: StoreAdapter,
-    private readonly initial: MethodSettings = {},
-  ) {}
+  constructor(private readonly store: StoreAdapter) {}
 
   /** The setting's value, or undefined if it was never set. */
   async get<T>(id: string): Promise<T | undefined> {
@@ -295,17 +294,26 @@ export class Settings {
     await this.change(id, () => value, updatedBy);
   }
 
-  /** Which sign-in methods are on, with their settings; the initial ones until an admin set them. */
-  async methods(): Promise<MethodSettings> {
-    return this.current(await this.get(METHODS_SETTING));
+  /**
+   * Which sign-in methods are on, with their settings; `initial` until an admin set them (see
+   * {@link initialMethods}: it depends on the providers in the store, so the caller passes it).
+   */
+  async methods(initial: MethodSettings = {}): Promise<MethodSettings> {
+    return this.methodsFrom(await this.get(METHODS_SETTING), initial);
+  }
+
+  /** {@link methods} from the setting's value as read, for a caller that read it together with something else. */
+  methodsFrom(value: unknown, initial: MethodSettings = {}): MethodSettings {
+    return this.current(value, initial);
   }
 
   /** Changes which methods are on, see {@link change}; `apply` gets the methods as they are now. */
   async changeMethods(
     apply: (current: MethodSettings) => MethodSettings | null,
     updatedBy: string | null,
+    initial: MethodSettings = {},
   ): Promise<MethodSettings | null> {
-    return this.change<MethodSettings>(METHODS_SETTING, (current) => apply(this.current(current)), updatedBy);
+    return this.change<MethodSettings>(METHODS_SETTING, (current) => apply(this.current(current, initial)), updatedBy);
   }
 
   /** The rules for new passwords; the defaults until an admin set them. */
@@ -333,8 +341,8 @@ export class Settings {
    * {@link parseLegacyMethodSettings}), but for the app on its own next to other methods, which counts as a
    * second factor only until an admin chooses: the operator is told once.
    */
-  private current(value: unknown): MethodSettings {
-    if (value === undefined) return this.initial;
+  private current(value: unknown, initial: MethodSettings): MethodSettings {
+    if (value === undefined) return initial;
     const stored = renameStoredMethods(value);
     const parsed = parseMethodSettings(stored) ?? parseLegacyMethodSettings(stored);
     const problem = parsed && !this.warnedLegacy ? legacyAppProblem(stored) : null;
@@ -347,7 +355,7 @@ export class Settings {
       this.warned = true;
       console.warn('[madauth] The stored sign-in methods are not in the form this version expects. An admin sets them again with Madauth.admin.setSettings; until then the initial methods count.');
     }
-    return this.initial;
+    return initial;
   }
 }
 

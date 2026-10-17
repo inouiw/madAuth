@@ -39,14 +39,17 @@ export interface MadauthConfig {
    * subdomains. Default: the host of the app that asks, so a passkey works on that host only.
    */
   passkeyRpId?: string;
-  /** Google sign-in; off when GOOGLE_CLIENT_ID is not set. */
+  /**
+   * Google sign-in from GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, as before madAuth 0.7: imported once into the
+   * store's providers when it has no Google provider (see `importProviders` in providers.ts), and ignored otherwise.
+   */
   google?: {
     /** OAuth web client ID (GOOGLE_CLIENT_ID). */
     clientId: string;
     /** Enables the server-side code flow (GOOGLE_CLIENT_SECRET). */
     clientSecret?: string;
   };
-  /** GitHub sign-in; off when GITHUB_CLIENT_ID is not set. GitHub only has the redirect flow, so the secret is needed too. */
+  /** GitHub sign-in from GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET, imported once like {@link google}. */
   github?: {
     /** The client ID of the OAuth App (GITHUB_CLIENT_ID). */
     clientId: string;
@@ -95,11 +98,12 @@ export function sendsSms(config: Pick<MadauthConfig, 'webhook'>): boolean {
   return !!config.webhook?.events.has('sms.send_code');
 }
 
-/** What decides which methods the server is configured for, see `isConfigured` and `initialMethods`. */
+/**
+ * What of the server's configuration decides which methods it has, see `isConfigured` and `initialMethods`.
+ * Google and GitHub come from the providers in the store, on every request.
+ */
 export function methodConfig(config: MadauthConfig): MethodConfig {
   return {
-    google: config.google,
-    github: config.github,
     password: config.password,
     emailVerification: sendsVerificationEmails(config),
     emailLink: sendsSignInEmails(config),

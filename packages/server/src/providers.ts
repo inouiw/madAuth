@@ -90,6 +90,10 @@ export function parseProviderFields(kind: ProviderKind, data: Record<string, unk
   };
 }
 
+/** The provider of `kind` among `providers` (e.g. a request's, see `MethodsNow`), or undefined. */
+export const providerOf = (from: { providers: StoredProvider[] }, kind: ProviderKind): StoredProvider | undefined =>
+  from.providers.find((provider) => provider.id === kind);
+
 /** Whether a stored value is a provider this version knows; others are left out. */
 function isStoredProvider(value: unknown): value is StoredProvider {
   const p = value as StoredProvider;
@@ -226,5 +230,37 @@ export class Providers {
       },
       null,
     );
+  }
+}
+
+/** Where a provider of madAuth before 0.7 came from: its environment variables. */
+const VARIABLES: Record<ProviderKind, string> = {
+  google: 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET',
+  github: 'GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET',
+};
+
+/**
+ * Google and GitHub as madAuth before 0.7 had them, from environment variables (MadauthConfig's `google` and
+ * `github`): each becomes a provider in the store once, when the store has none of its kind, and is ignored
+ * when it has one, which admins manage. Either way the log says to remove the variables.
+ */
+export async function importProviders(
+  providers: Providers,
+  configured: { google?: { clientId: string; clientSecret?: string }; github?: { clientId: string; clientSecret: string } },
+): Promise<void> {
+  const stored = await providers.list();
+  for (const kind of PROVIDER_KINDS) {
+    const from = configured[kind];
+    if (!from) continue;
+    const name = DEFAULT_NAMES[kind];
+    if (stored.some((p) => p.id === kind)) {
+      console.warn(`[madauth] ${VARIABLES[kind]} are ignored: the store has a ${name} provider, which admins manage (see "Providers" in docs/server.md). Remove the variables.`);
+      continue;
+    }
+    // Another instance may import it at the same moment: then it is there, and nothing is to say.
+    const added = await providers.add(kind, { clientId: from.clientId, ...(from.clientSecret ? { clientSecret: from.clientSecret } : {}) }, null);
+    if ('provider' in added) {
+      console.warn(`[madauth] ${VARIABLES[kind]} are now the ${name} provider in the store, which admins manage (see "Providers" in docs/server.md): remove the variables.`);
+    }
   }
 }

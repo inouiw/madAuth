@@ -82,7 +82,8 @@ export function createEmails(ctx: AppContext, users: Users, webhook: WebhookClie
 
     async sendAccountEmail(user, type, target, locale) {
       if (!webhook.wants(type)) return true;
-      const methods = await users.signInMethods(user.id, signInPredicate(ctx.configured, await ctx.settings.methods()));
+      const now = await ctx.methods();
+      const methods = await users.signInMethods(user.id, signInPredicate(now.configured, now.settings));
       return sendEmail(user, type, { link: target.href, site: target.host, locale, methods });
     },
 

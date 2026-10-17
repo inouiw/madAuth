@@ -53,16 +53,16 @@ const isFactor = (method: string) => (SECOND_FACTORS as readonly string[]).inclu
  * away (the last passkey). And the user must keep a way to sign in (`only_method`). `what` names the account.
  */
 export async function removalRefused(c: Context, ctx: AppContext, accounts: StoredAccount[], account: StoredAccount, what: string): Promise<Response | null> {
-  const methods = await ctx.methods(c);
+  const { configured, settings: methods } = await ctx.methods(c);
   const after = accounts.filter((a) => a.id !== account.id);
-  const left = factorsAmong(after, factorsOn(ctx.configured, methods));
+  const left = factorsAmong(after, factorsOn(configured, methods));
   const stillUsed = (method: string) => !isFactor(method) || after.some((a) => methodOf(a) === method);
-  const lacking = requiringSecondFactor(ctx.configured, methods).filter((method) => stillUsed(method) && !left.some((f) => f !== method));
+  const lacking = requiringSecondFactor(configured, methods).filter((method) => stillUsed(method) && !left.some((f) => f !== method));
   if (lacking.length) {
     const names = lacking.map((method) => POLICY_NAMES[method]).join(' and ');
     return error(c, 403, 'required_by_policy', `Signing in with ${names} requires a second factor, so ${what} can't be removed. Set up another second factor first, or delete your account.`);
   }
-  return lastWayIn(accounts, signInPredicate(ctx.configured, methods), (a) => a.id === account.id) ? onlyMethod(c) : null;
+  return lastWayIn(accounts, signInPredicate(configured, methods), (a) => a.id === account.id) ? onlyMethod(c) : null;
 }
 
 const onlyMethod = (c: Context) =>
@@ -75,7 +75,8 @@ const onlyMethod = (c: Context) =>
  */
 export async function removeAccount(c: Context, ctx: AppContext, accounts: StoredAccount[], account: StoredAccount): Promise<boolean | Response> {
   if (!(await ctx.users.unlinkAccount(account.key))) return false;
-  const signsIn = signInPredicate(ctx.configured, await ctx.methods(c));
+  const methods = await ctx.methods(c);
+  const signsIn = signInPredicate(methods.configured, methods.settings);
   const now = await ctx.users.accounts(account.userId);
   if (accounts.some((a) => signsIn(methodOf(a))) && !now.some((a) => signsIn(methodOf(a)))) {
     await ctx.users.restoreAccount(account);
@@ -95,7 +96,7 @@ export function methodRoutes(app: Hono, ctx: AppContext, onRemoved: (account: St
     const session = await ctx.currentUser(c);
     if (!session) return noSession(c);
     const [methods, accounts] = await Promise.all([ctx.methods(c), users.accounts(session.id)]);
-    const signsIn = signInPredicate(ctx.configured, methods);
+    const signsIn = signInPredicate(methods.configured, methods.settings);
     const entries = accounts
       .filter((account) => methodOf(account) !== 'sms')
       .map((account): MethodEntry => {

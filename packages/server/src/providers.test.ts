@@ -2,10 +2,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLocalKeyService } from './key-service.js';
 import { generateSigningKey } from './keys.js';
-import { PROVIDERS_SETTING, Providers, parseProviderFields, parseProviderKind } from './providers.js';
+import { PROVIDERS_SETTING, Providers, importProviders, parseProviderFields, parseProviderKind } from './providers.js';
 import { Settings } from './settings.js';
 import { createSqliteAdapter } from './store/sqlite.js';
-import { keyService } from './test/helpers.js';
+import { CLIENT_ID, keyService, passwordApp, setMethods } from './test/helpers.js';
 
 const GOOGLE_ID = '123-test.apps.googleusercontent.com';
 
@@ -117,5 +117,44 @@ describe('the providers in the store', () => {
     expect((await p.list()).map((x) => x.id)).toEqual(['google']);
     await p.list();
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Google and GitHub from the environment, as before 0.7', () => {
+  it('PV7: become providers once, and are ignored when the store has one; the log says to remove them', async () => {
+    const { providers: p } = providers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await importProviders(p, { google: { clientId: GOOGLE_ID, clientSecret: 'g-secret' }, github: { clientId: 'Ov23liAbc', clientSecret: 'gh-secret' } });
+    const [google, github] = await p.list();
+    expect(google).toMatchObject({ id: 'google', clientId: GOOGLE_ID });
+    expect(await p.clientSecret(google!)).toBe('g-secret');
+    expect(await p.clientSecret(github!)).toBe('gh-secret');
+    expect(warn.mock.calls.map((call) => String(call[0]))).toEqual([
+      expect.stringContaining('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are now the Google provider in the store'),
+      expect.stringContaining('GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are now the GitHub provider in the store'),
+    ]);
+
+    // An admin changed it since: the variables don't count any more.
+    await p.update('google', { name: 'Google Workspace' }, 'ada@example.com');
+    warn.mockClear();
+    await importProviders(p, { google: { clientId: 'other.apps.googleusercontent.com' } });
+    expect((await p.list())[0]).toMatchObject({ clientId: GOOGLE_ID, name: 'Google Workspace' });
+    expect(String(warn.mock.calls[0]![0])).toContain('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are ignored');
+  });
+
+  it('PV8: a provider in the store applies at the next request, on a server that started without it', async () => {
+    const { app, store } = passwordApp({ google: undefined });
+    const config = async () => (await (await app.request('/auth/config')).json()) as { google: { clientId: string; codeFlow: boolean } | null };
+    expect((await config()).google).toBeNull();
+    expect((await app.request('/auth/google/start')).status).toBe(404);
+
+    await new Providers(new Settings(store), keyService).add('google', { clientId: CLIENT_ID, clientSecret: 'g-secret' }, null);
+    await setMethods(store, { google: { allowAsSignInMethod: true, secondFactor: 'none' }, password: { allowAsSignInMethod: true, secondFactor: 'none' } });
+
+    expect((await config()).google).toEqual({ clientId: CLIENT_ID, codeFlow: true, secondFactor: 'none' });
+    const start = await app.request(`/auth/google/start?return_to=${encodeURIComponent('https://app.example.com/page')}`);
+    expect(start.status).toBe(302);
+    expect(new URL(start.headers.get('location')!).searchParams.get('client_id')).toBe(CLIENT_ID);
   });
 });

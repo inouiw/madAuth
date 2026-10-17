@@ -1,8 +1,8 @@
-import type { Hono } from 'hono';
+import type { Context, Hono } from 'hono';
 import type { AppContext } from '../app.js';
 import type { KeyService } from '../key-service.js';
-import type { MadauthConfig } from '../config.js';
-import { exchangeGitHubCode, fetchGitHubAccount, revokeGitHubGrant } from '../github.js';
+import { exchangeGitHubCode, fetchGitHubAccount, revokeGitHubGrant, type GitHubAppCredentials } from '../github.js';
+import { providerOf } from '../providers.js';
 import { githubAccountKey, type StoredAccount } from '../users.js';
 import { finishLink, pkceChallenge, redirectBack, resolveProviderUser, startOAuth, takeOAuthState, type OAuthProvider } from './oauth.js';
 
@@ -13,15 +13,20 @@ const COOKIE_PATH = '/auth/github';
 
 const GITHUB: OAuthProvider = { method: 'github', name: 'GitHub' };
 
-type GitHubConfig = NonNullable<MadauthConfig['github']>;
-
 /**
  * GitHub sign-in: the server-side authorization-code flow with PKCE, the only one GitHub has. The access
  * token is kept on the account, encrypted by the key service, for one thing: revoking the OAuth App's
- * authorization when the user deletes their account.
+ * authorization when the user deletes their account. The GitHub provider is read from the store with each
+ * request; without one, the routes answer 404 as if they weren't there.
  */
-export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig): void {
+export function githubRoutes(app: Hono, ctx: AppContext): void {
   const callbackUrl = `${ctx.config.issuer}/auth/github/callback`;
+  const githubOf = async (c: Context) => providerOf(await ctx.methods(c), 'github');
+
+  app.use(`${COOKIE_PATH}/*`, async (c, next) => {
+    if (!(await githubOf(c))) return c.notFound();
+    await next();
+  });
 
   app.get('/auth/github/start', async (c) => {
     const returnUrl = ctx.allowedUrl(c.req.query('return_to'));
@@ -34,7 +39,7 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig): 
 
     const url = new URL(GITHUB_AUTH_ENDPOINT);
     url.search = new URLSearchParams({
-      client_id: github.clientId,
+      client_id: (await githubOf(c))!.clientId,
       redirect_uri: callbackUrl,
       // Only the addresses: the profile's id, name and picture come with any token.
       scope: 'user:email',
@@ -55,7 +60,10 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig): 
     const code = c.req.query('code');
     if (!code || c.req.query('state') !== oauth.state) return back('verification_failed');
 
-    const token = await exchangeGitHubCode(github, code, callbackUrl, oauth.verifier);
+    const provider = (await githubOf(c))!;
+    const clientSecret = await ctx.clientSecret(provider);
+    if (!clientSecret) return back('verification_failed');
+    const token = await exchangeGitHubCode({ clientId: provider.clientId, clientSecret }, code, callbackUrl, oauth.verifier);
     if (!token) return back('verification_failed');
     const result = await fetchGitHubAccount(token);
     if (!result.ok) return back(result.error);
@@ -79,7 +87,7 @@ export function githubRoutes(app: Hono, ctx: AppContext, github: GitHubConfig): 
  * user is deleted: madAuth then no longer appears under the user's authorized apps. Best effort: the
  * deletion goes ahead whatever happens here, and a failure is logged.
  */
-export async function revokeGrant(github: GitHubConfig, keys: KeyService, account: StoredAccount | null): Promise<void> {
+export async function revokeGrant(github: GitHubAppCredentials, keys: KeyService, account: StoredAccount | null): Promise<void> {
   if (!account) return;
   const token = account.secret ? await keys.decrypt('provider-token', account.secret) : null;
   if (!token) {
