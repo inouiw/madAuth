@@ -275,17 +275,34 @@ function api<A extends Args>(build: (values: Values) => A | string, call: (args:
   return { build, call: (args) => call(args as A) };
 }
 
-type MethodId = 'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey' | 'sms';
 const ALL_METHODS = ['google', 'github', 'password', 'email-link', 'passkey', 'authenticator', 'sms'] as const;
 /** The methods whose policy for a second factor can be set: those that sign in. */
 const WITH_POLICY = ['google', 'github', 'password', 'email-link', 'passkey'] as const;
 /** The methods that sign in on their own or are only a second factor, as the admin chooses. */
 const EITHER = ['passkey', 'authenticator'] as const;
-type WithPolicy = (typeof WITH_POLICY)[number];
 type Either = (typeof EITHER)[number];
-const methodBox = (method: MethodId) => $<HTMLInputElement>(`#method-${method}`);
+/** A method's box, by its id: one of madAuth's own, or an OpenID Connect provider's. */
+const methodBox = (method: string) => $<HTMLInputElement>(`#method-${method}`);
 const signInBox = (method: Either) => $<HTMLInputElement>(`#signin-${method}`);
-const policySelect = (method: WithPolicy) => $<HTMLSelectElement>(`#policy-${method}`);
+const policySelect = (method: string) => $<HTMLSelectElement>(`#policy-${method}`);
+/** The OpenID Connect providers in the loaded settings, each with a row of its own. */
+let providerMethods: string[] = [];
+
+/** Gives each OpenID Connect provider (a method id that is none of madAuth's own) a row like GitHub's, after it. */
+function showProviderRows(methods: Settings['methods'] | undefined): void {
+  providerMethods = Object.keys(methods ?? {}).filter((id) => !(ALL_METHODS as readonly string[]).includes(id));
+  for (const row of document.querySelectorAll('table.methods tr[data-provider]')) row.remove();
+  const github = methodBox('github').closest('tr')!;
+  for (const id of [...providerMethods].reverse()) {
+    const row = document.createElement('tr');
+    row.dataset.provider = id;
+    row.innerHTML = `<td><label><input type="checkbox" /> </label></td><td></td><td><label class="policy">Second factor <select><option value="none">none</option><option value="optional">optional</option><option value="required">required</option></select></label></td>`;
+    row.querySelector('input')!.id = `method-${id}`;
+    row.querySelector('select')!.id = `policy-${id}`;
+    row.querySelector('label')!.append(`${id} (OpenID Connect)`);
+    github.after(row);
+  }
+}
 /** The user whose sign-in loaded the settings, so a claims change (which also notifies) doesn't load them again. */
 let settingsLoadedFor: string | undefined;
 /** Whether the controls show the server's settings; only then may setSettings send them. */
@@ -298,8 +315,9 @@ let settingsLoaded = false;
  */
 function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSettings>> | null>(result: T): T {
   const methods: Settings['methods'] | undefined = result?.isSuccess ? result.methods : undefined;
+  showProviderRows(methods);
   // A method the server doesn't list (an older server) counts as not configured.
-  for (const method of ALL_METHODS) {
+  for (const method of [...ALL_METHODS, ...providerMethods]) {
     methodBox(method).checked = methods?.[method]?.enabled ?? false;
     methodBox(method).disabled = !methods?.[method]?.configured;
   }
@@ -307,7 +325,7 @@ function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSetti
     signInBox(method).checked = methods?.[method]?.allowAsSignInMethod ?? false;
     signInBox(method).disabled = !methods?.[method]?.configured;
   }
-  for (const method of WITH_POLICY) {
+  for (const method of [...WITH_POLICY, ...providerMethods]) {
     policySelect(method).value = methods?.[method]?.secondFactor ?? 'none';
     policySelect(method).disabled = !methods?.[method]?.configured;
   }
@@ -323,10 +341,11 @@ function showSettings<T extends Awaited<ReturnType<typeof Madauth.admin.getSetti
 /** The list to send: what is checked is on, with both of its settings; the rest is off. */
 function methodsToSet(): MethodsToSet {
   const set: MethodsToSet = {};
-  for (const method of ALL_METHODS) {
+  for (const method of [...ALL_METHODS, ...providerMethods]) {
     if (!methodBox(method).checked) continue;
     const signIn = method === 'sms' ? false : (EITHER as readonly string[]).includes(method) ? signInBox(method as Either).checked : true;
-    const policy = signIn && (WITH_POLICY as readonly string[]).includes(method) ? (policySelect(method as WithPolicy).value as 'none' | 'optional' | 'required') : 'none';
+    const withPolicy = (WITH_POLICY as readonly string[]).includes(method) || providerMethods.includes(method);
+    const policy = signIn && withPolicy ? (policySelect(method).value as 'none' | 'optional' | 'required') : 'none';
     set[method] = { allowAsSignInMethod: signIn, secondFactor: policy };
   }
   return set;
