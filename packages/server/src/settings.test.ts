@@ -17,6 +17,7 @@ import {
   policyOf,
   renameStoredMethods,
   signsIn,
+  type MethodSettings,
 } from './settings.js';
 import { APP_ORIGIN, cookies, getNonce, googleIdToken, passwordApp, post, setClaims, signUpVerified, testApp, verify } from './test/helpers.js';
 
@@ -75,10 +76,12 @@ describe('parseMethodSettings', () => {
       { google: { allowAsSignInMethod: 'yes', secondFactor: 'none' } },
       { google: { allowAsSignInMethod: true, secondFactor: 'always' } },
       { google: { ...signIn(), other: 1 } },
-      { fax: signIn() },
+      { Fax: signIn() },
     ]) {
       expect(parseMethodSettings(bad)).toBeNull();
     }
+    // An OpenID Connect provider's id has the form of a method; the settings call checks it is one of the server's.
+    expect(parseMethodSettings({ gitlab: signIn() })).toEqual({ gitlab: signIn() });
   });
 
   it('reads what madAuth before 0.6 stored, as it was meant: the app is a second factor wherever a policy asks for one, and never more', () => {
@@ -239,7 +242,7 @@ describe('Settings', () => {
   it('a change sees what another change wrote in between, so a guard on the written value holds', async () => {
     const { store } = passwordApp();
     const settings = new Settings(store);
-    const atLeastOne = (next: Record<string, object>) => (Object.keys(next).length ? next : null);
+    const atLeastOne = (next: MethodSettings) => (Object.keys(next).length ? next : null);
     let first = true;
     // While the first change is being applied, another request switches password off.
     const results = await Promise.all([
@@ -360,9 +363,12 @@ describe('switching sign-in methods off and on', () => {
     expect((await settingsApi(app, undefined, 'get')).status).toBe(401);
     expect((await settingsApi(app, other, 'get')).status).toBe(403);
     expect((await settingsApi(app, other, 'set', { methods: { google: signIn() } })).status).toBe(403);
-    const bad = await settingsApi(app, cookie, 'set', { methods: { fax: signIn() } });
+    const bad = await settingsApi(app, cookie, 'set', { methods: { Fax: signIn() } });
     expect(bad.status).toBe(400);
     expect(await bad.json()).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('allowAsSignInMethod') });
+    // A provider's id the server has no provider for.
+    const unknown = await settingsApi(app, cookie, 'set', { methods: { google: signIn(), gitlab: signIn() } });
+    expect(await unknown.json()).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('"gitlab" is no sign-in method of this server') });
     // Both settings are always given: the shorthand of madAuth before 0.6 is not taken.
     expect((await settingsApi(app, cookie, 'set', { methods: { google: {} } })).status).toBe(400);
     expect((await settingsApi(app, cookie, 'set', { methods: { google: true } })).status).toBe(400);

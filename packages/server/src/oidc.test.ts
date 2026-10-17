@@ -96,3 +96,26 @@ describe('admins add an OpenID Connect provider', () => {
     ]);
   });
 });
+
+describe("an OpenID Connect provider's method", () => {
+  it('OP4: is switched on like the others, with a policy, and an id the server has no provider for is refused', async () => {
+    const idp = await fakeOidcProvider();
+    const made = await withAdmin(idp);
+    await admin(made, 'add', { ...GITLAB, issuer: idp.issuer });
+    const set = (methods: Record<string, unknown>) =>
+      post(made.app, '/auth/admin/settings/set', { methods }, { Cookie: made.cookie }).then((res) => res.json() as Promise<Record<string, any>>);
+    const on = { allowAsSignInMethod: true, secondFactor: 'none' };
+
+    expect((await set({ password: on, gitlab: { ...on, secondFactor: 'optional' }, authenticator: { allowAsSignInMethod: false, secondFactor: 'none' } })).methods.gitlab).toEqual({
+      configured: true,
+      enabled: true,
+      allowAsSignInMethod: true,
+      secondFactor: 'optional',
+    });
+    // It always signs in, like Google.
+    expect(await set({ password: on, gitlab: { allowAsSignInMethod: false, secondFactor: 'none' } })).toMatchObject({ error: 'invalid_settings' });
+    expect(await set({ password: on, keycloak: on })).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('"keycloak" is no sign-in method of this server') });
+    const config = (await (await made.app.request('/auth/config')).json()) as { providers: unknown[] };
+    expect(config.providers).toContainEqual({ id: 'gitlab', kind: 'oidc', name: 'GitLab' });
+  });
+});

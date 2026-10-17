@@ -1,6 +1,7 @@
 // Settings that admins change while the server runs, kept in the store: which sign-in methods are on, which
 // of them sign in on their own, which ask for a second factor, and the rules for new passwords. See "Sign-in
 // methods" and "Password rules" in docs/server.md.
+import { isProviderId } from './providers.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 
 /**
@@ -25,9 +26,12 @@ export type MethodId = (typeof METHODS)[number];
 export const SECOND_FACTORS = ['passkey', 'authenticator', 'sms'] as const;
 export type SecondFactor = (typeof SECOND_FACTORS)[number];
 
-/** The methods that always sign in when they are on: they are nothing else, and a sign-up makes their account. */
+/**
+ * The methods that always sign in when they are on: they are nothing else, and a sign-up makes their account. So
+ * do the OpenID Connect providers, whose ids are methods too (see `isProviderId`).
+ */
 export const ALWAYS_SIGN_IN = ['google', 'github', 'password', 'email-link'] as const;
-const isAlwaysSignIn = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method);
+const isAlwaysSignIn = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method) || isProviderId(method);
 
 /**
  * The methods that can ask for a second factor after they succeeded: those that always sign in, and passkeys.
@@ -54,8 +58,11 @@ export interface MethodSetting {
   secondFactor: SecondFactorPolicy;
 }
 
-/** The sign-in methods that are on, each with its settings. A method that is not listed is off. */
-export type MethodSettings = Partial<Record<MethodId, MethodSetting>>;
+/**
+ * The sign-in methods that are on, each with its settings: madAuth's own ({@link MethodId}) and the OpenID Connect
+ * providers', by their ids. A method that is not listed is off.
+ */
+export type MethodSettings = Partial<Record<string, MethodSetting>>;
 
 /** The id of the setting that holds {@link MethodSettings}. */
 export const METHODS_SETTING = 'methods';
@@ -98,9 +105,10 @@ export function parsePasswordRules(input: unknown): PasswordRules | null {
 }
 
 export const isMethodId = (value: string): value is MethodId => (METHODS as readonly string[]).includes(value);
-/** Whether a method takes a `secondFactor` policy other than `none`. */
-const hasSecondFactor = (method: string): method is MethodWithSecondFactor =>
-  (METHODS_WITH_SECOND_FACTOR as readonly string[]).includes(method);
+/** Whether a method takes a `secondFactor` policy other than `none`: those that always sign in, passkeys, and the providers'. */
+const hasSecondFactor = (method: string): boolean => (METHODS_WITH_SECOND_FACTOR as readonly string[]).includes(method) || isProviderId(method);
+/** Whether `method` signs people in: one of madAuth's own, or an OpenID Connect provider's id. */
+const isSignInMethodId = (method: string): boolean => (SIGN_IN_METHODS as readonly string[]).includes(method) || isProviderId(method);
 const isPolicy = (value: unknown): value is SecondFactorPolicy => (SECOND_FACTOR_POLICIES as readonly unknown[]).includes(value);
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
@@ -113,7 +121,7 @@ export function parseMethodSettings(input: unknown): MethodSettings | null {
   if (!isObject(input)) return null;
   const settings: MethodSettings = {};
   for (const [method, value] of Object.entries(input)) {
-    if (!isMethodId(method) || !isObject(value)) return null;
+    if ((!isMethodId(method) && !isProviderId(method)) || !isObject(value)) return null;
     const { allowAsSignInMethod, secondFactor, ...rest } = value;
     if (Object.keys(rest).length || typeof allowAsSignInMethod !== 'boolean' || !isPolicy(secondFactor)) return null;
     settings[method] = { allowAsSignInMethod, secondFactor };
@@ -164,7 +172,7 @@ export function parseLegacyMethodSettings(input: unknown): MethodSettings | null
     if (Object.keys(rest).length || !isPolicy(secondFactor) || (secondFactor !== 'none' && !hasSecondFactor(method))) return null;
     settings[method as MethodId] = { allowAsSignInMethod: method !== 'sms' && (method !== 'authenticator' || appOnly), secondFactor };
   }
-  const asks = Object.values(settings).some((setting) => setting.secondFactor !== 'none');
+  const asks = Object.values(settings).some((setting) => !!setting && setting.secondFactor !== 'none');
   if (asks && !settings.authenticator) settings.authenticator = { allowAsSignInMethod: false, secondFactor: 'none' };
   return settings;
 }
@@ -195,6 +203,8 @@ export function legacyAppProblem(value: unknown): string | null {
 export interface MethodConfig {
   google?: object;
   github?: object;
+  /** The ids of the OpenID Connect providers in the store. */
+  oidc?: ReadonlySet<string>;
   password?: object;
   /** The webhook sends the e-mails that confirm an address, so people can sign up. */
   emailVerification?: boolean;
@@ -205,7 +215,8 @@ export interface MethodConfig {
 }
 
 /** Whether the server has what a method needs; only a configured method can be on. */
-export function isConfigured(config: MethodConfig, method: MethodId): boolean {
+export function isConfigured(config: MethodConfig, method: string): boolean {
+  if (!isMethodId(method)) return !!config.oidc?.has(method);
   if (method === 'google') return !!config.google;
   if (method === 'github') return !!config.github;
   if (method === 'password') return !!config.password;
@@ -220,7 +231,7 @@ export function isConfigured(config: MethodConfig, method: MethodId): boolean {
  * the authenticator app and passkeys only when the webhook sends the confirmation e-mails (sign-up with them).
  * Without it, an app or a passkey that existing users set up is no way in for anyone new.
  */
-export function canSignUp(config: MethodConfig, method: SignInMethod): boolean {
+export function canSignUp(config: MethodConfig, method: string): boolean {
   return method === 'authenticator' || method === 'passkey' ? !!config.emailVerification : isConfigured(config, method);
 }
 
@@ -360,34 +371,35 @@ export class Settings {
 }
 
 /** Whether a method is on: configured on the server, and listed in the settings. */
-export function isOn(method: MethodId, configured: (method: MethodId) => boolean, methods: MethodSettings): boolean {
+export function isOn(method: string, configured: (method: string) => boolean, methods: MethodSettings): boolean {
   return configured(method) && methods[method] !== undefined;
 }
 
 /** Whether a method signs in on its own: it is on, and not only a second factor. */
-export function signsIn(method: MethodId, configured: (method: MethodId) => boolean, methods: MethodSettings): boolean {
+export function signsIn(method: string, configured: (method: string) => boolean, methods: MethodSettings): boolean {
   return isOn(method, configured, methods) && methods[method]!.allowAsSignInMethod;
 }
 
 /** {@link signsIn} for any method id, as the account checks take it: an id that is no method never signs in. */
 export const signInPredicate =
-  (configured: (method: MethodId) => boolean, methods: MethodSettings) =>
+  (configured: (method: string) => boolean, methods: MethodSettings) =>
   (method: string): boolean =>
-    isMethodId(method) && signsIn(method, configured, methods);
+    (isMethodId(method) || isProviderId(method)) && signsIn(method, configured, methods);
 
 /** The second-factor policy of a method, `none` unless set. */
-export function policyOf(method: MethodId, methods: MethodSettings): SecondFactorPolicy {
+export function policyOf(method: string, methods: MethodSettings): SecondFactorPolicy {
   return methods[method]?.secondFactor ?? 'none';
 }
 
 /** The second factors that are on, in the order a sign-in offers them; `except` is the method whose sign-in it is. */
-export function factorsOn(configured: (method: MethodId) => boolean, methods: MethodSettings, except?: MethodId): SecondFactor[] {
+export function factorsOn(configured: (method: string) => boolean, methods: MethodSettings, except?: string): SecondFactor[] {
   return SECOND_FACTORS.filter((factor) => factor !== except && isOn(factor, configured, methods));
 }
 
-/** The methods that sign in and require a second factor, so a user's last one can't go. */
-export function requiringSecondFactor(configured: (method: MethodId) => boolean, methods: MethodSettings): MethodWithSecondFactor[] {
-  return METHODS_WITH_SECOND_FACTOR.filter((method) => signsIn(method, configured, methods) && policyOf(method, methods) === 'required');
+/** The methods that sign in and require a second factor, so a user's last one can't go; providers' by their ids. */
+export function requiringSecondFactor(configured: (method: string) => boolean, methods: MethodSettings): string[] {
+  const candidates = [...METHODS_WITH_SECOND_FACTOR, ...Object.keys(methods).filter(isProviderId)];
+  return candidates.filter((method) => signsIn(method, configured, methods) && policyOf(method, methods) === 'required');
 }
 
 /**
@@ -395,8 +407,8 @@ export function requiringSecondFactor(configured: (method: MethodId) => boolean,
  * `signsUp` is {@link canSignUp} for the server. The app or passkeys alone, on a server where nobody can sign
  * up with them, would let in only the users who already have one.
  */
-export function anyOn(signsUp: (method: SignInMethod) => boolean, methods: MethodSettings): boolean {
-  return SIGN_IN_METHODS.some((method) => signsUp(method) && methods[method]?.allowAsSignInMethod === true);
+export function anyOn(signsUp: (method: string) => boolean, methods: MethodSettings): boolean {
+  return Object.keys(methods).some((method) => isSignInMethodId(method) && signsUp(method) && methods[method]?.allowAsSignInMethod === true);
 }
 
 /**
@@ -406,11 +418,12 @@ export function anyOn(signsUp: (method: SignInMethod) => boolean, methods: Metho
  */
 export function checkMethodSettings(
   methods: MethodSettings,
-  server: { configured: (method: MethodId) => boolean; signsUp: (method: SignInMethod) => boolean },
+  server: { configured: (method: string) => boolean; signsUp: (method: string) => boolean; providers?: { id: string; kind: string }[] },
 ): string | null {
-  for (const method of METHODS) {
-    const setting = methods[method];
+  const providerIds = (server.providers ?? []).filter((provider) => provider.kind === 'oidc').map((provider) => provider.id);
+  for (const [method, setting] of Object.entries(methods)) {
     if (!setting) continue;
+    if (!isMethodId(method) && !providerIds.includes(method)) return `"${method}" is no sign-in method of this server: add the provider first.`;
     if (isAlwaysSignIn(method) && !setting.allowAsSignInMethod) {
       return `"${method}" always signs in: set its allowAsSignInMethod to true, or leave it out to switch it off.`;
     }
@@ -424,7 +437,7 @@ export function checkMethodSettings(
     }
   }
   if (!anyOn(server.signsUp, methods)) {
-    const usable = SIGN_IN_METHODS.filter(server.signsUp);
+    const usable = [...SIGN_IN_METHODS, ...providerIds].filter(server.signsUp);
     return `At least one sign-in method that creates users must stay on. On this server these do: ${usable.join(', ')}.`;
   }
   return null;

@@ -83,10 +83,13 @@ export interface SignIn {
 export interface MethodsNow {
   /** The methods an admin switched on, with their settings; the initial ones until an admin set them. */
   settings: MethodSettings;
-  /** Whether the server has what a method needs: a provider in the store, or the webhook's e-mails and SMS. Only a configured method can be on. */
-  configured: (method: MethodId) => boolean;
+  /**
+   * Whether the server has what a method needs: a provider in the store (an OpenID Connect provider's method is
+   * its id), or the webhook's e-mails and SMS. Only a configured method can be on.
+   */
+  configured: (method: string) => boolean;
   /** Whether a method creates users on this server, see `canSignUp`. */
-  signsUp: (method: SignInMethod) => boolean;
+  signsUp: (method: string) => boolean;
   /** The sign-in providers in the store. */
   providers: StoredProvider[];
 }
@@ -188,7 +191,12 @@ export function createApp(config: MadauthConfig): Hono {
   const readMethods = async (): Promise<MethodsNow> => {
     await imported();
     const [stored, methodsValue] = await Promise.all([providers.list(), settings.get<unknown>(METHODS_SETTING)]);
-    const has = { ...fixedMethods, google: providerOf({ providers: stored }, 'google'), github: providerOf({ providers: stored }, 'github') };
+    const has = {
+      ...fixedMethods,
+      google: providerOf({ providers: stored }, 'google'),
+      github: providerOf({ providers: stored }, 'github'),
+      oidc: new Set(stored.filter((provider) => provider.kind === 'oidc').map((provider) => provider.id)),
+    };
     return {
       settings: settings.methodsFrom(methodsValue, initialMethods(has)),
       configured: (method) => isConfigured(has, method),
@@ -691,7 +699,8 @@ export function createApp(config: MadauthConfig): Hono {
   const settingsAnswer = (now: MethodsNow, methods: MethodSettings, password: PasswordRules) => ({
     password,
     methods: Object.fromEntries(
-      METHODS.map((method) => [
+      // madAuth's own methods, then the OpenID Connect providers' by their ids.
+      [...METHODS, ...now.providers.filter((provider) => provider.kind === 'oidc').map((provider) => provider.id)].map((method) => [
         method,
         {
           configured: now.configured(method),

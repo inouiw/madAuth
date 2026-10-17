@@ -151,7 +151,7 @@ export type SignInResult =
   | { ok: true; user: StoredUser }
   | { ok: false; error: 'signup_rejected' | 'temporarily_unavailable'; message: string }
   /** The address belongs to a user who signs in another way; `methods` says how. */
-  | { ok: false; error: 'other_method'; message: string; methods: SignInMethod[] };
+  | { ok: false; error: 'other_method'; message: string; methods: string[] };
 
 /** How a message names each method when it says how an address signs in. A method without a name here does not compile. */
 const METHOD_NAMES = {
@@ -205,7 +205,9 @@ export async function resolveProviderUser(
       if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) {
         const now = await ctx.methods();
         const methods = await users.signInMethods(existing.id, signInPredicate(now.configured, now.settings));
-        const how = methods.map((method) => METHOD_NAMES[method]).join(' or ');
+        // An OpenID Connect provider's method is its id, named as its admin named it.
+        const nameOf = (method: string) => METHOD_NAMES[method as SignInMethod] ?? now.providers.find((p) => p.id === method)?.name ?? method;
+        const how = methods.map(nameOf).join(' or ');
         return {
           ok: false,
           error: 'other_method',

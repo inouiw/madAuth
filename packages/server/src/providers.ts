@@ -24,8 +24,11 @@ const DEFAULT_NAMES: Record<BuiltInKind, string> = { google: 'Google', github: '
 
 /** What an OpenID Connect provider's id looks like: it names its method, routes and accounts. */
 const PROVIDER_ID = /^[a-z][a-z0-9-]{1,31}$/;
-/** Ids an OpenID Connect provider can't have: madAuth's own methods and kinds. */
-export const RESERVED_IDS = ['password', 'authenticator', 'email-link', 'passkey', 'sms', 'google', 'github', 'microsoft'];
+/** Ids an OpenID Connect provider can't have: madAuth's own methods and kinds, and `totp`, the authenticator app's id before 0.6. */
+export const RESERVED_IDS = ['password', 'authenticator', 'email-link', 'passkey', 'sms', 'google', 'github', 'microsoft', 'totp'];
+
+/** Whether `value` can be an OpenID Connect provider's id, and so its method's id in the settings. */
+export const isProviderId = (value: unknown): value is string => typeof value === 'string' && PROVIDER_ID.test(value) && !RESERVED_IDS.includes(value);
 
 /** The scopes every OpenID Connect sign-in asks for; an admin may add more. */
 export const OIDC_SCOPES = ['openid', 'email', 'profile'];

@@ -53,13 +53,15 @@ const isFactor = (method: string) => (SECOND_FACTORS as readonly string[]).inclu
  * away (the last passkey). And the user must keep a way to sign in (`only_method`). `what` names the account.
  */
 export async function removalRefused(c: Context, ctx: AppContext, accounts: StoredAccount[], account: StoredAccount, what: string): Promise<Response | null> {
-  const { configured, settings: methods } = await ctx.methods(c);
+  const { configured, settings: methods, providers } = await ctx.methods(c);
   const after = accounts.filter((a) => a.id !== account.id);
   const left = factorsAmong(after, factorsOn(configured, methods));
   const stillUsed = (method: string) => !isFactor(method) || after.some((a) => methodOf(a) === method);
   const lacking = requiringSecondFactor(configured, methods).filter((method) => stillUsed(method) && !left.some((f) => f !== method));
   if (lacking.length) {
-    const names = lacking.map((method) => POLICY_NAMES[method]).join(' and ');
+    // An OpenID Connect provider's method is its id: it is named as its admin named it.
+    const nameOf = (method: string) => POLICY_NAMES[method as MethodWithSecondFactor] ?? providers.find((provider) => provider.id === method)?.name ?? method;
+    const names = lacking.map(nameOf).join(' and ');
     return error(c, 403, 'required_by_policy', `Signing in with ${names} requires a second factor, so ${what} can't be removed. Set up another second factor first, or delete your account.`);
   }
   return lastWayIn(accounts, signInPredicate(configured, methods), (a) => a.id === account.id) ? onlyMethod(c) : null;

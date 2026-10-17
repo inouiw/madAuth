@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { claimsFromJson, type Claims } from './claims.js';
 import type { KeyService } from './key-service.js';
 import { codeHash, codeHashes, generateCode, generateLinkToken, hashLinkToken, safeEqual } from './password.js';
-import { ALWAYS_SIGN_IN, FORMER_AUTHENTICATOR_ID, SIGN_IN_METHODS, type SecondFactor, type SignInMethod } from './settings.js';
+import { ALWAYS_SIGN_IN, FORMER_AUTHENTICATOR_ID, SIGN_IN_METHODS, type SecondFactor } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 import type { MadauthUser } from './user.js';
 
@@ -175,9 +175,18 @@ export function passkeyAccountKey(credentialId: string): string {
 
 /** The method of an account: the start of its key, e.g. `password` or `sms`, and `authenticator` for the app's `totp:` key. */
 export const methodOf = (account: Pick<StoredAccount, 'key'>): string => {
-  const start = String(account.key).split(':')[0];
+  const [start, provider] = String(account.key).split(':');
+  // An OpenID Connect account (`oidc:<provider id>:<sub>`) belongs to the provider's method, its id.
+  if (start === OIDC_KEY_PREFIX && provider) return provider;
   return start === AUTHENTICATOR_KEY_PREFIX ? 'authenticator' : start;
 };
+
+const OIDC_KEY_PREFIX = 'oidc';
+
+/** The key of an account at an OpenID Connect provider: its id and the account's `sub` there. */
+export function oidcAccountKey(providerId: string, sub: string): string {
+  return `${OIDC_KEY_PREFIX}:${providerId}:${sub}`;
+}
 
 /** The methods whose accounts a sign-up makes; the authenticator app makes one only for a sign-up with it. */
 const isAlwaysPrimary = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method);
@@ -378,9 +387,11 @@ export class Users {
    * How the user signs in, e.g. `['google', 'passkey']`: the methods they have that sign in on their own now
    * (`signsIn`: on, configured, and allowed as a sign-in method); empty while nobody can.
    */
-  async signInMethods(userId: string, signsIn: (method: string) => boolean): Promise<SignInMethod[]> {
+  async signInMethods(userId: string, signsIn: (method: string) => boolean): Promise<string[]> {
     const has = (await this.accounts(userId)).map(methodOf);
-    return SIGN_IN_METHODS.filter((m) => has.includes(m) && signsIn(m));
+    // madAuth's own in their order, then the OpenID Connect providers' by their ids.
+    const providers = [...new Set(has.filter((m) => !(SIGN_IN_METHODS as readonly string[]).includes(m) && signsIn(m)))];
+    return [...SIGN_IN_METHODS.filter((m) => has.includes(m) && signsIn(m)), ...providers];
   }
 
   /**
