@@ -5,14 +5,15 @@ import { Admins } from './admins.js';
 import { ApiKeys, MADAUTH_SCOPES, ScopeCatalog, apiKeyInfo, grantedScopes, type MadauthScope } from './api-keys.js';
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
-import { Providers, importProviders, providerOf, type StoredProvider } from './providers.js';
+import { Providers, importProviders, parseProviderFields, parseProviderKind, providerOf, type StoredProvider } from './providers.js';
+import { SETUP_TOKEN_PREFIX, Setup } from './setup.js';
 import type { KeyService } from './key-service.js';
 import { isValidEmail, normalizeEmail } from './password.js';
 import { emailRoutes } from './routes/email.js';
 import { emailLinkRoutes } from './routes/email-link.js';
 import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
-import { body, error } from './routes/helpers.js';
+import { body, error, reauthRequired, signedInUser } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
 import { clearChallenge, isSetupStep, setChallenge, type NextStep } from './routes/challenge.js';
 import { appOriginOf } from './routes/oauth.js';
@@ -34,6 +35,7 @@ import {
   parseMethodSettings,
   parsePasswordRules,
   policyOf,
+  signInPredicate,
   signsIn,
   type MethodId,
   type MethodSettings,
@@ -46,7 +48,7 @@ import { apiKeyNotFound, apiKeyRoutes, invalidApiKey, keyCaller } from './routes
 import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { parseUserSearch, searchUsers } from './user-search.js';
-import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, type MadauthUser } from './user.js';
+import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, bearerTokenOf, type MadauthUser } from './user.js';
 import { Users, factorsAmong, methodOf, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
@@ -162,6 +164,7 @@ export function createApp(config: MadauthConfig): Hono {
   const settings = new Settings(config.store);
   const providers = new Providers(settings, keys);
   const admins = new Admins(settings, users);
+  const setup = new Setup(settings, users, keys, issuer);
   const apiKeys = new ApiKeys(config.store);
   const scopeCatalog = new ScopeCatalog(config.apiKeyScopesUrl, config.scopesFetch);
   const emailVerification = sendsVerificationEmails(config);
@@ -324,6 +327,8 @@ export function createApp(config: MadauthConfig): Hono {
       // A new user is told first, already with the role; the claims change says where it came from.
       if (firstSession) await this.emit('user.signed_up', { user: result, method });
       if (promoted) await this.emit('user.claims_changed', { user: result, claims: promoted.claims, by: INITIAL_ADMIN_EMAIL });
+      // The first admin exists: the setup token stops working.
+      if (promoted) await setup.close();
       return result;
     },
     async secondStep(c, user, amr, method, profile) {
@@ -585,7 +590,34 @@ export function createApp(config: MadauthConfig): Hono {
       const message = `Only users with the role "${ADMIN_ROLE}" can manage claims and settings.`;
       return { answer: c.json({ error: 'forbidden', message }, 403) };
     }
+    // An admin exists, so the setup token of a deployment from before 0.7 stops working too.
+    await setup.close();
     return { id: user.id, email };
+  };
+
+  /**
+   * Who changes the providers or settings: an admin as {@link admin} has it, or, while no admin exists, whoever
+   * has the setup token (see setup.ts), who has no address (`by` is null). `fresh` asks an admin for a session
+   * (no API keys) with a sign-in within the last ten minutes, as changing a user's methods does.
+   */
+  const adminOrSetup = async (
+    c: Context,
+    scope: MadauthScope | undefined,
+    fresh: boolean,
+  ): Promise<{ by: string | null; setup: boolean; byApiKey?: { id: string; name: string } } | { answer: Response }> => {
+    const bearer = bearerTokenOf(c.req.header('authorization'));
+    if (bearer?.startsWith(SETUP_TOKEN_PREFIX)) {
+      if (await setup.accepts(bearer)) return { by: null, setup: true };
+      const message = 'This setup token is not valid, or the setup is over: an admin signs in instead.';
+      return { answer: c.json({ error: 'invalid_setup_token', message }, 401) };
+    }
+    if (fresh && bearer !== undefined) {
+      return { answer: c.json({ error: 'forbidden', message: "An API key can't change the sign-in providers: an admin signs in to do it." }, 403) };
+    }
+    const caller = await admin(c, fresh ? undefined : scope);
+    if ('answer' in caller) return caller;
+    if (fresh && !(await signedInUser(c, ctx))?.recent) return { answer: reauthRequired(c) };
+    return { by: caller.email, setup: false, ...byApiKey(caller) };
   };
   /** What an event made with an API key adds: the key, next to its user's address in `by`. */
   const byApiKey = (caller: { byApiKey?: { id: string; name: string } }) => (caller.byApiKey ? { byApiKey: caller.byApiKey } : {});
@@ -664,14 +696,14 @@ export function createApp(config: MadauthConfig): Hono {
   });
 
   app.post('/auth/admin/settings/get', async (c) => {
-    const caller = await admin(c, 'madauth:settings:read');
+    const caller = await adminOrSetup(c, 'madauth:settings:read', false);
     if ('answer' in caller) return caller.answer;
     const [now, password] = await Promise.all([ctx.methods(c), settings.passwordRules()]);
     return c.json(settingsAnswer(now, now.settings, password));
   });
 
   app.post('/auth/admin/settings/set', async (c) => {
-    const caller = await admin(c, 'madauth:settings:write');
+    const caller = await adminOrSetup(c, 'madauth:settings:write', false);
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
@@ -698,17 +730,89 @@ export function createApp(config: MadauthConfig): Hono {
     if (wrong) return invalid(wrong);
     // Two writes: if the second fails, the first is undone, so a failed request has changed nothing.
     const previousRules = rules && next ? await settings.passwordRules() : undefined;
-    const password = rules ? await settings.setPasswordRules(rules, caller.email) : await settings.passwordRules();
+    const password = rules ? await settings.setPasswordRules(rules, caller.by) : await settings.passwordRules();
     if (next) {
       try {
         // The whole list is replaced.
-        await settings.changeMethods(() => next, caller.email);
+        await settings.changeMethods(() => next, caller.by);
       } catch (e) {
-        if (previousRules) await settings.setPasswordRules(previousRules, caller.email).catch(() => {});
+        if (previousRules) await settings.setPasswordRules(previousRules, caller.by).catch(() => {});
         throw e;
       }
     }
     return c.json(settingsAnswer(now, next ?? now.settings, password));
+  });
+
+  // --- Admin: the sign-in providers (see providers.ts) ---
+
+  /** A provider as the admin API answers it: never its secret, only whether it has one. */
+  const providerInfo = (provider: StoredProvider) => ({
+    id: provider.id,
+    kind: provider.kind,
+    name: provider.name,
+    clientId: provider.clientId,
+    hasClientSecret: !!provider.secret,
+    // What the provider's console must list as the redirect URI (Google) or callback URL (GitHub).
+    callbackUrl: `${issuer}/auth/providers/${provider.id}/callback`,
+    createdAt: provider.createdAt,
+    updatedAt: provider.updatedAt,
+  });
+  /** Who made a change, as a `provider.*` event tells it. */
+  const changedBy = (caller: { by: string | null; setup: boolean }) => ({ by: caller.by, ...(caller.setup ? { bySetupToken: true } : {}) });
+  const providerNotFound = (c: Context) => c.json({ error: 'provider_not_found', message: 'There is no provider with this id.' }, 404);
+
+  app.post('/auth/admin/providers/list', async (c) => {
+    const caller = await adminOrSetup(c, 'madauth:providers:read', false);
+    if ('answer' in caller) return caller.answer;
+    return c.json({ providers: (await ctx.methods(c)).providers.map(providerInfo) });
+  });
+
+  app.post('/auth/admin/providers/add', async (c) => {
+    const caller = await adminOrSetup(c, undefined, true);
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    const kind = parseProviderKind(data);
+    if (typeof kind !== 'string') return c.json(kind, 400);
+    const fields = parseProviderFields(kind, data, true);
+    if ('error' in fields) return c.json(fields, 400);
+    // Until an admin saved the methods, every configured one counts as on: they are saved as they are now
+    // first, so the new provider stays off until it is switched on.
+    if ((await settings.get(METHODS_SETTING)) === undefined) await settings.changeMethods((current) => current, caller.by, (await ctx.methods(c)).settings);
+    const added = await providers.add(kind, fields, caller.by);
+    if ('error' in added) return c.json({ error: added.error, message: `There is a "${kind}" provider already: change it with providers/update.` }, 409);
+    await ctx.emit('provider.added', { provider: providerInfo(added.provider), ...changedBy(caller) });
+    return c.json({ provider: providerInfo(added.provider) });
+  });
+
+  app.post('/auth/admin/providers/update', async (c) => {
+    const caller = await adminOrSetup(c, undefined, true);
+    if ('answer' in caller) return caller.answer;
+    const { id, ...data } = await body(c);
+    const current = (await ctx.methods(c)).providers.find((provider) => provider.id === id);
+    if (!current) return providerNotFound(c);
+    if (data.kind !== undefined && data.kind !== current.kind) return c.json({ error: 'invalid_provider', message: "A provider's kind can't change: add a new one." }, 400);
+    const fields = parseProviderFields(current.kind, data, false);
+    if ('error' in fields) return c.json(fields, 400);
+    const updated = await providers.update(current.id, fields, caller.by);
+    if ('error' in updated) return providerNotFound(c);
+    await ctx.emit('provider.changed', { provider: providerInfo(updated.provider), ...changedBy(caller) });
+    return c.json({ provider: providerInfo(updated.provider) });
+  });
+
+  // Its users' accounts stay, so adding the provider again brings their sign-ins back.
+  app.post('/auth/admin/providers/remove', async (c) => {
+    const caller = await adminOrSetup(c, undefined, true);
+    if ('answer' in caller) return caller.answer;
+    const { id } = await body(c);
+    const now = await ctx.methods(c);
+    if (typeof id !== 'string' || !now.providers.some((provider) => provider.id === id)) return providerNotFound(c);
+    // Counted before, while the provider still counts: the users who sign in with nothing else that is on.
+    const signsIn = signInPredicate(now.configured, now.settings);
+    const stranded = await users.countSigningInOnlyWith(id, (method) => method !== id && signsIn(method));
+    const removed = await providers.remove(id, caller.by);
+    if ('error' in removed) return providerNotFound(c);
+    await ctx.emit('provider.removed', { provider: providerInfo(removed.provider), ...changedBy(caller) });
+    return c.json({ provider: providerInfo(removed.provider), usersWithoutSignIn: stranded });
   });
 
   // The way back for a user who lost every way in, whatever they had: they sign up again and keep their id.

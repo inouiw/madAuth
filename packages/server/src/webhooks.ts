@@ -29,6 +29,9 @@ export const WEBHOOK_TYPES = [
   'user.sign_in_reset',
   'user.api_key_created',
   'user.api_key_revoked',
+  'provider.added',
+  'provider.changed',
+  'provider.removed',
 ] as const;
 
 /** The calls that hand over an e-mail (as opposed to events and checks). */
