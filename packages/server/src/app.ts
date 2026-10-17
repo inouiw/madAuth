@@ -7,6 +7,7 @@ import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
 import { Providers, importProviders, parseProviderFields, parseProviderKind, providerOf, type StoredProvider } from './providers.js';
 import { SETUP_TOKEN_PREFIX, Setup } from './setup.js';
+import { discover } from './oidc.js';
 import type { KeyService } from './key-service.js';
 import { isValidEmail, normalizeEmail } from './password.js';
 import { emailRoutes } from './routes/email.js';
@@ -763,6 +764,7 @@ export function createApp(config: MadauthConfig): Hono {
     callbackUrl: `${issuer}/auth/providers/${provider.id}/callback`,
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
+    ...(provider.kind === 'oidc' ? { issuer: provider.issuer, scopes: provider.scopes, trustEmail: provider.trustEmail } : {}),
   });
   /** Who made a change, as a `provider.*` event tells it. */
   const changedBy = (caller: { by: string | null; setup: boolean }) => ({ by: caller.by, ...(caller.setup ? { bySetupToken: true } : {}) });
@@ -778,15 +780,19 @@ export function createApp(config: MadauthConfig): Hono {
     const caller = await adminOrSetup(c, undefined, true);
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
-    const kind = parseProviderKind(data);
-    if (typeof kind !== 'string') return c.json(kind, 400);
+    const named = parseProviderKind(data);
+    if ('error' in named) return c.json(named, 400);
+    const { kind, id } = named;
     const fields = parseProviderFields(kind, data, true);
     if ('error' in fields) return c.json(fields, 400);
+    // An issuer that doesn't answer as an OpenID Connect provider would only fail at the first sign-in.
+    const found = fields.issuer ? await discover(fields.issuer, config.oidcFetch) : null;
+    if (found && 'problem' in found) return c.json({ error: 'invalid_provider', message: `The issuer is no OpenID Connect provider madAuth can use: ${found.problem}.` }, 400);
     // Until an admin saved the methods, every configured one counts as on: they are saved as they are now
     // first, so the new provider stays off until it is switched on.
     if ((await settings.get(METHODS_SETTING)) === undefined) await settings.changeMethods((current) => current, caller.by, (await ctx.methods(c)).settings);
-    const added = await providers.add(kind, fields, caller.by);
-    if ('error' in added) return c.json({ error: added.error, message: `There is a "${kind}" provider already: change it with providers/update.` }, 409);
+    const added = await providers.add(kind, id, fields, caller.by);
+    if ('error' in added) return c.json({ error: added.error, message: `There is a provider "${id}" already: change it with providers/update.` }, 409);
     await ctx.emit('provider.added', { provider: providerInfo(added.provider), ...changedBy(caller) });
     return c.json({ provider: providerInfo(added.provider) });
   });
