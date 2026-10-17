@@ -143,6 +143,17 @@ describe('Google and GitHub from the environment, as before 0.7', () => {
     expect(String(warn.mock.calls[0]![0])).toContain('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are ignored');
   });
 
+  it('PV9: a failed import is logged and leaves the requests working, without the providers', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failing = { ...keyService, encrypt: async () => Promise.reject(new Error('KMS is down')) };
+    const { app } = passwordApp({ keyService: failing, google: { clientId: CLIENT_ID, clientSecret: 'g-secret' } });
+
+    const res = await app.request('/auth/config');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { google: unknown }).google).toBeNull();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('KMS is down'));
+  });
+
   it('PV8: a provider in the store applies at the next request, on a server that started without it', async () => {
     const { app, store } = passwordApp({ google: undefined });
     const config = async () => (await (await app.request('/auth/config')).json()) as { google: { clientId: string; codeFlow: boolean } | null };

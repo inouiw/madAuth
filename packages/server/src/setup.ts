@@ -17,7 +17,7 @@ export const SETUP_SETTING = 'setup';
 export const SETUP_TOKEN_PREFIX = 'madauth_setup_';
 
 const LABEL = 'madauth setup token';
-/** While the setup is open, how long an instance trusts that no admin exists before it looks again. */
+/** While the setup is open, how long an instance trusts its search for an admin among the users before it searches again. */
 const RECHECK_MS = 60_000;
 /** The users read at once while looking for an admin. */
 const PAGE = 100;
@@ -33,8 +33,10 @@ export async function setupToken(keys: KeyService, issuer: string): Promise<stri
 
 export class Setup {
   private closed = false;
-  /** When this instance last found the setup open. */
-  private openSince = 0;
+  /** When this instance last searched the users and found no admin. */
+  private searchedAt = 0;
+  /** The token, computed once per instance: it changes only with the key service's hash key. */
+  private token: Promise<string> | undefined;
 
   constructor(
     private readonly settings: Settings,
@@ -49,18 +51,29 @@ export class Setup {
    */
   async isOpen(): Promise<boolean> {
     if (this.closed) return false;
-    if (Date.now() - this.openSince < RECHECK_MS) return true;
+    // Read every time, so a setup another instance closed is closed here too.
     const [done, applied] = await Promise.all([this.settings.get<unknown>(SETUP_SETTING), this.settings.get<unknown>(INITIAL_ADMIN_SETTING)]);
     if (done !== undefined) {
       this.closed = true;
       return false;
     }
-    if ((Array.isArray(applied) && applied.length) || (await this.anyAdmin())) {
+    // Searching the users is the costly part, so it is done at most once a minute.
+    const searched = Date.now() - this.searchedAt < RECHECK_MS;
+    if ((Array.isArray(applied) && applied.length) || (!searched && (await this.anyAdmin()))) {
       await this.close();
       return false;
     }
-    this.openSince = Date.now();
+    if (!searched) this.searchedAt = Date.now();
     return true;
+  }
+
+  /** The deployment's setup token (see {@link setupToken}), computed once per instance. */
+  async expectedToken(): Promise<string> {
+    this.token ??= setupToken(this.keys, this.issuer).catch((e: unknown) => {
+      this.token = undefined;
+      throw e;
+    });
+    return this.token;
   }
 
   /** Closes the setup for good: an admin exists. */
@@ -72,7 +85,7 @@ export class Setup {
 
   /** Whether `token` is this deployment's setup token, while the setup is open. */
   async accepts(token: string): Promise<boolean> {
-    const expected = Buffer.from(await setupToken(this.keys, this.issuer));
+    const expected = Buffer.from(await this.expectedToken());
     const given = Buffer.from(token);
     return given.length === expected.length && timingSafeEqual(given, expected) && (await this.isOpen());
   }
@@ -93,14 +106,14 @@ export class Setup {
  * Prints the setup token while the setup is open, for whoever starts the server: the entry points call it when
  * they load the configuration, so it is in the log of every start until the first admin exists.
  */
-export async function announceSetup(setup: Setup, token: Promise<string>, initialAdminEmail: string | undefined): Promise<void> {
+export async function announceSetup(setup: Setup, initialAdminEmail: string | undefined): Promise<void> {
   if (!(await setup.isOpen())) return;
   const admin = initialAdminEmail
     ? `then sign in as ${initialAdminEmail} (INITIAL_ADMIN_EMAIL), which makes you the first admin and ends the setup`
     : 'then set INITIAL_ADMIN_EMAIL to your address and sign in with it, which makes you the first admin and ends the setup';
   console.warn(
     `[madauth] No admin yet. This setup token configures the sign-in providers and settings until the first admin exists: ` +
-      `send it as "Authorization: Bearer ${await token}" to POST /auth/admin/providers/* and /auth/admin/settings/*, ${admin}. ` +
+      `send it as "Authorization: Bearer ${await setup.expectedToken()}" to POST /auth/admin/providers/* and /auth/admin/settings/*, ${admin}. ` +
       'See "First setup" in docs/server.md.',
   );
 }
@@ -112,7 +125,7 @@ export async function announceSetup(setup: Setup, token: Promise<string>, initia
 export async function announceSetupOf(config: Pick<MadauthConfig, 'store' | 'keyService' | 'issuer' | 'initialAdminEmail'>): Promise<void> {
   const { store, keyService, issuer } = config;
   const setup = new Setup(new Settings(store), new Users(store, keyService), keyService, issuer);
-  await announceSetup(setup, setupToken(keyService, issuer), config.initialAdminEmail).catch((e: unknown) => {
+  await announceSetup(setup, config.initialAdminEmail).catch((e: unknown) => {
     console.error(`[madauth] Could not check whether the setup is open: ${(e as Error).message}`);
   });
 }

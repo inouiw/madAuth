@@ -138,6 +138,17 @@ describe('the setup token, while no admin exists', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('AP8: stops at once on every instance, also on one that just found it open', async () => {
+    const one = fresh('ada@example.com');
+    const other = passwordApp({ google: undefined, initialAdminEmail: 'ada@example.com', store: one.store, webhookFetch: one.hook.fetch });
+    const headers = await bearer();
+    expect((await call(one, 'list', {}, headers)).status).toBe(200);
+
+    await signUpVerified(one.app, one.hook, 'ada@example.com', 'the admins own password');
+    expect(await json(call(other, 'list', {}, headers))).toMatchObject({ error: 'invalid_setup_token' });
+    expect(await json(call(one, 'list', {}, headers))).toMatchObject({ error: 'invalid_setup_token' });
+  });
+
   it('AP7: does nothing on a server that has an admin already, e.g. one from before 0.7', async () => {
     const made = fresh();
     await signUpVerified(made.app, made.hook, 'ada@example.com', 'the admins own password');

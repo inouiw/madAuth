@@ -169,13 +169,18 @@ export function createApp(config: MadauthConfig): Hono {
   const scopeCatalog = new ScopeCatalog(config.apiKeyScopesUrl, config.scopesFetch);
   const emailVerification = sendsVerificationEmails(config);
 
-  // GOOGLE_* and GITHUB_* of madAuth before 0.7 become providers once, before the first request reads them.
+  // GOOGLE_* and GITHUB_* of madAuth before 0.7 become providers once, before the first request reads them. A
+  // failed import is logged and tried again a minute later; the requests go on meanwhile, without those providers.
   let importing: Promise<void> | undefined;
+  let importRetryAt = 0;
   const imported = () => {
-    importing ??= importProviders(providers, { google: config.google, github: config.github }).catch((e: unknown) => {
-      importing = undefined;
-      throw e;
-    });
+    if (!importing && Date.now() >= importRetryAt) {
+      importing = importProviders(providers, { google: config.google, github: config.github }).catch((e: unknown) => {
+        console.error(`[madauth] Could not import GOOGLE_* and GITHUB_* into the providers, tried again in a minute: ${(e as Error).message}`);
+        importing = undefined;
+        importRetryAt = Date.now() + 60_000;
+      });
+    }
     return importing;
   };
   /** The methods and providers as the store has them now: two reads, at once. */
