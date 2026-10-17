@@ -2,6 +2,9 @@ import { defineConfig, type Options } from 'tsup';
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
+/** Packages a bundled dependency only loads on request, which madAuth never makes: pg's native bindings. */
+const NEVER_LOADED = ['pg-native'];
+
 /** A self-contained bundle to deploy without node_modules. `external` lists the packages the host provides. */
 function standalone(entry: Record<string, string>, external: string[]): Options {
   return {
@@ -14,7 +17,7 @@ function standalone(entry: Record<string, string>, external: string[]): Options 
     platform: 'node',
     // Bundle every dependency except the ones in `external`.
     noExternal: [external.length ? new RegExp(`^(?!(${external.map(escapeRegExp).join('|')})$)`) : /^/],
-    external,
+    external: [...external, ...NEVER_LOADED],
     outExtension: () => ({ js: '.mjs' }),
     // Some bundled CommonJS code calls require(); give ESM bundles one.
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
@@ -29,6 +32,7 @@ export default defineConfig([
       verify: 'src/verify.ts',
       sqlite: 'src/store/sqlite.ts',
       dynamodb: 'src/store/dynamodb.ts',
+      postgres: 'src/store/postgres.ts',
       'aws-kms': 'src/kms.ts',
       testing: 'src/testing.ts',
       webhook: 'src/webhook.ts',
@@ -45,6 +49,7 @@ export default defineConfig([
         'src/verify.ts',
         'src/store/sqlite.ts',
         'src/store/dynamodb.ts',
+        'src/store/postgres.ts',
         'src/kms.ts',
         'src/testing.ts',
         'src/webhook.ts',
@@ -55,7 +60,8 @@ export default defineConfig([
     },
     clean: true,
   },
-  // Docker: the image has no node_modules, so the AWS SDKs for DATABASE_URL=dynamodb:, aws-kms and WEBHOOK_AUTH=aws-iam are bundled as well.
+  // Docker: the image has no node_modules, so pg for DATABASE_URL=postgres:// and the AWS SDKs for DATABASE_URL=dynamodb:,
+  // aws-kms and WEBHOOK_AUTH=aws-iam are bundled as well. The Lambda and Azure bundles contain pg too.
   standalone({ main: 'src/main.ts' }, []),
   // AWS Lambda: its Node.js runtimes contain the AWS SDK (@aws-sdk/*). The signer of WEBHOOK_AUTH=aws-iam is bundled:
   // the runtime has it only as a dependency of the SDK, which may change.

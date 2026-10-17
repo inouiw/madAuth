@@ -158,6 +158,15 @@ describe('init', () => {
     expect(readEnvFile(both)).toMatchObject({ DATABASE_URL: 'dynamodb:users', WEBHOOK_URL: 'https://hooks.example.com/madauth' });
   });
 
+  it('takes a Postgres URL as the database, in either form', async () => {
+    for (const url of ['postgres://madauth:pw@db:5432/madauth', 'postgresql://app:pw@db-rw.ns:5432/app']) {
+      const file = tempFile();
+      await runCli(['init', '--yes', '--database', url, '--out', file], noQuestions);
+
+      expect(readEnvFile(file)).toMatchObject({ DATABASE_URL: url });
+    }
+  });
+
   it('asks, in order, what no option answers, and takes the default for an empty answer', async () => {
     const file = tempFile();
     const io = answering({ 'App URL': 'http://localhost:3000/' });
@@ -252,7 +261,7 @@ describe('init', () => {
     const failsWith = (text: string) => ({ exitCode: 1, output: expect.stringContaining(text) });
 
     expect(await init('--app-url', 'localhost:5173')).toEqual(failsWith('The app URL must be an http(s) URL'));
-    expect(await init('--database', 'postgres://db/madauth')).toEqual(failsWith('sqlite:<path> or dynamodb:<table>'));
+    expect(await init('--database', 'mysql://db/madauth')).toEqual(failsWith('sqlite:<path>, postgres://'));
     expect(await init('--webhook-url', 'http://hooks.example.com/x')).toEqual(failsWith('WEBHOOK_URL must be an https URL'));
     expect(existsSync(file)).toBe(false);
   });

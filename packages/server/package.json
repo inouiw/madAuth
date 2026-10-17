@@ -24,7 +24,8 @@
     "hono",
     "aws-lambda",
     "azure-functions",
-    "dynamodb"
+    "dynamodb",
+    "postgres"
   ],
   "type": "module",
   "engines": {
@@ -48,6 +49,10 @@
     "./dynamodb": {
       "types": "./dist/store/dynamodb.d.ts",
       "import": "./dist/dynamodb.js"
+    },
+    "./postgres": {
+      "types": "./dist/store/postgres.d.ts",
+      "import": "./dist/postgres.js"
     },
     "./aws-kms": {
       "types": "./dist/kms.d.ts",
@@ -103,7 +108,8 @@
     "@aws-sdk/client-kms": "^3.0.0",
     "@aws-sdk/credential-provider-node": "^3.0.0",
     "@azure/functions": "^4.0.0",
-    "@smithy/signature-v4": "^5.0.0"
+    "@smithy/signature-v4": "^5.0.0",
+    "pg": "^8.0.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-dynamodb": {
@@ -120,6 +126,9 @@
     },
     "@smithy/signature-v4": {
       "optional": true
+    },
+    "pg": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -130,6 +139,8 @@
     "@smithy/signature-v4": "^5.7.4",
     "@types/aws-lambda": "^8.10.164",
     "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
     "tsup": "^8.5.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",

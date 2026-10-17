@@ -149,9 +149,53 @@ describe('loadConfig', () => {
   });
 
   it('A14: names what is missing or wrong for e-mail & password sign-in', async () => {
-    await expect(loadConfig({ ...env, ...hook, DATABASE_URL: 'postgres://db/madauth' })).rejects.toThrow(
-      /must start with "sqlite:".*or "dynamodb:".*own store adapter/s,
-    );
+    const error = await loadConfig({ ...env, ...hook, DATABASE_URL: 'mysql://madauth:secret@db/madauth' }).catch((e: Error) => e);
+
+    expect(error).toBeInstanceOf(ConfigError);
+    expect((error as Error).message).toMatch(/must start with "sqlite:".*"postgres:\/\/".*or "dynamodb:".*own store adapter/s);
+    expect((error as Error).message).toContain('"mysql://db/madauth"');
+  });
+
+  it('DATABASE_URL=postgres://… opens the Postgres adapter at start-up, and never prints the password', async () => {
+    const error = await loadConfig({ ...env, ...hook, DATABASE_URL: 'postgres://madauth:secret@127.0.0.1:1/madauth' }).catch((e: Error) => e);
+
+    expect(error).toBeInstanceOf(ConfigError);
+    expect((error as Error).message).toMatch(/^DATABASE_URL: could not use "postgres:\/\/127\.0\.0\.1:1\/madauth": .*ECONNREFUSED/);
+    expect((error as Error).message).not.toContain('secret');
+  });
+
+  it('DATABASE_MIGRATE is true or false, and only for Postgres', async () => {
+    const postgres = { ...env, DATABASE_URL: 'postgres://127.0.0.1:1/madauth' };
+    await expect(loadConfig({ ...postgres, DATABASE_MIGRATE: 'maybe' })).rejects.toThrow(new ConfigError('DATABASE_MIGRATE must be true or false but is "maybe".'));
+    await expect(loadConfig({ ...env, DATABASE_MIGRATE: 'false' })).rejects.toThrow(/DATABASE_MIGRATE is only for DATABASE_URL=postgres/);
+    await expect(loadConfig({ ...env, DATABASE_MIGRATE: 'false' }, { store: createSqliteAdapter(':memory:') })).rejects.toThrow(/only for DATABASE_URL=postgres/);
+    // With Postgres it reaches the database (here: none).
+    await expect(loadConfig({ ...postgres, DATABASE_MIGRATE: 'false' })).rejects.toThrow(/could not use/);
+  });
+
+  // Needs a database, like the adapter's own tests (see store/postgres.test.ts).
+  it.skipIf(!process.env.POSTGRES_TEST_URL)('DATABASE_URL takes both forms of a Postgres URL, as e.g. CloudNativePG writes it', async () => {
+    const { default: pg } = await import('pg');
+    const admin = new pg.Client({ connectionString: process.env.POSTGRES_TEST_URL });
+    await admin.connect();
+    const schema = `madauth_test_config_${Date.now().toString(36)}`;
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const inSchema = (scheme: string) => {
+      const url = new URL(process.env.POSTGRES_TEST_URL!);
+      url.searchParams.set('options', `-c search_path=${schema}`);
+      return url.href.replace(/^[a-z]+:/, scheme);
+    };
+
+    try {
+      for (const scheme of ['postgres:', 'postgresql:']) {
+        const { store } = await loadConfig({ ...env, ...hook, DATABASE_URL: inSchema(scheme) });
+        expect(await store.findOne('user', { id: 'usr_missing' })).toBe(null);
+        await (store as unknown as { close(): Promise<void> }).close();
+      }
+    } finally {
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
   });
 
   it('DATABASE_URL=dynamodb:<table> uses the DynamoDB adapter, which only reaches AWS on first use', async () => {

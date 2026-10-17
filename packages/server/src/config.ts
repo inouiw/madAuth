@@ -123,6 +123,7 @@ export const envVars = {
   GITHUB_CLIENT_ID: false,
   GITHUB_CLIENT_SECRET: false,
   DATABASE_URL: true,
+  DATABASE_MIGRATE: false,
   INITIAL_ADMIN_EMAIL: false,
   AUTHENTICATOR_ISSUER: false,
   PASSKEY_RP_ID: false,
@@ -239,21 +240,10 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
     );
   }
 
-  // Validate the webhook before opening the store, so a configuration error doesn't leave a database open.
   const webhook = await webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_AUTH'), read('WEBHOOK_EVENTS'));
   // E-mail & password sign-in needs its e-mails sent, so it is on exactly when the webhook handles them.
   const sendsEmails = !!webhook && REQUIRED_EMAIL_TYPES.every((type) => webhook.events.has(type));
   const password = sendsEmails ? {} : undefined;
-  // A server may start without any sign-in method: its providers are added in the store, by the setup token's
-  // holder until the first admin exists (see setup.ts).
-  const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
-  if (!store) {
-    throw new ConfigError(
-      'DATABASE_URL is not set. madAuth stores every user, whichever way they sign in: set e.g. ' +
-        'DATABASE_URL=sqlite:./madauth.db or DATABASE_URL=dynamodb:<table>. See docs/server.md.',
-    );
-  }
-
   const ttlValue = read('SESSION_TTL');
   const sessionTtlSeconds = ttlValue ? Number(ttlValue) : DEFAULT_SESSION_TTL;
   if (!Number.isInteger(sessionTtlSeconds) || sessionTtlSeconds < 60) {
@@ -285,6 +275,27 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
     );
   }
 
+  // The store is opened last, so a configuration error doesn't leave a database connection open. A server may
+  // start without any sign-in method: its providers are added in the store, by the setup token's holder until
+  // the first admin exists (see setup.ts).
+  const migrateValue = read('DATABASE_MIGRATE');
+  const migrate = migrateValue?.toLowerCase() ?? 'true';
+  if (migrate !== 'true' && migrate !== 'false') {
+    throw new ConfigError(`DATABASE_MIGRATE must be true or false but is "${migrateValue}".`);
+  }
+  // Ignored, it would let an operator believe madAuth leaves the tables alone.
+  if (migrateValue && (overrides.store || !/^postgres(ql)?:\/\//.test(read('DATABASE_URL') ?? ''))) {
+    throw new ConfigError('DATABASE_MIGRATE is only for DATABASE_URL=postgres://: remove it. See "Postgres" in docs/server.md.');
+  }
+  const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL'), { migrate: migrate === 'true' }));
+  if (!store) {
+    throw new ConfigError(
+      'DATABASE_URL is not set. madAuth stores every user, whichever way they sign in: set e.g. ' +
+        'DATABASE_URL=sqlite:./madauth.db, DATABASE_URL=postgres://<user>:<password>@<host>/<database> or ' +
+        'DATABASE_URL=dynamodb:<table>. See docs/server.md.',
+    );
+  }
+
   return {
     issuer,
     keyService,
@@ -305,17 +316,18 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
 }
 
 /**
- * `DATABASE_URL=sqlite:<path>` or `DATABASE_URL=dynamodb:<table>` creates the built-in adapter, just as
+ * `DATABASE_URL=sqlite:<path>`, `postgres://…` or `dynamodb:<table>` creates the built-in adapter, just as
  * passing it as `store` would.
  */
-async function storeFromDatabaseUrl(url: string | undefined): Promise<StoreAdapter | undefined> {
+async function storeFromDatabaseUrl(url: string | undefined, options: { migrate: boolean }): Promise<StoreAdapter | undefined> {
   if (!url) return undefined;
   if (url.startsWith('dynamodb:')) return dynamoDbStore(url.slice('dynamodb:'.length));
+  if (/^postgres(ql)?:\/\//.test(url)) return postgresStore(url, options);
   if (!url.startsWith('sqlite:')) {
     throw new ConfigError(
-      `DATABASE_URL must start with "sqlite:" (e.g. sqlite:/data/madauth.db) or "dynamodb:" (e.g. ` +
-        `dynamodb:madauth) but is "${url}". For other databases, pass your own store adapter (see "Custom ` +
-        'store adapter" in docs/server.md).',
+      `DATABASE_URL must start with "sqlite:" (e.g. sqlite:/data/madauth.db), "postgres://" or "postgresql://" ` +
+        `(e.g. postgres://madauth:<password>@db:5432/madauth) or "dynamodb:" (e.g. dynamodb:madauth) but is ` +
+        `"${redactUrl(url)}". For other databases, pass your own store adapter (see "Custom store adapter" in docs/server.md).`,
     );
   }
   const path = url.slice('sqlite:'.length);
@@ -326,6 +338,26 @@ async function storeFromDatabaseUrl(url: string | undefined): Promise<StoreAdapt
   } catch (e) {
     throw new ConfigError(`DATABASE_URL: could not open "${path}": ${(e as Error).message}`);
   }
+}
+
+/** The URL without its user name and password, for error messages. */
+function redactUrl(url: string): string {
+  return url.replace(/^([a-z][\w+.-]*:\/\/)[^/?#]*@/i, '$1');
+}
+
+async function postgresStore(url: string, options: { migrate: boolean }): Promise<StoreAdapter> {
+  // Checked here, so a missing package stops the start-up with a hint.
+  const pg = await import('pg').catch((e: unknown) => e as Error);
+  if (pg instanceof Error) {
+    throw new ConfigError(`DATABASE_URL=postgres:// needs the pg package. Install it next to madAuth: npm install pg (${pg.message})`);
+  }
+  const { openPostgresAdapter } = await import('./store/postgres.js');
+  const opened = await openPostgresAdapter(url, options).catch((e: unknown) => e as Error);
+  if (opened instanceof Error) {
+    // Unreachable, or tables madAuth can't use. The driver's messages name the host, never the password.
+    throw new ConfigError(`DATABASE_URL: could not use "${redactUrl(url)}": ${opened.message}`);
+  }
+  return opened;
 }
 
 async function dynamoDbStore(tableName: string): Promise<StoreAdapter> {

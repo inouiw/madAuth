@@ -4,7 +4,7 @@
 
 To set it up on your machine step by step, see [Getting started](getting-started.md).
 
-Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method they have: the password, the Google account (known by Google's stable `sub`), the GitHub account (known by GitHub's user id), the authenticator app, the e-mail link, and the phone number for SMS codes. A method signs in only users who have it: a Google or GitHub sign-in with the address of a user who signs in with a password (and perhaps the authenticator app) is refused (`403 other_method`; after a redirect flow, `madauth_error=other_method`), since whoever controls that account must not get past them. The one exception is a sign-up nobody finished (its e-mail link was never used, or the app was never set up): a Google or GitHub sign-in with its address takes that user over and drops the unproven password. "Forgot password?" only resets a password that exists: a user who signs in with Google or GitHub alone gets an e-mail that says how they sign in instead (`email.send_password_reset_no_password`), and the answer is the same as for any address.
+Every user is stored, whichever way they sign in, through a [store adapter](#custom-store-adapter): SQLite, [Postgres](#postgres) and [Amazon DynamoDB](#dynamodb) are built in, and other databases need a small adapter of your own. A user has one id (`usr_…`) and one e-mail address, and one account per sign-in method they have: the password, the Google account (known by Google's stable `sub`), the GitHub account (known by GitHub's user id), the authenticator app, the e-mail link, and the phone number for SMS codes. A method signs in only users who have it: a Google or GitHub sign-in with the address of a user who signs in with a password (and perhaps the authenticator app) is refused (`403 other_method`; after a redirect flow, `madauth_error=other_method`), since whoever controls that account must not get past them. The one exception is a sign-up nobody finished (its e-mail link was never used, or the app was never set up): a Google or GitHub sign-in with its address takes that user over and drops the unproven password. "Forgot password?" only resets a password that exists: a user who signs in with Google or GitHub alone gets an e-mail that says how they sign in instead (`email.send_password_reset_no_password`), and the answer is the same as for any address.
 
 ## How it works
 
@@ -31,7 +31,8 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `MADAUTH_SIGNING_KEY` | with `local` | Private ES256 key (JWK JSON) that signs the sessions; the keys that hash the codes and encrypt the stored secrets are derived from it. Or a set of keys, the newest first, to [rotate](#rotating-the-signing-key) it: `{"keys":[<new>,<old>]}`. Use the same value on every instance and keep it secret. |
 | `ALLOWED_ORIGINS` | yes | Comma-separated origins of your apps, e.g. `https://app.example.com`. Only these may call the server or be redirected back to. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | no | From madAuth before 0.7: imported once into the [providers](#providers) in the store when it has none of that kind, and ignored when it has one; either way the log says to remove them. Google and GitHub are providers now, which admins manage. |
-| `DATABASE_URL` | yes | Where the users are stored: `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). For other databases pass your own [store adapter](#custom-store-adapter) instead. |
+| `DATABASE_URL` | yes | Where the users are stored: `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, `postgres://<user>:<password>@<host>:5432/<database>` or `postgresql://…` (see [Postgres](#postgres)), or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). For other databases pass your own [store adapter](#custom-store-adapter) instead. |
+| `DATABASE_MIGRATE` | no | With a Postgres `DATABASE_URL`: `true` (default) creates and upgrades madAuth's tables at start, `false` only checks that they are up to date, for a database user that may not change tables. See [Postgres](#postgres). |
 | `INITIAL_ADMIN_EMAIL` | no | Who signs in with this address gets the role `admin`, once the address is proven: confirmed by e-mail, or verified by Google or GitHub. Once per value; see [The first admin](#the-first-admin). |
 | `WEBHOOK_URL` | for the e-mail methods | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL`, without `WEBHOOK_AUTH` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
@@ -221,7 +222,7 @@ How madAuth signs in with it:
 
 ## E-mail & password sign-in
 
-Set `WEBHOOK_URL`, `WEBHOOK_SECRET` (or `WEBHOOK_AUTH`, see [AWS IAM](#aws-iam)) and `WEBHOOK_EVENTS` with `email.send_verification` and `email.send_password_reset` among the events: e-mail & password sign-in is on exactly when your webhook sends those e-mails. The users are in `DATABASE_URL`: with `sqlite:<path>` in that SQLite file (with Docker, keep it on a volume; the `docker-compose.yml` does this), with `dynamodb:<table>` in a [DynamoDB table](#dynamodb).
+Set `WEBHOOK_URL`, `WEBHOOK_SECRET` (or `WEBHOOK_AUTH`, see [AWS IAM](#aws-iam)) and `WEBHOOK_EVENTS` with `email.send_verification` and `email.send_password_reset` among the events: e-mail & password sign-in is on exactly when your webhook sends those e-mails. The users are in `DATABASE_URL`: with `sqlite:<path>` in that SQLite file (with Docker, keep it on a volume; the `docker-compose.yml` does this), with `postgres://…` in a [Postgres database](#postgres), with `dynamodb:<table>` in a [DynamoDB table](#dynamodb).
 
 madAuth does not send e-mails itself: it hands each one to your [webhook](#webhooks) receiver. There are three: the address confirmation, the password reset, and a note to the owner when someone tries to sign up with an address that already has an account. The confirmation and reset e-mails contain a link to the app page that asked for them (its origin must be in `ALLOWED_ORIGINS`) and a 6-digit code, for when the e-mail is read on another device.
 
@@ -266,6 +267,33 @@ export const handler = createHandler({ store: createDynamoDbAdapter({ tableName:
 
 How the records are stored: each record is one item (`pk` = `r|<model>|<id>`), with one more item per unique value (`u|user|emailNormalized|<address>`) and per indexed value (`i|account|userId|<id>`). A record and these items are always written in one transaction, and every read is strongly consistent, so the table needs no secondary index.
 
+### Postgres
+
+Store the users in PostgreSQL with `DATABASE_URL=postgres://<user>:<password>@<host>:5432/<database>`; `postgresql://` works as well, so the `uri` that e.g. CloudNativePG puts in its `<cluster>-app` Secret can be passed on unchanged. The madAuth Docker image and the Lambda and Azure bundles contain the driver; with madAuth from npm, install it next to it:
+
+```bash
+npm install pg
+```
+
+**The tables create themselves.** At start, madAuth creates its tables (`madauth_user`, `madauth_account`, …, see [Custom store adapter](#custom-store-adapter)) in an empty database and upgrades those of an older madAuth, in one transaction. The schema version they have is in the table `madauth_schema`. An advisory lock makes instances that start at the same time take turns: one creates or upgrades the tables, the others wait and find them done. A database that a newer madAuth has upgraded is refused, as is one that has madAuth's tables but no `madauth_schema` (the error says how to record their version). The tables go into the first schema of the user's `search_path`; to choose another, add `?options=-c%20search_path%3D<schema>` to the URL. The database user needs to create tables there (`CREATE` on the schema) and to read and write them.
+
+**Without the right to change tables**, set `DATABASE_MIGRATE=false`: madAuth then only checks that the tables are up to date and doesn't start if they are not, with the SQL to run in its message. Create them yourself with the SQL from `npx @madauth/server schema --dialect postgres`, and before you deploy a newer madAuth run the changes since your version, `schema --dialect postgres --from <version>` (see [Schema versions](#schema-versions)); then record the version in `madauth_schema`.
+
+**Connections.** Each instance keeps a pool of up to 10 connections to the database, e.g. to CloudNativePG's `-rw` Service. On AWS Lambda every function instance has its own pool, so many concurrent instances can use up the database's `max_connections`: put RDS Proxy in front of it, or create the adapter yourself with a smaller pool (`pool: { max: 1 }`, see below). A connection that breaks, e.g. when the primary fails over, is dropped and replaced by a new one at the next query, and the log says so; a request that was using it at that moment fails once with `500`. Nothing is sent again: a write sent twice could count twice, e.g. a single-use code. The database must be reachable at start: madAuth doesn't start without it, and your orchestrator starts it again.
+
+**TLS.** The URL's `sslmode` follows the [`pg`](https://node-postgres.com/features/ssl) driver: `sslmode=require` checks the server's certificate as `verify-full` does. With a certificate of your own CA, e.g. CloudNativePG's, mount the CA file in the container and add `sslrootcert=<path>`; `uselibpqcompat=true&sslmode=require` encrypts without checking the certificate, as libpq's `require` does. Without `sslmode`, the connection is not encrypted.
+
+To create the adapter in your own entry file, e.g. with other pool settings:
+
+```ts
+import { start } from '@madauth/server/node';
+import { openPostgresAdapter } from '@madauth/server/postgres';
+
+await start({ store: await openPostgresAdapter(process.env.PG_URL!, { pool: { max: 5 } }) });
+```
+
+On Kubernetes, the image runs as the numeric user `1000`, so `runAsNonRoot` works, and it runs with `readOnlyRootFilesystem`: with Postgres, madAuth writes no files. Use `GET /health` for the readiness probe: it answers without asking the database, so a failover doesn't take every instance out of the Service at once. Every instance needs the same `MADAUTH_SIGNING_KEY` (or the same [AWS KMS](#aws-kms) keys).
+
 ## Hosting
 
 Ready-made deployment templates are in [`deploy/`](../deploy/README.md). On AWS, [`deploy/aws`](../deploy/aws/README.md) creates the Lambda function, the DynamoDB table and the secrets in the Parameter Store with one `cdk deploy`.
@@ -296,7 +324,7 @@ Run the published image (for `linux/amd64` and `linux/arm64`). Pin a version, e.
 docker run --rm -p 8787:8787 --env-file .env -v madauth-data:/data ghcr.io/inouiw/madauth-server
 ```
 
-The `madauth-data` volume keeps a SQLite database (`DATABASE_URL=sqlite:/data/madauth.db`) when the container is removed. In production, add the flags from [Hardening](#hardening).
+The `madauth-data` volume keeps a SQLite database (`DATABASE_URL=sqlite:/data/madauth.db`) when the container is removed. With [Postgres](#postgres) the container needs no volume. In production, add the flags from [Hardening](#hardening).
 
 To build the image yourself, run this from the repository root:
 
@@ -364,7 +392,7 @@ And a `package.json` that points to the bundle:
 
 Set the environment variables as application settings.
 
-For e-mail & password sign-in on Lambda or Azure, SQLite does not fit: their file system is not persistent. On Lambda, use [DynamoDB](#dynamodb): `DATABASE_URL=dynamodb:<table>` works with the bundle as it is. On Azure, use a [custom store adapter](#custom-store-adapter). Password hashing needs about 32 MB per sign-in; give a Lambda function at least 256 MB.
+For e-mail & password sign-in on Lambda or Azure, SQLite does not fit: their file system is not persistent. On Lambda, use [DynamoDB](#dynamodb): `DATABASE_URL=dynamodb:<table>` works with the bundle as it is. On Azure, use [Postgres](#postgres) (`DATABASE_URL=postgres://…`, in the bundle as well) or a [custom store adapter](#custom-store-adapter). Password hashing needs about 32 MB per sign-in; give a Lambda function at least 256 MB.
 
 ### Your own Node server
 
@@ -380,9 +408,9 @@ const app = createApp(await loadConfig(process.env)); // a Hono app: app.fetch(r
 
 Whoever can read the server's memory, or plant a file that it runs, gets what the server has: every record it reads and, with the `local` [key service](#key-service), its keys. On a host you run yourself, the ways in are a core dump, a debugger, swap and a writable file system. Close them.
 
-In the container, the `docker-compose.yml` in `packages/server` sets these. The image already runs as the unprivileged `node` user, with `--disable-sigusr1` (see below):
+In the container, the `docker-compose.yml` in `packages/server` sets these. The image already runs as the unprivileged `node` user, by its number (`1000:1000`, so Kubernetes' `runAsNonRoot` accepts it), with `--disable-sigusr1` (see below):
 
-- **`read_only: true`** (`--read-only`): the container's file system is read-only, so nobody can change the image's files, the server's code among them. Only the data volume, for the SQLite database and its WAL files (`-wal`, `-shm`), and `/tmp` stay writable.
+- **`read_only: true`** (`--read-only`): the container's file system is read-only, so nobody can change the image's files, the server's code among them. Only the data volume, for the SQLite database and its WAL files (`-wal`, `-shm`), and `/tmp` stay writable. With Postgres, madAuth writes no files at all.
 - **`tmpfs: [/tmp]`** (`--tmpfs /tmp`): temporary files go to memory, and are gone when the container stops.
 - **`cap_drop: [ALL]`** (`--cap-drop ALL`): no Linux capabilities, not even for a process that becomes root. The server needs none.
 - **`security_opt: [no-new-privileges:true]`** (`--security-opt no-new-privileges`): no process gains privileges through a setuid program such as `su`, so the `node` user stays unprivileged.
@@ -718,17 +746,17 @@ interface StoreAdapter {
 
 `scan` returns a model's records a page at a time, for admins only (it is how [searching users](#searching-users) reads them): at most `limit`, in an order of your choosing that stays the same, starting after the record whose id is `after`, which may have been deleted since. Fewer than `limit` means there are no more. Ordering by the primary key does all of this in SQL (`where id > $after order by id limit $limit`); the DynamoDB adapter scans the table, whose order is fixed, from the key of `after`.
 
-The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` (one per sign-in method of a user), `verification`, `setting` and `recoveryCode`. The schema says nothing about how records are stored, so it fits any database. For SQL databases there are helpers: rows use the schema's camelCase field names, while the SQL tables use `madauth_<model>` and snake_case columns (`madauth_recovery_code`; `tableName()` and `columnName()` convert), and `createTablesSql()` creates them. Print the SQL to create the tables:
+The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` (one per sign-in method of a user), `verification`, `setting`, `recoveryCode` and `apiKey`. The schema says nothing about how records are stored, so it fits any database. For SQL databases there are helpers: rows use the schema's camelCase field names, while the SQL tables use `madauth_<model>` and snake_case columns (`madauth_recovery_code`; `tableName()` and `columnName()` convert), and `createTablesSql()` creates them. Print the SQL to create the tables:
 
 ```bash
 npx @madauth/server schema --dialect postgres
 ```
 
-`mysql` and `sqlite` work as well. The built-in SQLite adapter ([`packages/server/src/store/sqlite.ts`](../packages/server/src/store/sqlite.ts)) uses only this public API, so it is a complete example. The DynamoDB adapter ([`dynamodb.ts`](../packages/server/src/store/dynamodb.ts)) is one for a database without SQL.
+`mysql` and `sqlite` work as well. The built-in SQLite and [Postgres](#postgres) adapters ([`sqlite.ts`](../packages/server/src/store/sqlite.ts), [`postgres.ts`](../packages/server/src/store/postgres.ts)) use only this public API, so they are complete examples, e.g. for MySQL. The DynamoDB adapter ([`dynamodb.ts`](../packages/server/src/store/dynamodb.ts)) is one for a database without SQL.
 
 ### Schema versions
 
-`madauthSchema.version` increases when a madAuth release adds a model or a field. The built-in SQLite adapter upgrades its database by itself. For your own SQL tables, print the changes since the version they were created for and run them before you deploy the new madAuth version:
+`madauthSchema.version` increases when a madAuth release adds a model or a field. The built-in SQLite and Postgres adapters upgrade their database by themselves. For your own SQL tables, print the changes since the version they were created for and run them before you deploy the new madAuth version:
 
 ```bash
 npx @madauth/server schema --dialect postgres --from 1
@@ -748,73 +776,17 @@ npx @madauth/server schema --dialect postgres --from 1
 
 Stores without fixed columns need no change: madAuth reads a missing `wrongCodes`, `lastUsedStep` or `lastSmsAt` as 0, and a missing `claims`, `email` or `phone` as empty. Records from before version 9 keep working without being changed: without `signUpMethod`, a pending sign-up is one with a password when the user has a password, else one with the authenticator app, as before. Records from before version 7 keep working without being changed: with both `primaryUserId` and `secondFactor` missing, a password, Google or e-mail link account is the user's sign-in method and an authenticator app is one when the user has none of those (they signed up with it), and a missing `signedUpAt` means the sign-up was complete long ago, so no `user.signed_up` is sent for it. A sign-up from then that was never finished gets `signedUpAt` 0 when it is finished or started again, so its `user.signed_up` comes. Records of the `role` model are simply not read any more.
 
-### Example: Postgres
-
-With the [`postgres`](https://github.com/porsager/postgres) package:
-
-```ts
-// postgres-adapter.ts
-import postgres from 'postgres';
-import { columnName, madauthSchema, tableName, type Row, type StoreAdapter, type Where } from '@madauth/server';
-
-export function createPostgresAdapter(url: string): StoreAdapter {
-  const sql = postgres(url);
-  const fieldsOf = (model: string) => {
-    const def = (madauthSchema.models as Record<string, { fields: object }>)[model];
-    if (!def) throw new Error(`Unknown model "${model}"`);
-    return Object.keys(def.fields);
-  };
-  const table = (model: string) => sql(tableName(model));
-  const toColumns = (row: Row) => Object.fromEntries(Object.entries(row).map(([field, value]) => [columnName(field), value]));
-  const toRow = (model: string, record: Record<string, unknown>): Row =>
-    Object.fromEntries(fieldsOf(model).map((field) => [field, record[columnName(field)] as Row[string]]));
-  const where = (w: Where) =>
-    Object.entries(w).reduce(
-      (acc, [field, value], i) => sql`${acc} ${i ? sql`and` : sql`where`} ${sql(columnName(field))} ${value === null ? sql`is null` : sql`= ${value}`}`,
-      sql``,
-    );
-
-  return {
-    async create(model, data) {
-      fieldsOf(model);
-      return (await sql`insert into ${table(model)} ${sql(toColumns(data))} on conflict do nothing`).count === 1;
-    },
-    async findOne(model, w) {
-      const [record] = await sql`select * from ${table(model)} ${where(w)} limit 1`;
-      return record ? toRow(model, record) : null;
-    },
-    async findMany(model, w, opts = {}) {
-      const limit = opts.limit === undefined ? sql`` : sql`limit ${opts.limit}`;
-      return (await sql`select * from ${table(model)} ${where(w)} ${limit}`).map((record) => toRow(model, record));
-    },
-    async update(model, w, patch) {
-      fieldsOf(model);
-      return (await sql`update ${table(model)} set ${sql(toColumns(patch))} ${where(w)}`).count;
-    },
-    async delete(model, w) {
-      fieldsOf(model);
-      return (await sql`delete from ${table(model)} ${where(w)}`).count;
-    },
-    async scan(model, { after, limit }) {
-      fieldsOf(model);
-      const from = after === undefined ? sql`` : sql`where id > ${after}`;
-      return (await sql`select * from ${table(model)} ${from} order by id limit ${limit}`).map((record) => toRow(model, record));
-    },
-  };
-}
-```
-
 ### Testing your adapter
 
 `@madauth/server/testing` checks an adapter against everything madAuth relies on, e.g. that duplicates are refused and that only one of several concurrent deletes of a record counts. It works with any test runner that has `describe`, `it` and `expect`, and only adds records with fresh IDs, so a shared test database is fine:
 
 ```ts
-// postgres-adapter.test.ts
+// my-adapter.test.ts
 import { describe, expect, it } from 'vitest';
 import { storeAdapterContract } from '@madauth/server/testing';
-import { createPostgresAdapter } from './postgres-adapter.js';
+import { createMyAdapter } from './my-adapter.js';
 
-storeAdapterContract({ describe, it, expect }, () => createPostgresAdapter(process.env.TEST_DATABASE_URL!));
+storeAdapterContract({ describe, it, expect }, () => createMyAdapter(process.env.TEST_DATABASE_URL!));
 ```
 
 ### Registering your adapter
@@ -825,27 +797,27 @@ AWS Lambda:
 
 ```ts
 import { createHandler } from '@madauth/server/lambda';
-import { createPostgresAdapter } from './postgres-adapter.js';
+import { createMyAdapter } from './my-adapter.js';
 
-export const handler = createHandler({ store: createPostgresAdapter(process.env.PG_URL!) });
+export const handler = createHandler({ store: createMyAdapter(process.env.MY_DB_URL!) });
 ```
 
 Azure Functions:
 
 ```ts
 import { register } from '@madauth/server/azure';
-import { createPostgresAdapter } from './postgres-adapter.js';
+import { createMyAdapter } from './my-adapter.js';
 
-register({ store: createPostgresAdapter(process.env.PG_URL!) });
+register({ store: createMyAdapter(process.env.MY_DB_URL!) });
 ```
 
 Node / Docker:
 
 ```ts
 import { start } from '@madauth/server/node';
-import { createPostgresAdapter } from './postgres-adapter.js';
+import { createMyAdapter } from './my-adapter.js';
 
-await start({ store: createPostgresAdapter(process.env.PG_URL!) });
+await start({ store: createMyAdapter(process.env.MY_DB_URL!) });
 ```
 
 With `createApp`, pass it to `loadConfig`: `createApp(await loadConfig(process.env, { store }))`.

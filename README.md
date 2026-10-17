@@ -147,7 +147,7 @@ signInButton.onclick = () => Madauth.showSignInDialog();
 See [Running the madAuth server](docs/server.md) for:
 - the configuration
 - Google Cloud Console setup, and GitHub OAuth App setup
-- the database (SQLite or Amazon DynamoDB) that stores every user, and webhooks for sending e-mails (with ready-made receivers in [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks), e.g. for Amazon SES), checking sign-ups and receiving events
+- the database (SQLite, Postgres or Amazon DynamoDB) that stores every user, and webhooks for sending e-mails (with ready-made receivers in [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks), e.g. for Amazon SES), checking sign-ups and receiving events
 - Node, Docker, AWS Lambda and Azure Functions
 - storing users in your own database (custom store adapter)
 - verifying the session in your own backend
