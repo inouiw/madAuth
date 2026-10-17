@@ -94,14 +94,14 @@ type App = ReturnType<typeof testApp>;
 
 /** Gets a nonce from the app as the allowed browser would; returns the nonce and its cookie. */
 export async function getNonce(app: App): Promise<{ nonce: string; cookie: string }> {
-  const res = await app.request('/auth/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } });
+  const res = await app.request('/auth/providers/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } });
   const { nonce } = (await res.json()) as { nonce: string };
   return { nonce, cookie: `madauth_nonce=${cookies(res).madauth_nonce.value}` };
 }
 
 export function verify(app: App, credential: string, cookie?: string): Promise<Response> {
   return Promise.resolve(
-    app.request('/auth/google/verify', {
+    app.request('/auth/providers/google/verify', {
       method: 'POST',
       headers: { Origin: APP_ORIGIN, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
       body: JSON.stringify({ credential }),
@@ -299,14 +299,14 @@ export function stubGitHub(stub: GitHubStub = {}) {
 
 /** Starts the GitHub redirect flow as the browser would; returns where GitHub would send the user and the state cookie. */
 export async function startGitHub(app: App, returnTo = `${APP_ORIGIN}/page`) {
-  const res = await app.request(`/auth/github/start?return_to=${encodeURIComponent(returnTo)}`);
+  const res = await app.request(`/auth/providers/github/start?return_to=${encodeURIComponent(returnTo)}`);
   const location = new URL(res.headers.get('location') ?? 'about:blank');
   return { res, location, state: location.searchParams.get('state') ?? '', cookie: `madauth_oauth=${cookies(res).madauth_oauth?.value}` };
 }
 
 /** Comes back from GitHub with a code, as the browser would after the user agreed. */
 export function githubCallback(app: App, started: { state: string; cookie: string }, query = `code=c&state=${started.state}`): Promise<Response> {
-  return Promise.resolve(app.request(`/auth/github/callback?${query}`, { headers: { Cookie: started.cookie } }));
+  return Promise.resolve(app.request(`/auth/providers/github/callback?${query}`, { headers: { Cookie: started.cookie } }));
 }
 
 /** Signs in through the GitHub flow (the stand-in must be in place) and returns the callback's redirect, with its cookies. */

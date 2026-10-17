@@ -23,8 +23,8 @@ const NONCE_COOKIE = 'madauth_nonce';
 const NONCE_TYP = 'madauth-nonce+jwt';
 const NONCE_TTL = 5 * 60;
 
-/** The state cookie of the code flow comes back on the redirect to /auth/google/callback only. */
-const COOKIE_PATH = '/auth/google';
+/** The state cookie of the code flow comes back on the redirect to /auth/providers/google/callback only. */
+const COOKIE_PATH = '/auth/providers/google';
 
 const GOOGLE_AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -41,7 +41,7 @@ const toProfile = (profile: GoogleProfile): ProviderProfile => ({ key: googleAcc
 export function googleRoutes(app: Hono, ctx: AppContext): void {
   const { config, keys, secure } = ctx;
   const { issuer } = config;
-  const callbackUrl = `${issuer}/auth/google/callback`;
+  const callbackUrl = `${issuer}/auth/providers/google/callback`;
   const googleOf = async (c: Context) => providerOf(await ctx.methods(c), 'google');
   /** The Google provider, which every route below finds: the first route makes sure it exists. */
   const google = async (c: Context): Promise<StoredProvider> => (await googleOf(c))!;
@@ -56,7 +56,7 @@ export function googleRoutes(app: Hono, ctx: AppContext): void {
 
   // --- FedCM / One Tap (the ID token is issued in the browser and verified here) ---
 
-  app.post('/auth/google/nonce', async (c) => {
+  app.post('/auth/providers/google/nonce', async (c) => {
     if (!(await ctx.enabled(c, 'google'))) return disabled(c);
     const nonce = randomString();
     const token = await signToken(keys, issuer, NONCE_TYP, { nonce }, NONCE_TTL);
@@ -91,7 +91,7 @@ export function googleRoutes(app: Hono, ctx: AppContext): void {
     return result.profile;
   };
 
-  app.post('/auth/google/verify', async (c) => {
+  app.post('/auth/providers/google/verify', async (c) => {
     if (!(await ctx.enabled(c, 'google'))) return disabled(c);
     const body = await c.req.json<{ credential?: unknown; locale?: unknown }>().catch(() => ({}) as { credential?: unknown; locale?: unknown });
     const profile = await verifiedCredential(c, body);
@@ -105,7 +105,7 @@ export function googleRoutes(app: Hono, ctx: AppContext): void {
   });
 
   // A signed-in user adds a Google account to their methods, with an ID token from One Tap / FedCM.
-  app.post('/auth/google/link', async (c) => {
+  app.post('/auth/providers/google/link', async (c) => {
     if (!(await ctx.enabled(c, 'google'))) return disabled(c);
     const user = await recentUser(c, ctx);
     if (user instanceof Response) return user;
@@ -123,7 +123,7 @@ export function googleRoutes(app: Hono, ctx: AppContext): void {
     await next();
   };
 
-  app.get('/auth/google/start', requireCodeFlow, async (c) => {
+  app.get('/auth/providers/google/start', requireCodeFlow, async (c) => {
     const returnUrl = ctx.allowedUrl(c.req.query('return_to'));
     if (!returnUrl) return c.text('return_to must be an absolute URL whose origin is in ALLOWED_ORIGINS', 400);
     // The browser is on its way from the app: a method that is off sends it back there, with the error.
@@ -146,7 +146,7 @@ export function googleRoutes(app: Hono, ctx: AppContext): void {
     return c.redirect(url.href, 302);
   });
 
-  app.get('/auth/google/callback', requireCodeFlow, async (c) => {
+  app.get('/auth/providers/google/callback', requireCodeFlow, async (c) => {
     const oauth = await takeOAuthState(c, ctx, COOKIE_PATH);
     if (!oauth) return c.text('Sign-in expired or was started in another browser. Please try again.', 400);
     const back = redirectBack(c, oauth.returnTo, 'google');

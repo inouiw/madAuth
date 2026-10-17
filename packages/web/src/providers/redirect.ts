@@ -66,5 +66,5 @@ export function renderRedirectButton(
 export function startRedirect(ctx: ProviderContext, method: LoginMethodId, link = false): void {
   const returnTo = location.href.split('#')[0];
   const locale = ctx.locale ? `&locale=${encodeURIComponent(ctx.locale)}` : '';
-  location.assign(`${ctx.serverUrl}/auth/${method}/start?return_to=${encodeURIComponent(returnTo)}${locale}${link ? '&link=1' : ''}`);
+  location.assign(`${ctx.serverUrl}/auth/providers/${method}/start?return_to=${encodeURIComponent(returnTo)}${locale}${link ? '&link=1' : ''}`);
 }

@@ -68,7 +68,7 @@ export interface FakeServer {
   /** E-mails "sent": what for, to whom and the link's page. */
   mails: { purpose: 'verify' | 'reset' | 'signin' | 'registered'; to: string; redirectTo: unknown }[];
   user: MadauthUser | null;
-  /** Error code that /auth/google/verify answers with, if set. */
+  /** Error code that /auth/providers/google/verify answers with, if set. */
   verifyError: string | undefined;
   /** Makes every request fail like an unreachable server. */
   down: boolean;
@@ -510,9 +510,9 @@ export function fakeServer(): FakeServer {
         }
         issued();
         return json({ user: server.user });
-      case 'POST /auth/google/nonce':
+      case 'POST /auth/providers/google/nonce':
         return json({ nonce: `nonce-${++server.nonces}` });
-      case 'POST /auth/google/verify':
+      case 'POST /auth/providers/google/verify':
         if (server.verifyError) return json({ error: server.verifyError, message: 'rejected in test' }, 401);
         return afterPrimary(ada.email!, 'google');
       case 'POST /auth/logout':

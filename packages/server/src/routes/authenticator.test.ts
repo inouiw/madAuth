@@ -680,10 +680,10 @@ describe('the second step after a password, Google or GitHub', () => {
     expect(await sessionClaims(app, second)).toMatchObject({ amr: ['google', 'otp'] });
     expect(hook.calls.at(-1)).toMatchObject({ type: 'user.signed_in', data: { method: 'google', secondFactor: 'authenticator' } });
 
-    const started = await app.request(`/auth/google/start?return_to=${encodeURIComponent(`${APP_ORIGIN}/page`)}`);
+    const started = await app.request(`/auth/providers/google/start?return_to=${encodeURIComponent(`${APP_ORIGIN}/page`)}`);
     const location = new URL(started.headers.get('location')!);
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id_token: await googleIdToken({ nonce: location.searchParams.get('nonce')! }) })));
-    const back = await app.request(`/auth/google/callback?code=c&state=${location.searchParams.get('state')}`, {
+    const back = await app.request(`/auth/providers/google/callback?code=c&state=${location.searchParams.get('state')}`, {
       headers: { Cookie: `madauth_oauth=${cookies(started).madauth_oauth.value}` },
     });
     expect(back.headers.get('location')).toBe(`${APP_ORIGIN}/page#madauth_next=authenticator&madauth_factors=authenticator&madauth_method=google`);

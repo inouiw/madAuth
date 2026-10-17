@@ -87,7 +87,7 @@ describe('GoogleFedcm', () => {
     gis.signIn('one-tap-token');
     await settle();
 
-    expect(server.requests.find((r) => r.path === '/auth/google/verify')?.body).toEqual({ credential: 'one-tap-token' });
+    expect(server.requests.find((r) => r.path === '/auth/providers/google/verify')?.body).toEqual({ credential: 'one-tap-token' });
     expect(listener).toHaveBeenLastCalledWith(ada);
     expect(Madauth.currentUser).toEqual(ada);
   });
@@ -283,7 +283,7 @@ describe('GoogleRedirect', () => {
     shadow<HTMLButtonElement>('.google-slot button')!.click();
 
     expect(assign).toHaveBeenCalledExactlyOnceWith(
-      `${SERVER}/auth/google/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}&locale=${encodeURIComponent(navigator.language)}`,
+      `${SERVER}/auth/providers/google/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}&locale=${encodeURIComponent(navigator.language)}`,
     );
     expect(shadow('.notice')).toBeNull();
   });

@@ -75,7 +75,7 @@ describe('GitHub', () => {
     $<HTMLButtonElement>('.github-slot button')!.click();
 
     // The locale goes along, for the sign-up check's message.
-    expect(assign).toHaveBeenCalledExactlyOnceWith(`${SERVER}/auth/github/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}&locale=${encodeURIComponent(navigator.language)}`);
+    expect(assign).toHaveBeenCalledExactlyOnceWith(`${SERVER}/auth/providers/github/start?return_to=${encodeURIComponent('https://app.example.com/page?x=1')}&locale=${encodeURIComponent(navigator.language)}`);
     expect(gisScripts()).toHaveLength(0);
   });
 

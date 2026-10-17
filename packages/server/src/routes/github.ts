@@ -8,8 +8,8 @@ import { finishLink, pkceChallenge, redirectBack, resolveProviderUser, startOAut
 
 const GITHUB_AUTH_ENDPOINT = 'https://github.com/login/oauth/authorize';
 
-/** The state cookie comes back on the redirect to /auth/github/callback only. */
-const COOKIE_PATH = '/auth/github';
+/** The state cookie comes back on the redirect to /auth/providers/github/callback only. */
+const COOKIE_PATH = '/auth/providers/github';
 
 const GITHUB: OAuthProvider = { method: 'github', name: 'GitHub' };
 
@@ -20,7 +20,7 @@ const GITHUB: OAuthProvider = { method: 'github', name: 'GitHub' };
  * request; without one, the routes answer 404 as if they weren't there.
  */
 export function githubRoutes(app: Hono, ctx: AppContext): void {
-  const callbackUrl = `${ctx.config.issuer}/auth/github/callback`;
+  const callbackUrl = `${ctx.config.issuer}/auth/providers/github/callback`;
   const githubOf = async (c: Context) => providerOf(await ctx.methods(c), 'github');
 
   app.use(`${COOKIE_PATH}/*`, async (c, next) => {
@@ -28,7 +28,7 @@ export function githubRoutes(app: Hono, ctx: AppContext): void {
     await next();
   });
 
-  app.get('/auth/github/start', async (c) => {
+  app.get('/auth/providers/github/start', async (c) => {
     const returnUrl = ctx.allowedUrl(c.req.query('return_to'));
     if (!returnUrl) return c.text('return_to must be an absolute URL whose origin is in ALLOWED_ORIGINS', 400);
     // The browser is on its way from the app: a method that is off sends it back there, with the error.
@@ -50,7 +50,7 @@ export function githubRoutes(app: Hono, ctx: AppContext): void {
     return c.redirect(url.href, 302);
   });
 
-  app.get('/auth/github/callback', async (c) => {
+  app.get('/auth/providers/github/callback', async (c) => {
     const oauth = await takeOAuthState(c, ctx, COOKIE_PATH);
     if (!oauth) return c.text('Sign-in expired or was started in another browser. Please try again.', 400);
     const back = redirectBack(c, oauth.returnTo, 'github');

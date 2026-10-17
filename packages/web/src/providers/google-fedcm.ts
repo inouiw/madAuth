@@ -75,7 +75,7 @@ export class GoogleFedcm implements SignInProvider {
   /** Gets a fresh nonce from the server and (re)initializes GIS with it. */
   async #prepare(): Promise<Result> {
     const ctx = this.#ctx!;
-    const res = await ctx.request<{ nonce: string }>('/auth/google/nonce', { method: 'POST' });
+    const res = await ctx.request<{ nonce: string }>('/auth/providers/google/nonce', { method: 'POST' });
     if (!res.ok) return { isSuccess: false, error: res.error };
     this.#gis!.initialize({
       client_id: ctx.config.google!.clientId,
@@ -126,7 +126,7 @@ export class GoogleFedcm implements SignInProvider {
     const ctx = this.#ctx!;
     // A button that links adds the Google account to the signed-in user instead of signing in.
     if (this.#button?.purpose === 'link') return this.#onLink(this.#button, credential);
-    const res = await ctx.request<{ user: MadauthUser }>('/auth/google/verify', {
+    const res = await ctx.request<{ user: MadauthUser }>('/auth/providers/google/verify', {
       method: 'POST',
       body: { credential },
     });
@@ -147,7 +147,7 @@ export class GoogleFedcm implements SignInProvider {
 
   async #onLink(mount: ButtonMount, credential: string): Promise<void> {
     const ctx = this.#ctx!;
-    const res = await ctx.request('/auth/google/link', { method: 'POST', body: { credential } });
+    const res = await ctx.request('/auth/providers/google/link', { method: 'POST', body: { credential } });
     const user = ctx.currentUser;
     if (res.ok && user) mount.onResult({ isSuccess: true, user });
     else mount.onResult({ isSuccess: false, error: res.ok ? { code: 'no_session', message: 'Nobody is signed in.' } : res.error });

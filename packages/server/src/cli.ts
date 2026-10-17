@@ -480,12 +480,12 @@ function nextSteps(
       'In the Google Cloud Console (https://console.cloud.google.com/apis/credentials), add to your OAuth client:',
       '',
       `  Authorized JavaScript origins: ${[...googleOrigins].join(' and ')}`,
-      ...(google === 'GoogleRedirect' ? [`  Authorized redirect URIs: ${origin}/auth/google/callback`] : []),
+      ...(google === 'GoogleRedirect' ? [`  Authorized redirect URIs: ${origin}/auth/providers/google/callback`] : []),
     ],
     github && [
       'In your GitHub OAuth App (https://github.com/settings/developers), set:',
       '',
-      `  Authorization callback URL: ${origin}/auth/github/callback`,
+      `  Authorization callback URL: ${origin}/auth/providers/github/callback`,
     ],
     adminEmail && [
       `Sign up with ${adminEmail} in your app: you get the role admin (INITIAL_ADMIN_EMAIL), and manage claims and`,

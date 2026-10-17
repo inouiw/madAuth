@@ -147,13 +147,13 @@ describe('Google and GitHub from the environment, as before 0.7', () => {
     const { app, store } = passwordApp({ google: undefined });
     const config = async () => (await (await app.request('/auth/config')).json()) as { google: { clientId: string; codeFlow: boolean } | null };
     expect((await config()).google).toBeNull();
-    expect((await app.request('/auth/google/start')).status).toBe(404);
+    expect((await app.request('/auth/providers/google/start')).status).toBe(404);
 
     await new Providers(new Settings(store), keyService).add('google', { clientId: CLIENT_ID, clientSecret: 'g-secret' }, null);
     await setMethods(store, { google: { allowAsSignInMethod: true, secondFactor: 'none' }, password: { allowAsSignInMethod: true, secondFactor: 'none' } });
 
     expect((await config()).google).toEqual({ clientId: CLIENT_ID, codeFlow: true, secondFactor: 'none' });
-    const start = await app.request(`/auth/google/start?return_to=${encodeURIComponent('https://app.example.com/page')}`);
+    const start = await app.request(`/auth/providers/google/start?return_to=${encodeURIComponent('https://app.example.com/page')}`);
     expect(start.status).toBe(302);
     expect(new URL(start.headers.get('location')!).searchParams.get('client_id')).toBe(CLIENT_ID);
   });

@@ -531,6 +531,6 @@ describe('configuration', () => {
       sms: true,
       passkey: null,
     });
-    expect((await app.request('/auth/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } })).status).toBe(404);
+    expect((await app.request('/auth/providers/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } })).status).toBe(404);
   });
 });

@@ -100,9 +100,9 @@ vi.stubGlobal(
         if (body().code !== '123456') return json({ error: 'code_invalid', message: 'wrong' }, 401);
         authenticator = false;
         return json({});
-      case 'POST /auth/google/nonce':
+      case 'POST /auth/providers/google/nonce':
         return json({ nonce: 'n' });
-      case 'POST /auth/google/verify':
+      case 'POST /auth/providers/google/verify':
         sessionUser = signInAs;
         return json({ user: signInAs });
       case 'POST /auth/logout':

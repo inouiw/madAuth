@@ -355,7 +355,7 @@ Next steps:
     expect(output).toContain("import { Madauth, GitHub } from '@madauth/web';");
     expect(output).toContain('Madauth.initialize({ providers: [new GitHub()] });');
     expect(output).toContain('4. In your GitHub OAuth App (https://github.com/settings/developers), set:');
-    expect(output).toContain('Authorization callback URL: http://localhost:5173/auth/github/callback');
+    expect(output).toContain('Authorization callback URL: http://localhost:5173/auth/providers/github/callback');
     expect(output).not.toContain('Google Cloud Console');
   });
 
@@ -381,7 +381,7 @@ Next steps:
     expect(output).toContain("import { Madauth, GoogleRedirect, Password } from '@madauth/web';");
     expect(output).toContain('Madauth.initialize({ providers: [new GoogleRedirect(), new Password()] });');
     expect(output).toContain('Authorized JavaScript origins: https://app.example.com\n');
-    expect(output).toContain('Authorized redirect URIs: https://app.example.com/auth/google/callback');
+    expect(output).toContain('Authorized redirect URIs: https://app.example.com/auth/providers/google/callback');
     expect(output).toContain('6. Never commit');
   });
 });
