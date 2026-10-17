@@ -7,7 +7,6 @@ import { isValidEmail, normalizeEmail } from './password.js';
 import type { MethodConfig } from './settings.js';
 import type { StoreAdapter } from './store/schema.js';
 import {
-  DEV_WEBHOOK_RECEIVER_URL,
   REQUIRED_EMAIL_TYPES,
   WEBHOOK_TYPES,
   checkWebhookSecret,
@@ -243,19 +242,8 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
   // E-mail & password sign-in needs its e-mails sent, so it is on exactly when the webhook handles them.
   const sendsEmails = !!webhook && REQUIRED_EMAIL_TYPES.every((type) => webhook.events.has(type));
   const password = sendsEmails ? {} : undefined;
-  // Sign-up with the authenticator app only needs the address confirmed; the e-mail link needs its own e-mail.
-  const emailVerification = !!webhook && webhook.events.has('email.send_verification');
-  const emailLink = !!webhook && webhook.events.has('email.send_signin_link');
-
-  if (!clientId && !githubClientId && !password && !emailVerification && !emailLink) {
-    throw new ConfigError(
-      'No sign-in method is configured. Set GOOGLE_CLIENT_ID for Google sign-in, GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET for GitHub sign-in, and/or a webhook that sends ' +
-        'the e-mails: e-mail & password sign-in needs email.send_verification and email.send_password_reset, the passwordless e-mail link ' +
-        `needs email.send_signin_link, sign-up with the authenticator app needs email.send_verification. For development, run the ` +
-        `receiver at ${DEV_WEBHOOK_RECEIVER_URL} and set WEBHOOK_URL=http://localhost:8790/webhook and ` +
-        `WEBHOOK_EVENTS=${REQUIRED_EMAIL_TYPES.join(',')},email.send_signin_link,email.send_already_registered,email.send_password_reset_no_password. See docs/server.md.`,
-    );
-  }
+  // A server may start without any sign-in method: its providers are added in the store, by the setup token's
+  // holder until the first admin exists (see setup.ts).
   const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL')));
   if (!store) {
     throw new ConfigError(
