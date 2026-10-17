@@ -196,6 +196,15 @@
           and give yourself the role: set <code>INITIAL_ADMIN_EMAIL</code> in <code>packages/server/.env</code> to your
           address, and sign in with it.
         </p>
+        <!-- The admin dialog: Madauth.showAdminDialog() adds, changes, switches on and removes the sign-in providers. -->
+        <button id="admin-dialog" type="button">
+          Sign-In Providers
+          <code>Madauth.showAdminDialog()</code>
+        </button>
+        <div id="admin-output" class="api-box" hidden>
+          <span class="caption">Response</span>
+          <pre role="status"></pre>
+        </div>
         <ul class="api-list">
           <li class="api-method" data-call="searchUsers">
             <button type="button" class="api-row" aria-expanded="false">Madauth.admin.searchUsers(search)</button>

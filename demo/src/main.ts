@@ -94,7 +94,7 @@ function handleAuthStateChanged(user: MadauthUser | null): void {
   if (!user) {
     // Nothing of the previous user stays on the page: the parameters, the responses, the settings, the app, the phone.
     resetExplorer();
-    for (const box of [$('#authenticator-output'), $('#methods-output')]) {
+    for (const box of [$('#authenticator-output'), $('#methods-output'), $('#admin-output')]) {
       box.hidden = true;
       box.querySelector('pre')!.textContent = '';
     }
@@ -252,6 +252,21 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#account butt
     }
   });
 }
+
+// The admin dialog: the server's sign-in providers. It may switch them on or off, which the settings' controls then show.
+$<HTMLButtonElement>('#admin-dialog').addEventListener('click', async () => {
+  const button = $<HTMLButtonElement>('#admin-dialog');
+  const user = Madauth.currentUser?.id;
+  button.disabled = true;
+  try {
+    const result = await Madauth.showAdminDialog();
+    if (Madauth.currentUser?.id !== user) return;
+    showOutput($('#admin-output'), 'Madauth.showAdminDialog()', result);
+    if (result.isSuccess) showSettings(await Madauth.admin.getSettings());
+  } finally {
+    button.disabled = false;
+  }
+});
 
 // --- The API explorer: the rest of what a signed-in user can call, a method per row ---
 //
