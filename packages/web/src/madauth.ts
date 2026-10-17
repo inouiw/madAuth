@@ -591,6 +591,25 @@ export const Madauth = {
   },
 
   /**
+   * Opens the dialog on the server's sign-in providers, for admins: the list with each one's state, forms to add
+   * one (Google, GitHub or an OpenID Connect provider, with the callback URL to register at it), to change it and
+   * to switch it on with its policy for a second factor, and its removal, confirmed with how many users sign in
+   * with it alone. Resolves when the dialog is closed. Changes take a sign-in within the last ten minutes: the
+   * dialog asks the admin to sign in again when needed. Fails without opening the dialog with `no_session` when
+   * nobody is signed in and `forbidden` for a user without the role `admin`, so the page can leave its button
+   * out. With `ui: 'custom'` use `Madauth.admin`.
+   */
+  async showAdminDialog(): Promise<Result> {
+    const ready = await dialogReady('showAdminDialog', 'Madauth.admin');
+    if (!ready.isSuccess) return ready;
+    if (!user) return fail('no_session', 'Nobody is signed in.');
+    // Read first: a user who may not see the providers gets the error, and no dialog.
+    const listed = await Madauth.admin.listProviders();
+    if (!listed.isSuccess) return listed;
+    return dialogFlow<Result>((element) => element.openAdmin(listed), {}, ok());
+  },
+
+  /**
    * Changes the language of the dialog and of the e-mails, e.g. when the user switches the language of
    * your app. An open dialog shows the new language at once. See {@link MadauthOptions.locale}.
    */

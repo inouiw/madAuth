@@ -33,6 +33,7 @@ describe('@madauth/web', () => {
         'provider',
         'sessionReady',
         'setLocale',
+        'showAdminDialog',
         'showManageApiKeysDialog',
         'showManageSignInMethodsDialog',
         'showSetUpAuthenticatorDialog',

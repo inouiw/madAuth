@@ -97,8 +97,15 @@ export interface FakeServer {
   passkeys: Map<string, { email: string; id: string; name: string }>;
   /** Google, GitHub, OpenID Connect providers and the e-mail link the users added while signed in, by e-mail address. */
   linked: Map<string, Set<string>>;
-  /** The OpenID Connect providers that are on, with their names and policies. */
-  oidc: { id: string; name: string; secondFactor: SecondFactorPolicy }[];
+  /**
+   * The OpenID Connect providers, with their names and policies; on unless `on` is false. The rest is what the
+   * admin API answers about them.
+   */
+  oidc: { id: string; name: string; secondFactor: SecondFactorPolicy; on?: boolean; issuer?: string; clientId?: string; scopes?: string[]; trustEmail?: boolean }[];
+  /** How many users sign in with a provider alone, by its id, as a removal counts them. */
+  usersAlone: Record<string, number>;
+  /** The settings refuse to be set, with this message (`invalid_settings`). */
+  settingsRefused: string | undefined;
   /** The user signed in more than ten minutes ago: changing a method answers `reauth_required`. */
   staleSignIn: boolean;
   /** A setup under way (the setup cookie); set to undefined to simulate its expiry. */
@@ -164,6 +171,8 @@ export function fakeServer(): FakeServer {
     passkeys: new Map(),
     linked: new Map(),
     oidc: [],
+    usersAlone: {},
+    settingsRefused: undefined,
     staleSignIn: false,
     apiScopes: [
       { name: 'madauth:claims:read', description: "Read a user's claims and roles", role: 'admin', endpoints: ['POST /auth/admin/claims/get'] },
@@ -179,7 +188,10 @@ export function fakeServer(): FakeServer {
   };
   const userFor = (email: string): MadauthUser => {
     const account = server.accounts.get(email);
-    return email === grace.email ? grace : email === ada.email ? ada : { id: `usr_${email.split('@')[0]}`, email, ...(account?.name ? { name: account.name } : {}) };
+    const user = email === grace.email ? grace : email === ada.email ? ada : { id: `usr_${email.split('@')[0]}`, email, ...(account?.name ? { name: account.name } : {}) };
+    // The claims an admin set for the address come with the session, as on the real server.
+    const claims = server.claims.get(email);
+    return claims ? { ...user, claims } : user;
   };
   const lastMailTo = (purpose: 'verify' | 'reset' | 'signin') => [...server.mails].reverse().find((m) => m.purpose === purpose)?.to;
   /** What the real server does with every session it issues or renews. */
@@ -265,7 +277,7 @@ export function fakeServer(): FakeServer {
           passkey: server.passkey ? { signUp: false, ...server.passkey } : null,
           providers: [
             ...(['google', 'github'] as const).filter((kind) => server[kind] && server.methods[kind]).map((kind) => ({ id: kind, kind, name: server.providerNames[kind], secondFactor: server.policy[kind] })),
-            ...server.oidc.map((provider) => ({ ...provider, kind: 'oidc' })),
+            ...server.oidc.filter((provider) => provider.on !== false).map(({ id, name, secondFactor }) => ({ id, name, secondFactor, kind: 'oidc' })),
           ],
         });
       // --- Passkeys ---
@@ -702,6 +714,7 @@ export function fakeServer(): FakeServer {
         if (url.pathname.endsWith('/set') && (body as { methods?: unknown }).methods !== undefined) {
           const methods = (body as { methods?: Record<string, unknown> }).methods;
           if (!methods || typeof methods !== 'object') return json({ error: 'invalid_settings', message: 'invalid' }, 400);
+          if (server.settingsRefused) return json({ error: 'invalid_settings', message: server.settingsRefused }, 400);
           const on = (value: unknown) => value === true || (!!value && typeof value === 'object');
           const policyOf = (value: unknown): SecondFactorPolicy =>
             value && typeof value === 'object' && 'secondFactor' in value ? ((value as { secondFactor: SecondFactorPolicy }).secondFactor ?? 'none') : 'none';
@@ -709,6 +722,7 @@ export function fakeServer(): FakeServer {
           const signsIn = (value: unknown) => on(value) && (value as { allowAsSignInMethod?: unknown }).allowAsSignInMethod === true;
           server.methods = { google: on(methods.google), github: on(methods.github), password: on(methods.password), authenticator: signsIn(methods.authenticator), 'email-link': on(methods['email-link']), sms: on(methods.sms) };
           server.policy = { google: policyOf(methods.google), github: policyOf(methods.github), password: policyOf(methods.password), 'email-link': policyOf(methods['email-link']) };
+          for (const provider of server.oidc) Object.assign(provider, { on: on(methods[provider.id]), secondFactor: policyOf(methods[provider.id]) });
         }
         return json({
           password: server.passwordRules,
@@ -720,6 +734,7 @@ export function fakeServer(): FakeServer {
             'email-link': setting(server.emailLink, server.methods['email-link'], true, server.policy['email-link']),
             passkey: setting(true, !!server.passkey, !!server.passkey?.signIn, server.passkey?.secondFactor ?? 'none'),
             sms: setting(true, server.methods.sms, false, 'none'),
+            ...Object.fromEntries(server.oidc.map((provider) => [provider.id, setting(true, provider.on !== false, true, provider.secondFactor)])),
           },
         });
       }
@@ -738,25 +753,60 @@ export function fakeServer(): FakeServer {
         server.apiKeys.splice(index, 1);
         return json({ email, userId });
       }
-      // The providers as the admin API answers them: an admin adds GitHub, renames it, removes it.
+      // The providers as the admin API answers them: an admin adds, changes and removes Google, GitHub and
+      // OpenID Connect providers; a removal or its dry run counts `usersAlone`.
       case 'POST /auth/admin/providers/list':
       case 'POST /auth/admin/providers/add':
       case 'POST /auth/admin/providers/update':
       case 'POST /auth/admin/providers/remove': {
         if (!server.user) return json({ error: 'no_session' }, 401);
         if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
-        const data = body as unknown as { id?: string; kind?: 'google' | 'github'; name?: string; clientId?: string; clientSecret?: string | null };
-        const info = (kind: 'google' | 'github') => ({ id: kind, kind, name: server.providerNames[kind], clientId: `${kind}-client`, hasClientSecret: true, callbackUrl: `${SERVER}/auth/providers/${kind}/callback`, createdAt: 1, updatedAt: 1 });
+        const data = body as unknown as { id?: string; kind?: string; name?: string; clientId?: string; clientSecret?: string | null; issuer?: string; scopes?: string; trustEmail?: boolean; dryRun?: boolean };
         const action = url.pathname.split('/').at(-1);
-        if (action === 'list') return json({ providers: (['google', 'github'] as const).filter((kind) => server[kind]).map(info), callbackBase: `${SERVER}/auth/providers/` });
-        const kind = (action === 'add' ? data.kind : data.id) as 'google' | 'github';
-        if (kind !== 'google' && kind !== 'github') return json({ error: 'invalid_provider', message: 'kind' }, 400);
+        const callbackUrl = (id: string) => `${SERVER}/auth/providers/${id}/callback`;
+        const builtIn = (kind: 'google' | 'github') => ({ id: kind, kind, name: server.providerNames[kind], clientId: `${kind}-client`, hasClientSecret: true, callbackUrl: callbackUrl(kind), createdAt: 1, updatedAt: 1 });
+        const oidcInfo = (p: FakeServer['oidc'][number]) => ({
+          id: p.id, kind: 'oidc', name: p.name, clientId: p.clientId ?? `${p.id}-client`, hasClientSecret: true, callbackUrl: callbackUrl(p.id), createdAt: 1, updatedAt: 1,
+          issuer: p.issuer ?? `https://${p.id}.example.com`, scopes: p.scopes ?? [], trustEmail: p.trustEmail ?? false,
+        });
+        if (action === 'list') {
+          const providers = [...(['google', 'github'] as const).filter((kind) => server[kind]).map(builtIn), ...server.oidc.map(oidcInfo)];
+          return json({ providers, callbackBase: `${SERVER}/auth/providers/` });
+        }
+        const dryRun = action === 'remove' && data.dryRun === true;
+        if (server.staleSignIn && !dryRun) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        const id = action === 'add' ? (data.kind === 'oidc' ? data.id : data.kind) : data.id;
+        const oidc = server.oidc.find((p) => p.id === id);
+        if (action === 'add' && data.kind === 'oidc') {
+          if (!id || !data.issuer?.startsWith('https://')) return json({ error: 'invalid_provider', message: 'The issuer must be an https URL.' }, 400);
+          if (oidc) return json({ error: 'provider_exists', message: 'exists' }, 409);
+          const added = { id, name: data.name ?? id, secondFactor: 'none' as const, on: false, issuer: data.issuer, clientId: data.clientId, scopes: data.scopes?.split(' ').filter(Boolean) ?? [], trustEmail: !!data.trustEmail };
+          server.oidc.push(added);
+          return json({ provider: oidcInfo(added) });
+        }
+        if (oidc) {
+          if (action === 'update') {
+            Object.assign(oidc, {
+              ...(data.name ? { name: data.name } : {}),
+              ...(data.clientId ? { clientId: data.clientId } : {}),
+              ...(data.scopes !== undefined ? { scopes: data.scopes.split(' ').filter(Boolean) } : {}),
+              ...(data.trustEmail !== undefined ? { trustEmail: data.trustEmail } : {}),
+            });
+            return json({ provider: oidcInfo(oidc) });
+          }
+          if (!dryRun) server.oidc.splice(server.oidc.indexOf(oidc), 1);
+          return json({ provider: oidcInfo(oidc), usersWithoutSignIn: server.usersAlone[oidc.id] ?? 0, ...(dryRun ? { dryRun: true } : {}) });
+        }
+        const kind = id as 'google' | 'github';
+        if (kind !== 'google' && kind !== 'github') return json(action === 'add' ? { error: 'invalid_provider', message: 'kind' } : { error: 'provider_not_found', message: 'none' }, action === 'add' ? 400 : 404);
         if (action === 'add' && server[kind]) return json({ error: 'provider_exists', message: 'exists' }, 409);
         if (action !== 'add' && !server[kind]) return json({ error: 'provider_not_found', message: 'none' }, 404);
-        if (action === 'remove' && (body as { dryRun?: boolean }).dryRun) return json({ provider: info(kind), usersWithoutSignIn: 0, dryRun: true });
+        if (dryRun) return json({ provider: builtIn(kind), usersWithoutSignIn: server.usersAlone[kind] ?? 0, dryRun: true });
         if (data.name) server.providerNames[kind] = data.name;
         server[kind] = action !== 'remove';
-        return json(action === 'remove' ? { provider: info(kind), usersWithoutSignIn: 0 } : { provider: info(kind) });
+        // A new provider is off until it is switched on; removed, it is out of the settings too.
+        if (action !== 'update') server.methods[kind] = false;
+        return json(action === 'remove' ? { provider: builtIn(kind), usersWithoutSignIn: server.usersAlone[kind] ?? 0 } : { provider: builtIn(kind) });
       }
       // Every user in the order they signed up, a page at a time; the cursor is the last one's address.
       case 'POST /auth/admin/users/search': {

@@ -14,9 +14,10 @@ import {
 } from './madauth.js';
 import { isBuiltInMethodId, loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
 import type { SignInMethodInfo } from './scopes/methods.js';
+import type { NewProvider, ProviderChanges, ProviderInfo, ProviderKind, Settings } from './scopes/admin.js';
 import type { ApiKeyInfo, ApiKeyScope } from './scopes/api-keys.js';
 import type { PasskeyInfo } from './scopes/passkey.js';
-import { pendingStepOf, secondStepOf, type PendingStep } from './providers/provider.js';
+import { pendingStepOf, secondStepOf, type PendingStep, type SecondFactorPolicy } from './providers/provider.js';
 import type { CodeOptions } from './scopes/authenticator.js';
 import { qrModules, qrViewBox, type QrModules } from './qr.js';
 import { SECOND_FACTORS, type MadauthError, type MadauthErrorCode, type MadauthUser, type Result, type SecondFactor } from './result.js';
@@ -75,10 +76,63 @@ type View =
   | 'add-password'
   | 'api-keys'
   | 'api-key-create'
-  | 'api-key-created';
+  | 'api-key-created'
+  | 'admin-providers'
+  | 'admin-add'
+  | 'admin-provider'
+  | 'admin-remove';
 
-/** The views that change the signed-in user's methods or keys: after signing in again, the dialog goes back to them. */
-const changeViews = ['passkey-setup', 'methods', 'add-password', 'api-key-create'] as const satisfies readonly View[];
+/** The views that change the signed-in user's methods or keys, or the providers: after signing in again, the dialog goes back to them. */
+const changeViews = ['passkey-setup', 'methods', 'add-password', 'api-key-create', 'admin-provider', 'admin-remove'] as const satisfies readonly View[];
+
+/** What the provider form of the admin dialog holds while it is filled in; kept while the admin signs in again. */
+interface ProviderDraft {
+  /** An OpenID Connect provider's id; Google's and GitHub's is their kind. */
+  id: string;
+  name: string;
+  issuer: string;
+  clientId: string;
+  /** Empty: none for a new provider, the current one kept for a provider being changed. */
+  clientSecret: string;
+  removeSecret: boolean;
+  scopes: string;
+  trustEmail: boolean;
+  /** On as a sign-in method, with this policy for a second factor. */
+  on: boolean;
+  secondFactor: SecondFactorPolicy;
+}
+
+const EMPTY_DRAFT: ProviderDraft = { id: '', name: '', issuer: '', clientId: '', clientSecret: '', removeSecret: false, scopes: '', trustEmail: false, on: false, secondFactor: 'none' };
+
+/** The provider form: a new provider of `kind`, or `provider` being changed, with what is typed. */
+interface ProviderForm {
+  kind: ProviderKind;
+  provider?: ProviderInfo;
+  draft: ProviderDraft;
+}
+
+/** What `addProvider` takes for a new provider of `kind`, from the form. */
+function newProviderOf(kind: ProviderKind, d: ProviderDraft): NewProvider {
+  const name = d.name.trim();
+  const shared = { clientId: d.clientId.trim(), ...(d.clientSecret ? { clientSecret: d.clientSecret } : {}) };
+  if (kind !== 'oidc') return { kind, ...shared, ...(name ? { name } : {}) };
+  const scopes = d.scopes.trim();
+  return { kind, id: d.id.trim(), name, issuer: d.issuer.trim(), clientId: shared.clientId, clientSecret: d.clientSecret, trustEmail: d.trustEmail, ...(scopes ? { scopes } : {}) };
+}
+
+/** What `updateProvider` takes to make `provider` what the form says: only what differs. */
+function changesOf(provider: ProviderInfo, d: ProviderDraft): ProviderChanges {
+  const name = d.name.trim();
+  const clientId = d.clientId.trim();
+  const scopes = d.scopes.trim();
+  return {
+    ...(name && name !== provider.name ? { name } : {}),
+    ...(clientId && clientId !== provider.clientId ? { clientId } : {}),
+    ...(d.clientSecret ? { clientSecret: d.clientSecret } : d.removeSecret ? { clientSecret: null } : {}),
+    ...(provider.kind === 'oidc' && scopes !== (provider.scopes ?? []).join(' ') ? { scopes } : {}),
+    ...(provider.kind === 'oidc' && d.trustEmail !== !!provider.trustEmail ? { trustEmail: d.trustEmail } : {}),
+  };
+}
 type ChangeView = (typeof changeViews)[number];
 const isChangeView = (view: View): view is ChangeView => (changeViews as readonly View[]).includes(view);
 
@@ -247,6 +301,10 @@ export class MadauthLogin extends LitElement {
     apiKeyScopes: { state: true },
     chosenScopes: { state: true },
     newApiKey: { state: true },
+    adminProviders: { state: true },
+    adminSettings: { state: true },
+    providerForm: { state: true },
+    removal: { state: true },
   };
 
   /** Title shown at the top of the dialog. Default: "Sign in" in the dialog's language. */
@@ -326,6 +384,15 @@ export class MadauthLogin extends LitElement {
   private chosenScopes = 0;
   /** A key just made, shown this once. */
   private newApiKey?: string;
+  /** The server's sign-in providers, in the admin views; undefined while they load. */
+  private adminProviders?: ProviderInfo[];
+  /** The start of a new provider's callback URL, `<callbackBase><id>/callback`; undefined from servers of the first 0.7 betas. */
+  private callbackBase?: string;
+  /** The server's sign-in settings, for each provider's state; undefined while they load. */
+  private adminSettings?: Settings['methods'];
+  private providerForm?: ProviderForm;
+  /** The provider to remove, with how many users sign in with it alone. */
+  private removal?: { provider: ProviderInfo; usersWithoutSignIn: number };
   /** The view that changes the user's methods and asked them to sign in again: the dialog goes back to it after. */
   private reauthThen?: ChangeView;
   /** The passkey's setup or the app's was started from the methods view: it goes back there after. */
@@ -480,6 +547,23 @@ export class MadauthLogin extends LitElement {
   }
 
   /**
+   * Opens the dialog on the server's sign-in providers, for admins: `listed` is what `Madauth.showAdminDialog()`
+   * read to find out whether the user may see them. Usually called through it, which resolves when the dialog is closed.
+   */
+  async openAdmin(listed: { providers: ProviderInfo[]; callbackBase?: string }): Promise<void> {
+    this.setupForSignIn = false;
+    this.view = 'admin-providers';
+    this.adminProviders = listed.providers;
+    this.callbackBase = listed.callbackBase;
+    const ready = await this.show();
+    if (!ready.isSuccess) {
+      this.showError(ready.error);
+      return;
+    }
+    await this.loadAdmin();
+  }
+
+  /**
    * Opens the dialog on the signed-in user's API keys. Usually called through
    * `Madauth.showManageApiKeysDialog()`, which resolves when the dialog is closed.
    */
@@ -599,6 +683,11 @@ export class MadauthLogin extends LitElement {
     this.apiKeyScopes = undefined;
     this.chosenScopes = 0;
     this.newApiKey = undefined;
+    this.adminProviders = undefined;
+    this.callbackBase = undefined;
+    this.adminSettings = undefined;
+    this.providerForm = undefined;
+    this.removal = undefined;
     this.reauthThen = undefined;
     this.fromMethods = false;
     this.conditionalFailed = false;
@@ -867,6 +956,14 @@ export class MadauthLogin extends LitElement {
         return s.methodsView.heading;
       case 'add-password':
         return s.addPassword.heading;
+      case 'admin-providers':
+        return s.adminView.heading;
+      case 'admin-add':
+        return s.adminView.add;
+      case 'admin-provider':
+        return this.providerForm?.provider?.name ?? s.adminView.addHeading(s.adminView.kinds[this.providerForm?.kind ?? 'oidc']);
+      case 'admin-remove':
+        return s.adminView.removeHeading(this.removal?.provider.name ?? '');
       case 'api-keys':
         return s.apiKeysView.heading;
       case 'api-key-create':
@@ -915,6 +1012,9 @@ export class MadauthLogin extends LitElement {
     }
     if (error.code === 'email_unverified' && error.method === 'password') return s.confirmEmailFirst;
     if (error.code === 'reauth_required' && this.view === 'api-key-create') return s.apiKeyCreate.reauth;
+    if (error.code === 'reauth_required' && this.view.startsWith('admin-')) return s.adminView.reauth;
+    // What the server found wrong with a provider or the settings, for the admin: its message says what to change.
+    if ((error.code === 'invalid_provider' || error.code === 'invalid_settings') && this.view.startsWith('admin-')) return error.message;
     if (error.code === 'invalid_credentials' && error.method === 'authenticator') return s.authenticatorInvalid;
     if (error.code === 'other_method' && error.methods?.length) {
       // The provider that was refused, when a provider's sign-in got the error.
@@ -1016,6 +1116,14 @@ export class MadauthLogin extends LitElement {
         return this.renderApiKeyCreate();
       case 'api-key-created':
         return this.renderApiKeyCreated();
+      case 'admin-providers':
+        return this.renderAdminProviders();
+      case 'admin-add':
+        return this.renderAdminAdd();
+      case 'admin-provider':
+        return this.renderProviderForm();
+      case 'admin-remove':
+        return this.renderAdminRemove();
       default:
         return this.renderSignInView();
     }
@@ -2052,18 +2160,363 @@ export class MadauthLogin extends LitElement {
   }
 
   private async copyApiKey(): Promise<void> {
-    const copied = await navigator.clipboard?.writeText(this.newApiKey ?? '').then(
+    await this.copy(this.newApiKey ?? '', '.api-key', (strings) => strings.apiKeyCreated);
+  }
+
+  /**
+   * Copies `text`, and says so. Where the page may not use the clipboard (e.g. in a frame), the element
+   * `selector` that shows it is selected for the user to copy.
+   */
+  private async copy(text: string, selector: string, texts: (strings: Strings) => { copied: string; copyByHand: string }): Promise<void> {
+    const copied = await navigator.clipboard?.writeText(text).then(
       () => true,
       () => false,
     );
     if (copied) {
-      this.notice = (strings) => strings.apiKeyCreated.copied;
+      this.notice = (strings) => texts(strings).copied;
       return;
     }
-    // The page may not use the clipboard (e.g. in a frame): the key is selected for the user to copy.
-    const key = this.renderRoot.querySelector('.api-key');
-    if (key) getSelection()?.selectAllChildren(key);
-    this.notice = (strings) => strings.apiKeyCreated.copyByHand;
+    const shown = this.renderRoot.querySelector(selector);
+    if (shown) getSelection()?.selectAllChildren(shown);
+    this.notice = (strings) => texts(strings).copyByHand;
+  }
+
+  // --- The admin dialog: the server's sign-in providers ---
+
+  /** Loads the providers and the settings, for each provider's state. */
+  private async loadAdmin(): Promise<void> {
+    const [listed, settings] = await Promise.all([Madauth.admin.listProviders(), Madauth.admin.getSettings()]);
+    if (!listed.isSuccess) {
+      this.showError(listed.error);
+      return;
+    }
+    if (!settings.isSuccess) {
+      this.showError(settings.error);
+      return;
+    }
+    this.adminProviders = listed.providers;
+    this.callbackBase = listed.callbackBase ?? this.callbackBase;
+    this.adminSettings = settings.methods;
+  }
+
+  /** To the list of providers, loaded anew, with what changed as the notice. */
+  private backToAdmin(notice?: 'added' | 'saved' | 'removed'): void {
+    this.providerForm = undefined;
+    this.removal = undefined;
+    this.goTo('admin-providers');
+    if (notice) this.notice = (strings) => strings.adminView[notice];
+    void this.loadAdmin();
+  }
+
+  private renderAdminProviders() {
+    const v = this.strings.adminView;
+    const list = this.adminProviders;
+    return html`
+      <p class="lead">${v.lead}</p>
+      ${!list
+        ? html`<p class="hint" role="status">${v.loading}</p>`
+        : list.length
+          ? html`<ul class="providers">${list.map((provider) => html`<li>${this.providerRow(provider)}</li>`)}</ul>`
+          : html`<p class="hint">${v.empty}</p>`}
+      ${list
+        ? html`<ul>
+            <li>
+              <button part="method" class="row" type="button" data-action="add-provider" ?disabled=${this.busy} @click=${() => this.goTo('admin-add')}>
+                <span class="label">${v.add}</span>
+                ${chevronIcon}
+              </button>
+            </li>
+          </ul>`
+        : null}
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="done" @click=${() => this.dialog.close()}>${v.done}</button>
+      </p>
+    `;
+  }
+
+  /** A provider of the list: its name, kind, id and state; it opens its form. */
+  private providerRow(provider: ProviderInfo) {
+    const v = this.strings.adminView;
+    const setting = this.adminSettings?.[provider.id];
+    const state = setting ? (setting.enabled ? v.on(v.policies[setting.secondFactor]) : v.off) : undefined;
+    const details = [provider.kind === 'oidc' ? `${v.kinds.oidc} · ${provider.id}` : v.kinds[provider.kind], state].filter(Boolean);
+    return html`
+      <button part="method" class="row" type="button" data-provider=${provider.id} ?disabled=${this.busy} @click=${() => this.editProvider(provider)}>
+        <span class="method-text">
+          <span class="label">${provider.name}</span>
+          <span class="hint">${details.join(' · ')}</span>
+        </span>
+        ${chevronIcon}
+      </button>
+    `;
+  }
+
+  /** Which kind of provider to add: Google and GitHub once each, OpenID Connect providers as many as needed. */
+  private renderAdminAdd() {
+    const s = this.strings;
+    const v = s.adminView;
+    const has = (kind: ProviderKind) => !!this.adminProviders?.some((provider) => provider.id === kind);
+    const kinds = (['google', 'github', 'oidc'] as const).filter((kind) => kind === 'oidc' || !has(kind));
+    return html`
+      <p class="lead">${v.chooseKind}</p>
+      <ul>
+        ${kinds.map(
+          (kind) => html`
+            <li>
+              <button part="method" class="row" type="button" data-kind=${kind} @click=${() => this.newProvider(kind)}>
+                <span class="method-text">
+                  <span class="label">${v.kinds[kind]}</span>
+                  <span class="hint">${v.kindHints[kind]}</span>
+                </span>
+                ${chevronIcon}
+              </button>
+            </li>
+          `,
+        )}
+      </ul>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="back-to-providers" @click=${() => this.backToAdmin()}>${s.cancel}</button>
+      </p>
+    `;
+  }
+
+  private newProvider(kind: ProviderKind): void {
+    this.providerForm = { kind, draft: EMPTY_DRAFT };
+    this.goTo('admin-provider');
+  }
+
+  private editProvider(provider: ProviderInfo): void {
+    const setting = this.adminSettings?.[provider.id];
+    const on = !!setting?.enabled;
+    this.providerForm = {
+      kind: provider.kind,
+      provider,
+      draft: {
+        ...EMPTY_DRAFT,
+        id: provider.id,
+        name: provider.name,
+        issuer: provider.issuer ?? '',
+        clientId: provider.clientId,
+        scopes: (provider.scopes ?? []).join(' '),
+        trustEmail: !!provider.trustEmail,
+        on,
+        secondFactor: on ? setting!.secondFactor : 'none',
+      },
+    };
+    this.goTo('admin-provider');
+  }
+
+  /**
+   * A provider's form: for a new one, what its kind needs (an OpenID Connect provider's id and issuer, which
+   * can't change later) and the callback URL to register; for one being changed, what can change. Both with
+   * whether it is on, and its policy for a second factor.
+   */
+  private renderProviderForm() {
+    const form = this.providerForm;
+    if (!form) return nothing;
+    const s = this.strings;
+    const v = s.adminView;
+    const d = form.draft;
+    const editing = !!form.provider;
+    const oidc = form.kind === 'oidc';
+    const id = oidc ? d.id.trim() : form.kind;
+    const callbackUrl = form.provider?.callbackUrl ?? (this.callbackBase ? `${this.callbackBase}${id || '<id>'}/callback` : undefined);
+    // A new GitHub or OpenID Connect provider needs its secret: they only have the server's code exchange.
+    const secretRequired = !editing && form.kind !== 'google';
+    const secretHint = editing ? v.secretKept : form.kind === 'google' ? v.googleSecret : undefined;
+    return html`
+      <form part="form" class="provider-form" @input=${this.onProviderInput} @change=${this.onProviderInput} @submit=${this.onProviderSave}>
+        ${oidc && !editing
+          ? html`<div class="field">
+              <label for="provider-id">${v.id}</label>
+              <input part="input" id="provider-id" name="id" type="text" autocomplete="off" spellcheck="false" required
+                pattern="[a-z][a-z0-9\-]{1,31}" maxlength="32" .value=${d.id} />
+              <p class="hint">${v.idHint}</p>
+            </div>`
+          : null}
+        ${callbackUrl
+          ? html`<div class="field">
+              <span class="field-label">${v.callbackUrl}</span>
+              <code part="callback-url" class="api-key callback-url">${callbackUrl}</code>
+              <p class="hint">
+                ${v.callbackHint}
+                <button class="link" part="link" type="button" data-action="copy-callback-url" ?disabled=${oidc && !id}
+                  @click=${() => this.copy(callbackUrl, '.callback-url', (strings) => strings.adminView)}>${v.copy}</button>
+              </p>
+            </div>`
+          : null}
+        <div class="field">
+          <label for="provider-name">${v.name} ${oidc ? null : html`<span class="optional">${s.optional}</span>`}</label>
+          <input part="input" id="provider-name" name="name" type="text" autocomplete="off" maxlength="64" ?required=${oidc}
+            placeholder=${oidc ? '' : v.kinds[form.kind]} .value=${d.name} />
+          <p class="hint">${v.nameHint}</p>
+        </div>
+        ${oidc
+          ? editing
+            ? html`<div class="field">
+                <span class="field-label">${v.issuer}</span>
+                <code class="api-key issuer">${d.issuer}</code>
+              </div>`
+            : html`<div class="field">
+                <label for="provider-issuer">${v.issuer}</label>
+                <input part="input" id="provider-issuer" name="issuer" type="url" autocomplete="off" spellcheck="false" required .value=${d.issuer} />
+                <p class="hint">${v.issuerHint}</p>
+              </div>`
+          : null}
+        <div class="field">
+          <label for="provider-client-id">${v.clientId}</label>
+          <input part="input" id="provider-client-id" name="clientId" type="text" autocomplete="off" spellcheck="false" required .value=${d.clientId} />
+        </div>
+        <div class="field">
+          <label for="provider-client-secret">${v.clientSecret} ${secretRequired ? null : html`<span class="optional">${s.optional}</span>`}</label>
+          <input part="input" id="provider-client-secret" name="clientSecret" type="password" autocomplete="off" spellcheck="false"
+            ?required=${secretRequired} .value=${d.clientSecret} />
+          ${secretHint ? html`<p class="hint">${secretHint}</p>` : null}
+        </div>
+        ${editing && form.kind === 'google' && form.provider!.hasClientSecret
+          ? html`<label class="scope"><input type="checkbox" name="removeSecret" .checked=${d.removeSecret} /><span>${v.removeSecret}</span></label>`
+          : null}
+        ${oidc
+          ? html`<div class="field">
+                <label for="provider-scopes">${v.scopes} <span class="optional">${s.optional}</span></label>
+                <input part="input" id="provider-scopes" name="scopes" type="text" autocomplete="off" spellcheck="false" .value=${d.scopes} />
+                <p class="hint">${v.scopesHint}</p>
+              </div>
+              <label class="scope">
+                <input type="checkbox" name="trustEmail" .checked=${d.trustEmail} />
+                <span class="method-text"><span>${v.trustEmail}</span><span class="hint">${v.trustEmailHint}</span></span>
+              </label>`
+          : null}
+        <label class="scope"><input type="checkbox" name="on" .checked=${d.on} /><span>${v.switchOn}</span></label>
+        ${d.on
+          ? html`<div class="field">
+              <label for="provider-second-factor">${v.secondFactor}</label>
+              <select part="input" id="provider-second-factor" name="secondFactor" .value=${d.secondFactor}>
+                ${(['none', 'optional', 'required'] as const).map((policy) => html`<option value=${policy} ?selected=${policy === d.secondFactor}>${v.policies[policy]}</option>`)}
+              </select>
+            </div>`
+          : null}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${editing ? v.save : v.addHeading(oidc ? d.name.trim() || v.kinds.oidc : v.kinds[form.kind])}</span>
+        </button>
+      </form>
+      <p class="links">
+        ${editing
+          ? html`<button class="link" part="link" type="button" data-action="remove-provider" ?disabled=${this.busy}
+              @click=${() => this.startRemoval(form.provider!)}>${v.remove}</button>`
+          : null}
+        <button class="link" part="link" type="button" data-action="back-to-providers" @click=${() => this.backToAdmin()}>${s.cancel}</button>
+      </p>
+    `;
+  }
+
+  /** Keeps what is typed into the provider form, so the callback URL follows the id, and a sign-in again doesn't lose it. */
+  private onProviderInput(e: Event): void {
+    const form = this.providerForm;
+    if (!form) return;
+    const data = new FormData(e.currentTarget as HTMLFormElement);
+    const text = (name: keyof ProviderDraft) => (data.has(name) ? String(data.get(name)) : (form.draft[name] as string));
+    this.providerForm = {
+      ...form,
+      draft: {
+        id: text('id'),
+        name: text('name'),
+        issuer: text('issuer'),
+        clientId: text('clientId'),
+        clientSecret: text('clientSecret'),
+        removeSecret: data.has('removeSecret'),
+        scopes: text('scopes'),
+        trustEmail: data.has('trustEmail'),
+        on: data.has('on'),
+        secondFactor: text('secondFactor') as SecondFactorPolicy,
+      },
+    };
+  }
+
+  private async onProviderSave(e: Event): Promise<void> {
+    e.preventDefault();
+    this.onProviderInput(e);
+    const form = this.providerForm;
+    if (!form) return;
+    const result = await this.run(() => this.saveProvider(form));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      return;
+    }
+    this.backToAdmin(form.provider ? 'saved' : 'added');
+  }
+
+  /** Adds or changes the provider, then switches it on or off as the form says. */
+  private async saveProvider(form: ProviderForm): Promise<Result> {
+    const saved = form.provider ? await this.changeProvider(form.provider, form.draft) : await Madauth.admin.addProvider(newProviderOf(form.kind, form.draft));
+    if (!saved.isSuccess) return saved;
+    // From now on the form changes it, also when switching it on fails below; the secret is sent once.
+    this.providerForm = { ...form, provider: saved.provider, draft: { ...form.draft, clientSecret: '', removeSecret: false } };
+    return this.switchProvider(saved.provider.id, form.draft);
+  }
+
+  /** Changes what the form changed of `provider`, if anything. */
+  private async changeProvider(provider: ProviderInfo, draft: ProviderDraft): Promise<Result<{ provider: ProviderInfo }>> {
+    const changes = changesOf(provider, draft);
+    return Object.keys(changes).length ? Madauth.admin.updateProvider(provider.id, changes) : { isSuccess: true, provider };
+  }
+
+  /**
+   * Switches the provider on with the form's policy, or off. The settings list every method that is on, so they
+   * are read right before, and sent back with only this one changed.
+   */
+  private async switchProvider(id: string, draft: ProviderDraft): Promise<Result> {
+    const settings = await Madauth.admin.getSettings();
+    if (!settings.isSuccess) return settings;
+    const current = settings.methods[id];
+    const unchanged = !!current?.enabled === draft.on && (!draft.on || current?.secondFactor === draft.secondFactor);
+    if (unchanged) return { isSuccess: true };
+    const others = Object.entries(settings.methods)
+      .filter(([method, setting]) => method !== id && setting.enabled)
+      .map(([method, setting]) => [method, { allowAsSignInMethod: setting.allowAsSignInMethod, secondFactor: setting.secondFactor }] as const);
+    const methods = Object.fromEntries(draft.on ? [...others, [id, { allowAsSignInMethod: true, secondFactor: draft.secondFactor }] as const] : others);
+    const set = await Madauth.admin.setSettings({ methods });
+    return set.isSuccess ? { isSuccess: true } : set;
+  }
+
+  /** Counts the users who sign in with the provider alone, for the confirmation of its removal. */
+  private async startRemoval(provider: ProviderInfo): Promise<void> {
+    const counted = await this.run(() => Madauth.admin.removeProvider(provider.id, { dryRun: true }));
+    if (!counted) return;
+    if (!counted.isSuccess) {
+      this.showError(counted.error);
+      return;
+    }
+    this.removal = { provider, usersWithoutSignIn: counted.usersWithoutSignIn };
+    this.goTo('admin-remove');
+  }
+
+  private renderAdminRemove() {
+    const removal = this.removal;
+    if (!removal) return nothing;
+    const s = this.strings;
+    const v = s.adminView;
+    return html`
+      <p class="lead" data-stranded=${removal.usersWithoutSignIn}>${v.stranded(removal.usersWithoutSignIn)}</p>
+      <p class="hint">${v.removeLead}</p>
+      <button part="method" class="submit" type="button" data-action="confirm-remove" ?disabled=${this.busy} @click=${() => this.onRemoveProvider(removal.provider)}>
+        <span class="label">${v.remove}</span>
+      </button>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="back-to-provider" @click=${() => this.editProvider(removal.provider)}>${s.cancel}</button>
+      </p>
+    `;
+  }
+
+  private async onRemoveProvider(provider: ProviderInfo): Promise<void> {
+    const result = await this.run(() => Madauth.admin.removeProvider(provider.id));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      return;
+    }
+    this.backToAdmin('removed');
   }
 
   // --- The e-mail link ---
@@ -2472,7 +2925,8 @@ export class MadauthLogin extends LitElement {
       gap: 6px;
     }
 
-    label {
+    label,
+    .field-label {
       font-size: 0.8125rem;
       font-weight: 500;
       line-height: 18px;
