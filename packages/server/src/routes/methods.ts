@@ -10,6 +10,7 @@ import {
   signInPredicate,
   type MethodWithSecondFactor,
 } from '../settings.js';
+import { nameOfMethod } from '../providers.js';
 import { factorsAmong, isProviderAccount, lastWayIn, methodOf, toMadauthUser, type StoredAccount } from '../users.js';
 import { body, error, noSession, recentUser } from './helpers.js';
 
@@ -58,9 +59,7 @@ export async function removalRefused(c: Context, ctx: AppContext, accounts: Stor
   const stillUsed = (method: string) => !isFactor(method) || after.some((a) => methodOf(a) === method);
   const lacking = requiringSecondFactor(configured, methods).filter((method) => stillUsed(method) && !left.some((f) => f !== method));
   if (lacking.length) {
-    // An OpenID Connect provider's method is its id: it is named as its admin named it.
-    const nameOf = (method: string) => POLICY_NAMES[method as MethodWithSecondFactor] ?? providers.find((provider) => provider.id === method)?.name ?? method;
-    const names = lacking.map(nameOf).join(' and ');
+    const names = lacking.map((method) => nameOfMethod(POLICY_NAMES, providers, method)).join(' and ');
     return error(c, 403, 'required_by_policy', `Signing in with ${names} requires a second factor, so ${what} can't be removed. Set up another second factor first, or delete your account.`);
   }
   return lastWayIn(accounts, signInPredicate(configured, methods), (a) => a.id === account.id) ? onlyMethod(c) : null;

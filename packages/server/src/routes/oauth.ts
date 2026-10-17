@@ -6,6 +6,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { base64url } from 'jose';
 import type { AppContext } from '../app.js';
 import { normalizeEmail } from '../password.js';
+import { nameOfMethod } from '../providers.js';
 import { signInPredicate, type SecondFactor, type SignInMethod } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
 import { toMadauthUser, type StoredUser } from '../users.js';
@@ -206,9 +207,7 @@ export async function resolveProviderUser(
       if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) {
         const now = await ctx.methods();
         const methods = await users.signInMethods(existing.id, signInPredicate(now.configured, now.settings));
-        // An OpenID Connect provider's method is its id, named as its admin named it.
-        const nameOf = (method: string) => METHOD_NAMES[method as SignInMethod] ?? now.providers.find((p) => p.id === method)?.name ?? method;
-        const how = methods.map(nameOf).join(' or ');
+        const how = methods.map((method) => nameOfMethod(METHOD_NAMES, now.providers, method)).join(' or ');
         return {
           ok: false,
           error: 'other_method',

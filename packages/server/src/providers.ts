@@ -162,6 +162,13 @@ export function parseProviderFields(kind: ProviderKind, data: Record<string, unk
   };
 }
 
+/**
+ * How a message names a method: by `names` (madAuth's own methods, each message has its wording), else an
+ * OpenID Connect provider's method, its id, by the name its admin gave it.
+ */
+export const nameOfMethod = (names: Partial<Record<string, string>>, providers: StoredProvider[], method: string): string =>
+  names[method] ?? providers.find((provider) => provider.id === method)?.name ?? method;
+
 /** The provider with the id `id` among `providers` (e.g. a request's, see `MethodsNow`), or undefined; a built-in kind's id is its kind. */
 export const providerOf = (from: { providers: StoredProvider[] }, id: string): StoredProvider | undefined =>
   from.providers.find((provider) => provider.id === id);

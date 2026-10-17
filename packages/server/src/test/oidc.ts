@@ -16,7 +16,8 @@ export interface FakeOidcOptions {
 /** What the next code exchange answers: the ID token's claims (`sub` at least) and what userinfo says. */
 export interface FakeSignIn {
   idToken: JWTPayload;
-  userinfo?: Record<string, unknown>;
+  /** A string is answered as it is, as a signed userinfo answer (`application/jwt`) would be. */
+  userinfo?: Record<string, unknown> | string;
   /** The ID token's audience; default: the client. */
   audience?: string | string[];
 }
@@ -28,7 +29,7 @@ export async function fakeOidcProvider(options: FakeOidcOptions = {}) {
   const { privateKey, publicKey } = await generateKeyPair('ES256');
   const jwk = { ...(await exportJWK(publicKey)), kid: 'key-1', alg: 'ES256', use: 'sig' };
   const codes = new Map<string, FakeSignIn & { nonce: string; redirectUri: string }>();
-  const tokens = new Map<string, Record<string, unknown>>();
+  const tokens = new Map<string, Record<string, unknown> | string>();
   const calls: { url: string; body?: string; authorization?: string | null }[] = [];
   let next = 1;
 
@@ -80,6 +81,7 @@ export async function fakeOidcProvider(options: FakeOidcOptions = {}) {
     }
     if (url === `${issuer}/userinfo` && options.userinfo !== false) {
       const answer = tokens.get(headers.get('authorization')?.replace(/^Bearer /, '') ?? '');
+      if (typeof answer === 'string') return new Response(answer, { headers: { 'Content-Type': 'application/jwt' } });
       return answer ? json(answer) : json({ error: 'invalid_token' }, 401);
     }
     return new Response('not found', { status: 404 });

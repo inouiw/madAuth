@@ -249,6 +249,9 @@ async function handleSignInLink(ctx: ProviderContext, providers: Map<LoginMethod
   else ctx.signInFailed(res.error);
 }
 
+/** The form of an OpenID Connect provider's id, as the server allows it. */
+const OIDC_PROVIDER_ID = /^[a-z][a-z0-9-]{1,31}$/;
+
 /**
  * Back from a redirect sign-in (Google's code flow, GitHub, an OpenID Connect provider): with its error, or
  * with the first step done and a second factor or its setup next. The server names the method next to
@@ -261,8 +264,9 @@ function handleRedirectReturn(ctx: ProviderContext): LoginMethodId | undefined {
   const next = takeHashParam(REDIRECT_NEXT_PARAM);
   const named = (takeHashParam(REDIRECT_FACTORS_PARAM) ?? '').split(',').filter(isSecondFactor);
   const via = takeHashParam(REDIRECT_METHOD_PARAM);
-  // Only the providers come back this way: a method the server has no provider for counts as Google's.
-  const isProvider = (id: string | null): id is string => id === 'google' || id === 'github' || !!ctx.config.providers?.some((p) => p.id === id);
+  // Only the providers come back this way, also one switched off or removed meanwhile (an OpenID Connect
+  // provider's id is none of madAuth's own methods); anything else counts as Google's.
+  const isProvider = (id: string | null): id is string => id === 'google' || id === 'github' || (!!id && OIDC_PROVIDER_ID.test(id) && !isBuiltInMethodId(id) && id !== 'sms');
   if (isProvider(linked)) return linked;
   const method: LoginMethodId = isProvider(via) ? via : 'google';
   if (error) {

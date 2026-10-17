@@ -131,7 +131,7 @@ export function keysCache(fetchFn: typeof fetch = fetch): (jwksUri: string) => J
 /**
  * The claims of an ID token, checked as OpenID Connect Core (section 3.1.3.7) asks: signed with one of the
  * provider's published keys, by the issuer, for this client (and, with several audiences, authorized for it by
- * `azp`), not expired, with the sign-in's nonce and a `sub`. Null if anything doesn't hold.
+ * `azp`, which must name it whenever it is there), not expired, with the sign-in's nonce and a `sub`. Null if anything doesn't hold.
  */
 export async function verifyIdToken(
   idToken: string,
@@ -141,7 +141,8 @@ export async function verifyIdToken(
   if (!verified) return null;
   const { payload } = verified;
   const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-  if (audiences.length > 1 && payload.azp !== expected.clientId) return null;
+  // With several audiences `azp` must name this client, and when present it must anyway (section 3.1.3.7).
+  if ((audiences.length > 1 || payload.azp !== undefined) && payload.azp !== expected.clientId) return null;
   if (payload.nonce !== expected.nonce || typeof payload.sub !== 'string' || !payload.sub) return null;
   return payload;
 }
@@ -173,6 +174,9 @@ export async function addressOf(
     signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
   }).catch(() => null);
   const userinfo = res?.ok ? ((await res.json().catch(() => null)) as Record<string, unknown> | null) : null;
+  if (res?.ok && !userinfo) {
+    console.error(`[madauth] The userinfo endpoint of ${from.endpoints.issuer} answered no JSON (a signed userinfo answer is not supported): switch its signing off, or have the address in the ID token.`);
+  }
   // OpenID Connect Core, section 5.3.2: the answer must be about the user the ID token is about.
   if (!userinfo || userinfo.sub !== claims.sub) return { error: 'verification_failed' };
   return read(userinfo) ?? { error: 'email_unverified' };

@@ -94,6 +94,10 @@ describe('OpenID Connect providers', () => {
       error: { code: 'email_unverified', message: 'Your GitLab account’s email address is not verified.' },
     });
 
+    // Also a provider the server no longer offers, switched off while the user was at it: named by its id, not as Google.
+    history.replaceState(null, '', '/page#madauth_error=method_disabled&madauth_method=keycloak');
+    expect(await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] })).toMatchObject({ error: { message: 'keycloak sign-in is switched off at the moment.' } });
+
     history.replaceState(null, '', '/page#madauth_linked=gitlab');
     expect(await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] })).toEqual({ isSuccess: true, leftOut: [], linked: 'gitlab' });
     expect(location.href).toBe('https://app.example.com/page');

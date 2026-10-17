@@ -173,6 +173,10 @@ describe('signing in with an OpenID Connect provider', () => {
     const made = await withGitLab();
     expect((await signIn(made, { idToken: { sub: 'gl-2' }, userinfo: { sub: 'gl-2', email: 'mia@example.com', email_verified: true } })).location).toBe(`${APP}/page`);
     expect((await signIn(made, { idToken: { sub: 'gl-3' }, userinfo: { sub: 'someone-else', email: 'x@example.com', email_verified: true } })).location).toBe(`${APP}/page#madauth_error=verification_failed&madauth_method=gitlab`);
+    // A signed userinfo answer (a JWT, not JSON) fails, and the log says why.
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect((await signIn(made, { idToken: { sub: 'gl-3' }, userinfo: 'eyJ.signed.jwt' })).location).toBe(`${APP}/page#madauth_error=verification_failed&madauth_method=gitlab`);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('answered no JSON'));
     expect((await signIn(made, { idToken: { sub: 'gl-4', email: 'eve@example.com', email_verified: false } })).location).toBe(`${APP}/page#madauth_error=email_unverified&madauth_method=gitlab`);
     expect((await signIn(made, { idToken: { sub: 'gl-5', email: 'cognito@example.com', email_verified: 'true' } })).location).toBe(`${APP}/page`);
 
@@ -188,6 +192,8 @@ describe('signing in with an OpenID Connect provider', () => {
     expect((await signIn(made, { idToken: claims, audience: 'another-client' })).location).toBe(refused);
     expect((await signIn(made, { idToken: claims, audience: ['madauth-client', 'another-client'] })).location).toBe(refused);
     expect((await signIn(made, { idToken: { ...claims, azp: 'madauth-client' }, audience: ['madauth-client', 'another-client'] })).location).toBe(`${APP}/page`);
+    // azp, when there, names this client also with one audience.
+    expect((await signIn(made, { idToken: { ...claims, azp: 'another-client' } })).location).toBe(refused);
   });
 
   it('OP8: never joins a user who signs in another way, and is off, missing or not OpenID Connect as the settings say', async () => {
