@@ -748,11 +748,12 @@ export function fakeServer(): FakeServer {
         const data = body as unknown as { id?: string; kind?: 'google' | 'github'; name?: string; clientId?: string; clientSecret?: string | null };
         const info = (kind: 'google' | 'github') => ({ id: kind, kind, name: server.providerNames[kind], clientId: `${kind}-client`, hasClientSecret: true, callbackUrl: `${SERVER}/auth/providers/${kind}/callback`, createdAt: 1, updatedAt: 1 });
         const action = url.pathname.split('/').at(-1);
-        if (action === 'list') return json({ providers: (['google', 'github'] as const).filter((kind) => server[kind]).map(info) });
+        if (action === 'list') return json({ providers: (['google', 'github'] as const).filter((kind) => server[kind]).map(info), callbackBase: `${SERVER}/auth/providers/` });
         const kind = (action === 'add' ? data.kind : data.id) as 'google' | 'github';
         if (kind !== 'google' && kind !== 'github') return json({ error: 'invalid_provider', message: 'kind' }, 400);
         if (action === 'add' && server[kind]) return json({ error: 'provider_exists', message: 'exists' }, 409);
         if (action !== 'add' && !server[kind]) return json({ error: 'provider_not_found', message: 'none' }, 404);
+        if (action === 'remove' && (body as { dryRun?: boolean }).dryRun) return json({ provider: info(kind), usersWithoutSignIn: 0, dryRun: true });
         if (data.name) server.providerNames[kind] = data.name;
         server[kind] = action !== 'remove';
         return json(action === 'remove' ? { provider: info(kind), usersWithoutSignIn: 0 } : { provider: info(kind) });

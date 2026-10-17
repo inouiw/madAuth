@@ -179,8 +179,12 @@ export interface AdminApi {
    * it may be outdated by the time it is shown. Fails with `forbidden`, `invalid_email` or `invalid_search`.
    */
   searchUsers(search?: UserSearch): Promise<Result<{ users: FoundUser[]; cursor?: string }>>;
-  /** The sign-in providers, without their secrets. Fails with `forbidden`. */
-  listProviders(): Promise<Result<{ providers: ProviderInfo[] }>>;
+  /**
+   * The sign-in providers, without their secrets. `callbackBase` gives a new provider's callback URL before it is
+   * added, `<callbackBase><id>/callback`, to register at the provider (absent from servers of the first 0.7
+   * betas). Fails with `forbidden`.
+   */
+  listProviders(): Promise<Result<{ providers: ProviderInfo[]; callbackBase?: string }>>;
   /**
    * Adds a sign-in provider: Google (its client ID; a client secret for the redirect sign-in), GitHub (its client
    * ID and secret), or an OpenID Connect provider (an id of its own, e.g. `gitlab`, which becomes its method's;
@@ -197,10 +201,11 @@ export interface AdminApi {
   updateProvider(id: string, changes: ProviderChanges): Promise<Result<{ provider: ProviderInfo }>>;
   /**
    * Removes a provider; needs a recent sign-in. Its users' accounts stay, so adding it again brings their sign-ins
-   * back; `usersWithoutSignIn` says how many users signed in with nothing else. Fails with `forbidden`,
+   * back; `usersWithoutSignIn` says how many users signed in with nothing else. With `dryRun: true` it only
+   * counts them, to confirm the removal with, and needs no recent sign-in. Fails with `forbidden`,
    * `reauth_required` or `provider_not_found`.
    */
-  removeProvider(id: string): Promise<Result<{ provider: ProviderInfo; usersWithoutSignIn: number }>>;
+  removeProvider(id: string, options?: { dryRun?: boolean }): Promise<Result<{ provider: ProviderInfo; usersWithoutSignIn: number }>>;
 }
 
 export function createAdminApi(core: Core): AdminApi {
@@ -223,10 +228,14 @@ export function createAdminApi(core: Core): AdminApi {
     revokeApiKey: (email, id) => call('api-keys/revoke', { email, id }, (data: { userId: string }) => ({ userId: data.userId })),
     searchUsers: (search = {}) =>
       call('users/search', { ...search }, (data: { users: FoundUser[]; cursor?: string }) => ({ users: data.users, ...(data.cursor ? { cursor: data.cursor } : {}) })),
-    listProviders: () => call('providers/list', {}, (data: { providers: ProviderInfo[] }) => ({ providers: data.providers })),
+    listProviders: () =>
+      call('providers/list', {}, (data: { providers: ProviderInfo[]; callbackBase?: string }) => ({
+        providers: data.providers,
+        ...(typeof data.callbackBase === 'string' ? { callbackBase: data.callbackBase } : {}),
+      })),
     addProvider: (provider) => call('providers/add', { ...provider }, (data: { provider: ProviderInfo }) => ({ provider: data.provider })),
     updateProvider: (id, changes) => call('providers/update', { id, ...changes }, (data: { provider: ProviderInfo }) => ({ provider: data.provider })),
-    removeProvider: (id) =>
-      call('providers/remove', { id }, (data: { provider: ProviderInfo; usersWithoutSignIn: number }) => ({ provider: data.provider, usersWithoutSignIn: data.usersWithoutSignIn })),
+    removeProvider: (id, options = {}) =>
+      call('providers/remove', { id, ...(options.dryRun ? { dryRun: true } : {}) }, (data: { provider: ProviderInfo; usersWithoutSignIn: number }) => ({ provider: data.provider, usersWithoutSignIn: data.usersWithoutSignIn })),
   };
 }

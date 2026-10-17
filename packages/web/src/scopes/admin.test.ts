@@ -147,8 +147,12 @@ describe('Madauth.admin', () => {
     expect(await Madauth.admin.addProvider({ kind: 'github', clientId: 'x' })).toMatchObject({ isSuccess: false, error: { code: 'provider_exists' } });
     expect(await Madauth.admin.updateProvider('github', { name: 'GitHub Enterprise' })).toMatchObject({ isSuccess: true, provider: { name: 'GitHub Enterprise' } });
     expect(server.requests.at(-1)!.body).toEqual({ id: 'github', name: 'GitHub Enterprise' });
-    expect((await Madauth.admin.listProviders()).isSuccess && (await Madauth.admin.listProviders())).toMatchObject({ providers: [{ id: 'google' }, { id: 'github' }] });
+    expect(await Madauth.admin.listProviders()).toMatchObject({ isSuccess: true, providers: [{ id: 'google' }, { id: 'github' }], callbackBase: `${SERVER}/auth/providers/` });
+    // A dry run counts, and leaves the provider.
+    expect(await Madauth.admin.removeProvider('github', { dryRun: true })).toMatchObject({ isSuccess: true, usersWithoutSignIn: 0 });
+    expect(server.requests.at(-1)!.body).toEqual({ id: 'github', dryRun: true });
     expect(await Madauth.admin.removeProvider('github')).toMatchObject({ isSuccess: true, usersWithoutSignIn: 0 });
+    expect(server.requests.at(-1)!.body).toEqual({ id: 'github' });
     expect(await Madauth.admin.removeProvider('github')).toMatchObject({ isSuccess: false, error: { code: 'provider_not_found' } });
   });
 

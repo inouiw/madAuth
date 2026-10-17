@@ -785,7 +785,9 @@ export function createApp(config: MadauthConfig): Hono {
   app.post('/auth/admin/providers/list', async (c) => {
     const caller = await adminOrSetup(c, 'madauth:providers:read', false);
     if ('answer' in caller) return caller.answer;
-    return c.json({ providers: (await ctx.methods(c)).providers.map(providerInfo) });
+    // `callbackBase`: a new provider's callback URL is `<callbackBase><id>/callback`, which the admin registers
+    // at the provider before adding it.
+    return c.json({ providers: (await ctx.methods(c)).providers.map(providerInfo), callbackBase: `${issuer}/auth/providers/` });
   });
 
   app.post('/auth/admin/providers/add', async (c) => {
@@ -829,18 +831,25 @@ export function createApp(config: MadauthConfig): Hono {
 
   // Its users' accounts stay, so adding the provider again brings their sign-ins back.
   app.post('/auth/admin/providers/remove', async (c) => {
-    const caller = await adminOrSetup(c, undefined, true);
+    const { id, dryRun } = await body(c);
+    if (dryRun !== undefined && typeof dryRun !== 'boolean') return c.json({ error: 'invalid_options', message: 'dryRun must be true or false.' }, 400);
+    // A dry run only counts, so reading the providers is enough for it; removing takes a fresh sign-in.
+    const caller = dryRun ? await adminOrSetup(c, 'madauth:providers:read', false) : await adminOrSetup(c, undefined, true);
     if ('answer' in caller) return caller.answer;
-    const { id } = await body(c);
     const now = await ctx.methods(c);
-    if (typeof id !== 'string' || !now.providers.some((provider) => provider.id === id)) return providerNotFound(c);
+    const provider = typeof id === 'string' ? now.providers.find((p) => p.id === id) : undefined;
+    if (!provider) return providerNotFound(c);
     // Counted before, while the provider still counts: the users who sign in with nothing else that is on.
     const signsIn = signInPredicate(now.configured, now.settings);
-    const stranded = await users.countSigningInOnlyWith(id, (method) => method !== id && signsIn(method));
-    const removed = await providers.remove(id, caller.by);
+    const stranded = await users.countSigningInOnlyWith(provider.id, (method) => method !== provider.id && signsIn(method));
+    if (dryRun) return c.json({ provider: providerInfo(provider), usersWithoutSignIn: stranded, dryRun: true });
+    const removed = await providers.remove(provider.id, caller.by);
     if ('error' in removed) return providerNotFound(c);
     // Out of the settings too, so a provider added again with the id stays off until it is switched on.
-    await settings.changeMethods((methods) => (methods[id] ? Object.fromEntries(Object.entries(methods).filter(([method]) => method !== id)) : null), caller.by);
+    await settings.changeMethods(
+      (methods) => (methods[provider.id] ? Object.fromEntries(Object.entries(methods).filter(([method]) => method !== provider.id)) : null),
+      caller.by,
+    );
     await ctx.emit('provider.removed', { provider: providerInfo(removed.provider), ...changedBy(caller) });
     return c.json({ provider: providerInfo(removed.provider), usersWithoutSignIn: stranded });
   });
