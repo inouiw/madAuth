@@ -20,9 +20,9 @@ function providers(keys = keyService) {
 }
 
 describe('checking what an admin sends', () => {
-  it('PV1: a provider is Google or GitHub, with its kind as its id', () => {
-    expect(parseProviderKind({ kind: 'google' })).toBe('google');
-    expect(parseProviderKind({ kind: 'github', id: 'github' })).toBe('github');
+  it('PV1: Google and GitHub have their kind as their id', () => {
+    expect(parseProviderKind({ kind: 'google' })).toEqual({ kind: 'google', id: 'google' });
+    expect(parseProviderKind({ kind: 'github', id: 'github' })).toEqual({ kind: 'github', id: 'github' });
     expect(parseProviderKind({ kind: 'gitlab' })).toMatchObject({ error: 'invalid_provider' });
     expect(parseProviderKind({ kind: 'google', id: 'work' })).toMatchObject({ error: 'invalid_provider', message: expect.stringContaining('"google"') });
   });
