@@ -160,13 +160,17 @@ describe('loadConfig', () => {
     const error = await loadConfig({ ...env, ...hook, DATABASE_URL: 'postgres://madauth:secret@127.0.0.1:1/madauth' }).catch((e: Error) => e);
 
     expect(error).toBeInstanceOf(ConfigError);
-    expect((error as Error).message).toMatch(/^DATABASE_URL: could not open "postgres:\/\/127\.0\.0\.1:1\/madauth": .*ECONNREFUSED/);
+    expect((error as Error).message).toMatch(/^DATABASE_URL: could not use "postgres:\/\/127\.0\.0\.1:1\/madauth": .*ECONNREFUSED/);
     expect((error as Error).message).not.toContain('secret');
   });
 
-  it('DATABASE_MIGRATE is true or false', async () => {
-    expect((await loadConfig({ ...env, DATABASE_MIGRATE: 'false' })).store).toBeDefined();
-    await expect(loadConfig({ ...env, DATABASE_MIGRATE: 'maybe' })).rejects.toThrow(new ConfigError('DATABASE_MIGRATE must be true or false but is "maybe".'));
+  it('DATABASE_MIGRATE is true or false, and only for Postgres', async () => {
+    const postgres = { ...env, DATABASE_URL: 'postgres://127.0.0.1:1/madauth' };
+    await expect(loadConfig({ ...postgres, DATABASE_MIGRATE: 'maybe' })).rejects.toThrow(new ConfigError('DATABASE_MIGRATE must be true or false but is "maybe".'));
+    await expect(loadConfig({ ...env, DATABASE_MIGRATE: 'false' })).rejects.toThrow(/DATABASE_MIGRATE is only for DATABASE_URL=postgres/);
+    await expect(loadConfig({ ...env, DATABASE_MIGRATE: 'false' }, { store: createSqliteAdapter(':memory:') })).rejects.toThrow(/only for DATABASE_URL=postgres/);
+    // With Postgres it reaches the database (here: none).
+    await expect(loadConfig({ ...postgres, DATABASE_MIGRATE: 'false' })).rejects.toThrow(/could not use/);
   });
 
   // Needs a database, like the adapter's own tests (see store/postgres.test.ts).
@@ -182,13 +186,16 @@ describe('loadConfig', () => {
       return url.href.replace(/^[a-z]+:/, scheme);
     };
 
-    for (const scheme of ['postgres:', 'postgresql:']) {
-      const { store } = await loadConfig({ ...env, ...hook, DATABASE_URL: inSchema(scheme) });
-      expect(await store.findOne('user', { id: 'usr_missing' })).toBe(null);
-      await (store as unknown as { close(): Promise<void> }).close();
+    try {
+      for (const scheme of ['postgres:', 'postgresql:']) {
+        const { store } = await loadConfig({ ...env, ...hook, DATABASE_URL: inSchema(scheme) });
+        expect(await store.findOne('user', { id: 'usr_missing' })).toBe(null);
+        await (store as unknown as { close(): Promise<void> }).close();
+      }
+    } finally {
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
     }
-    await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-    await admin.end();
   });
 
   it('DATABASE_URL=dynamodb:<table> uses the DynamoDB adapter, which only reaches AWS on first use', async () => {

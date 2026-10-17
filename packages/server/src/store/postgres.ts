@@ -139,7 +139,10 @@ export async function openPostgresAdapter(url: string, options: PostgresAdapterO
   };
 }
 
-/** The schema version of the tables: 0 without tables, null for madAuth tables without a recorded version. */
+/**
+ * The schema version of the tables: 0 without tables, null for madAuth tables without a recorded version.
+ * Throws for a recorded version without the tables.
+ */
 async function schemaVersion(db: Pick<PoolClient, 'query'>): Promise<number | null> {
   const { rows } = await db.query(
     `SELECT to_regclass('${VERSION_TABLE}') IS NOT NULL AS versioned, to_regclass('${tableName('user')}') IS NOT NULL AS tables`,
@@ -147,7 +150,14 @@ async function schemaVersion(db: Pick<PoolClient, 'query'>): Promise<number | nu
   const { versioned, tables } = rows[0] as { versioned: boolean; tables: boolean };
   if (!versioned) return tables ? null : 0;
   const recorded = (await db.query(`SELECT version FROM ${VERSION_TABLE}`)).rows[0] as { version: number } | undefined;
-  return recorded ? recorded.version : tables ? null : 0;
+  // A newer version is left to checkVersion, which refuses it either way.
+  if (recorded && !tables && recorded.version > 0 && recorded.version <= madauthSchema.version) {
+    throw new Error(
+      `${VERSION_TABLE} records madAuth schema version ${recorded.version}, but the madAuth tables are missing. ` +
+        `Restore them, or DROP TABLE ${VERSION_TABLE} to start with an empty database.`,
+    );
+  }
+  return recorded && (tables || recorded.version > madauthSchema.version) ? recorded.version : tables ? null : 0;
 }
 
 /**

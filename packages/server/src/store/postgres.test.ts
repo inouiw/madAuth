@@ -129,6 +129,14 @@ describe.skipIf(!url)('Postgres adapter with a database', () => {
     await expect(open(schema)).rejects.toThrow(/no madauth_schema table.*INSERT INTO madauth_schema/s);
   });
 
+  it('refuses a recorded version whose tables are missing', async () => {
+    const schema = await freshSchema();
+    await sqlIn(schema, `CREATE TABLE madauth_schema (version INTEGER NOT NULL); INSERT INTO madauth_schema VALUES (${madauthSchema.version});`);
+
+    await expect(open(schema)).rejects.toThrow(/tables are missing/);
+    await expect(open(schema, { migrate: false })).rejects.toThrow(/tables are missing/);
+  });
+
   it('with migrate false, changes no tables: refuses an empty or older database, opens an up-to-date one', async () => {
     const empty = await freshSchema();
     await expect(open(empty, { migrate: false })).rejects.toThrow(/no madAuth tables.*schema --dialect postgres/s);

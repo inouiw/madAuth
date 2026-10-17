@@ -278,9 +278,14 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
   // The store is opened last, so a configuration error doesn't leave a database connection open. A server may
   // start without any sign-in method: its providers are added in the store, by the setup token's holder until
   // the first admin exists (see setup.ts).
-  const migrate = read('DATABASE_MIGRATE')?.toLowerCase() ?? 'true';
+  const migrateValue = read('DATABASE_MIGRATE');
+  const migrate = migrateValue?.toLowerCase() ?? 'true';
   if (migrate !== 'true' && migrate !== 'false') {
-    throw new ConfigError(`DATABASE_MIGRATE must be true or false but is "${read('DATABASE_MIGRATE')}".`);
+    throw new ConfigError(`DATABASE_MIGRATE must be true or false but is "${migrateValue}".`);
+  }
+  // Ignored, it would let an operator believe madAuth leaves the tables alone.
+  if (migrateValue && (overrides.store || !/^postgres(ql)?:\/\//.test(read('DATABASE_URL') ?? ''))) {
+    throw new ConfigError('DATABASE_MIGRATE is only for DATABASE_URL=postgres://: remove it. See "Postgres" in docs/server.md.');
   }
   const store = overrides.store ?? (await storeFromDatabaseUrl(read('DATABASE_URL'), { migrate: migrate === 'true' }));
   if (!store) {
@@ -349,8 +354,8 @@ async function postgresStore(url: string, options: { migrate: boolean }): Promis
   const { openPostgresAdapter } = await import('./store/postgres.js');
   const opened = await openPostgresAdapter(url, options).catch((e: unknown) => e as Error);
   if (opened instanceof Error) {
-    // The driver's messages name the host, never the password.
-    throw new ConfigError(`DATABASE_URL: could not open "${redactUrl(url)}": ${opened.message}`);
+    // Unreachable, or tables madAuth can't use. The driver's messages name the host, never the password.
+    throw new ConfigError(`DATABASE_URL: could not use "${redactUrl(url)}": ${opened.message}`);
   }
   return opened;
 }
