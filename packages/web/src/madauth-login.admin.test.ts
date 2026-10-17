@@ -74,6 +74,11 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     await click('[data-kind="oidc"]');
     expect(text('h2')).toBe('Add OpenID Connect');
 
+    // Browsers compile the id's pattern with the v flag, which wants the dash escaped; an invalid one checks nothing.
+    const pattern = new RegExp(`^(?:${$<HTMLInputElement>('input[name="id"]')!.pattern})$`, 'v');
+    expect(['gitlab', 'my-idp'].map((id) => pattern.test(id))).toEqual([true, true]);
+    expect(['GitLab', 'g', '1idp'].map((id) => pattern.test(id))).toEqual([false, false, false]);
+
     // The callback URL to register at the provider follows the id as it is typed.
     expect(text('.callback-url')).toBe(`${SERVER}/auth/providers/<id>/callback`);
     await type('id', 'gitlab');

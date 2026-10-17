@@ -2241,7 +2241,7 @@ export class MadauthLogin extends LitElement {
     const state = setting ? (setting.enabled ? v.on(v.policies[setting.secondFactor]) : v.off) : undefined;
     const details = [provider.kind === 'oidc' ? `${v.kinds.oidc} · ${provider.id}` : v.kinds[provider.kind], state].filter(Boolean);
     return html`
-      <button part="method" class="row" type="button" data-provider=${provider.id} ?disabled=${this.busy} @click=${() => this.editProvider(provider)}>
+      <button part="method" class="row detailed" type="button" data-provider=${provider.id} ?disabled=${this.busy} @click=${() => this.editProvider(provider)}>
         <span class="method-text">
           <span class="label">${provider.name}</span>
           <span class="hint">${details.join(' · ')}</span>
@@ -2263,7 +2263,7 @@ export class MadauthLogin extends LitElement {
         ${kinds.map(
           (kind) => html`
             <li>
-              <button part="method" class="row" type="button" data-kind=${kind} @click=${() => this.newProvider(kind)}>
+              <button part="method" class="row detailed" type="button" data-kind=${kind} @click=${() => this.newProvider(kind)}>
                 <span class="method-text">
                   <span class="label">${v.kinds[kind]}</span>
                   <span class="hint">${v.kindHints[kind]}</span>
@@ -2330,7 +2330,7 @@ export class MadauthLogin extends LitElement {
           ? html`<div class="field">
               <label for="provider-id">${v.id}</label>
               <input part="input" id="provider-id" name="id" type="text" autocomplete="off" spellcheck="false" required
-                pattern="[a-z][a-z0-9\-]{1,31}" maxlength="32" .value=${d.id} />
+                pattern="[a-z][a-z0-9\\-]{1,31}" maxlength="32" .value=${d.id} />
               <p class="hint">${v.idHint}</p>
             </div>`
           : null}
@@ -3105,6 +3105,14 @@ export class MadauthLogin extends LitElement {
 
     .row .label {
       flex: 1;
+    }
+
+    /* A row with a line of details under its label (the admin dialog's providers and kinds): as tall as it needs. */
+    .row.detailed {
+      height: auto;
+      min-height: calc(var(--_control-height) + 4px);
+      padding-top: 6px;
+      padding-bottom: 6px;
     }
 
     .row .icon {
