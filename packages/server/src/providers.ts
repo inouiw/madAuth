@@ -8,6 +8,11 @@ import type { Settings } from './settings.js';
 
 /** The id of the setting that holds the providers. */
 export const PROVIDERS_SETTING = 'providers';
+/**
+ * Each OpenID Connect provider's id with its issuer, kept when the provider is removed: the id's accounts
+ * (`oidc:<id>:<sub>`) are that issuer's users, so the id comes back only with the same issuer.
+ */
+export const PROVIDER_ISSUERS_SETTING = 'provider-issuers';
 
 /** The kinds of providers madAuth has. */
 export const PROVIDER_KINDS = ['google', 'github', 'oidc'] as const;
@@ -204,9 +209,19 @@ export class Providers {
 
   /**
    * Adds a provider of `kind` under `id` (both from {@link parseProviderKind}), with `fields` checked by
-   * {@link parseProviderFields}; refused if one with the id exists.
+   * {@link parseProviderFields}; refused if one with the id exists, or if the id of an OpenID Connect provider
+   * was another issuer's (`issuer_bound`, with that issuer).
    */
-  async add(kind: ProviderKind, id: string, fields: ProviderFields, by: string | null): Promise<{ provider: StoredProvider } | { error: 'provider_exists' }> {
+  async add(
+    kind: ProviderKind,
+    id: string,
+    fields: ProviderFields,
+    by: string | null,
+  ): Promise<{ provider: StoredProvider } | { error: 'provider_exists' } | { error: 'issuer_bound'; issuer: string }> {
+    if (kind === 'oidc') {
+      const bound = await this.bindIssuer(id, fields.issuer!, by);
+      if (bound !== fields.issuer) return { error: 'issuer_bound', issuer: bound };
+    }
     const now = Date.now();
     const provider: StoredProvider = {
       id,
@@ -257,7 +272,29 @@ export class Providers {
     return updated ? { provider: updated } : { error: 'provider_not_found' };
   }
 
-  /** Removes a provider. Its users' accounts stay, so adding it again brings their sign-ins back. */
+  /**
+   * Binds the id of an OpenID Connect provider to its issuer for good (see {@link PROVIDER_ISSUERS_SETTING}),
+   * unless it is bound already. Resolves to the issuer the id is bound to.
+   */
+  private async bindIssuer(id: string, issuer: string, by: string | null): Promise<string> {
+    let bound = issuer;
+    await this.settings.change<unknown>(
+      PROVIDER_ISSUERS_SETTING,
+      (current) => {
+        const known: Record<string, unknown> = current && typeof current === 'object' && !Array.isArray(current) ? (current as Record<string, unknown>) : {};
+        const earlier = known[id];
+        bound = typeof earlier === 'string' ? earlier : issuer;
+        return typeof earlier === 'string' ? null : { ...known, [id]: issuer };
+      },
+      by,
+    );
+    return bound;
+  }
+
+  /**
+   * Removes a provider. Its users' accounts stay, so adding it again brings their sign-ins back; an OpenID
+   * Connect provider's id comes back only with its issuer.
+   */
   async remove(id: string, by: string | null): Promise<{ provider: StoredProvider } | { error: 'provider_not_found' }> {
     let removed: StoredProvider | undefined;
     await this.settings.change<unknown>(

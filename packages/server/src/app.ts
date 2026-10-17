@@ -804,6 +804,9 @@ export function createApp(config: MadauthConfig): Hono {
     // first, so the new provider stays off until it is switched on.
     if ((await settings.get(METHODS_SETTING)) === undefined) await settings.changeMethods((current) => current, caller.by, (await ctx.methods(c)).settings);
     const added = await providers.add(kind, id, fields, caller.by);
+    if ('error' in added && added.error === 'issuer_bound') {
+      return c.json({ error: 'invalid_provider', message: `The id "${id}" belongs to the issuer "${added.issuer}", whose users' accounts it has: give this provider another id.` }, 400);
+    }
     if ('error' in added) return c.json({ error: added.error, message: `There is a provider "${id}" already: change it with providers/update.` }, 409);
     await ctx.emit('provider.added', { provider: providerInfo(added.provider), ...changedBy(caller) });
     return c.json({ provider: providerInfo(added.provider) });
@@ -836,6 +839,8 @@ export function createApp(config: MadauthConfig): Hono {
     const stranded = await users.countSigningInOnlyWith(id, (method) => method !== id && signsIn(method));
     const removed = await providers.remove(id, caller.by);
     if ('error' in removed) return providerNotFound(c);
+    // Out of the settings too, so a provider added again with the id stays off until it is switched on.
+    await settings.changeMethods((methods) => (methods[id] ? Object.fromEntries(Object.entries(methods).filter(([method]) => method !== id)) : null), caller.by);
     await ctx.emit('provider.removed', { provider: providerInfo(removed.provider), ...changedBy(caller) });
     return c.json({ provider: providerInfo(removed.provider), usersWithoutSignIn: stranded });
   });

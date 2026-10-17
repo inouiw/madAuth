@@ -208,6 +208,31 @@ describe('signing in with an OpenID Connect provider', () => {
     expect(new URLSearchParams(exchange.body).get('client_secret')).toBe('madauth-client-secret');
   });
 
+  it('OP11: its id comes back only with its issuer, whose users its accounts are, and off until switched on', async () => {
+    const idp = await fakeOidcProvider();
+    const other = await fakeOidcProvider({ issuer: 'https://other-idp.example.com' });
+    const both = ((input: string | URL | Request, init?: RequestInit) =>
+      (String(input instanceof Request ? input.url : input).startsWith(other.issuer) ? other.fetch : idp.fetch)(input, init)) as typeof fetch;
+    const made = { ...(await withAdmin({ ...idp, fetch: both })), idp };
+    const add = (issuer: string) => admin(made, 'add', { ...GITLAB, issuer });
+    const switchOn = () => post(made.app, '/auth/admin/settings/set', { methods: { password: ON, gitlab: ON } }, { Cookie: made.cookie });
+    const userOf = async (session: string | undefined) => ((await (await made.app.request('/auth/session', { headers: { Cookie: session! } })).json()) as { user: { id: string } }).user.id;
+    const linus = { idToken: { sub: 'gl-9', email: 'linus@example.com', email_verified: true } };
+    expect((await add(idp.issuer)).provider).toBeDefined();
+    await switchOn();
+    const first = await signIn(made, linus);
+
+    expect((await admin(made, 'remove', { id: 'gitlab' })).usersWithoutSignIn).toBe(1);
+    // Another issuer under the id would sign its users in to these accounts, by their sub.
+    expect(await add(other.issuer)).toMatchObject({ error: 'invalid_provider', message: expect.stringContaining(`belongs to the issuer "${idp.issuer}"`) });
+    expect((await add(idp.issuer)).provider).toBeDefined();
+    const settings = (await (await post(made.app, '/auth/admin/settings/get', {}, { Cookie: made.cookie })).json()) as { methods: Record<string, { enabled: boolean }> };
+    expect(settings.methods.gitlab).toMatchObject({ configured: true, enabled: false });
+    await switchOn();
+    const again = await signIn(made, linus);
+    expect(await userOf(again.session)).toBe(await userOf(first.session));
+  });
+
   it('OP10: a signed-in user adds the provider to their methods, sees its address there, and removes it', async () => {
     const made = await withGitLab();
     const { location } = await signIn(made, { idToken: { sub: 'gl-ada', email: 'ada@gitlab.example.com', email_verified: true } }, '&link=1');
