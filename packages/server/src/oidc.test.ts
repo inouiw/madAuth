@@ -119,3 +119,100 @@ describe("an OpenID Connect provider's method", () => {
     expect(config.providers).toContainEqual({ id: 'gitlab', kind: 'oidc', name: 'GitLab' });
   });
 });
+
+describe('signing in with an OpenID Connect provider', () => {
+  const APP = 'https://app.example.com';
+  const ON = { allowAsSignInMethod: true, secondFactor: 'none' } as const;
+
+  /** A server with GitLab added and on, next to e-mail & password; `extra` changes the provider. */
+  async function withGitLab(options: Parameters<typeof fakeOidcProvider>[0] = {}, extra: Record<string, unknown> = {}) {
+    const idp = await fakeOidcProvider(options);
+    const made = await withAdmin(idp);
+    expect((await admin(made, 'add', { ...GITLAB, issuer: idp.issuer, scopes: 'read_user', ...extra })).provider).toBeDefined();
+    await post(made.app, '/auth/admin/settings/set', { methods: { password: ON, gitlab: ON } }, { Cookie: made.cookie });
+    return { ...made, idp };
+  }
+
+  /** The sign-in as a browser makes it: start, the provider's page (approve), and back to the callback. */
+  async function signIn(made: Awaited<ReturnType<typeof withGitLab>>, signedIn: Parameters<FakeOidcProvider['approve']>[1], extraQuery = '') {
+    const start = await made.app.request(`/auth/providers/gitlab/start?return_to=${encodeURIComponent(`${APP}/page`)}${extraQuery}`, { headers: extraQuery ? { Cookie: made.cookie } : {} });
+    expect(start.status).toBe(302);
+    const authorize = start.headers.get('location')!;
+    const state = start.headers.getSetCookie().find((cookie) => cookie.startsWith('madauth_oauth='))!.split(';')[0]!;
+    const callback = await made.app.request(`/auth/providers/gitlab/callback?${made.idp.approve(authorize, signedIn)}`, { headers: { Cookie: extraQuery ? `${state}; ${made.cookie}` : state } });
+    const session = callback.headers.getSetCookie().find((cookie) => cookie.startsWith('madauth_session='))?.split(';')[0];
+    return { authorize: new URL(authorize), callback, location: callback.headers.get('location'), session };
+  }
+
+  it('OP5: a new user signs up: the request asks for the scopes with PKCE and a nonce, the code exchange authenticates the client', async () => {
+    const made = await withGitLab();
+    const { authorize, location, session } = await signIn(made, { idToken: { sub: 'gl-1', email: 'linus@example.com', email_verified: true, name: 'Linus' } });
+
+    expect(authorize.origin + authorize.pathname).toBe(`${made.idp.issuer}/authorize`);
+    expect(Object.fromEntries(authorize.searchParams)).toMatchObject({
+      client_id: 'madauth-client',
+      redirect_uri: 'https://auth.example.com/auth/providers/gitlab/callback',
+      response_type: 'code',
+      scope: 'openid email profile read_user',
+      code_challenge_method: 'S256',
+      nonce: expect.any(String),
+      state: expect.any(String),
+    });
+    expect(location).toBe(`${APP}/page`);
+    const user = (await (await made.app.request('/auth/session', { headers: { Cookie: session! } })).json()) as { user: Record<string, unknown> };
+    expect(user.user).toMatchObject({ email: 'linus@example.com', name: 'Linus', amr: ['gitlab'] });
+    expect(made.idp.calls.find((call) => call.url.endsWith('/token'))?.authorization).toMatch(/^Basic /);
+    expect(made.hook.calls.filter((call) => call.type === 'user.signed_up').at(-1)?.data).toMatchObject({ user: { email: 'linus@example.com' }, method: 'gitlab' });
+    // The same account signs in again, also with a new address at the provider.
+    const again = await signIn(made, { idToken: { sub: 'gl-1', email: 'linus@new.example.com', email_verified: true } });
+    expect(again.location).toBe(`${APP}/page`);
+    expect(((await (await made.app.request('/auth/session', { headers: { Cookie: again.session! } })).json()) as { user: { email: string } }).user.email).toBe('linus@example.com');
+  });
+
+  it('OP6: the address comes from userinfo when the ID token has none, and counts only verified, unless the provider is trusted', async () => {
+    const made = await withGitLab();
+    expect((await signIn(made, { idToken: { sub: 'gl-2' }, userinfo: { sub: 'gl-2', email: 'mia@example.com', email_verified: true } })).location).toBe(`${APP}/page`);
+    expect((await signIn(made, { idToken: { sub: 'gl-3' }, userinfo: { sub: 'someone-else', email: 'x@example.com', email_verified: true } })).location).toBe(`${APP}/page#madauth_error=verification_failed&madauth_method=gitlab`);
+    expect((await signIn(made, { idToken: { sub: 'gl-4', email: 'eve@example.com', email_verified: false } })).location).toBe(`${APP}/page#madauth_error=email_unverified&madauth_method=gitlab`);
+    expect((await signIn(made, { idToken: { sub: 'gl-5', email: 'cognito@example.com', email_verified: 'true' } })).location).toBe(`${APP}/page`);
+
+    await admin(made, 'update', { id: 'gitlab', trustEmail: true });
+    expect((await signIn(made, { idToken: { sub: 'gl-4', email: 'eve@example.com' } })).location).toBe(`${APP}/page`);
+  });
+
+  it('OP7: an ID token with another nonce or for another client is refused; one for several clients needs azp', async () => {
+    const made = await withGitLab();
+    const refused = `${APP}/page#madauth_error=verification_failed&madauth_method=gitlab`;
+    const claims = { sub: 'gl-6', email: 'kim@example.com', email_verified: true };
+    expect((await signIn(made, { idToken: { ...claims, nonce: 'another' } })).location).toBe(refused);
+    expect((await signIn(made, { idToken: claims, audience: 'another-client' })).location).toBe(refused);
+    expect((await signIn(made, { idToken: claims, audience: ['madauth-client', 'another-client'] })).location).toBe(refused);
+    expect((await signIn(made, { idToken: { ...claims, azp: 'madauth-client' }, audience: ['madauth-client', 'another-client'] })).location).toBe(`${APP}/page`);
+  });
+
+  it('OP8: never joins a user who signs in another way, and is off, missing or not OpenID Connect as the settings say', async () => {
+    const made = await withGitLab();
+    expect((await signIn(made, { idToken: { sub: 'gl-7', email: 'ada@example.com', email_verified: true } })).location).toBe(`${APP}/page#madauth_error=other_method&madauth_method=gitlab`);
+
+    await post(made.app, '/auth/admin/settings/set', { methods: { password: ON } }, { Cookie: made.cookie });
+    const off = await made.app.request(`/auth/providers/gitlab/start?return_to=${encodeURIComponent(`${APP}/page`)}`);
+    expect(off.headers.get('location')).toBe(`${APP}/page#madauth_error=method_disabled&madauth_method=gitlab`);
+    expect((await made.app.request(`/auth/providers/keycloak/start?return_to=${encodeURIComponent(`${APP}/page`)}`)).status).toBe(404);
+  });
+
+  it('OP9: a provider that takes the secret only in the form gets it there', async () => {
+    const made = await withGitLab({ authMethods: ['client_secret_post'] });
+    expect((await signIn(made, { idToken: { sub: 'gl-8', email: 'pat@example.com', email_verified: true } })).location).toBe(`${APP}/page`);
+    const exchange = made.idp.calls.find((call) => call.url.endsWith('/token'))!;
+    expect(exchange.authorization).toBeNull();
+    expect(new URLSearchParams(exchange.body).get('client_secret')).toBe('madauth-client-secret');
+  });
+
+  it('OP10: a signed-in user adds the provider to their methods', async () => {
+    const made = await withGitLab();
+    const { location } = await signIn(made, { idToken: { sub: 'gl-ada', email: 'ada@gitlab.example.com', email_verified: true } }, '&link=1');
+    expect(location).toBe(`${APP}/page#madauth_linked=gitlab`);
+    const methods = (await (await made.app.request('/auth/methods', { headers: { Cookie: made.cookie } })).json()) as { methods: { method: string }[] };
+    expect(methods.methods.map((m) => m.method)).toContain('gitlab');
+  });
+});

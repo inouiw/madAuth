@@ -120,7 +120,7 @@ export function appOriginOf(c: Context): string | undefined {
  * set), with the error, or with the second step the sign-in goes on with and which second factors can
  * finish it (the challenge cookie is set). `method` names the sign-in in the hash in the last two cases.
  */
-export function redirectBack(c: Context, returnTo: string, method: SignInMethod): (error?: string, next?: NextStep, factors?: SecondFactor[]) => Response {
+export function redirectBack(c: Context, returnTo: string, method: string): (error?: string, next?: NextStep, factors?: SecondFactor[]) => Response {
   return (error, next, factors = []) => {
     const url = new URL(returnTo);
     if (error) url.hash = `${REDIRECT_ERROR_PARAM}=${error}&${REDIRECT_METHOD_PARAM}=${method}`;
@@ -132,7 +132,8 @@ export function redirectBack(c: Context, returnTo: string, method: SignInMethod)
 
 /** A sign-in provider whose profiles {@link resolveProviderUser} resolves: its method id, and its name for messages. */
 export interface OAuthProvider {
-  method: SignInMethod;
+  /** Its method: madAuth's own id, or an OpenID Connect provider's id. */
+  method: string;
   name: string;
 }
 

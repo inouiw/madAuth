@@ -17,6 +17,8 @@ export interface FakeOidcOptions {
 export interface FakeSignIn {
   idToken: JWTPayload;
   userinfo?: Record<string, unknown>;
+  /** The ID token's audience; default: the client. */
+  audience?: string | string[];
 }
 
 export async function fakeOidcProvider(options: FakeOidcOptions = {}) {
@@ -68,7 +70,7 @@ export async function fakeOidcProvider(options: FakeOidcOptions = {}) {
       const idToken = await new SignJWT({ nonce: issued.nonce, ...issued.idToken })
         .setProtectedHeader({ alg: 'ES256', kid: 'key-1' })
         .setIssuer(issuer)
-        .setAudience(clientId)
+        .setAudience(issued.audience ?? clientId)
         .setIssuedAt(now)
         .setExpirationTime(now + 300)
         .sign(privateKey);

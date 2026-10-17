@@ -14,6 +14,7 @@ import { emailRoutes } from './routes/email.js';
 import { emailLinkRoutes } from './routes/email-link.js';
 import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
+import { oidcRoutes } from './routes/oidc.js';
 import { body, error, reauthRequired, signedInUser } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
 import { clearChallenge, isSetupStep, setChallenge, type NextStep } from './routes/challenge.js';
@@ -42,7 +43,6 @@ import {
   type MethodSettings,
   type PasswordRules,
   type SecondFactor,
-  type SignInMethod,
 } from './settings.js';
 import { methodRoutes } from './routes/methods.js';
 import { apiKeyNotFound, apiKeyRoutes, invalidApiKey, keyCaller } from './routes/api-keys.js';
@@ -69,7 +69,7 @@ export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | 
  * (the challenge cookie is set; `factors` is what the user can finish with); or nothing, because the method
  * is switched off.
  */
-export type SignInStep = { user: MadauthUser } | { next: NextStep; method: SignInMethod; factors: SecondFactor[] } | { disabled: true };
+export type SignInStep = { user: MadauthUser } | { next: NextStep; method: string; factors: SecondFactor[] } | { disabled: true };
 
 /** A signed-in user, and when they signed in (milliseconds since 1970; null for a session from before madAuth 0.6). */
 export interface SignIn {
@@ -113,7 +113,7 @@ export interface AppContext {
     c: Context,
     user: MadauthUser,
     amr: string[],
-    signIn: { method: SignInMethod; signedUpAt: number | null },
+    signIn: { method: string; signedUpAt: number | null },
     extra?: { sv?: number },
   ): Promise<MadauthUser>;
   /**
@@ -122,7 +122,7 @@ export interface AppContext {
    * `profile` is what the method knows beyond the record (e.g. Google's picture). A passkey counts as a
    * factor only when it answers on the app the sign-in is for (see `appOriginOf`). Emits `user.signed_in`.
    */
-  secondStep(c: Context, user: StoredUser, amr: string[], method: SignInMethod, profile?: { name?: string; picture?: string }): Promise<SignInStep>;
+  secondStep(c: Context, user: StoredUser, amr: string[], method: string, profile?: { name?: string; picture?: string }): Promise<SignInStep>;
   /** The user of the request's session, or null if there is none or it has ended; renews it on the way like GET /auth/session. */
   currentUser(c: Context): Promise<MadauthUser | null>;
   /**
@@ -145,9 +145,9 @@ export interface AppContext {
   /** A provider's client secret in plain text; null without one. Decrypted by the key service, so only read where it is used. */
   clientSecret(provider: StoredProvider): Promise<string | null>;
   /** Whether a method signs in: configured, listed by an admin, and allowed as a sign-in method. */
-  enabled(c: Context, method: MethodId): Promise<boolean>;
+  enabled(c: Context, method: string): Promise<boolean>;
   /** Asks the webhook whether someone may sign up (`user.signing_up`). Fails closed: without an answer, nobody signs up. */
-  checkSignup(data: { email: string; name?: string; locale?: string; method: SignInMethod }): Promise<SignupCheck>;
+  checkSignup(data: { email: string; name?: string; locale?: string; method: string }): Promise<SignupCheck>;
   /** Tells the webhook that something happened. Awaited (Lambda stops after the answer), but never fails. */
   emit(type: WebhookType, data: Record<string, unknown>): Promise<void>;
 }
@@ -498,6 +498,8 @@ export function createApp(config: MadauthConfig): Hono {
   // Always there: whether the store has the provider is a question of each request.
   googleRoutes(app, ctx);
   githubRoutes(app, ctx);
+  // After Google's and GitHub's, whose own routes answer for their ids.
+  oidcRoutes(app, ctx);
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, users, ctx.webhook);
   authenticatorRoutes(app, ctx);
   passkeyRoutes(app, ctx);
