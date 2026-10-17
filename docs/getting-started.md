@@ -23,10 +23,6 @@ npx @madauth/server init
 | Question | Default | Description |
 | --- | --- | --- |
 | App URL | `http://localhost:5173` | The address your users open. Here it is your dev server. madAuth is served on the same origin through a proxy (step 5), so its cookies are first-party. |
-| Google client ID | none | Turns on Google sign-in. See [Google Cloud Console setup](server.md#google-cloud-console-setup). |
-| Google client secret | none | Only asked with a client ID. Enables the redirect flow (`GoogleRedirect`). Without it, Google sign-in runs in the browser (`GoogleFedcm`). |
-| GitHub client ID | none | Turns on GitHub sign-in. See [GitHub OAuth App setup](server.md#github-oauth-app-setup). |
-| GitHub client secret | none | Only asked with a GitHub client ID, and needed with one: GitHub only has the redirect flow. |
 | E-mail & password sign-in? | yes | |
 | Sign-up with the authenticator app alone? | no | Accounts without a password: the address is confirmed by e-mail, then the app is set up. The app as a second factor needs no answer here; admins set that [policy](server.md#sign-in-methods) while the server runs. |
 | Passwordless sign-in with an e-mail link? | no | The user enters their address and gets an e-mail with a link that signs them in and a code. A new address is signed up on first use. |
@@ -104,7 +100,7 @@ Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
 signInButton.onclick = () => Madauth.showSignInDialog();
 ```
 
-Google and GitHub sign-in are [providers](server.md#providers) in the store, not settings in `.env`. Until the first admin exists, the server prints a setup token at its start, with which you add them ([First setup](server.md#first-setup)); afterwards an admin does it with `Madauth.admin.addProvider`. The dialog then shows their buttons by itself. With Google, add your app URL under **Authorized JavaScript origins** in the Google Cloud Console (for `http://localhost:5173`, add `http://localhost` as well), and for the redirect flow `<app URL>/auth/providers/google/callback` under **Authorized redirect URIs**. With GitHub, the OAuth App's callback URL is `<app URL>/auth/providers/github/callback`.
+Google, GitHub and [OpenID Connect](server.md#openid-connect-provider-setup) sign-in are [providers](server.md#providers) in the store, not settings in `.env`. Until the first admin exists, the server prints a setup token at its start, with which you add them ([First setup](server.md#first-setup)); afterwards an admin does it with `Madauth.admin.addProvider`. The dialog then shows their buttons by itself. With Google, add your app URL under **Authorized JavaScript origins** in the Google Cloud Console (for `http://localhost:5173`, add `http://localhost` as well), and for the redirect flow `<app URL>/auth/providers/google/callback` under **Authorized redirect URIs**. With GitHub, the OAuth App's callback URL is `<app URL>/auth/providers/github/callback`, and with an OpenID Connect provider `<app URL>/auth/providers/<id>/callback`.
 
 ## 7. Sign up once
 

@@ -4,36 +4,36 @@
 import type { Context, Hono } from 'hono';
 import type { AppContext } from '../app.js';
 import {
-  METHODS_WITH_SECOND_FACTOR,
   SECOND_FACTORS,
   factorsOn,
   requiringSecondFactor,
   signInPredicate,
-  type MethodId,
   type MethodWithSecondFactor,
 } from '../settings.js';
-import { factorsAmong, lastWayIn, methodOf, toMadauthUser, type StoredAccount } from '../users.js';
+import { nameOfMethod } from '../providers.js';
+import { factorsAmong, isProviderAccount, lastWayIn, methodOf, toMadauthUser, type StoredAccount } from '../users.js';
 import { body, error, noSession, recentUser } from './helpers.js';
 
 /** A sign-in method of the user as the list shows it. */
 export interface MethodEntry {
   /** The account's id (`acc_…`), which removing it takes. */
   id: string;
-  method: MethodId;
+  /** A built-in method, or the id of an OpenID Connect provider. */
+  method: string;
   /** Whether it signs the user in on its own right now (the admin allows it as a sign-in method). */
   signIn: boolean;
   /** Whether `POST /auth/methods/remove` removes it; the authenticator app takes a code of its own. */
   removable: boolean;
   createdAt: number;
-  /** Google and GitHub: the provider's address at the last sign-in. */
+  /** A provider (Google, GitHub, an OpenID Connect provider): its address at the last sign-in. */
   email?: string;
   /** A passkey: its name, and when it last signed in (0 never). */
   name?: string;
   lastUsedAt?: number;
 }
 
-/** The methods the generic route removes; the authenticator app and the phone take a code of their own to remove. */
-const REMOVABLE: readonly string[] = METHODS_WITH_SECOND_FACTOR;
+/** Whether the generic route removes a method: the authenticator app and the phone take a code of their own to remove. */
+const isRemovable = (method: string) => method !== 'authenticator' && method !== 'sms';
 
 /** How a message names the methods whose policy can require a second factor. A method without a name here does not compile. */
 const POLICY_NAMES = {
@@ -53,13 +53,13 @@ const isFactor = (method: string) => (SECOND_FACTORS as readonly string[]).inclu
  * away (the last passkey). And the user must keep a way to sign in (`only_method`). `what` names the account.
  */
 export async function removalRefused(c: Context, ctx: AppContext, accounts: StoredAccount[], account: StoredAccount, what: string): Promise<Response | null> {
-  const { configured, settings: methods } = await ctx.methods(c);
+  const { configured, settings: methods, providers } = await ctx.methods(c);
   const after = accounts.filter((a) => a.id !== account.id);
   const left = factorsAmong(after, factorsOn(configured, methods));
   const stillUsed = (method: string) => !isFactor(method) || after.some((a) => methodOf(a) === method);
   const lacking = requiringSecondFactor(configured, methods).filter((method) => stillUsed(method) && !left.some((f) => f !== method));
   if (lacking.length) {
-    const names = lacking.map((method) => POLICY_NAMES[method]).join(' and ');
+    const names = lacking.map((method) => nameOfMethod(POLICY_NAMES, providers, method)).join(' and ');
     return error(c, 403, 'required_by_policy', `Signing in with ${names} requires a second factor, so ${what} can't be removed. Set up another second factor first, or delete your account.`);
   }
   return lastWayIn(accounts, signInPredicate(configured, methods), (a) => a.id === account.id) ? onlyMethod(c) : null;
@@ -100,14 +100,14 @@ export function methodRoutes(app: Hono, ctx: AppContext, onRemoved: (account: St
     const entries = accounts
       .filter((account) => methodOf(account) !== 'sms')
       .map((account): MethodEntry => {
-        const method = methodOf(account) as MethodId;
+        const method = methodOf(account);
         return {
           id: account.id,
           method,
           signIn: signsIn(method),
-          removable: REMOVABLE.includes(method),
+          removable: isRemovable(method),
           createdAt: account.createdAt,
-          ...((method === 'google' || method === 'github') && account.email ? { email: account.email } : {}),
+          ...(isProviderAccount(account) && account.email ? { email: account.email } : {}),
           ...(method === 'passkey' ? { name: account.name ?? '', lastUsedAt: account.lastUsedAt ?? 0 } : {}),
         };
       });
@@ -120,8 +120,8 @@ export function methodRoutes(app: Hono, ctx: AppContext, onRemoved: (account: St
     const [data, accounts] = await Promise.all([body(c), users.accounts(user.id)]);
     const account = accounts.find((a) => a.id === data.id && methodOf(a) !== 'sms');
     if (!account) return error(c, 404, 'method_not_found', 'You have no such sign-in method.');
-    const method = methodOf(account) as MethodId;
-    if (!REMOVABLE.includes(method)) {
+    const method = methodOf(account);
+    if (!isRemovable(method)) {
       return error(c, 400, 'invalid_options', 'The authenticator app is removed with a code from it: use /auth/authenticator/remove.');
     }
     const refused = await removalRefused(c, ctx, accounts, account, method === 'passkey' ? 'this passkey' : 'this sign-in method');

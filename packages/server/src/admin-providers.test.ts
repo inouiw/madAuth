@@ -89,7 +89,7 @@ describe('admins manage the providers', () => {
     expect(await config()).toMatchObject({ github: { secondFactor: 'none' } });
   });
 
-  it('AP4: removing a provider says how many users signed in with it alone; their accounts stay', async () => {
+  it('AP4: removing a provider says how many users signed in with it alone; their accounts stay, its setting goes', async () => {
     const made = await withAdmin();
     await call(made, 'add', GITHUB, { Cookie: made.cookie });
     await setMethods(made.store, { github: ON, password: ON });
@@ -101,6 +101,10 @@ describe('admins manage the providers', () => {
 
     expect(await json(call(made, 'remove', { id: 'github' }, { Cookie: made.cookie }))).toMatchObject({ usersWithoutSignIn: 1 });
     expect(await users.findAccountByKey('github:2')).toMatchObject({ userId: linus!.id });
+
+    // Added again, it is off until an admin switches it on, as a new provider is.
+    await call(made, 'add', GITHUB, { Cookie: made.cookie });
+    expect(((await (await made.app.request('/auth/config')).json()) as { github: unknown }).github).toBeNull();
   });
 });
 

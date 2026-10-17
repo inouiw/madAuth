@@ -7,12 +7,14 @@ import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
 import { Providers, importProviders, parseProviderFields, parseProviderKind, providerOf, type StoredProvider } from './providers.js';
 import { SETUP_TOKEN_PREFIX, Setup } from './setup.js';
+import { discover } from './oidc.js';
 import type { KeyService } from './key-service.js';
 import { isValidEmail, normalizeEmail } from './password.js';
 import { emailRoutes } from './routes/email.js';
 import { emailLinkRoutes } from './routes/email-link.js';
 import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
+import { oidcRoutes } from './routes/oidc.js';
 import { body, error, reauthRequired, signedInUser } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
 import { clearChallenge, isSetupStep, setChallenge, type NextStep } from './routes/challenge.js';
@@ -41,7 +43,6 @@ import {
   type MethodSettings,
   type PasswordRules,
   type SecondFactor,
-  type SignInMethod,
 } from './settings.js';
 import { methodRoutes } from './routes/methods.js';
 import { apiKeyNotFound, apiKeyRoutes, invalidApiKey, keyCaller } from './routes/api-keys.js';
@@ -68,7 +69,7 @@ export type SignupCheck = { ok: true } | { ok: false; reason: 'unavailable' } | 
  * (the challenge cookie is set; `factors` is what the user can finish with); or nothing, because the method
  * is switched off.
  */
-export type SignInStep = { user: MadauthUser } | { next: NextStep; method: SignInMethod; factors: SecondFactor[] } | { disabled: true };
+export type SignInStep = { user: MadauthUser } | { next: NextStep; method: string; factors: SecondFactor[] } | { disabled: true };
 
 /** A signed-in user, and when they signed in (milliseconds since 1970; null for a session from before madAuth 0.6). */
 export interface SignIn {
@@ -82,10 +83,13 @@ export interface SignIn {
 export interface MethodsNow {
   /** The methods an admin switched on, with their settings; the initial ones until an admin set them. */
   settings: MethodSettings;
-  /** Whether the server has what a method needs: a provider in the store, or the webhook's e-mails and SMS. Only a configured method can be on. */
-  configured: (method: MethodId) => boolean;
+  /**
+   * Whether the server has what a method needs: a provider in the store (an OpenID Connect provider's method is
+   * its id), or the webhook's e-mails and SMS. Only a configured method can be on.
+   */
+  configured: (method: string) => boolean;
   /** Whether a method creates users on this server, see `canSignUp`. */
-  signsUp: (method: SignInMethod) => boolean;
+  signsUp: (method: string) => boolean;
   /** The sign-in providers in the store. */
   providers: StoredProvider[];
 }
@@ -109,7 +113,7 @@ export interface AppContext {
     c: Context,
     user: MadauthUser,
     amr: string[],
-    signIn: { method: SignInMethod; signedUpAt: number | null },
+    signIn: { method: string; signedUpAt: number | null },
     extra?: { sv?: number },
   ): Promise<MadauthUser>;
   /**
@@ -118,7 +122,7 @@ export interface AppContext {
    * `profile` is what the method knows beyond the record (e.g. Google's picture). A passkey counts as a
    * factor only when it answers on the app the sign-in is for (see `appOriginOf`). Emits `user.signed_in`.
    */
-  secondStep(c: Context, user: StoredUser, amr: string[], method: SignInMethod, profile?: { name?: string; picture?: string }): Promise<SignInStep>;
+  secondStep(c: Context, user: StoredUser, amr: string[], method: string, profile?: { name?: string; picture?: string }): Promise<SignInStep>;
   /** The user of the request's session, or null if there is none or it has ended; renews it on the way like GET /auth/session. */
   currentUser(c: Context): Promise<MadauthUser | null>;
   /**
@@ -141,9 +145,9 @@ export interface AppContext {
   /** A provider's client secret in plain text; null without one. Decrypted by the key service, so only read where it is used. */
   clientSecret(provider: StoredProvider): Promise<string | null>;
   /** Whether a method signs in: configured, listed by an admin, and allowed as a sign-in method. */
-  enabled(c: Context, method: MethodId): Promise<boolean>;
+  enabled(c: Context, method: string): Promise<boolean>;
   /** Asks the webhook whether someone may sign up (`user.signing_up`). Fails closed: without an answer, nobody signs up. */
-  checkSignup(data: { email: string; name?: string; locale?: string; method: SignInMethod }): Promise<SignupCheck>;
+  checkSignup(data: { email: string; name?: string; locale?: string; method: string }): Promise<SignupCheck>;
   /** Tells the webhook that something happened. Awaited (Lambda stops after the answer), but never fails. */
   emit(type: WebhookType, data: Record<string, unknown>): Promise<void>;
 }
@@ -187,7 +191,12 @@ export function createApp(config: MadauthConfig): Hono {
   const readMethods = async (): Promise<MethodsNow> => {
     await imported();
     const [stored, methodsValue] = await Promise.all([providers.list(), settings.get<unknown>(METHODS_SETTING)]);
-    const has = { ...fixedMethods, google: providerOf({ providers: stored }, 'google'), github: providerOf({ providers: stored }, 'github') };
+    const has = {
+      ...fixedMethods,
+      google: providerOf({ providers: stored }, 'google'),
+      github: providerOf({ providers: stored }, 'github'),
+      oidc: new Set(stored.filter((provider) => provider.kind === 'oidc').map((provider) => provider.id)),
+    };
     return {
       settings: settings.methodsFrom(methodsValue, initialMethods(has)),
       configured: (method) => isConfigured(has, method),
@@ -478,8 +487,9 @@ export function createApp(config: MadauthConfig): Hono {
       // people can sign up with one alone, `secondFactor` whether such a sign-in then asks for a second factor.
       // On, they are a second factor of the methods that ask for one.
       passkey: on('passkey') ? { signIn: signIn('passkey'), signUp: signIn('passkey') && emailVerification, secondFactor: policyOf('passkey', current) } : null,
-      // The sign-in providers that are on, with the names admins gave them: the web library shows a button for each.
-      providers: now.providers.filter((provider) => signIn(provider.id as MethodId)).map(({ id, kind, name }) => ({ id, kind, name })),
+      // The sign-in providers that are on, with the names admins gave them: the web library shows a button for
+      // each, and names those whose sign-in can ask for a second factor.
+      providers: now.providers.filter((provider) => signsIn(provider.id, now.configured, current)).map(({ id, kind, name }) => ({ id, kind, name, secondFactor: policyOf(id, current) })),
     });
   });
 
@@ -489,6 +499,8 @@ export function createApp(config: MadauthConfig): Hono {
   // Always there: whether the store has the provider is a question of each request.
   googleRoutes(app, ctx);
   githubRoutes(app, ctx);
+  // After Google's and GitHub's, whose own routes answer for their ids.
+  oidcRoutes(app, ctx);
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, users, ctx.webhook);
   authenticatorRoutes(app, ctx);
   passkeyRoutes(app, ctx);
@@ -690,7 +702,8 @@ export function createApp(config: MadauthConfig): Hono {
   const settingsAnswer = (now: MethodsNow, methods: MethodSettings, password: PasswordRules) => ({
     password,
     methods: Object.fromEntries(
-      METHODS.map((method) => [
+      // madAuth's own methods, then the OpenID Connect providers' by their ids.
+      [...METHODS, ...now.providers.filter((provider) => provider.kind === 'oidc').map((provider) => provider.id)].map((method) => [
         method,
         {
           configured: now.configured(method),
@@ -763,6 +776,7 @@ export function createApp(config: MadauthConfig): Hono {
     callbackUrl: `${issuer}/auth/providers/${provider.id}/callback`,
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
+    ...(provider.kind === 'oidc' ? { issuer: provider.issuer, scopes: provider.scopes, trustEmail: provider.trustEmail } : {}),
   });
   /** Who made a change, as a `provider.*` event tells it. */
   const changedBy = (caller: { by: string | null; setup: boolean }) => ({ by: caller.by, ...(caller.setup ? { bySetupToken: true } : {}) });
@@ -778,15 +792,22 @@ export function createApp(config: MadauthConfig): Hono {
     const caller = await adminOrSetup(c, undefined, true);
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
-    const kind = parseProviderKind(data);
-    if (typeof kind !== 'string') return c.json(kind, 400);
+    const named = parseProviderKind(data);
+    if ('error' in named) return c.json(named, 400);
+    const { kind, id } = named;
     const fields = parseProviderFields(kind, data, true);
     if ('error' in fields) return c.json(fields, 400);
+    // An issuer that doesn't answer as an OpenID Connect provider would only fail at the first sign-in.
+    const found = fields.issuer ? await discover(fields.issuer, config.oidcFetch) : null;
+    if (found && 'problem' in found) return c.json({ error: 'invalid_provider', message: `The issuer is no OpenID Connect provider madAuth can use: ${found.problem}.` }, 400);
     // Until an admin saved the methods, every configured one counts as on: they are saved as they are now
     // first, so the new provider stays off until it is switched on.
     if ((await settings.get(METHODS_SETTING)) === undefined) await settings.changeMethods((current) => current, caller.by, (await ctx.methods(c)).settings);
-    const added = await providers.add(kind, fields, caller.by);
-    if ('error' in added) return c.json({ error: added.error, message: `There is a "${kind}" provider already: change it with providers/update.` }, 409);
+    const added = await providers.add(kind, id, fields, caller.by);
+    if ('error' in added && added.error === 'issuer_bound') {
+      return c.json({ error: 'invalid_provider', message: `The id "${id}" belongs to the issuer "${added.issuer}", whose users' accounts it has: give this provider another id.` }, 400);
+    }
+    if ('error' in added) return c.json({ error: added.error, message: `There is a provider "${id}" already: change it with providers/update.` }, 409);
     await ctx.emit('provider.added', { provider: providerInfo(added.provider), ...changedBy(caller) });
     return c.json({ provider: providerInfo(added.provider) });
   });
@@ -818,6 +839,8 @@ export function createApp(config: MadauthConfig): Hono {
     const stranded = await users.countSigningInOnlyWith(id, (method) => method !== id && signsIn(method));
     const removed = await providers.remove(id, caller.by);
     if ('error' in removed) return providerNotFound(c);
+    // Out of the settings too, so a provider added again with the id stays off until it is switched on.
+    await settings.changeMethods((methods) => (methods[id] ? Object.fromEntries(Object.entries(methods).filter(([method]) => method !== id)) : null), caller.by);
     await ctx.emit('provider.removed', { provider: providerInfo(removed.provider), ...changedBy(caller) });
     return c.json({ provider: providerInfo(removed.provider), usersWithoutSignIn: stranded });
   });

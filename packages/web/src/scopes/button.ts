@@ -15,16 +15,18 @@ export interface ButtonRenderOptions {
   purpose?: 'signin' | 'link';
   /**
    * Called with the outcome of a sign-in through this button. `Madauth.onAuthStateChanged` listeners are
-   * notified as well. With a redirect provider (`GoogleRedirect`, `GitHub`) the page navigates away instead.
+   * notified as well. With a redirect provider (`GoogleRedirect`, `GitHub`, an OpenID Connect provider) the
+   * page navigates away instead.
    */
   onResult?(result: Result<{ user: MadauthUser }>): void;
 }
 
-/** The scope of a method whose provider renders a branded button: `Madauth.google`, `Madauth.github`. */
+/** The scope of a method whose provider renders a button: `Madauth.google`, `Madauth.github`, `Madauth.provider(id)`. */
 export interface ButtonApi {
   /**
    * Renders the provider's sign-in button into `container`. Can be called before `initialize` has
-   * finished. Fails with `flow_not_enabled` when no provider with a button is registered for the method.
+   * finished. Fails with `flow_not_enabled` when no provider with a button is registered for the method;
+   * while `initialize` still asks the server, through `onResult` (madAuth adds a provider for each the server offers).
    */
   renderButton(container: HTMLElement, options?: ButtonRenderOptions): Result<{ remove(): void }>;
 }
@@ -34,8 +36,8 @@ export function createButtonApi(core: Core, method: LoginMethodId, hint: string)
   return {
     renderButton(container, options = {}) {
       if (!core.isConfigured()) return fail('not_initialized', 'Call Madauth.initialize({ providers: [...] }) first.');
-      const provider = core.provider(method);
-      if (!provider?.renderButton) return fail('flow_not_enabled', hint);
+      // Before the server's settings are known, the providers madAuth adds for it are not registered yet.
+      if (core.config() && !core.provider(method)?.renderButton) return fail('flow_not_enabled', hint);
       let removed = false;
       let unmount: (() => void) | undefined;
       void core.whenReady().then((ready) => {
@@ -44,8 +46,13 @@ export function createButtonApi(core: Core, method: LoginMethodId, hint: string)
           options.onResult?.(ready);
           return;
         }
+        const provider = core.provider(method);
+        if (!provider?.renderButton) {
+          options.onResult?.(fail('flow_not_enabled', hint));
+          return;
+        }
         const theme = options.theme === 'light' || options.theme === 'dark' ? options.theme : isDark(container) ? 'dark' : 'light';
-        unmount = provider.renderButton!(container, { theme, purpose: options.purpose, onResult: (result) => options.onResult?.(result) });
+        unmount = provider.renderButton(container, { theme, purpose: options.purpose, onResult: (result) => options.onResult?.(result) });
       });
       return ok({
         remove() {

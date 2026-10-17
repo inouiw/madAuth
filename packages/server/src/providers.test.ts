@@ -20,9 +20,9 @@ function providers(keys = keyService) {
 }
 
 describe('checking what an admin sends', () => {
-  it('PV1: a provider is Google or GitHub, with its kind as its id', () => {
-    expect(parseProviderKind({ kind: 'google' })).toBe('google');
-    expect(parseProviderKind({ kind: 'github', id: 'github' })).toBe('github');
+  it('PV1: Google and GitHub have their kind as their id', () => {
+    expect(parseProviderKind({ kind: 'google' })).toEqual({ kind: 'google', id: 'google' });
+    expect(parseProviderKind({ kind: 'github', id: 'github' })).toEqual({ kind: 'github', id: 'github' });
     expect(parseProviderKind({ kind: 'gitlab' })).toMatchObject({ error: 'invalid_provider' });
     expect(parseProviderKind({ kind: 'google', id: 'work' })).toMatchObject({ error: 'invalid_provider', message: expect.stringContaining('"google"') });
   });
@@ -57,10 +57,10 @@ describe('the providers in the store', () => {
     const { providers: p } = providers();
     expect(await p.list()).toEqual([]);
 
-    const { provider: google } = (await p.add('google', { clientId: GOOGLE_ID }, 'ada@example.com')) as { provider: { id: string } };
+    const { provider: google } = (await p.add('google', 'google', { clientId: GOOGLE_ID }, 'ada@example.com')) as { provider: { id: string } };
     expect(google).toMatchObject({ id: 'google', kind: 'google', name: 'Google', clientId: GOOGLE_ID, secret: null });
-    expect(await p.add('google', { clientId: GOOGLE_ID }, null)).toEqual({ error: 'provider_exists' });
-    await p.add('github', { clientId: 'Ov23liAbc', clientSecret: 'gh-secret', name: 'GitHub Enterprise' }, null);
+    expect(await p.add('google', 'google', { clientId: GOOGLE_ID }, null)).toEqual({ error: 'provider_exists' });
+    await p.add('github', 'github', { clientId: 'Ov23liAbc', clientSecret: 'gh-secret', name: 'GitHub Enterprise' }, null);
     expect((await p.list()).map((x) => x.id)).toEqual(['google', 'github']);
 
     const changed = await p.update('github', { name: 'GitHub' }, null);
@@ -74,7 +74,7 @@ describe('the providers in the store', () => {
 
   it('PV4: keeps the client secret encrypted by the key service, and reads it back', async () => {
     const { providers: p, store } = providers();
-    await p.add('github', { clientId: 'Ov23liAbc', clientSecret: 'gh-secret' }, null);
+    await p.add('github', 'github', { clientId: 'Ov23liAbc', clientSecret: 'gh-secret' }, null);
 
     const record = await store.findOne('setting', { id: PROVIDERS_SETTING });
     expect(String(record?.value)).not.toContain('gh-secret');
@@ -83,7 +83,7 @@ describe('the providers in the store', () => {
 
     await p.update('github', { clientSecret: 'new-secret' }, null);
     expect(await p.clientSecret((await p.list())[0]!)).toBe('new-secret');
-    await p.add('google', { clientId: GOOGLE_ID, clientSecret: 'g' }, null);
+    await p.add('google', 'google', { clientId: GOOGLE_ID, clientSecret: 'g' }, null);
     await p.update('google', { clientSecret: null }, null);
     expect((await p.list())[1]!.secret).toBeNull();
   });
@@ -93,7 +93,7 @@ describe('the providers in the store', () => {
     const newKey = await generateSigningKey();
     const store = createSqliteAdapter(':memory:');
     const settings = new Settings(store);
-    await new Providers(settings, await createLocalKeyService([oldKey])).add('github', { clientId: 'Ov23liAbc', clientSecret: 'gh-secret' }, null);
+    await new Providers(settings, await createLocalKeyService([oldKey])).add('github', 'github', { clientId: 'Ov23liAbc', clientSecret: 'gh-secret' }, null);
 
     const rotated = new Providers(settings, await createLocalKeyService([newKey, oldKey]));
     const before = (await rotated.list())[0]!;
@@ -110,7 +110,7 @@ describe('the providers in the store', () => {
 
   it("PV6: leaves out a stored provider it doesn't know, and warns once", async () => {
     const { providers: p, settings } = providers();
-    await p.add('google', { clientId: GOOGLE_ID }, null);
+    await p.add('google', 'google', { clientId: GOOGLE_ID }, null);
     await settings.set(PROVIDERS_SETTING, [...(await p.list()), { id: 'gitlab', kind: 'gitlab' }], null);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -160,7 +160,7 @@ describe('Google and GitHub from the environment, as before 0.7', () => {
     expect((await config()).google).toBeNull();
     expect((await app.request('/auth/providers/google/start')).status).toBe(404);
 
-    await new Providers(new Settings(store), keyService).add('google', { clientId: CLIENT_ID, clientSecret: 'g-secret' }, null);
+    await new Providers(new Settings(store), keyService).add('google', 'google', { clientId: CLIENT_ID, clientSecret: 'g-secret' }, null);
     await setMethods(store, { google: { allowAsSignInMethod: true, secondFactor: 'none' }, password: { allowAsSignInMethod: true, secondFactor: 'none' } });
 
     expect((await config()).google).toEqual({ clientId: CLIENT_ID, codeFlow: true, secondFactor: 'none' });

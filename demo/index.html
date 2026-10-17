@@ -244,20 +244,20 @@
           <li class="api-method" data-call="listProviders">
             <button type="button" class="api-row" aria-expanded="false">Madauth.admin.listProviders()</button>
             <div class="api-detail" hidden>
-              <p>The sign-in providers, Google and GitHub: their client IDs, whether they have a client secret (never the secret), and the callback URL each one's console must list.</p>
+              <p>The sign-in providers, Google, GitHub and the OpenID Connect providers: their client IDs, whether they have a client secret (never the secret), and the callback URL each one's console must list.</p>
             </div>
           </li>
           <li class="api-method" data-call="addProvider">
             <button type="button" class="api-row" aria-expanded="false">Madauth.admin.addProvider(provider)</button>
             <div class="api-detail" hidden>
-              <p>Adds Google (its client ID; a client secret for the redirect sign-in) or GitHub (the client ID and secret of an OAuth App). It is off until you switch it on in <code>setSettings</code>; then its button is in the dialog. Needs a sign-in within the last ten minutes.</p>
+              <p>Adds Google (its client ID; a client secret for the redirect sign-in), GitHub (the client ID and secret of an OAuth App), or an OpenID Connect provider with an id of its own, e.g. <code>{ "kind": "oidc", "id": "gitlab", "name": "GitLab", "issuer": "https://gitlab.com", "clientId": "…", "clientSecret": "…" }</code>; the server reads its discovery document first. It is off until you switch it on in <code>setSettings</code>, by its id; then its button is in the dialog. Needs a sign-in within the last ten minutes.</p>
               <label>Provider (JSON) <textarea data-param="provider" data-json rows="3" spellcheck="false">{ "kind": "github", "clientId": "", "clientSecret": "" }</textarea></label>
             </div>
           </li>
           <li class="api-method" data-call="updateProvider">
             <button type="button" class="api-row" aria-expanded="false">Madauth.admin.updateProvider(id, changes)</button>
             <div class="api-detail" hidden>
-              <p>Changes a provider's name (the button says "Continue with" it), client ID or client secret; <code>"clientSecret": null</code> removes Google's.</p>
+              <p>Changes a provider's name (the button says "Continue with" it), client ID or client secret, and an OpenID Connect provider's <code>scopes</code> and <code>trustEmail</code>; <code>"clientSecret": null</code> removes Google's.</p>
               <label>Id <input data-param="id" type="text" autocomplete="off" spellcheck="false" value="github" /></label>
               <label>Changes (JSON) <textarea data-param="changes" data-json rows="2" spellcheck="false">{ "name": "GitHub" }</textarea></label>
             </div>
