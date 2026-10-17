@@ -16,9 +16,10 @@ FROM node:22-alpine
 WORKDIR /app
 COPY --from=build /repo/packages/server/dist/standalone/main.mjs ./main.mjs
 # For DATABASE_URL=sqlite:/data/madauth.db: a volume the unprivileged user can write to.
-RUN mkdir /data && chown node:node /data
+RUN mkdir /data && chown 1000:1000 /data
 VOLUME /data
-USER node
+# The image's node user, by number: Kubernetes checks runAsNonRoot only for a numeric user.
+USER 1000:1000
 ENV NODE_ENV=production PORT=8787
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1:${PORT}/health || exit 1

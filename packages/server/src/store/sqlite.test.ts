@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
+import { schemaV1 } from '../test/schema-v1.js';
 import { storeAdapterContract } from '../testing.js';
 import { madauthSchema } from './schema.js';
 import { columnName, createTablesSql, tableName, upgradeTablesSql } from './sql.js';
@@ -57,14 +58,8 @@ describe('SQLite adapter', () => {
   it('upgrades a database written by an older madAuth and keeps its records', async () => {
     dir = mkdtempSync(join(tmpdir(), 'madauth-'));
     const path = join(dir, 'madauth.db');
-    // Schema version 1: users had no count of wrong codes and no claims, accounts no e-mail and no last code,
-    // and there were no settings and no recovery codes.
-    const { wrongCodes: _, claims: __, lastSmsAt: _________, signedUpAt: __________, signUpMethod: _g, ...v1Fields } = madauthSchema.models.user.fields;
-    const { email: ___, lastUsedStep: _____, setupId: _______, phone: ________, primaryUserId: ___________, secondFactor: ____________, name: _a, credentialId: _b, signCount: _c, transports: _d, lastUsedAt: _e, rpId: _f, ...v1AccountFields } = madauthSchema.models.account.fields;
-    const { setting: ____, recoveryCode: ______, apiKey: _h, ...v1Models } = madauthSchema.models;
-    const v1 = { version: 1, models: { ...v1Models, user: { fields: v1Fields }, account: { fields: v1AccountFields } } };
     const db = new DatabaseSync(path);
-    db.exec(createTablesSql('sqlite', v1));
+    db.exec(createTablesSql('sqlite', schemaV1));
     db.exec("INSERT INTO madauth_user VALUES ('usr_1', 'Ada@example.com', 'ada@example.com', 1, 'Ada', 0, 0, 1)");
     db.exec("INSERT INTO madauth_account VALUES ('acc_1', 'usr_1', 'password:usr_1', 'hash', 0, 0, 1)");
     db.exec('PRAGMA user_version = 1');

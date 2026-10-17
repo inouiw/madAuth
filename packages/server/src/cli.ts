@@ -35,9 +35,10 @@ Commands:
   kms-rotate                   Rotate those keys, with your AWS credentials; run it every day (the AWS
                                template's rotator does). A key gets a successor once a year.
   schema [--dialect <name>] [--from <version>]
-                               Print the SQL that creates madAuth's tables for a custom store adapter.
-                               Dialects: postgres (default), mysql, sqlite. With --from, print only the
-                               changes since that schema version, to upgrade existing tables.
+                               Print the SQL that creates madAuth's tables, for a custom store adapter or
+                               for DATABASE_URL=postgres:// with DATABASE_MIGRATE=false. Dialects: postgres
+                               (default), mysql, sqlite. With --from, print only the changes since that
+                               schema version, to upgrade existing tables.
 
 Options:
   --env-file <path>            Read environment variables from this file, for any command. A variable
@@ -324,8 +325,8 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   }
   // Every user is stored, whichever way they sign in.
   const database = await answer(options.database, 'Database for the users', 'sqlite:./madauth.db');
-  if (!/^(sqlite|dynamodb):./.test(database)) {
-    return fail(`The database must be sqlite:<path> or dynamodb:<table> but is "${database}".`);
+  if (!/^((sqlite|dynamodb):.|postgres(ql)?:\/\/.)/.test(database)) {
+    return fail(`The database must be sqlite:<path>, postgres://<user>:<password>@<host>/<database> or dynamodb:<table> but is "${database}".`);
   }
   const webhookUrl = webhook
     ? await answer(options['webhook-url'], `Webhook URL, where madAuth hands over its ${emails ? (sms ? 'e-mails and SMS' : 'e-mails') : 'SMS'}`, 'http://localhost:8790/webhook')

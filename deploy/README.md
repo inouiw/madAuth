@@ -6,8 +6,8 @@ same server; they differ in where the users are stored and how the secrets are k
 | Target | Folder | Google / GitHub sign-in | E-mail & password | Users stored in |
 | --- | --- | --- | --- | --- |
 | AWS Lambda | [`aws/`](aws/README.md) | yes | yes | DynamoDB |
-| Docker (any VM or container host) | [`docs/server.md`](../docs/server.md#docker) | yes | yes | SQLite on a volume |
-| Azure Functions | [`docs/server.md`](../docs/server.md#azure-functions) | yes | needs a [custom store adapter](../docs/server.md#custom-store-adapter) | – |
+| Docker (any VM or container host) | [`docs/server.md`](../docs/server.md#docker) | yes | yes | SQLite on a volume, or [Postgres](../docs/server.md#postgres) |
+| Azure Functions | [`docs/server.md`](../docs/server.md#azure-functions) | yes | needs a database | [Postgres](../docs/server.md#postgres) or a [custom store adapter](../docs/server.md#custom-store-adapter) |
 
 More templates (Azure, Docker with HTTPS) will be added next to `aws/`.
 
