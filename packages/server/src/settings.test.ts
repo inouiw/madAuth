@@ -334,6 +334,7 @@ describe('switching sign-in methods off and on', () => {
       emailLink: null,
       sms: false,
       passkey: null,
+      providers: [{ id: 'google', kind: 'google', name: 'Google' }],
     });
   });
 

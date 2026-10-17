@@ -530,6 +530,7 @@ describe('configuration', () => {
       emailLink: { secondFactor: 'none' },
       sms: true,
       passkey: null,
+      providers: [],
     });
     expect((await app.request('/auth/providers/google/nonce', { method: 'POST', headers: { Origin: APP_ORIGIN } })).status).toBe(404);
   });

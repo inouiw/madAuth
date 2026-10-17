@@ -980,6 +980,7 @@ describe('signing up with the app alone', () => {
       emailLink: null,
       sms: false,
       passkey: null,
+      providers: [],
     });
     expect((await signUp(only)).status).toBe(202);
   });
