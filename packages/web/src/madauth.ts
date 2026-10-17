@@ -10,9 +10,11 @@ import {
 } from './constants.js';
 import { takeHashParam } from './hash.js';
 import { request, type HttpResult, type RequestInit } from './http.js';
-import { isLoginMethodId, type LoginMethodId } from './methods.js';
+import { isBuiltInMethodId, type LoginMethodId } from './methods.js';
 import { GitHub } from './providers/github.js';
 import { GoogleRedirect } from './providers/google-redirect.js';
+import { OpenIdConnect } from './providers/oidc.js';
+import { methodName } from './providers/redirect.js';
 import { FACTOR_STEPS, pendingStepOf, type DeletedAccount, type PendingStep, type ProviderContext, type ServerConfig, type SignInProvider } from './providers/provider.js';
 import { fail, isSecondFactor, ok, toErrorCode, type MadauthError, type MadauthUser, type Result } from './result.js';
 import type { Core } from './scopes/core.js';
@@ -24,6 +26,7 @@ import { createMethodsApi } from './scopes/methods.js';
 import { createApiKeysApi } from './scopes/api-keys.js';
 import { createPasskeyApi, type PasskeyInfo } from './scopes/passkey.js';
 import { createPasswordApi } from './scopes/password.js';
+import { createProviderApi, type ProviderApi } from './scopes/provider.js';
 import { createSmsApi } from './scopes/sms.js';
 import { createAuthenticatorApi } from './scopes/authenticator.js';
 import { stringsFor, type Strings } from './strings.js';
@@ -38,7 +41,7 @@ export interface MadauthOptions {
    * when the page was opened from a password reset link, when a sign-in goes on with a second step, or with
    * the error of a sign-in that failed outside it (a redirect, a link, One Tap) while nobody is signed in.
    * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.github`,
-   * `Madauth.authenticator`, `Madauth.emailLink`, `Madauth.passkey`, `Madauth.sms` and `Madauth.methods`; the
+   * `Madauth.provider(id)`, `Madauth.authenticator`, `Madauth.emailLink`, `Madauth.passkey`, `Madauth.sms` and `Madauth.methods`; the
    * dialog never opens.
    */
   ui?: 'dialog' | 'custom';
@@ -64,10 +67,11 @@ export type AuthStateListener = (user: MadauthUser | null) => void;
  * What `initialize` resolves to: a {@link Result}, plus `leftOut`, the methods whose providers were left out
  * because the server doesn't offer them (see {@link Madauth.initialize}). It is there on a failure as well,
  * e.g. when a redirect sign-in failed although madAuth is ready; empty when nothing was left out. `linked`
- * is set when the page came back from a redirect that added Google or GitHub to the signed-in user's methods
- * (a button with `purpose: 'link'`); one that failed is the failure, e.g. `account_taken`.
+ * is set when the page came back from a redirect that added a provider (Google, GitHub, an OpenID Connect
+ * provider) to the signed-in user's methods (a button with `purpose: 'link'`); one that failed is the
+ * failure, e.g. `account_taken`.
  */
-export type InitializeResult = Result & { leftOut: LoginMethodId[]; linked?: 'google' | 'github' };
+export type InitializeResult = Result & { leftOut: LoginMethodId[]; linked?: LoginMethodId };
 
 interface State {
   serverUrl: string;
@@ -145,7 +149,7 @@ function logError<T extends object>(result: Result<T>): Result<T> {
 
 /** The step an error stands for (see `secondStepOf`), with the method whose sign-in it is. */
 function nextStepOf(error: MadauthError): PendingStep | undefined {
-  return pendingStepOf(error, isLoginMethodId(error.method) ? error.method : 'password');
+  return pendingStepOf(error, error.method || 'password');
 }
 
 /** A sign-in outside the dialog goes on with its second step: the dialog opens on that step. */
@@ -246,24 +250,25 @@ async function handleSignInLink(ctx: ProviderContext, providers: Map<LoginMethod
 }
 
 /**
- * Back from a redirect sign-in (Google's code flow, GitHub): with its error, or with the first step done and
- * a second factor or its setup next. The server names the method next to either; a server before 0.5 names
- * none, and only Google had a redirect flow then. Or back from a redirect that added the provider to the
- * signed-in user's methods: resolves to which. The URL is tidied up either way.
+ * Back from a redirect sign-in (Google's code flow, GitHub, an OpenID Connect provider): with its error, or
+ * with the first step done and a second factor or its setup next. The server names the method next to
+ * either; a server before 0.5 names none, and only Google had a redirect flow then. Or back from a redirect
+ * that added the provider to the signed-in user's methods: resolves to which. The URL is tidied up either way.
  */
-function handleRedirectReturn(ctx: ProviderContext): 'google' | 'github' | undefined {
+function handleRedirectReturn(ctx: ProviderContext): LoginMethodId | undefined {
   const linked = takeHashParam(REDIRECT_LINKED_PARAM);
   const error = takeHashParam(REDIRECT_ERROR_PARAM);
   const next = takeHashParam(REDIRECT_NEXT_PARAM);
   const named = (takeHashParam(REDIRECT_FACTORS_PARAM) ?? '').split(',').filter(isSecondFactor);
-  // Only the redirect providers come back this way: anything else in the hash counts as Google's.
   const via = takeHashParam(REDIRECT_METHOD_PARAM);
-  if (linked === 'google' || linked === 'github') return linked;
-  const method: LoginMethodId = via === 'github' ? 'github' : 'google';
+  // Only the providers come back this way: a method the server has no provider for counts as Google's.
+  const isProvider = (id: string | null): id is string => id === 'google' || id === 'github' || !!ctx.config.providers?.some((p) => p.id === id);
+  if (isProvider(linked)) return linked;
+  const method: LoginMethodId = isProvider(via) ? via : 'google';
   if (error) {
     const code = toErrorCode(error);
     const s = stringsFor(ctx.locale);
-    const name = s.methodNames[method];
+    const name = methodName(ctx.config, method, s);
     const message = Object.hasOwn(s.redirectErrors, code) ? s.redirectErrors[code as keyof Strings['redirectErrors']](name) : s.redirectFailed(name, error);
     ctx.signInFailed({ code, message });
     return undefined;
@@ -276,13 +281,14 @@ function handleRedirectReturn(ctx: ProviderContext): 'google' | 'github' | undef
 }
 
 /**
- * The providers for the sign-in providers the server offers that the app didn't pass: GitHub's redirect, and
- * Google's when the server has its code flow (a client secret). Google's One Tap the app passes itself
- * (`new GoogleFedcm()`), since it loads Google's script and prompts on page load.
+ * The providers for the sign-in providers the server offers that the app didn't pass: GitHub's redirect, the
+ * OpenID Connect providers', and Google's when the server has its code flow (a client secret). Google's One
+ * Tap the app passes itself (`new GoogleFedcm()`), since it loads Google's script and prompts on page load.
  */
 function automaticProviders(config: ServerConfig, passed: Map<LoginMethodId, SignInProvider>): SignInProvider[] {
   return (config.providers ?? []).flatMap((offered): SignInProvider[] => {
-    if (passed.has(offered.id as LoginMethodId)) return [];
+    if (passed.has(offered.id)) return [];
+    if (offered.kind === 'oidc') return [new OpenIdConnect(offered.id)];
     if (offered.kind === 'github') return [new GitHub()];
     return offered.kind === 'google' && config.google?.codeFlow ? [new GoogleRedirect()] : [];
   });
@@ -678,6 +684,15 @@ export const Madauth = {
   /** GitHub sign-in for custom login screens. Needs `new GitHub()`. */
   github: createGitHubApi(core),
 
+  /**
+   * A sign-in provider the server offers, by its id, for custom login screens: its button, or its redirect
+   * without one. For the OpenID Connect providers an admin added (e.g. `Madauth.provider('gitlab')`), and for
+   * Google and GitHub too.
+   */
+  provider(id: string): ProviderApi {
+    return createProviderApi(core, id);
+  },
+
   /** The authenticator app for custom login screens: sign-in, the second step, the setup. Needs `new Authenticator()`. */
   authenticator: createAuthenticatorApi(core),
 
@@ -721,6 +736,21 @@ export const Madauth = {
 /** The provider registered for a sign-in method, if any. */
 export function providerFor(method: LoginMethodId): SignInProvider | undefined {
   return state?.providers.get(method);
+}
+
+/** The OpenID Connect providers' methods that are registered, in the order the server lists them. */
+export function providerMethods(): string[] {
+  return [...(state?.providers.keys() ?? [])].filter((method) => !isBuiltInMethodId(method));
+}
+
+/** How the texts name a method: a provider by the name an admin gave it. */
+export function nameOfMethod(method: LoginMethodId, s: Strings): string {
+  return methodName(state?.config, method, s);
+}
+
+/** Whether a method is a registered sign-in provider's: Google, GitHub or an OpenID Connect provider. */
+export function isProviderMethod(method: LoginMethodId): boolean {
+  return method === 'google' || method === 'github' || providerMethods().includes(method);
 }
 
 /** Resolves when madAuth is usable (or why not). */

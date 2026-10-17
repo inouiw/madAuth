@@ -1,6 +1,6 @@
 import { fail, ok, type Result } from '../result.js';
 import type { ButtonOptions, ProviderContext, SignInProvider } from './provider.js';
-import { renderRedirectButton } from './redirect.js';
+import { renderRedirectButton, startRedirect } from './redirect.js';
 
 const GOOGLE_LOGO = `<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
 <path fill="#ea4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
@@ -42,5 +42,9 @@ export class GoogleRedirect implements SignInProvider {
       method: 'google',
       style: { logo: GOOGLE_LOGO, colors: buttonColors, font: "500 14px/20px Roboto, 'Google Sans', Arial, sans-serif" },
     });
+  }
+
+  redirect(link: boolean): void {
+    startRedirect(this.#ctx!, 'google', link);
   }
 }

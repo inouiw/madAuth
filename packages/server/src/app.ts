@@ -487,8 +487,9 @@ export function createApp(config: MadauthConfig): Hono {
       // people can sign up with one alone, `secondFactor` whether such a sign-in then asks for a second factor.
       // On, they are a second factor of the methods that ask for one.
       passkey: on('passkey') ? { signIn: signIn('passkey'), signUp: signIn('passkey') && emailVerification, secondFactor: policyOf('passkey', current) } : null,
-      // The sign-in providers that are on, with the names admins gave them: the web library shows a button for each.
-      providers: now.providers.filter((provider) => signIn(provider.id as MethodId)).map(({ id, kind, name }) => ({ id, kind, name })),
+      // The sign-in providers that are on, with the names admins gave them: the web library shows a button for
+      // each, and names those whose sign-in can ask for a second factor.
+      providers: now.providers.filter((provider) => signsIn(provider.id, now.configured, current)).map(({ id, kind, name }) => ({ id, kind, name, secondFactor: policyOf(id, current) })),
     });
   });
 

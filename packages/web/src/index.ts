@@ -40,7 +40,8 @@ export type { PasskeyApi, PasskeyInfo, PasskeySignInOptions, PasskeySignUpOption
 export type { MethodsApi, SignInMethodInfo } from './scopes/methods.js';
 export type { ApiKeyInfo, ApiKeyScope, ApiKeysApi, CreateApiKeyOptions } from './scopes/api-keys.js';
 export type { ButtonRenderOptions } from './scopes/button.js';
-export type { AdminApi, Claims, FoundUser, MethodId, MethodSetting, MethodToSet, MethodsToSet, PasswordRules, ProviderChanges, ProviderInfo, ProviderKind, Settings, UserSearch } from './scopes/admin.js';
+export type { ProviderApi } from './scopes/provider.js';
+export type { AdminApi, Claims, FoundUser, MethodId, MethodSetting, MethodToSet, MethodsToSet, PasswordRules, NewProvider, ProviderChanges, ProviderInfo, ProviderKind, Settings, UserSearch } from './scopes/admin.js';
 export type { RatePassword } from './strength.js';
 export {
   MadauthLogin,
@@ -51,7 +52,7 @@ export {
   type SmsEnabledDetail,
   type SmsFailedDetail,
 } from './madauth-login.js';
-export { loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
+export { loginMethods, type BuiltInMethodId, type LoginMethod, type LoginMethodId } from './methods.js';
 
 if (!customElements.get('madauth-login')) {
   customElements.define('madauth-login', MadauthLogin);

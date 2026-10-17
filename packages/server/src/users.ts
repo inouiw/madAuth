@@ -183,6 +183,9 @@ export const methodOf = (account: Pick<StoredAccount, 'key'>): string => {
 
 const OIDC_KEY_PREFIX = 'oidc';
 
+/** Whether an account is at a sign-in provider (Google, GitHub, an OpenID Connect provider), which tells its address. */
+export const isProviderAccount = (account: Pick<StoredAccount, 'key'>): boolean => ['google', 'github', OIDC_KEY_PREFIX].includes(String(account.key).split(':')[0]!);
+
 /** The key of an account at an OpenID Connect provider: its id and the account's `sub` there. */
 export function oidcAccountKey(providerId: string, sub: string): string {
   return `${OIDC_KEY_PREFIX}:${providerId}:${sub}`;

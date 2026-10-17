@@ -116,7 +116,7 @@ describe("an OpenID Connect provider's method", () => {
     expect(await set({ password: on, gitlab: { allowAsSignInMethod: false, secondFactor: 'none' } })).toMatchObject({ error: 'invalid_settings' });
     expect(await set({ password: on, keycloak: on })).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('"keycloak" is no sign-in method of this server') });
     const config = (await (await made.app.request('/auth/config')).json()) as { providers: unknown[] };
-    expect(config.providers).toContainEqual({ id: 'gitlab', kind: 'oidc', name: 'GitLab' });
+    expect(config.providers).toContainEqual({ id: 'gitlab', kind: 'oidc', name: 'GitLab', secondFactor: 'optional' });
   });
 });
 
@@ -208,11 +208,14 @@ describe('signing in with an OpenID Connect provider', () => {
     expect(new URLSearchParams(exchange.body).get('client_secret')).toBe('madauth-client-secret');
   });
 
-  it('OP10: a signed-in user adds the provider to their methods', async () => {
+  it('OP10: a signed-in user adds the provider to their methods, sees its address there, and removes it', async () => {
     const made = await withGitLab();
     const { location } = await signIn(made, { idToken: { sub: 'gl-ada', email: 'ada@gitlab.example.com', email_verified: true } }, '&link=1');
     expect(location).toBe(`${APP}/page#madauth_linked=gitlab`);
-    const methods = (await (await made.app.request('/auth/methods', { headers: { Cookie: made.cookie } })).json()) as { methods: { method: string }[] };
-    expect(methods.methods.map((m) => m.method)).toContain('gitlab');
+    const list = async () => ((await (await made.app.request('/auth/methods', { headers: { Cookie: made.cookie } })).json()) as { methods: { id: string; method: string }[] }).methods;
+    const gitlab = (await list()).find((m) => m.method === 'gitlab');
+    expect(gitlab).toMatchObject({ signIn: true, removable: true, email: 'ada@gitlab.example.com' });
+    expect((await post(made.app, '/auth/methods/remove', { id: gitlab!.id }, { Cookie: made.cookie })).status).toBe(200);
+    expect((await list()).map((m) => m.method)).not.toContain('gitlab');
   });
 });
