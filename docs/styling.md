@@ -59,12 +59,13 @@ Use `::part()` to style an element directly.
 | `dialog` | The dialog box itself (`<dialog>`). |
 | `method` | Each sign-in method button: the submit buttons of the forms ("Sign in", "Create account", "Turn on", …), the "Sign in with a passkey" button, and every row under "Other ways to sign in". Google's own button (with `GoogleFedcm`) and the redirect buttons (with `GoogleRedirect` and `GitHub`) follow the providers' design and can't be styled; they take the dialog's light or dark look. |
 | `error` | The message shown when a sign-in fails. |
-| `form` | Each form: sign in (`signin`), create account (`signup`), forgot password (`forgot`), code (`code`), new password (`reset`), the e-mail link (`email-link`), the authenticator app's: sign in with it (`authenticator`), the second step (`authenticator-code`), the setup (`authenticator-setup`), and the SMS code's: the second step (`sms-code`), adding a phone (`sms-setup`, `sms-setup-code`), and a new API key (`api-key-create`). The class names tell them apart. |
+| `form` | Each form: sign in (`signin`), create account (`signup`), forgot password (`forgot`), code (`code`), new password (`reset`), the e-mail link (`email-link`), the authenticator app's: sign in with it (`authenticator`), the second step (`authenticator-code`), the setup (`authenticator-setup`), and the SMS code's: the second step (`sms-code`), adding a phone (`sms-setup`, `sms-setup-code`), a new API key (`api-key-create`), and a sign-in provider in the admin dialog (`provider-form`). The class names tell them apart. |
 | `input` | Each text field. |
 | `link` | The text buttons: "Forgot password?", "No account? Create one", "Already have an account? Sign in" (only the action, a `<span>`, is underlined), "Back to sign in", "Send the email again", "Use a recovery code instead", "Send a code by SMS instead", "Use your phone number instead", "Cancel", "Start again". |
 | `qr` | The QR code of the authenticator app's key: an inline SVG whose modules are drawn in its text color, black on a white background. Keep it dark on light; not every authenticator app reads an inverted code. |
 | `codes` | The list of recovery codes, shown once after the setup. |
 | `api-key` | A new [API key](api-keys.md), shown once to copy (monospace, selected with one click). |
+| `callback-url` | In the admin dialog, the callback URL to register at a sign-in provider (monospace, selected with one click, like `api-key`). |
 | `strength` | The strength meter under a new password (create account, new password): four bars and a word. It has `data-score` (0 to 4), and `data-too-easy` while the password is below the server's `minScore`. |
 
 ```css

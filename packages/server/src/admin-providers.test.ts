@@ -46,7 +46,10 @@ describe('admins manage the providers', () => {
     expect(JSON.stringify(added)).not.toContain('gh-secret');
     expect(await json(call(made, 'add', GITHUB, admin))).toMatchObject({ error: 'provider_exists' });
     await call(made, 'add', { kind: 'google', clientId: CLIENT_ID }, admin);
-    expect((await json(call(made, 'list', {}, admin))).providers.map((p: { id: string }) => p.id)).toEqual(['github', 'google']);
+    const listed = await json(call(made, 'list', {}, admin));
+    expect(listed.providers.map((p: { id: string }) => p.id)).toEqual(['github', 'google']);
+    // A new provider's callback URL is <callbackBase><id>/callback, to register before it is added.
+    expect(listed.callbackBase).toBe(`${ISSUER}/auth/providers/`);
 
     expect((await json(call(made, 'update', { id: 'github', name: 'GitHub Enterprise' }, admin))).provider).toMatchObject({ name: 'GitHub Enterprise', hasClientSecret: true });
     expect(await json(call(made, 'update', { id: 'github', kind: 'google' }, admin))).toMatchObject({ error: 'invalid_provider' });
@@ -105,6 +108,44 @@ describe('admins manage the providers', () => {
     // Added again, it is off until an admin switches it on, as a new provider is.
     await call(made, 'add', GITHUB, { Cookie: made.cookie });
     expect(((await (await made.app.request('/auth/config')).json()) as { github: unknown }).github).toBeNull();
+  });
+
+  it('AP9: a dry run of the removal counts the users who sign in with it alone and removes nothing; reading is enough for it', async () => {
+    const made = await withAdmin();
+    await call(made, 'add', GITHUB, { Cookie: made.cookie });
+    await setMethods(made.store, { github: ON, password: ON });
+    const users = new Users(made.store);
+    await users.createUser({ email: 'linus@example.com', emailNormalized: 'linus@example.com', name: null, emailVerified: true, account: { key: 'github:2', email: 'linus@example.com' } });
+    made.hook.calls.length = 0;
+
+    // Later than ten minutes after Ada signed in: no fresh sign-in.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 11 * 60_000 });
+    expect(await json(call(made, 'remove', { id: 'github', dryRun: true }, { Cookie: made.cookie }))).toMatchObject({ provider: { id: 'github' }, usersWithoutSignIn: 1, dryRun: true });
+    expect((await json(call(made, 'list', {}, { Cookie: made.cookie }))).providers.map((p: { id: string }) => p.id)).toEqual(['github']);
+    expect(made.hook.calls).toEqual([]);
+    expect(await json(call(made, 'remove', { id: 'github' }, { Cookie: made.cookie }))).toMatchObject({ error: 'reauth_required' });
+    expect(await json(call(made, 'remove', { id: 'github', dryRun: 'yes' }, { Cookie: made.cookie }))).toMatchObject({ error: 'invalid_options' });
+    expect(await json(call(made, 'remove', { id: 'gitlab', dryRun: true }, { Cookie: made.cookie }))).toMatchObject({ error: 'provider_not_found' });
+  });
+
+  it('AP10: settings/method changes one method in the stored list, keeps the others as they are, and is checked like the whole list', async () => {
+    const made = await withAdmin();
+    await call(made, 'add', GITHUB, { Cookie: made.cookie });
+    await setMethods(made.store, { password: ON, passkey: ON });
+    const method = (body: unknown) => json(post(made.app, '/auth/admin/settings/method', body, { Cookie: made.cookie }));
+    const stored = async () => (await json(post(made.app, '/auth/admin/settings/get', {}, { Cookie: made.cookie }))).methods;
+
+    expect((await method({ method: 'github', setting: { allowAsSignInMethod: true, secondFactor: 'optional' } })).methods.github).toMatchObject({ enabled: true, secondFactor: 'optional' });
+    // Meanwhile another admin switched passkeys off: the next change keeps that.
+    await setMethods(made.store, { password: ON, github: { allowAsSignInMethod: true, secondFactor: 'optional' } });
+    await method({ method: 'github', setting: null });
+    expect(await stored()).toMatchObject({ password: { enabled: true }, passkey: { enabled: false }, github: { enabled: false } });
+
+    expect(await method({ method: 'github', setting: { allowAsSignInMethod: true } })).toMatchObject({ error: 'invalid_settings' });
+    expect(await method({ method: 'gitlab', setting: ON })).toMatchObject({ error: 'invalid_settings', message: expect.stringContaining('"gitlab" is no sign-in method of this server') });
+    // The last sign-in method stays on, as with setSettings.
+    expect(await method({ method: 'password', setting: null })).toMatchObject({ error: 'invalid_settings' });
+    expect((await stored()).password).toMatchObject({ enabled: true });
   });
 });
 

@@ -9,7 +9,7 @@ Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password()
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 ```
 
-`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.showSignInDialog()`, `Madauth.showSetUpAuthenticatorDialog()`, `Madauth.showSetUpSmsDialog()`, `Madauth.showSetUpPasskeyDialog()`, `Madauth.showManageSignInMethodsDialog()` and `Madauth.showManageApiKeysDialog()` return an `invalid_options` error: the calls whose name starts with `show` and ends in `Dialog` open madAuth's dialog, the others only talk to the server.
+`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.showSignInDialog()`, `Madauth.showSetUpAuthenticatorDialog()`, `Madauth.showSetUpSmsDialog()`, `Madauth.showSetUpPasskeyDialog()`, `Madauth.showManageSignInMethodsDialog()`, `Madauth.showManageApiKeysDialog()` and `Madauth.showAdminDialog()` return an `invalid_options` error: the calls whose name starts with `show` and ends in `Dialog` open madAuth's dialog, the others only talk to the server.
 
 All methods resolve to a result object and never throw for expected failures:
 
