@@ -27,6 +27,10 @@ export const REDIRECT_FACTORS_PARAM = 'madauth_factors';
 export const REDIRECT_METHOD_PARAM = 'madauth_method';
 /** Hash parameter after a redirect that added the provider to the signed-in user's methods (`madauth_linked=github`). */
 export const REDIRECT_LINKED_PARAM = 'madauth_linked';
+/** The next step after a provider whose address isn't verified: its confirmation e-mail went out. */
+export const NEXT_EMAIL_CONFIRMATION = 'email-confirmation';
+/** Hash parameter next to it: the address the e-mail went to, masked (`l•••@example.com`), for the page to show. */
+export const REDIRECT_EMAIL_PARAM = 'madauth_email';
 
 const OAUTH_COOKIE = 'madauth_oauth';
 const OAUTH_TYP = 'madauth-oauth-state+jwt';
@@ -131,6 +135,22 @@ export function redirectBack(c: Context, returnTo: string, method: string): (err
   };
 }
 
+/** An address as a page may show it without spelling it out: its first letter, then dots, and the domain. */
+export function maskEmail(email: string): string {
+  const at = email.lastIndexOf('@');
+  return `${email.slice(0, 1)}${'•'.repeat(3)}${email.slice(at)}`;
+}
+
+/**
+ * The way back to the app after a sign-in whose address the confirmation e-mail now confirms (its cookie is set):
+ * the step, the masked address and the method.
+ */
+export function redirectToConfirmation(c: Context, returnTo: string, method: string, email: string): Response {
+  const url = new URL(returnTo);
+  url.hash = `${REDIRECT_NEXT_PARAM}=${NEXT_EMAIL_CONFIRMATION}&${REDIRECT_EMAIL_PARAM}=${encodeURIComponent(maskEmail(email))}&${REDIRECT_METHOD_PARAM}=${method}`;
+  return c.redirect(url.href, 302);
+}
+
 /** A sign-in provider whose profiles {@link resolveProviderUser} resolves: its method id, and its name for messages. */
 export interface OAuthProvider {
   /** Its method: madAuth's own id, or an OpenID Connect provider's id. */
@@ -151,7 +171,7 @@ export interface ProviderProfile {
 
 export type SignInResult =
   | { ok: true; user: StoredUser }
-  | { ok: false; error: 'signup_rejected' | 'temporarily_unavailable'; message: string }
+  | { ok: false; error: 'signup_rejected' | 'temporarily_unavailable' | 'email_unverified'; message: string }
   /** The address belongs to a user who signs in another way; `methods` says how. */
   | { ok: false; error: 'other_method'; message: string; methods: string[] };
 
@@ -194,7 +214,15 @@ export async function resolveProviderUser(
         ...(profile.secret ? { secret: profile.secret } : {}),
       };
       if (Object.keys(patch).length) await users.updateAccount(account.id, patch);
-      return signedIn(user);
+      if (user.emailVerified) return signedIn(user);
+      // A sign-up with this account that waits for its address (see resolveUnconfirmedProviderUser): the
+      // provider vouches for it now, as it does for a new account. Another address is still the e-mail's to prove.
+      if (normalizeEmail(profile.email) !== user.emailNormalized) {
+        return { ok: false, error: 'email_unverified', message: 'Confirm your e-mail address with the link or the code we sent you first.' };
+      }
+      const taken = await users.reopenSignUp(user);
+      await users.verifyByProvider(taken, provider.method);
+      return signedIn({ ...taken, emailVerified: true });
     }
     // Left behind by a deletion that did not finish: it would hold the key forever.
     await users.deleteAccount(account.id);
@@ -204,17 +232,7 @@ export async function resolveProviderUser(
   for (let attempt = 0; attempt < 2; attempt++) {
     const existing = await users.findByEmail(emailNormalized);
     if (existing) {
-      if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) {
-        const now = await ctx.methods();
-        const methods = await users.signInMethods(existing.id, signInPredicate(now.configured, now.settings));
-        const how = methods.map((method) => nameOfMethod(METHOD_NAMES, now.providers, method)).join(' or ');
-        return {
-          ok: false,
-          error: 'other_method',
-          message: `This e-mail address signs in with ${how || 'another method'}. Use that instead of ${provider.name}.`,
-          methods,
-        };
-      }
+      if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) return otherMethod(ctx, provider, existing);
       // The provider verified the address, and nobody has proven this user yet (an unconfirmed sign-up, whose
       // password or e-mail link goes) or nobody can sign in as them: the provider's account takes the user over.
       // Its sign-up ends with this sign-in: one from before `user.signed_up` existed gets it too.
@@ -245,6 +263,84 @@ export async function resolveProviderUser(
       account: { key, email: profile.email, secret: profile.secret },
     });
     if (user) return signedIn(user);
+  }
+  return { ok: false, error: 'temporarily_unavailable', message: 'Please try again.' };
+}
+
+/** The answer for an address whose user signs in another way: how, so the page can say it. */
+async function otherMethod(ctx: AppContext, provider: OAuthProvider, existing: StoredUser): Promise<SignInResult> {
+  const now = await ctx.methods();
+  const methods = await ctx.users.signInMethods(existing.id, signInPredicate(now.configured, now.settings));
+  const how = methods.map((method) => nameOfMethod(METHOD_NAMES, now.providers, method)).join(' or ');
+  return { ok: false, error: 'other_method', message: `This e-mail address signs in with ${how || 'another method'}. Use that instead of ${provider.name}.`, methods };
+}
+
+/**
+ * The user behind a provider profile whose address the provider doesn't vouch for (an OpenID Connect provider
+ * without `email_verified`). A returning account whose user is confirmed signs in, as in
+ * {@link resolveProviderUser}. Otherwise the sign-up waits for the address (`confirm`): a new user, or one
+ * nobody can sign in as yet (an unfinished sign-up, whose unproven password, e-mail link or provider account
+ * goes), gets the provider's account and an unconfirmed address, and the confirmation e-mail proves it, as a
+ * sign-up with a password does. It never joins a user who signs in another way (`other_method`), and nothing
+ * is sent for one.
+ */
+export async function resolveUnconfirmedProviderUser(
+  ctx: AppContext,
+  provider: OAuthProvider,
+  profile: ProviderProfile,
+  locale: string | undefined,
+): Promise<SignInResult | { ok: 'confirm'; user: StoredUser }> {
+  const { users } = ctx;
+  const { key } = profile;
+  const confirm = (user: StoredUser) => ({ ok: 'confirm' as const, user });
+
+  const account = await users.findAccountByKey(key);
+  if (account) {
+    const user = await users.findById(account.userId);
+    if (user) {
+      if (account.email !== profile.email) await users.updateAccount(account.id, { email: profile.email });
+      // A sign-up with this account that waits for its address: the e-mail goes again.
+      return user.emailVerified ? { ok: true, user } : confirm(user);
+    }
+    await users.deleteAccount(account.id);
+  }
+
+  // Twice at most: a user created between the lookup and the create is found the second time.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const existing = await users.findByEmail(normalizeEmail(profile.email));
+    if (existing) {
+      if (existing.emailVerified && (await users.hasSignInMethod(existing.id))) return otherMethod(ctx, provider, existing);
+      // Nobody has proven this address yet, or nobody can sign in with it: this sign-up starts afresh and waits
+      // for the address, as a password's does. What an earlier unconfirmed sign-up set (perhaps someone else's) goes.
+      const reopened = await users.reopenSignUp(existing);
+      await users.dropUnprovenAccounts(existing.id);
+      await users.updateUser(existing.id, { emailVerified: false, signUpMethod: provider.method, ...(profile.name ? { name: profile.name } : {}) });
+      if (!(await users.linkAccount(existing.id, { key, email: profile.email }))) {
+        // The account appeared meanwhile; it belongs to whoever has it now.
+        const linked = await users.findAccountByKey(key);
+        const owner = linked && (await users.findById(linked.userId));
+        if (!owner) return { ok: false, error: 'temporarily_unavailable', message: 'Please try again.' };
+        return owner.emailVerified ? { ok: true, user: owner } : confirm(owner);
+      }
+      return confirm({ ...reopened, emailVerified: false, signUpMethod: provider.method, name: profile.name ?? reopened.name });
+    }
+    if (attempt === 0) {
+      const check = await ctx.checkSignup({ email: profile.email, name: profile.name, locale, method: provider.method });
+      if (!check.ok) {
+        return check.reason === 'rejected'
+          ? { ok: false, error: 'signup_rejected', message: check.message }
+          : { ok: false, error: 'temporarily_unavailable', message: 'Signing up is not possible right now. Please try again later.' };
+      }
+    }
+    const user = await users.createUser({
+      email: profile.email,
+      emailNormalized: normalizeEmail(profile.email),
+      name: profile.name ?? null,
+      emailVerified: false,
+      signUpMethod: provider.method,
+      account: { key, email: profile.email },
+    });
+    if (user) return confirm(user);
   }
   return { ok: false, error: 'temporarily_unavailable', message: 'Please try again.' };
 }

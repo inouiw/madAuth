@@ -349,7 +349,8 @@ export class MadauthLogin extends LitElement {
   private email = '';
 
   /** What the e-mail in the check-inbox view is for: confirming the address, a password reset, or a sign-in link. */
-  private inboxPurpose: 'verify' | 'reset' | 'signin' = 'verify';
+  /** What the inbox view's code is for; `confirm`: the address of a sign-up through a provider that doesn't vouch for it. */
+  private inboxPurpose: 'verify' | 'reset' | 'signin' | 'confirm' = 'verify';
 
   /** The reset code entered in the check-inbox view, used with the new password. */
   private resetCode?: string;
@@ -489,6 +490,13 @@ export class MadauthLogin extends LitElement {
     this.primary = pending.method;
     this.useRecovery = false;
     this.setupNeedsCode = false;
+    if (pending.step === 'email') {
+      // The address the e-mail went to, masked: the code is sent without it, the browser's cookie says whose.
+      this.email = pending.email ?? '';
+      this.inboxPurpose = 'confirm';
+      this.view = 'check-inbox';
+      return;
+    }
     if (pending.step === 'setup') {
       this.factors = undefined;
       this.setupForSignIn = true;
@@ -929,6 +937,11 @@ export class MadauthLogin extends LitElement {
       if (result) this.finish('email-link', result);
       return;
     }
+    if (this.inboxPurpose === 'confirm') {
+      const result = await this.run(() => Madauth.provider(this.primary).verifyEmail({ code }));
+      if (result) this.finish(this.primary, result);
+      return;
+    }
     const result = await this.run(() => this.signUpScope.verifyEmail({ email: this.email, code }));
     if (result) this.finish(this.primary, result);
   }
@@ -948,18 +961,20 @@ export class MadauthLogin extends LitElement {
     this.finish('password', result);
   }
 
-  private async resend(purpose: 'verify' | 'reset' | 'signin'): Promise<void> {
+  private async resend(purpose: 'verify' | 'reset' | 'signin' | 'confirm'): Promise<void> {
     const email = this.email;
     const result = await this.run(() =>
       purpose === 'verify'
         ? this.signUpScope.sendVerificationEmail({ email })
-        : purpose === 'reset'
-          ? Madauth.password.sendResetEmail({ email })
-          : Madauth.emailLink.send({ email }),
+        : purpose === 'confirm'
+          ? Madauth.provider(this.primary).sendVerificationEmail()
+          : purpose === 'reset'
+            ? Madauth.password.sendResetEmail({ email })
+            : Madauth.emailLink.send({ email }),
     );
     if (!result) return;
     if (!result.isSuccess) {
-      this.showError(result.error, purpose === 'verify' ? this.primary : purpose === 'reset' ? 'password' : 'email-link');
+      this.showError(result.error, purpose === 'verify' || purpose === 'confirm' ? this.primary : purpose === 'reset' ? 'password' : 'email-link');
       return;
     }
     this.inboxPurpose = purpose;
@@ -2590,6 +2605,7 @@ export class MadauthLogin extends LitElement {
     const lead = this.inboxPurpose === 'signin' ? s.signInInboxLead : s.inboxLead;
     return html`
       <p class="lead">${lead.before}<strong>${this.email}</strong>${lead.after}</p>
+      ${this.inboxPurpose === 'confirm' ? html`<p class="hint">${s.confirmProviderAddress(nameOfMethod(this.primary, s))}</p>` : null}
       <form part="form" class="code" @submit=${this.onCode}>
         <div class="field">
           <label for="code">${s.code}</label>

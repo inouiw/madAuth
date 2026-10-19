@@ -6,7 +6,20 @@ import type { AppContext } from '../app.js';
 import { addressOf, discoveryCache, exchangeCode, keysCache, verifyIdToken } from '../oidc.js';
 import { OIDC_SCOPES, providerOf, type StoredProvider } from '../providers.js';
 import { oidcAccountKey } from '../users.js';
-import { finishLink, pkceChallenge, redirectBack, resolveProviderUser, startOAuth, takeOAuthState, type OAuthProvider } from './oauth.js';
+import { createEmails } from './emails.js';
+import { setConfirmation } from './email.js';
+import {
+  finishLink,
+  pkceChallenge,
+  redirectBack,
+  redirectToConfirmation,
+  resolveProviderUser,
+  resolveUnconfirmedProviderUser,
+  startOAuth,
+  takeOAuthState,
+  type OAuthProvider,
+  type SignInResult,
+} from './oauth.js';
 
 /** Where a provider's routes are; its state cookie comes back to them only. */
 const pathOf = (id: string) => `/auth/providers/${id}`;
@@ -16,6 +29,8 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
   const endpointsOf = discoveryCache(fetchFn);
   const keysOf = keysCache(fetchFn);
   const callbackUrl = (id: string) => `${ctx.config.issuer}${pathOf(id)}/callback`;
+  // The confirmation e-mail for an address the provider doesn't vouch for; without it, such an address is refused.
+  const emails = ctx.webhook && ctx.emailVerification ? createEmails(ctx, ctx.users, ctx.webhook) : null;
 
   /** The OpenID Connect provider the route names, or null: Google's and GitHub's routes are their own. */
   const providerOfRoute = async (c: Context): Promise<StoredProvider | null> => {
@@ -81,14 +96,25 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     if ('error' in address) return back(address.error);
     const profile = { key: oidcAccountKey(provider.id, claims.sub!), email: address.email, ...(address.name ? { name: address.name } : {}) };
 
+    // Linking takes the account by its id, whatever its address: the signed-in user is the proof.
     const linked = await finishLink(c, ctx, asOAuthProvider(provider), oauth, profile);
     if (linked) return linked;
-    const resolved = await resolveProviderUser(ctx, asOAuthProvider(provider), profile, oauth.locale);
-    if (!resolved.ok) return back(resolved.error);
-    const step = await ctx.secondStep(c, resolved.user, [provider.id], provider.id, address.name ? { name: address.name } : undefined);
-    if ('disabled' in step) return back('method_disabled');
-    // The app continues with the second step (a code, or a setup); the challenge cookie is set.
-    if ('next' in step) return back(undefined, step.next, step.factors);
-    return back();
+    /** Signs the resolved user in, or goes on with their second step; or sends the browser back with the error. */
+    const signIn = async (resolved: SignInResult) => {
+      if (!resolved.ok) return back(resolved.error);
+      const step = await ctx.secondStep(c, resolved.user, [provider.id], provider.id, address.name ? { name: address.name } : undefined);
+      if ('disabled' in step) return back('method_disabled');
+      // The app continues with the second step (a code, or a setup); the challenge cookie is set.
+      if ('next' in step) return back(undefined, step.next, step.factors);
+      return back();
+    };
+    if (address.verified) return signIn(await resolveProviderUser(ctx, asOAuthProvider(provider), profile, oauth.locale));
+    if (!emails) return back('email_unverified');
+    const pending = await resolveUnconfirmedProviderUser(ctx, asOAuthProvider(provider), profile, oauth.locale);
+    if (pending.ok !== 'confirm') return signIn(pending);
+    // The address is proven by the e-mail's link or code before the account signs anyone in.
+    if (!(await emails.sendLinkEmail(pending.user, 'verify', new URL(oauth.returnTo), oauth.locale))) return back('temporarily_unavailable');
+    await setConfirmation(c, ctx, pending.user.id);
+    return redirectToConfirmation(c, oauth.returnTo, provider.id, pending.user.email);
   });
 }

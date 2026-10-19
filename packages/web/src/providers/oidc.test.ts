@@ -145,3 +145,43 @@ describe('OpenID Connect providers', () => {
     expect($('p.hint')?.textContent).toBe('Signed up with GitLab? There is no password to reset: use that button instead.');
   });
 });
+
+describe('a provider that does not vouch for the address', () => {
+  it('O7: back from it, the dialog asks for the code from the confirmation e-mail, sends it without the address, and signs in', async () => {
+    const server = gitlabServer();
+    server.confirmation = { email: 'linus@example.com', method: 'gitlab' };
+    history.replaceState(null, '', `/page#madauth_next=email-confirmation&madauth_email=${encodeURIComponent('l•••@example.com')}&madauth_method=gitlab`);
+
+    const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    expect(result).toEqual({ isSuccess: true, leftOut: [] });
+    expect(location.href).toBe('https://app.example.com/page');
+    expect(Madauth.authenticator.pendingStep).toEqual({ step: 'email', method: 'gitlab', email: 'l•••@example.com' });
+    await settle();
+
+    expect($('h2')!.textContent).toBe('Check your inbox');
+    expect($('.lead')!.textContent!.replace(/\s+/g, ' ')).toContain('We sent an email to l•••@example.com.');
+    expect($('p.hint')!.textContent).toBe('GitLab doesn’t confirm this address, so we confirm it once before you sign in with GitLab.');
+    // Send it again: no address either.
+    $<HTMLButtonElement>('[data-action="resend"]')!.click();
+    await settle();
+    expect(server.requests.at(-1)).toMatchObject({ path: '/auth/email/send-verification', body: { redirectTo: 'https://app.example.com/page' } });
+    expect(server.requests.at(-1)!.body).not.toHaveProperty('email');
+
+    $<HTMLInputElement>('form.code input[name="code"]')!.value = '123456';
+    $<HTMLFormElement>('form.code')!.requestSubmit();
+    await settle();
+    expect(server.requests.at(-1)).toMatchObject({ path: '/auth/email/verify', body: { code: '123456' } });
+    expect(server.requests.at(-1)!.body).not.toHaveProperty('email');
+    expect(Madauth.currentUser).toMatchObject({ email: 'linus@example.com', amr: ['gitlab'] });
+  });
+
+  it('O8: a custom screen finishes it with Madauth.provider(id).verifyEmail and sends it again with sendVerificationEmail', async () => {
+    const server = gitlabServer();
+    server.confirmation = { email: 'linus@example.com', method: 'gitlab' };
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()], ui: 'custom' });
+
+    expect(await Madauth.provider('gitlab').sendVerificationEmail()).toEqual({ isSuccess: true });
+    expect(await Madauth.provider('gitlab').verifyEmail({ code: '000000' })).toMatchObject({ isSuccess: false, error: { code: 'code_invalid' } });
+    expect(await Madauth.provider('gitlab').verifyEmail({ code: '123456' })).toMatchObject({ isSuccess: true, user: { email: 'linus@example.com' } });
+  });
+});

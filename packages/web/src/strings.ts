@@ -70,6 +70,8 @@ export const en = {
     after: '. Open the link in it, or enter the 6-digit code from the email.',
   },
   emailSentAgain: 'We sent the email again.',
+  /** Under the inbox's lead after a sign-in through a provider that doesn't vouch for the address. */
+  confirmProviderAddress: (name: string) => `${name} doesn’t confirm this address, so we confirm it once before you sign in with ${name}.`,
   chooseNewPassword: 'Choose a new password',
 
   // The e-mail link
@@ -441,6 +443,7 @@ export const de: Strings = {
     after: ' gesendet. Öffnen Sie den Link darin oder geben Sie den 6-stelligen Bestätigungscode aus der E-Mail ein.',
   },
   emailSentAgain: 'Wir haben die E-Mail erneut gesendet.',
+  confirmProviderAddress: (name) => `${name} bestätigt diese Adresse nicht, deshalb bestätigen wir sie einmal, bevor Sie sich mit ${name} anmelden.`,
   chooseNewPassword: 'Neues Passwort wählen',
 
   emailLink: {

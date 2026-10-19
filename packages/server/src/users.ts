@@ -2,6 +2,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { claimsFromJson, type Claims } from './claims.js';
 import type { KeyService } from './key-service.js';
+import { isProviderId } from './providers.js';
 import { codeHash, codeHashes, generateCode, generateLinkToken, hashLinkToken, safeEqual } from './password.js';
 import { ALWAYS_SIGN_IN, FORMER_AUTHENTICATOR_ID, SIGN_IN_METHODS, type SecondFactor } from './settings.js';
 import type { Row, StoreAdapter } from './store/schema.js';
@@ -27,8 +28,9 @@ export interface StoredUser {
    */
   signedUpAt: number | null;
   /**
-   * The method the user's pending sign-up confirms the address for, see {@link SignUpMethod}. Empty in records
-   * from before schema version 9, and for users who signed up without a confirmation e-mail.
+   * The method the user's pending sign-up confirms the address for, see {@link SignUpMethod}, or the id of an
+   * OpenID Connect provider whose address waits for its confirmation. Empty in records from before schema
+   * version 9, and for users who signed up without a confirmation e-mail.
    */
   signUpMethod: string | null;
   createdAt: number;
@@ -36,7 +38,8 @@ export interface StoredUser {
 
 /**
  * The methods whose sign-up confirms the address by e-mail (`/auth/email/verify`): a password, and the
- * authenticator app and passkeys, which are set up once the address is confirmed.
+ * authenticator app and passkeys, which are set up once the address is confirmed. An OpenID Connect provider
+ * whose address isn't verified confirms it the same way, by its id.
  */
 export const SIGN_UP_METHODS = ['password', 'authenticator', 'passkey'] as const;
 export type SignUpMethod = (typeof SIGN_UP_METHODS)[number];
@@ -191,8 +194,11 @@ export function oidcAccountKey(providerId: string, sub: string): string {
   return `${OIDC_KEY_PREFIX}:${providerId}:${sub}`;
 }
 
-/** The methods whose accounts a sign-up makes; the authenticator app makes one only for a sign-up with it. */
-const isAlwaysPrimary = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method);
+/**
+ * The methods whose accounts a sign-up makes, an OpenID Connect provider's among them; the authenticator app
+ * makes one only for a sign-up with it.
+ */
+const isAlwaysPrimary = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method) || isProviderId(method);
 
 /**
  * Whether an account is the one its user signed up with; `accounts` are all of the user's. Records since
@@ -447,7 +453,7 @@ export class Users {
     name: string | null;
     emailVerified: boolean;
     account?: NewAccount | ((userId: string) => NewAccount);
-    signUpMethod?: SignUpMethod;
+    signUpMethod?: string;
   }): Promise<StoredUser | null> {
     const user: StoredUser = {
       id: newId('usr'),
@@ -475,14 +481,21 @@ export class Users {
   }
 
   /**
-   * Removes what an unconfirmed sign-up set without proving it: the password, and the e-mail link account of
-   * a first link nobody used. Only `except`'s own account stays: the method that proves the address, or
-   * signs it up anew, is the one the user ends up with.
+   * Removes what an unconfirmed sign-up set without proving it: the password, the e-mail link account of a
+   * first link nobody used, and the account of a provider whose address waits for its confirmation (whoever
+   * signed in there may not own the address). Only `except`'s own account stays: the method that proves the
+   * address, or signs it up anew, is the one the user ends up with.
    */
-  async dropUnprovenAccounts(userId: string, except?: UnprovenMethod): Promise<void> {
+  async dropUnprovenAccounts(userId: string, except?: string): Promise<void> {
     const keys: Record<UnprovenMethod, string> = { password: passwordAccountKey(userId), 'email-link': emailLinkAccountKey(userId) };
     for (const [method, key] of Object.entries(keys)) {
       if (method !== except) await this.store.delete('account', { key });
+    }
+    // Only a user nobody has confirmed: a confirmed user's providers are proven ways in.
+    const user = await this.findById(userId);
+    if (!user || user.emailVerified) return;
+    for (const account of await this.accounts(userId)) {
+      if (isProviderAccount(account) && methodOf(account) !== except) await this.store.delete('account', { key: account.key });
     }
   }
 
@@ -491,7 +504,7 @@ export class Users {
    * nobody has proven, is dropped (its accounts, except `proven`'s own, and its pending links and codes),
    * and the user counts as verified.
    */
-  async verifyByProvider(user: StoredUser, proven?: UnprovenMethod): Promise<void> {
+  async verifyByProvider(user: StoredUser, proven?: string): Promise<void> {
     if (user.emailVerified) return;
     await this.dropUnprovenAccounts(user.id, proven);
     await this.clearVerifications(user.id);

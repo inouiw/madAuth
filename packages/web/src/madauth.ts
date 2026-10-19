@@ -1,5 +1,6 @@
 import {
   EXPIRY_COOKIE,
+  REDIRECT_EMAIL_PARAM,
   REDIRECT_ERROR_PARAM,
   REDIRECT_FACTORS_PARAM,
   REDIRECT_LINKED_PARAM,
@@ -263,6 +264,7 @@ function handleRedirectReturn(ctx: ProviderContext): LoginMethodId | undefined {
   const error = takeHashParam(REDIRECT_ERROR_PARAM);
   const next = takeHashParam(REDIRECT_NEXT_PARAM);
   const named = (takeHashParam(REDIRECT_FACTORS_PARAM) ?? '').split(',').filter(isSecondFactor);
+  const email = takeHashParam(REDIRECT_EMAIL_PARAM);
   const via = takeHashParam(REDIRECT_METHOD_PARAM);
   // Only the providers come back this way, also one switched off or removed meanwhile (an OpenID Connect
   // provider's id is none of madAuth's own methods); anything else counts as Google's.
@@ -281,6 +283,8 @@ function handleRedirectReturn(ctx: ProviderContext): LoginMethodId | undefined {
   else if (next === 'second-factor-setup') ctx.signInContinues(named.length ? { step: 'setup', method, factors: named } : { step: 'setup', method });
   else if (next === 'authenticator-setup') ctx.signInContinues({ step: 'setup', method, factors: ['authenticator'] });
   else if (next === 'passkey-setup') ctx.signInContinues({ step: 'setup', method, factors: ['passkey'] });
+  // A provider that doesn't vouch for the address: its confirmation e-mail went out, the code finishes the sign-up.
+  else if (next === 'email-confirmation') ctx.signInContinues({ step: 'email', method, email: email ?? '' });
   return undefined;
 }
 

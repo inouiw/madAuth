@@ -45,15 +45,18 @@ export interface ServerConfig {
 export interface PendingStep {
   /**
    * `passkey`: a passkey of the user; `code`: a code from the authenticator app; `sms`: a code sent to the
-   * user's phone; `setup`: a second factor has to be set up first.
+   * user's phone; `setup`: a second factor has to be set up first; `email`: an OpenID Connect provider doesn't
+   * vouch for the address, so the confirmation e-mail went to it (`Madauth.provider(method).verifyEmail`).
    */
-  step: 'passkey' | 'code' | 'setup' | 'sms';
+  step: 'passkey' | 'code' | 'setup' | 'sms' | 'email';
   method: LoginMethodId;
   /**
    * With `passkey`, `code` and `sms`: the second factors the user can finish with, so a screen can offer the
    * switch. With `setup`: those the user can set up (a server before madAuth 0.6 names none: the app, or a phone).
    */
   factors?: SecondFactor[];
+  /** With `email`: the address the e-mail went to, masked (`l•••@example.com`). */
+  email?: string;
 }
 
 const STEPS: Partial<Record<string, PendingStep['step']>> = {

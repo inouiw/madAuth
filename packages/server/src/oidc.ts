@@ -152,19 +152,20 @@ const isVerified = (value: unknown) => value === true || value === 'true';
 
 /**
  * The user's address and name from the ID token, or from the userinfo endpoint when the ID token has no
- * address. The address counts only when the same claims say `email_verified`, or when the provider is marked
- * `trustEmail` (the operator's own provider). The userinfo answer must be about the ID token's `sub`.
+ * address, and whether it is verified: when the same claims say `email_verified`, or when the provider is
+ * marked `trustEmail` (the operator's own provider). An unverified address is confirmed by e-mail before it
+ * signs anyone up (see `resolveUnconfirmedProviderUser`). The userinfo answer must be about the ID token's
+ * `sub`. `email_unverified` when neither has an address.
  */
 export async function addressOf(
   claims: JWTPayload,
   from: { endpoints: OidcEndpoints; accessToken?: string; trustEmail: boolean },
   fetchFn: typeof fetch = fetch,
-): Promise<{ email: string; name?: string } | { error: 'email_unverified' | 'verification_failed' }> {
+): Promise<{ email: string; name?: string; verified: boolean } | { error: 'email_unverified' | 'verification_failed' }> {
   const read = (source: Record<string, unknown>) => {
     if (typeof source.email !== 'string' || !source.email) return null;
-    if (!from.trustEmail && !isVerified(source.email_verified)) return { error: 'email_unverified' as const };
     const name = typeof source.name === 'string' && source.name ? source.name : typeof claims.name === 'string' ? claims.name : undefined;
-    return { email: source.email, ...(name ? { name } : {}) };
+    return { email: source.email, ...(name ? { name } : {}), verified: from.trustEmail || isVerified(source.email_verified) };
   };
   const inToken = read(claims);
   if (inToken) return inToken;
