@@ -315,7 +315,7 @@ With `policy.signUp`, `signUp({ email, name? })` creates an account that signs i
 | `list()` | `{ methods: [{ id, method, signIn, removable, createdAt, email?, name?, lastUsedAt? }] }` | `no_session` |
 | `remove(id)` | — | `only_method` (the user's last way in), `required_by_policy`, `reauth_required`, `method_not_found`, `no_session` |
 
-A user adds a method with its own call: `Madauth.passkey.add()`, `Madauth.password.add({ password })`, `Madauth.emailLink.add()`, a provider's button with `purpose: 'link'` (Google, GitHub, `Madauth.provider(id)`), or the app's setup. Adding and removing need a sign-in within the last ten minutes: otherwise they fail with `reauth_required`, and the user signs in again first. The authenticator app is removed with `Madauth.authenticator.remove`, which takes a code. See [Several sign-in methods](sign-in-methods.md).
+A user adds a method with its own call: `Madauth.passkey.add()`, `Madauth.password.add({ password })`, `Madauth.emailLink.add()`, a provider's button with `purpose: 'link'` (Google, GitHub, `Madauth.provider(id)`), or the app's setup. Adding and removing need a sign-in within the last two minutes: otherwise they fail with `reauth_required`, and the user signs in again first. The authenticator app is removed with `Madauth.authenticator.remove`, which takes a code. See [Several sign-in methods](sign-in-methods.md).
 
 ## API keys: `Madauth.apiKeys`
 
@@ -328,7 +328,7 @@ A user's keys for programs that call your API, or madAuth's admin API, in their 
 | `create({ name, scopes, expiresAt? })` | `{ key, apiKey }`: show `key` to the user to copy, it is never shown again | `invalid_options`, `invalid_scopes`, `scope_not_allowed`, `too_many_api_keys`, `reauth_required`, `temporarily_unavailable`, `no_session` |
 | `revoke(id)` | — | `api_key_not_found`, `no_session` |
 
-Making a key needs a sign-in within the last ten minutes, like adding a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. Offer only the scopes with `allowed`; the server refuses the others. `Madauth.admin.listApiKeys(email)` and `revokeApiKey(email, id)` let an admin revoke a user's key.
+Making a key needs a sign-in within the last two minutes, like adding a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. Offer only the scopes with `allowed`; the server refuses the others. `Madauth.admin.listApiKeys(email)` and `revokeApiKey(email, id)` let an admin revoke a user's key.
 
 ## Language
 

@@ -564,6 +564,8 @@ export function fakeServer(): FakeServer {
         if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         const who = whoSetsUp();
         if (!who) return json({ error: 'no_session' }, 401);
+        // The signed-in user starts a setup only right after signing in.
+        if (server.user?.email === who && server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         // Replacing an app: the current one has to agree.
         if (server.authenticators.has(who)) {
           if (body.code === undefined && body.recoveryCode === undefined) return json({ error: 'code_required', message: 'the current app has to agree' }, 401);
@@ -623,6 +625,8 @@ export function fakeServer(): FakeServer {
         if (!who) return json({ error: 'no_session' }, 401);
         const phone = normalizePhone(body.phone);
         if (!phone) return json({ error: 'invalid_phone', message: 'not a number' }, 400);
+        // A signed-in user's first number starts right after signing in; replacing one starts with `send`.
+        if (server.user?.email === who && server.staleSignIn && !server.phones.has(who)) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         // Replacing a number: the current one has to agree.
         if (server.phones.has(who)) {
           if (body.code === undefined) return json({ error: 'code_required', message: 'the current number has to agree' }, 401);
@@ -657,6 +661,8 @@ export function fakeServer(): FakeServer {
         if (!who) return json({ error: challenge === undefined && server.challenge ? 'challenge_expired' : 'no_session', message: 'nobody' }, 401);
         const phone = server.phones.get(who);
         if (!phone) return challenge ? json({ error: 'challenge_expired', message: 'no phone' }, 401) : json({ error: 'no_phone', message: 'none' }, 400);
+        // Signed in, the code approves a change to the number, which starts right after signing in.
+        if (!challenge && server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         if (server.smsTooSoon) return json({ error: 'too_soon', message: 'wait' }, 429);
         if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
         server.texts.push({ to: phone, purpose: challenge ? 'signin' : 'approve' });

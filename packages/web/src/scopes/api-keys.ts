@@ -51,7 +51,7 @@ export interface ApiKeysApi {
   list(): Promise<Result<{ apiKeys: ApiKeyInfo[] }>>;
   /**
    * Makes a key and resolves with it: `key` is shown this once (madAuth keeps only its hash), so show it to
-   * the user to copy. Only within ten minutes of signing in, else it fails with `reauth_required`. Fails with
+   * the user to copy. Only within two minutes of signing in, else it fails with `reauth_required`. Fails with
    * `invalid_options`, `invalid_scopes` (a scope that doesn't exist), `scope_not_allowed` (one the user may not
    * give), `too_many_api_keys` (20), `temporarily_unavailable` (your app's scopes can't be read right now) or
    * `no_session`.

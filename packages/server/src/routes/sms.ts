@@ -12,7 +12,7 @@ import { WEBHOOK_TIMEOUT_MS, localeOf, type WebhookClient } from '../webhooks.js
 import { finishSignIn, methodOff, methodStillOn, pendingFactor, readChallenge, whoSetsUp } from './challenge.js';
 import { removeAccount, removalRefused } from './methods.js';
 import { MAIL_INTERVAL_MS as SMS_INTERVAL_MS } from './emails.js';
-import { body, error, noSession, originHost, smsUnavailable, type Body } from './helpers.js';
+import { body, error, noSession, originHost, reauthRequired, recentUser, signedInUser, smsUnavailable, type Body } from './helpers.js';
 import { countSignInAttempt } from './lockout.js';
 
 /** How long a code sent by SMS works. */
@@ -107,9 +107,12 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
    */
 
   app.post(`${ROUTE_PATH}/setup`, async (c) => {
-    const who = await whoSetsUp(c, ctx, 'sms');
+    // A signed-in user's first number is a new second factor, which starts here; replacing one starts with the
+    // code to the current number (`send`), which this setup then takes.
+    const who = await whoSetsUp(c, ctx, 'sms', 'finish');
     if (who instanceof Response) return who;
     const { user } = who;
+    if (!who.challenge && !(await users.smsAccount(user.id)) && !(await signedInUser(c, ctx))?.recent) return reauthRequired(c);
     const data = await body(c);
     const phone = normalizePhone(data.phone);
     if (!phone) return error(c, 400, 'invalid_phone', 'Enter a mobile number with the country code, e.g. +41 79 123 45 67.');
@@ -142,7 +145,7 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
   });
 
   app.post(`${ROUTE_PATH}/confirm`, async (c) => {
-    const who = await whoSetsUp(c, ctx, 'sms');
+    const who = await whoSetsUp(c, ctx, 'sms', 'finish');
     if (who instanceof Response) return who;
     const { user, challenge } = who;
     const setup = await readToken<SetupClaims>(ctx.keys, config.issuer, SETUP_TYP, getCookie(c, SETUP_COOKIE));
@@ -180,9 +183,10 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
       user = waiting && waiting.sessionVersion === challenge.sv ? waiting : null;
       if (!user) return expired(c);
     } else {
-      const session = await ctx.currentUser(c);
-      user = session ? await users.findById(session.id) : null;
-      if (!user) return noSession(c);
+      // Approving a change to the number (replacing or removing it) starts that change: right after signing in.
+      const recent = await recentUser(c, ctx);
+      if (recent instanceof Response) return recent;
+      user = recent;
     }
     const account = await users.smsAccount(user.id);
     if (!account?.phone) return challenge ? expired(c) : error(c, 400, 'no_phone', 'No phone number is set up.');
@@ -204,6 +208,7 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
   });
 
   app.post(`${ROUTE_PATH}/remove`, async (c) => {
+    // The code to the number, sent right after signing in (`send`), finishes the removal.
     const session = await ctx.currentUser(c);
     const user = session ? await users.findById(session.id) : null;
     if (!user) return noSession(c);

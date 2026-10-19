@@ -13,8 +13,9 @@ export interface SmsApi {
    * Starts adding a phone number for the signed-in user (or for a sign-in whose policy requires a second
    * factor the user has not set up yet): sends a code to it. Resolves to the number as it is shown (masked).
    * A user who has a number already replaces it: without `code` this fails with `code_required`; call
-   * {@link send} for a code to the current number and pass it. Fails with `invalid_phone`, `too_soon` (one
-   * SMS per minute), `no_session`, `method_disabled` or `temporarily_unavailable` (the SMS could not be sent).
+   * {@link send} for a code to the current number and pass it. A signed-in user's first number is started only
+   * within two minutes of signing in (`reauth_required`). Fails with `invalid_phone`, `too_soon` (one SMS per
+   * minute), `no_session`, `method_disabled` or `temporarily_unavailable` (the SMS could not be sent).
    */
   setUp(options: { phone: string; code?: string }): Promise<Result<{ phone: string }>>;
   /**
@@ -25,7 +26,9 @@ export interface SmsApi {
   /**
    * Sends a code to the user's number: for the second step of a sign-in that ended with `sms_required` (or
    * `authenticator_required` with `sms` among its `factors`), or, signed in, to approve replacing or removing the
-   * number. Resolves to the masked number. Fails with `too_soon`, `no_phone`, `challenge_expired` or `no_session`.
+   * number. Resolves to the masked number. Signed in, it starts that change: only within two minutes of signing
+   * in, else it fails with `reauth_required` (the code then finishes it later). Fails with `too_soon`, `no_phone`,
+   * `challenge_expired` or `no_session`.
    */
   send(): Promise<Result<{ phone: string }>>;
   /** Finishes the sign-in with the code from the SMS. Fails with `code_invalid`, `too_many_attempts` or `challenge_expired`. */

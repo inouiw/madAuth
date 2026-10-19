@@ -108,14 +108,14 @@ export const isSignUpStep = (challenge: Challenge): boolean => !challenge.amr.le
  * this browser), else the signed-in user; otherwise the answer to send. Starting a session ends the
  * challenge, so an abandoned one can't outlive a later sign-in, and one from before a password reset no
  * longer counts. A sign-up with the app or a passkey has no first factor yet: it sets up its own method,
- * nothing else. A signed-in user for whom `recent` holds (a factor that is a way in of its own) must have
- * signed in within the last ten minutes (`reauth_required`).
+ * nothing else. A signed-in user starts a setup (`step: 'start'`) only within RECENT_SIGN_IN_MS of signing
+ * in (`reauth_required`); its last step (`'finish'`) relies on the setup's own state, which the start made.
  */
 export async function whoSetsUp(
   c: Context,
   ctx: AppContext,
   factor: SecondFactor,
-  recent: (user: StoredUser) => Promise<boolean> = async () => false,
+  step: 'start' | 'finish',
 ): Promise<{ user: StoredUser; challenge: ChallengeClaims | null } | Response> {
   const pending = await pendingSetup(c, ctx, factor);
   if (pending) {
@@ -124,7 +124,7 @@ export async function whoSetsUp(
   }
   const signedIn = await signedInUser(c, ctx);
   if (!signedIn) return noSession(c);
-  if (!signedIn.recent && (await recent(signedIn.user))) return reauthRequired(c);
+  if (step === 'start' && !signedIn.recent) return reauthRequired(c);
   return { user: signedIn.user, challenge: null };
 }
 

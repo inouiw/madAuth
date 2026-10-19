@@ -325,3 +325,44 @@ describe('<madauth-login> and SMS codes', () => {
     expect(Madauth.currentUser).toMatchObject({ email: 'ada@example.com' });
   });
 });
+
+describe('adding or replacing a phone with a sign-in that is no longer recent', () => {
+  it('D30: asks to sign in again, then goes back to the number', async () => {
+    const server = smsServer();
+    server.phones.clear();
+    server.user = grace;
+    server.staleSignIn = true;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+
+    void Madauth.showSetUpSmsDialog();
+    await settle();
+    fill({ phone: PHONE });
+    await submit('sms-setup');
+    expect($('[part="error"]')!.dataset.code).toBe('reauth_required');
+    await click('[data-action="sign-in-again"]');
+    server.staleSignIn = false;
+    fill(credentials);
+    await submit('signin');
+
+    expect(text('h2')).toBe('Add your phone number');
+    fill({ phone: PHONE });
+    await submit('sms-setup');
+    expect(text('p.lead')).toBe(`Enter the code we sent to ${MASKED_PHONE}.`);
+  });
+
+  it('D30: replacing it, the code to the current number is what needs the recent sign-in', async () => {
+    const server = smsServer();
+    server.user = grace;
+    server.staleSignIn = true;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+
+    void Madauth.showSetUpSmsDialog();
+    await settle();
+    fill({ phone: '+41790000099' });
+    await submit('sms-setup');
+    expect($('[part="error"]')!.dataset.code).toBe('reauth_required');
+    expect(server.texts).toEqual([]);
+    await click('[data-action="sign-in-again"]');
+    expect(text('h2')).toBe('Sign in');
+  });
+});

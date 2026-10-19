@@ -132,7 +132,8 @@ export interface FoundUser {
 /**
  * Managing claims, settings and users' API keys, and resetting a user's sign-in, for users with the role `admin`
  * (`claims.roles`). The first admin is the user who signs in with the address in the server's
- * `INITIAL_ADMIN_EMAIL`.
+ * `INITIAL_ADMIN_EMAIL`. A change (claims, settings, providers, a sign-in reset) takes a sign-in within the last
+ * two minutes, else it fails with `reauth_required`; reading, and revoking a user's API key, take none.
  */
 export interface AdminApi {
   /**
@@ -196,7 +197,7 @@ export interface AdminApi {
    * ID and secret), or an OpenID Connect provider (an id of its own, e.g. `gitlab`, which becomes its method's;
    * its name, issuer, client ID and secret). The server reads an OpenID Connect provider's discovery document
    * first, and refuses it with `invalid_provider` when that fails. A provider is off until switched on with
-   * `setSettings`. Needs a sign-in within the last ten minutes. Fails with `forbidden`, `reauth_required`,
+   * `setSettings`. Needs a sign-in within the last two minutes. Fails with `forbidden`, `reauth_required`,
    * `invalid_provider` or `provider_exists`.
    */
   addProvider(provider: NewProvider): Promise<Result<{ provider: ProviderInfo }>>;

@@ -25,6 +25,22 @@ const withChallenge = (res: Response) => ({ Cookie: `madauth_challenge=${cookies
 const lastCode = (hook: Hook) => hook.lastSms()!.data.code as string;
 const signIn = (app: App) => post(app, '/auth/password/signin', grace);
 
+/**
+ * Grace signs in again, as the dialog's "Sign in again" does before a change: her password, then the app's code
+ * (with `secret`) or an SMS code if the sign-in asks for one. Returns the new session.
+ */
+async function signInAgain(app: App, hook: Hook, secret?: Buffer): Promise<string> {
+  const first = await signIn(app);
+  if (first.status === 200) return cookies(first).madauth_session.value;
+  const { error } = (await first.json()) as { error: string };
+  if (error === 'authenticator_required' && secret) {
+    return cookies(await post(app, '/auth/authenticator/verify', { code: totp(secret, stepOf(Date.now())) }, withChallenge(first))).madauth_session.value;
+  }
+  expect(error).toBe('sms_required');
+  expect((await post(app, '/auth/sms/send', {}, withChallenge(first))).status).toBe(202);
+  return cookies(await post(app, '/auth/sms/verify', { code: lastCode(hook) }, withChallenge(first))).madauth_session.value;
+}
+
 /** Adds a phone for the signed-in user: the setup SMS, then its code. */
 async function addPhone(app: App, hook: Hook, session: string, phone = PHONE) {
   const setup = await post(app, '/auth/sms/setup', { phone, locale: 'de' }, withSession(session));
@@ -44,15 +60,20 @@ async function addApp(app: App, session: string): Promise<Buffer> {
   return secret;
 }
 
-/** Grace with a password and a phone, on a server where password sign-in asks for a second factor when there is one. */
+/**
+ * Grace with a password and a phone, on a server where password sign-in asks for a second factor when there is
+ * one; `session` is a sign-in a minute old (with an SMS code), so the next SMS may go and changes still may be made.
+ */
 async function withPhone(methods: TestMethods = { google: {}, password: { secondFactor: 'optional' }, sms: {} }) {
   startClock();
   const made = passwordApp();
   await setMethods(made.store, methods);
-  const session = await signUpVerified(made.app, made.hook);
+  const signedUp = await signUpVerified(made.app, made.hook);
   advance(61_000);
-  const { confirm } = await addPhone(made.app, made.hook, session);
+  const { confirm } = await addPhone(made.app, made.hook, signedUp);
   expect(confirm.status).toBe(200);
+  advance(61_000);
+  const session = await signInAgain(made.app, made.hook);
   made.hook.calls.length = 0;
   advance(61_000);
   return { ...made, session };
@@ -169,18 +190,26 @@ describe('adding a phone number', () => {
     expect(await store.findOne('account', { key: `sms:${userId}` })).toMatchObject({ phone: '+41790000099' });
     expect(await (await app.request('/auth/sms/status', { headers: withSession(session) })).json()).toEqual({ enabled: true, phone: '+41 ••••••• 99' });
 
+    // Removing it starts with the code to the number, right after signing in: the sign-in's own SMS code
+    // first, and a minute later the one for the removal.
     advance(61_000);
-    expect((await post(app, '/auth/sms/remove', { code: '000000' }, withSession(session))).status).toBe(401);
-    await post(app, '/auth/sms/send', {}, withSession(session));
+    expect(await (await post(app, '/auth/sms/send', {}, withSession(session))).json()).toMatchObject({ error: 'reauth_required' });
+    const fresh = await signInAgain(app, hook);
+    advance(61_000);
+    expect((await post(app, '/auth/sms/remove', { code: '000000' }, withSession(fresh))).status).toBe(401);
+    expect((await post(app, '/auth/sms/send', {}, withSession(fresh))).status).toBe(202);
     const code = lastCode(hook);
     hook.calls.length = 0;
-    const removed = await post(app, '/auth/sms/remove', { code }, withSession(session));
+    // The code finishes the removal, also once the sign-in is no longer recent.
+    advance(2 * 60_000);
+    const removed = await post(app, '/auth/sms/remove', { code }, withSession(fresh));
 
     expect(removed.status).toBe(200);
     expect(await store.findOne('account', { key: `sms:${userId}` })).toBeNull();
     expect(hook.calls).toEqual([{ type: 'user.second_factor_disabled', data: { user: graceUser, method: 'sms' } }]);
-    expect(await (await post(app, '/auth/sms/remove', { code }, withSession(session))).json()).toMatchObject({ error: 'no_phone' });
-    expect(await (await post(app, '/auth/sms/send', {}, withSession(session))).json()).toMatchObject({ error: 'no_phone' });
+    expect(await (await post(app, '/auth/sms/remove', { code }, withSession(fresh))).json()).toMatchObject({ error: 'no_phone' });
+    const again = await signInAgain(app, hook);
+    expect(await (await post(app, '/auth/sms/send', {}, withSession(again))).json()).toMatchObject({ error: 'no_phone' });
   });
 
   it('S12: a setup started before the user had a number does not replace the one they added meanwhile', async () => {
@@ -194,10 +223,11 @@ describe('adding a phone number', () => {
     expect(stale.status).toBe(202);
     const staleCookie = `madauth_sms_setup=${cookies(stale).madauth_sms_setup.value}`;
     advance(61_000);
-    // Another browser adds a number and confirms it.
-    expect((await addPhone(app, hook, session)).confirm.status).toBe(200);
+    // Another browser signs in and adds a number, and confirms it.
+    const other = await signInAgain(app, hook);
+    expect((await addPhone(app, hook, other)).confirm.status).toBe(200);
 
-    const refused = await post(app, '/auth/sms/confirm', { code: lastCode(hook) }, withSession(session, staleCookie));
+    const refused = await post(app, '/auth/sms/confirm', { code: lastCode(hook) }, withSession(other, staleCookie));
 
     // The first setup never had the current number's approval, whatever code it brings.
     expect(refused.status).toBe(400);
@@ -219,14 +249,15 @@ describe('adding a phone number', () => {
     // With the app as well, the phone may go; and the other way round.
     const secret = await addApp(app, session);
     advance(61_000);
-    await post(app, '/auth/sms/send', {}, withSession(session));
-    expect((await post(app, '/auth/sms/remove', { code: lastCode(hook) }, withSession(session))).status).toBe(200);
-    const appAlone = await post(app, '/auth/authenticator/remove', { code: totp(secret, stepOf(Date.now()) + 1) }, withSession(session));
+    const fresh = await signInAgain(app, hook, secret);
+    await post(app, '/auth/sms/send', {}, withSession(fresh));
+    expect((await post(app, '/auth/sms/remove', { code: lastCode(hook) }, withSession(fresh))).status).toBe(200);
+    const appAlone = await post(app, '/auth/authenticator/remove', { code: totp(secret, stepOf(Date.now()) + 1) }, withSession(fresh));
     expect(appAlone.status).toBe(403);
     expect(await appAlone.json()).toMatchObject({ error: 'required_by_policy', message: expect.stringContaining('another second factor') });
     advance(61_000);
-    await addPhone(app, hook, session);
-    expect((await post(app, '/auth/authenticator/remove', { code: totp(secret, stepOf(Date.now())) }, withSession(session))).status).toBe(200);
+    await addPhone(app, hook, fresh);
+    expect((await post(app, '/auth/authenticator/remove', { code: totp(secret, stepOf(Date.now())) }, withSession(fresh))).status).toBe(200);
   });
 });
 

@@ -205,13 +205,13 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
 
   /**
    * Who adds a passkey: the user whose sign-in waits for a second factor's setup (a `required` policy) or
-   * whose sign-up with a passkey waits for it, or the signed-in user if they signed in recently (a passkey is
-   * a way in of its own); else the answer to send.
+   * whose sign-up with a passkey waits for it, or the signed-in user, who starts it only right after signing
+   * in (a passkey is a way in of its own); else the answer to send.
    */
-  const whoAdds = (c: Context) => whoSetsUp(c, ctx, 'passkey', async () => true);
+  const whoAdds = (c: Context, step: 'start' | 'finish') => whoSetsUp(c, ctx, 'passkey', step);
 
   app.post(`${ROUTE_PATH}/register/options`, async (c) => {
-    const who = await whoAdds(c);
+    const who = await whoAdds(c, 'start');
     if (who instanceof Response) return who;
     const domain = rpIdOf(c);
     if (!domain) return wrongDomain(c);
@@ -235,7 +235,8 @@ export function passkeyRoutes(app: Hono, ctx: AppContext): void {
   });
 
   app.post(`${ROUTE_PATH}/register/verify`, async (c) => {
-    const who = await whoAdds(c);
+    // The ceremony the options started finishes it: the browser's dialog may take longer than the start allows.
+    const who = await whoAdds(c, 'finish');
     if (who instanceof Response) return who;
     const { user: adding, challenge } = who;
     const ceremony = await finish(c, 'register', adding.id);

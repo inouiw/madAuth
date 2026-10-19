@@ -31,7 +31,7 @@ export interface MethodsApi {
   list(): Promise<Result<{ methods: SignInMethodInfo[] }>>;
   /**
    * Removes a password, Google, GitHub, the e-mail link or a passkey (the authenticator app takes a code:
-   * `Madauth.authenticator.remove`). Only within ten minutes of signing in, else it fails with
+   * `Madauth.authenticator.remove`). Only within two minutes of signing in, else it fails with
    * `reauth_required`. Fails with `only_method` (the user would have no way left to sign in),
    * `required_by_policy` (the last passkey, when a policy requires a second factor), `method_not_found` or
    * `no_session`.

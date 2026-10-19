@@ -24,7 +24,7 @@ Code: `finish` in [`routes/passkey.ts`](../packages/server/src/routes/passkey.ts
 
 ## Adding a passkey
 
-- Only a signed-in user adds a passkey, and only within ten minutes of signing in (the session's `auth_time`, which renewals keep): later, the answer is `401 reauth_required`, and the user signs in again first. A session someone took over (a stolen cookie, a browser left open) must not give them a way in of their own that outlives it.
+- Only a signed-in user adds a passkey, and only within two minutes of signing in (the session's `auth_time`, which renewals keep): later, the answer is `401 reauth_required`, and the user signs in again first. A session someone took over (a stolen cookie, a browser left open) must not give them a way in of their own that outlives it.
 - Or the sign-in whose policy requires a second factor the user doesn't have yet (`second_factor_setup_required` with `passkey` among its `factors`): the new passkey finishes that sign-in.
 - Or a sign-up with a passkey alone, once its address is confirmed (see below). A sign-up with the authenticator app alone has no first factor either, so it sets the app up, never a passkey; and a sign-up with a passkey sets up a passkey, never the app or a phone.
 - The options leave out the passkeys the user has (`excludeCredentials`), so an authenticator that holds one says so instead of making another. A passkey is stored by the SHA-256 of its credential id (the id itself can be longer than a key column holds), with its public key, its transports, its counter and a name the user gives it (`Passkey` by default, at most 64 characters, changed with `Madauth.passkey.rename`).
@@ -52,7 +52,7 @@ A passkey the server no longer has (the user removed it) is `401 passkey_unknown
 
 ## Removing a passkey
 
-- Within ten minutes of signing in, like adding one: `Madauth.methods.remove(id)` or `POST /auth/methods/remove`.
+- Within two minutes of signing in, like adding one: `Madauth.methods.remove(id)` or `POST /auth/methods/remove`.
 - Not the last way the user signs in (`403 only_method`): they add another method first, or delete the account.
 - Not the last second factor a `required` policy can ask them for (`403 required_by_policy`): a policy needs a factor the user keeps, other than the method itself. One of several passkeys may always go, and the passkeys' own policy doesn't keep the last one: without it, the user signs in with no passkey.
 - A user who lost their passkeys signs in another way and removes them. One who has no other way in needs an admin, who [resets their sign-in](server.md#resetting-a-users-sign-in): every method goes, and the user signs up again, with a passkey too (see [Signing up with a passkey](#signing-up-with-a-passkey)), and keeps their id. The admin checks who is asking first: after a reset, the inbox is all it takes.

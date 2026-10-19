@@ -69,7 +69,8 @@ export interface AuthenticatorApi {
    * `second_factor_setup_required` or `authenticator_setup_required`: a new key to scan or type into the app.
    * Confirm it within ten minutes with {@link confirmSetup}. A user who has an app already gives a current code
    * from it (or a recovery code) in `options`, since the new app replaces it; without one it fails with
-   * `code_required`, with a wrong one with `code_invalid`. Fails with `no_session`.
+   * `code_required`, with a wrong one with `code_invalid`. The signed-in user starts it only within two minutes of
+   * signing in, else it fails with `reauth_required`; the confirmation may come later. Fails with `no_session`.
    */
   startSetup(options?: CodeOptions): Promise<Result<AuthenticatorSetup>>;
   /**
@@ -82,9 +83,13 @@ export interface AuthenticatorApi {
    * Turns the signed-in user's app off, with a current code from it or a recovery code. Fails with
    * `code_invalid`, `required_by_policy` (a method requires the app, so nobody can remove it), `only_method`
    * (the app is the user's only way to sign in; they can delete the account instead) or `no_session`.
+   * Only within two minutes of signing in, else it fails with `reauth_required`.
    */
   remove(options: CodeOptions): Promise<Result>;
-  /** New recovery codes for the signed-in user, with a current code; the old ones stop working. Fails with `code_invalid`, `no_authenticator` or `no_session`. */
+  /**
+   * New recovery codes for the signed-in user, with a current code; the old ones stop working. Fails with
+   * `code_invalid`, `no_authenticator` or `no_session`. Only within two minutes of signing in, else it fails with `reauth_required`.
+   */
   newRecoveryCodes(options: CodeOptions): Promise<Result<{ recoveryCodes: string[] }>>;
   /** Whether the signed-in user has an app, and how many recovery codes are left. Fails with `no_session`. */
   status(): Promise<Result<{ enabled: boolean; recoveryCodesLeft: number }>>;

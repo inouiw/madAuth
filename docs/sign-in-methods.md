@@ -15,11 +15,19 @@ So adding a method needs both: the signed-in user, and the method itself (the pr
 
 Code: `linkProviderAccount` in [`routes/oauth.ts`](../packages/server/src/routes/oauth.ts), `/auth/password/add`, `/auth/email-link/add`, `/auth/passkey/register/*`.
 
-## Only within ten minutes of signing in
+## Only within two minutes of signing in
 
-Adding a method, and removing one, is refused with `401 reauth_required` more than ten minutes after the user signed in: the session's `auth_time`, which renewals keep. The time is the one of the token the user was read from (the session token, or the renewal token that renewed it), so another user's token in the same request can't make the sign-in look recent. A session someone took over (a stolen cookie, an unlocked computer) must not let them add a way in that outlives it, nor take one away. The user signs in again (`Madauth.showManageSignInMethodsDialog()` asks them to, and goes back to the methods after), and the change follows.
+A sensitive change made with a session is refused with `401 reauth_required` more than two minutes after the user signed in: the session's `auth_time`, which renewals keep. The time is the one of the token the user was read from (the session token, or the renewal token that renewed it), so another user's token in the same request can't make the sign-in look recent. A session someone took over (a stolen cookie, an unlocked computer) must not let them add a way in that outlives it, nor take one away. The user signs in again, a full sign-in with their second factor if their policy asks for one (madAuth's dialog asks them to, and goes back to the change after), and the change follows.
 
-A first authenticator app needs it too while the app is allowed as a sign-in method, since it is a way in then. Otherwise setting up the app or adding a phone keeps its own rules (a code from the current app or phone to replace them), see [Authenticator app security](authenticator-security.md#setting-the-app-up) and [SMS code security](sms-security.md).
+What it covers:
+- adding a sign-in method (a password, the e-mail link, a passkey, Google, GitHub, an OpenID Connect provider) and removing one;
+- setting up the authenticator app or a phone, replacing or removing them, and new recovery codes (these take a code from the app or the phone as well);
+- making an API key, and deleting the account;
+- the admin API's changes: claims, settings, providers, a user's sign-in reset.
+
+A change of several steps checks it when it starts, and its own state finishes it: the setup of the app or a phone (its setup cookie), a passkey's ceremony, a provider's redirect. Replacing or removing the phone starts with the code to the current number (`Madauth.sms.send()`), which the setup or the removal then takes. Two minutes rather than one, since after a sign-in with an SMS code the next SMS can only go a minute later.
+
+Exempt: an API key with the scope for the admin API (a key has no sign-in; making one takes the recent sign-in), the [setup token](server.md#first-setup), and what only takes access away: revoking an API key, an admin revoking a user's key, signing out.
 
 Code: `recentUser` in [`routes/helpers.ts`](../packages/server/src/routes/helpers.ts), `auth_time` in [`tokens.ts`](../packages/server/src/tokens.ts).
 

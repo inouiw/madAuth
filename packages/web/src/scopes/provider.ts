@@ -16,7 +16,7 @@ export interface ProviderApi extends ButtonApi {
   /**
    * Starts the provider's sign-in without a button of madAuth's: the browser goes to the provider and comes
    * back to this page, whose `Madauth.initialize` reports the result. With `purpose: 'link'`, it adds the
-   * provider to the signed-in user's methods instead (within ten minutes of signing in). Fails with
+   * provider to the signed-in user's methods instead (within two minutes of signing in). Fails with
    * `flow_not_enabled` when the server doesn't offer the provider, or when it signs in without a redirect here
    * (Google with `GoogleFedcm`: render its button).
    */

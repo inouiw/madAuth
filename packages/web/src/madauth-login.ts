@@ -82,8 +82,22 @@ type View =
   | 'admin-provider'
   | 'admin-remove';
 
-/** The views that change the signed-in user's methods or keys, or the providers: after signing in again, the dialog goes back to them. */
-const changeViews = ['passkey-setup', 'methods', 'add-password', 'api-key-create', 'admin-provider', 'admin-remove'] as const satisfies readonly View[];
+/**
+ * The views that change the signed-in user's methods, second factors or keys, or the providers: a change needs a
+ * recent sign-in, and after signing in again the dialog goes back to them. `sms-code` is one while it approves
+ * a new number with a code to the current one.
+ */
+const changeViews = [
+  'passkey-setup',
+  'methods',
+  'add-password',
+  'api-key-create',
+  'authenticator-setup',
+  'sms-setup',
+  'sms-code',
+  'admin-provider',
+  'admin-remove',
+] as const satisfies readonly View[];
 
 /** What the provider form of the admin dialog holds while it is filled in; kept while the admin signs in again. */
 interface ProviderDraft {
@@ -725,6 +739,11 @@ export class MadauthLogin extends LitElement {
     this.reauthThen = undefined;
     if (then === 'methods') this.backToMethods();
     else if (then === 'api-key-create') void this.startApiKeyCreate();
+    // The setup starts again: its first step is what needed the sign-in.
+    else if (then === 'authenticator-setup') {
+      this.goTo('authenticator-setup');
+      void this.startSetup();
+    } else if (then === 'sms-code') this.goTo('sms-setup');
     else this.goTo(then);
     return true;
   }

@@ -545,7 +545,7 @@ export const Madauth = {
 
   /**
    * Opens the dialog on the "Create a passkey" screen for the signed-in user; the browser's passkey dialog
-   * follows. Resolves with the new passkey. Within ten minutes of signing in only: later the dialog asks the
+   * follows. Resolves with the new passkey. Within two minutes of signing in only: later the dialog asks the
    * user to sign in again first, and goes on with the passkey after. Fails with `cancelled` when the dialog
    * is closed before, `no_session` when nobody is signed in, and `flow_not_enabled` when the server has
    * passkeys switched off or the browser has none. With `ui: 'custom'` use `Madauth.passkey.add()`.
@@ -566,7 +566,7 @@ export const Madauth = {
    * Opens the dialog on the signed-in user's sign-in methods: which they have, with buttons to add another
    * (a passkey, a password, Google, GitHub, the e-mail link, the authenticator app, as the server offers them)
    * and to remove one. Resolves when the dialog is closed. Changing a method takes a sign-in within the last
-   * ten minutes: the dialog asks the user to sign in again when needed. Fails with `no_session` when nobody is
+   * two minutes: the dialog asks the user to sign in again when needed. Fails with `no_session` when nobody is
    * signed in. With `ui: 'custom'` use `Madauth.methods` and the methods' own calls.
    */
   async showManageSignInMethodsDialog(): Promise<Result> {
@@ -579,7 +579,7 @@ export const Madauth = {
   /**
    * Opens the dialog on the signed-in user's API keys: which they have, each with a button to revoke it, and
    * a form to make one (its name, its scopes, when it expires) that shows the new key once, to copy. Resolves
-   * when the dialog is closed. Making a key takes a sign-in within the last ten minutes: the dialog asks the
+   * when the dialog is closed. Making a key takes a sign-in within the last two minutes: the dialog asks the
    * user to sign in again when needed. Fails with `no_session` when nobody is signed in. With `ui: 'custom'`
    * use `Madauth.apiKeys`.
    */
@@ -594,7 +594,7 @@ export const Madauth = {
    * Opens the dialog on the server's sign-in providers, for admins: the list with each one's state, forms to add
    * one (Google, GitHub or an OpenID Connect provider, with the callback URL to register at it), to change it and
    * to switch it on with its policy for a second factor, and its removal, confirmed with how many users sign in
-   * with it alone. Resolves when the dialog is closed. Changes take a sign-in within the last ten minutes: the
+   * with it alone. Resolves when the dialog is closed. Changes take a sign-in within the last two minutes: the
    * dialog asks the admin to sign in again when needed. Fails without opening the dialog with `no_session` when
    * nobody is signed in and `forbidden` for a user without the role `admin`, so the page can leave its button
    * out. With `ui: 'custom'` use `Madauth.admin`.
@@ -638,8 +638,8 @@ export const Madauth = {
    * sign-in methods, whichever way they signed in. Delete the user's data in your own backend first, while
    * they are still signed in. Once the user has an authenticator app, a current code from it (or a recovery
    * code) is needed: without one it fails with `code_required`, with a wrong one with `code_invalid`.
-   * Fails with `no_session` when nobody is signed in, and with `own_admin_role` for a user with the role
-   * `admin`: another admin takes it from them first. With `GoogleFedcm`, the app's access to the user's
+   * Fails with `no_session` when nobody is signed in, `reauth_required` more than two minutes after signing in,
+   * and `own_admin_role` for a user with the role `admin`: another admin takes it from them first. With `GoogleFedcm`, the app's access to the user's
    * Google account is revoked as well, so Google no longer lists it among their connected apps.
    */
   async deleteAccount(options?: DeleteAccountOptions): Promise<Result> {

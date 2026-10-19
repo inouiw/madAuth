@@ -231,13 +231,13 @@ describe('removing a sign-in method', () => {
     expect(await (await post(app, '/auth/methods/remove', { id: password.id }, { Cookie: cookie })).json()).toMatchObject({ error: 'only_method' });
   });
 
-  it('M11: allowed as a sign-in method, a first authenticator app needs a recent sign-in too; only as a second factor, it doesn\'t', async () => {
-    const { app, store, cookie } = await withGrace({ ...everything, authenticator: { allowAsSignInMethod: true, secondFactor: 'none' } });
-    advance(11 * 60_000);
-
-    expect(await (await post(app, '/auth/authenticator/setup', {}, { Cookie: cookie })).json()).toMatchObject({ error: 'reauth_required' });
-    await setMethods(store, { ...everything, authenticator: { allowAsSignInMethod: false, secondFactor: 'none' } });
-    expect((await post(app, '/auth/authenticator/setup', {}, { Cookie: cookie })).status).toBe(200);
+  it('M11: setting up the authenticator app takes a sign-in within two minutes, as a sign-in method and as a second factor alike', async () => {
+    for (const allowAsSignInMethod of [true, false]) {
+      const { app, cookie } = await withGrace({ ...everything, authenticator: { allowAsSignInMethod, secondFactor: 'none' } });
+      expect((await post(app, '/auth/authenticator/setup', {}, { Cookie: cookie })).status).toBe(200);
+      advance(2 * 60_000 + 1);
+      expect(await (await post(app, '/auth/authenticator/setup', {}, { Cookie: cookie })).json()).toMatchObject({ error: 'reauth_required' });
+    }
   });
 
   it('M12: two removals at once of the last two ways in leave one', async () => {

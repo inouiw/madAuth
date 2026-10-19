@@ -51,7 +51,7 @@ export interface PasskeyApi {
    * Adds a passkey for the signed-in user, for a sign-in that ended with `second_factor_setup_required` and
    * `passkey` among its factors, or for a sign-up with a passkey alone that ended with
    * `passkey_setup_required` (then it finishes the sign-in or sign-up, and `user` is set; the sign-up's
-   * passkey is the user's sign-in method). Only within ten minutes of signing in:
+   * passkey is the user's sign-in method). Only within two minutes of signing in:
    * later it fails with `reauth_required` (sign in again, then add it). Fails with `cancelled`,
    * `already_added` (this device holds one of the user's passkeys), `verification_failed`, `no_session`,
    * `setup_expired` or `passkey_unsupported`; in a sign-up whose passkey policy asks for a second factor, with
