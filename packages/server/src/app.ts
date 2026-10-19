@@ -646,9 +646,9 @@ export function createApp(config: MadauthConfig): Hono {
     if (need === 'session' && bearer !== undefined) {
       return { answer: c.json({ error: 'forbidden', message: "An API key can't change the sign-in providers: an admin signs in to do it." }, 403) };
     }
-    const caller = await admin(c, need === 'session' ? undefined : scope);
+    const caller = need === 'change' && scope ? await adminChange(c, scope) : await admin(c, need === 'session' ? undefined : scope);
     if ('answer' in caller) return caller;
-    if (need !== 'read' && !caller.byApiKey && !(await signedInUser(c, ctx))?.recent) return { answer: reauthRequired(c) };
+    if (need === 'session' && !(await signedInUser(c, ctx))?.recent) return { answer: reauthRequired(c) };
     return { by: caller.email, setup: false, ...byApiKey(caller) };
   };
   /** What an event made with an API key adds: the key, next to its user's address in `by`. */

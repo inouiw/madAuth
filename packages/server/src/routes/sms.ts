@@ -112,7 +112,6 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
     const who = await whoSetsUp(c, ctx, 'sms', 'finish');
     if (who instanceof Response) return who;
     const { user } = who;
-    if (!who.challenge && !(await users.smsAccount(user.id)) && !(await signedInUser(c, ctx))?.recent) return reauthRequired(c);
     const data = await body(c);
     const phone = normalizePhone(data.phone);
     if (!phone) return error(c, 400, 'invalid_phone', 'Enter a mobile number with the country code, e.g. +41 79 123 45 67.');
@@ -120,6 +119,7 @@ export function smsRoutes(app: Hono, ctx: AppContext, users: Users, webhook: Web
     // session alone must not swap the number for the thief's. The approval holds for SETUP_TTL in the setup
     // cookie, so a code sent again (or a mistyped number) costs no second approval.
     const existing = await users.smsAccount(user.id);
+    if (!who.challenge && !existing && !(await signedInUser(c, ctx))?.recent) return reauthRequired(c);
     let approved: number | undefined;
     /** The current number agreed in this request: its code was just sent, so the one to the new number may follow at once. */
     let justApproved = false;
