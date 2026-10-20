@@ -1,6 +1,6 @@
 # @madauth/server
 
-The server of [madAuth](https://github.com/inouiw/madAuth), a self-hostable alternative to Cognito / Auth0: Google, GitHub, e-mail & password, e-mail link and authenticator-app (TOTP) sign-in with madAuth sessions. It runs with Node, in Docker, on AWS Lambda, on Azure Functions or inside your own Node server.
+The server of [madAuth](https://github.com/inouiw/madAuth), a self-hostable alternative to Cognito / Auth0: Google, GitHub, OpenID Connect providers, e-mail & password, e-mail link, passkeys, the authenticator app (TOTP) and SMS codes, with madAuth sessions. Users are stored in SQLite, Postgres, DynamoDB or a database of your own, and its keys can stay in AWS KMS. It runs with Node, in Docker, on AWS Lambda, on Azure Functions or inside your own Node server.
 
 The browser side is [`@madauth/web`](https://www.npmjs.com/package/@madauth/web).
 

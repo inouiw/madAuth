@@ -45,6 +45,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # The sizes the READMEs and the landing page name must match the bundle.
+      - run: npm run size -- --check
 
   docker:
     runs-on: ubuntu-latest

@@ -14,6 +14,10 @@
     "build": "npm run build -w packages/server && npm run build -w packages/web && npm run build -w demo && npm run build -w site",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "size": "npm run build -w packages/web && node scripts/size.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

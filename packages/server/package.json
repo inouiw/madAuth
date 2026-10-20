@@ -1,7 +1,7 @@
 {
   "name": "@madauth/server",
   "version": "0.7.0-beta.2",
-  "description": "madAuth server: Google, e-mail & password and authenticator-app sign-in with madAuth sessions, for Docker, AWS Lambda and Azure Functions.",
+  "description": "madAuth server: Google, GitHub, OpenID Connect, e-mail & password, e-mail link, passkey, authenticator-app and SMS-code sign-in with madAuth sessions, for Node, Docker, AWS Lambda and Azure Functions.",
   "license": "MIT",
   "author": "David Neuy",
   "homepage": "https://github.com/inouiw/madAuth#readme",
@@ -19,13 +19,20 @@
     "login",
     "sign-in",
     "google-sign-in",
+    "oidc",
+    "passkeys",
+    "webauthn",
+    "totp",
+    "2fa",
     "session",
     "jwt",
     "hono",
     "aws-lambda",
     "azure-functions",
     "dynamodb",
-    "postgres"
+    "postgres",
+    "sqlite",
+    "aws-kms"
   ],
   "type": "module",
   "engines": {

@@ -1,92 +1,67 @@
 # madAuth
 
-A self-hostable alternative to Cognito / Auth0. Sign-in methods:
-
-| Method | Status |
-| --- | --- |
-| Google sign-in (FedCM / One Tap, or server-side redirect) | available |
-| GitHub sign-in (server-side redirect) | available |
-| OpenID Connect providers: GitLab, Keycloak, Okta, a company's own… (server-side redirect) | available |
-| E-mail & password (with e-mail confirmation and password reset) | available |
-| Passwordless e-mail link (a link and a code by e-mail, sign-up on first use) | available |
-| Passkeys (WebAuthn): on their own (with sign-up by e-mail confirmation), in the e-mail field's autofill, and as a second factor | available |
-| Authenticator app (TOTP): as a second factor, and on its own | available |
-| SMS code (as a second factor) | available |
-
-A user can have several of these: they sign up with one and add more while signed in. The admin decides which methods sign in on their own and which ask for a second factor.
-
-Users can also make **API keys** for programs that call your API, or madAuth's admin API, in their name, each limited to scopes; your backend checks them with `createApiKeyVerifier`. See [API keys](docs/api-keys.md).
+A self-hostable alternative to Cognito / Auth0: run the madAuth server in your own cloud account, keep your users in your own database, and add a ready-made sign-in dialog to any web app.
 
 **Try it: [madauth.com/demo](https://madauth.com/demo/)** – the live demo: sign in and see the signed-in user's claims.
 
-## Repository layout
+## Why madAuth
 
-```
-packages/web     @madauth/web – sign-in client and UI as framework-agnostic web components (Lit)
-packages/server  @madauth/server – the madAuth server for Docker, AWS Lambda and Azure Functions (Hono)
-demo             demo page: plain HTML + TypeScript served by Vite, no framework (live at https://madauth.com/demo/)
-deploy/aws       AWS CDK template to host the madAuth server: Lambda, DynamoDB, secrets in SSM
-site             the madauth.com website (landing page and blog, see site/README.md) and its infrastructure (site/infra)
-```
+- **Small in the browser.** The sign-in dialog with every sign-in method adds about 49 kB (gzipped) to your app, Lit included. With your own login screen, `@madauth/web/client` is about 18 kB. The password-strength check loads only on a screen that asks for a new password.
+- **Any framework.** The dialog is a standard web component: plain HTML, React, Angular, Vue, Svelte and Capacitor apps.
+- **Your infrastructure.** Node, Docker, AWS Lambda or Azure Functions; SQLite, Postgres, DynamoDB or a store of your own. The AWS Lambda bundle is one file of under 2 MB, without `node_modules`. See [the table below](#runs-on-your-infrastructure).
+- **Keys outside the process.** On AWS, madAuth's signing, hashing and encryption keys can stay in AWS KMS and never leave it: someone who breaks into the server can't take them away. The AWS template creates and rotates them. See [Key service](docs/server.md#key-service).
+- **Secure by default.** Failed sign-ins are slowed down per account, answers don't reveal which addresses have an account, and sensitive changes (a new sign-in method, removing the second factor, deleting the account) need a sign-in within the last two minutes. Webhooks are signed, on AWS with IAM instead of a shared secret. The container runs as an unprivileged user, and the `docker-compose.yml` adds a read-only file system and no Linux capabilities. See [Password security](docs/password-security.md) and [Hardening](docs/server.md#hardening).
+- **MIT licensed.**
 
-The UI ships as a standard custom element, so it works in plain HTML, React, Angular, Vue, Svelte and Capacitor apps. Without it, `@madauth/web/client` is the client alone, with no UI framework in it.
+## Sign-in methods
 
-## Getting started
+| Method | Status |
+| --- | --- |
+| Google sign-in (FedCM / One Tap, server-side redirect, or an ID token the app obtained itself, e.g. natively in Capacitor) | available |
+| GitHub sign-in (server-side redirect) | available |
+| OpenID Connect providers: GitLab, Keycloak, Okta, a company's own… (server-side redirect; an address the provider doesn't vouch for is confirmed by e-mail) | available |
+| E-mail & password (with e-mail confirmation and password reset) | available |
+| Passwordless e-mail link (a link and a code by e-mail, sign-up on first use) | available |
+| Passkeys (WebAuthn): on their own (with sign-up by e-mail confirmation), in the e-mail field's autofill, and as a second factor | available |
+| Authenticator app (TOTP): as a second factor with recovery codes, and on its own | available |
+| SMS code (as a second factor) | available |
+| Microsoft (personal accounts and Entra ID) | open ([#48](https://github.com/inouiw/madAuth/issues/48)) |
+| Enterprise SSO with SAML 2.0 | open ([#51](https://github.com/inouiw/madAuth/issues/51)) |
 
-Install dependencies:
+A user can have several of these: they sign up with one and add more while signed in. The admin decides which methods sign in on their own and which ask for a second factor, and manages the providers in a dialog of their own (`Madauth.showAdminDialog()`).
 
-```bash
-npm install
-```
+Users can also make **API keys** for programs that call your API, or madAuth's admin API, in their name, each limited to scopes; your backend checks them with `createApiKeyVerifier`. See [API keys](docs/api-keys.md).
 
-Create the server's configuration from the example. It uses a Google client that already allows `http://localhost:3000`, stores e-mail & password users in `packages/server/madauth.db`, and hands e-mails to a development webhook receiver that prints them:
+## Runs on your infrastructure
 
-```bash
-cp packages/server/.env.example packages/server/.env
-```
+| Part | Option | Status |
+| --- | --- | --- |
+| Hosting | Node (`npx @madauth/server start`) | available |
+| | Docker (`ghcr.io/inouiw/madauth-server`) | available |
+| | AWS Lambda, with an [AWS CDK template](deploy/aws/README.md) | available |
+| | Azure Functions | available |
+| | Your own Node server (`createApp`, a Hono app) | available |
+| | Cloudflare Workers | open ([#100](https://github.com/inouiw/madAuth/issues/100)) |
+| | Deployment templates for Azure and Google Cloud | open ([#101](https://github.com/inouiw/madAuth/issues/101)) |
+| Database | SQLite | available |
+| | Postgres | available |
+| | Amazon DynamoDB | available |
+| | Your own database, with a [custom store adapter](docs/server.md#custom-store-adapter) | available |
+| | MySQL / MariaDB, MongoDB, Azure Cosmos DB, Google Firestore (built in) | open ([#102](https://github.com/inouiw/madAuth/issues/102)) |
+| Keys | In the server's memory, from `MADAUTH_SIGNING_KEY` | available |
+| | AWS KMS | available |
+| | A key service of your own, passed to `createApp` | available |
+| | Azure Key Vault, Google Cloud KMS (built in) | open ([#74](https://github.com/inouiw/madAuth/issues/74)) |
+| E-mail and SMS (a [webhook receiver](https://github.com/inouiw/madAuth-webhooks) sends them) | Development receiver that prints them | available |
+| | Amazon SES (e-mail) and Amazon SNS (SMS) | available |
+| | Any other service, with a receiver of your own | available |
+| | Ready-made receivers for other services (e.g. SendGrid, Twilio, Azure Communication Services) | open ([#103](https://github.com/inouiw/madAuth/issues/103)) |
 
-Start the madAuth server. The first start prints a signing key, then a webhook secret; copy each into `packages/server/.env` (`MADAUTH_SIGNING_KEY`, `WEBHOOK_SECRET`) and start again:
-
-```bash
-npm run dev:server
-```
-
-In a second terminal, start the development receiver from the [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks) repository. The confirmation and reset e-mails appear there, with their links and codes. Get it once, next to this repository. Its `.env` (see its [README](https://github.com/inouiw/madAuth-webhooks/tree/main/dev-receiver)) is linked to `packages/server/.env`, so it always has the server's `WEBHOOK_URL` and `WEBHOOK_SECRET`:
-
-```bash
-git clone https://github.com/inouiw/madAuth-webhooks.git ../madAuth-webhooks && npm install --prefix ../madAuth-webhooks/dev-receiver && ln -s "$PWD/packages/server/.env" ../madAuth-webhooks/dev-receiver/.env
-```
-
-```bash
-npm run dev --prefix ../madAuth-webhooks/dev-receiver
-```
-
-In a third terminal, start the demo at http://localhost:3000 (it proxies `/auth` to the server). The demo page switches between Google One Tap and the server-side redirect flow (which needs a Google provider with a client secret: until the first admin exists, add it with the setup token the server prints, see [First setup](docs/server.md#first-setup)), shows the signed-in user's claims, and has a button for every other call a signed-in user can make, the admin API included. http://localhost:3000/custom.html shows a custom login screen built with the same library:
-
-```bash
-npm run dev
-```
-
-The admin API needs the role `admin`, which the public demo at madauth.com gives to nobody: an admin could change every visitor's claims and switch sign-in methods off for everyone. Here you give it to yourself: set `INITIAL_ADMIN_EMAIL` in `packages/server/.env` to your address, start the server again, and sign in with that address (see [The first admin](docs/server.md#the-first-admin)).
-
-Build the server, the library and the demo:
-
-```bash
-npm run build
-```
-
-Run the type checker and the unit tests (Vitest + happy-dom):
-
-```bash
-npm run typecheck
-npm test
-```
+New to madAuth? [Getting started](docs/getting-started.md) walks you through the server and the library on your machine.
 
 ## Using madAuth in your app
 
 madAuth has two parts: the sign-in library for your web app, and the madAuth server it talks to.
-
-New to madAuth? [Getting started](docs/getting-started.md) walks you through both on your machine: install, create the configuration, start the server and sign up.
 
 Install the library:
 
@@ -157,21 +132,9 @@ See [Running the madAuth server](docs/server.md) for:
 
 The login form can be styled to match your app (colors, corner radius, font, and individual parts of the dialog). See [Styling the login form](docs/styling.md) for all available settings.
 
-## Adding a sign-in method
-
-1. Add or update the entry in [`packages/web/src/methods.ts`](packages/web/src/methods.ts), its name and button in [`strings-core.ts`](packages/web/src/strings-core.ts), and the texts of its views in [`strings.ts`](packages/web/src/strings.ts).
-2. Implement a `SignInProvider` (see [`packages/web/src/providers`](packages/web/src/providers)). The dialog lists a method once its provider is passed to `Madauth.initialize` and the server offers it (a provider whose `setup` answers `flow_not_enabled` is left out).
-3. Add the server endpoints in a module in [`packages/server/src/routes`](packages/server/src/routes) and register it in [`app.ts`](packages/server/src/app.ts). A provider with a redirect flow (like Google's code flow and GitHub) builds on [`routes/oauth.ts`](packages/server/src/routes/oauth.ts): the state cookie, the way back to the app, and resolving the user behind a verified profile. Store what it needs as models in [`madauthSchema`](packages/server/src/store/schema.ts). A second factor (like SMS codes) has no provider and no row in the dialog: it is a scope, views for its step, and a `step` in `PendingStep` with the `factors` the server names.
-4. Add the method's actions as a scope on `Madauth` (see [`packages/web/src/scopes`](packages/web/src/scopes)), so custom login screens can use it.
-5. Add tests next to the code (`*.test.ts`) and run `npm test`.
-
-## Releasing
-
-See [Releasing](docs/releasing.md).
-
 ## Contributing
 
-Contributions are welcome! Open an issue to discuss an idea or report a bug, or send a pull request. Please make sure `npm run typecheck` and `npm test` pass.
+Contributions are welcome! Open an issue to discuss an idea or report a bug, or send a pull request. [Developing madAuth](docs/development.md) describes the repository, how to run the demo from it, the tests, and how to add a sign-in method. Please make sure `npm run typecheck` and `npm test` pass.
 
 ## License
 
