@@ -1,6 +1,6 @@
 import type { BuiltInMethodId } from './methods.js';
 import type { MadauthErrorCode } from './result.js';
-import { coreDe, coreEn, languageOf } from './strings-core.js';
+import { coreDe, coreEn, languageOf, methodTexts } from './strings-core.js';
 
 /**
  * Every text the sign-in dialog shows: the client's (`strings-core.ts`: the methods' names, the buttons and
@@ -19,6 +19,8 @@ export const en = {
   otherWays: 'Other ways to sign in',
   /** The tooltip of an OpenID Connect provider's button (`continueWith`). */
   useAccount: (name: string) => `Use your ${name} account`,
+  /** The sign-in methods: `label` is the text of the button, `description` its tooltip. */
+  methods: methodTexts,
 
   // Fields
   email: 'Email',
@@ -373,6 +375,14 @@ export const de: Strings = {
   or: 'oder',
   otherWays: 'Weitere Anmeldemöglichkeiten',
   useAccount: (name) => `Mit Ihrem ${name}-Konto anmelden`,
+  methods: {
+    google: { label: 'Weiter mit Google', description: 'Mit Ihrem Google-Konto anmelden' },
+    github: { label: 'Weiter mit GitHub', description: 'Mit Ihrem GitHub-Konto anmelden' },
+    password: { label: 'E-Mail-Adresse und Passwort', description: 'Mit E-Mail-Adresse und Passwort anmelden' },
+    authenticator: { label: 'Authentifizierungs-App', description: 'Einmalcode aus Ihrer Authentifizierungs-App' },
+    'email-link': { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
+    passkey: { label: 'Passkey', description: 'Mit Fingerabdruck, Gesicht oder Bildschirmsperre anmelden' },
+  },
 
   email: 'E-Mail-Adresse',
   password: 'Passwort',

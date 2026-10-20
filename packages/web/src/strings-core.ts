@@ -2,29 +2,32 @@ import type { BuiltInMethodId } from './methods.js';
 import type { MadauthErrorCode } from './result.js';
 
 /**
+ * The built-in sign-in methods in English: `label` is the text of the button, `description` its tooltip.
+ * `loginMethods` carries them; the dialog's `methods` has them in every language.
+ */
+export const methodTexts = {
+  google: { label: 'Continue with Google', description: 'Use your Google account' },
+  github: { label: 'Continue with GitHub', description: 'Use your GitHub account' },
+  password: { label: 'Email & password', description: 'Sign in with your email address and password' },
+  authenticator: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
+  'email-link': { label: 'Email link', description: 'Passwordless sign-in by email' },
+  passkey: { label: 'Passkey', description: 'Sign in with your fingerprint, face or screen lock' },
+} satisfies Record<BuiltInMethodId, { label: string; description: string }>;
+
+/**
  * The texts the client shows without the dialog (`@madauth/web/client`): the names of the sign-in methods,
  * the buttons of the redirect sign-ins (`GoogleRedirect`, `GitHub`, `OpenIdConnect`) and their errors. The
  * dialog's tables in `strings.ts` extend these, so a client without the dialog ships only this file. `coreDe`
  * has the same shape, so a text that is missing in one language fails the type check.
  */
 export const coreEn = {
-  /** The sign-in methods: `label` is the text of the button, `description` its tooltip. `loginMethods` has the English ones. */
-  methods: {
-    google: { label: 'Continue with Google', description: 'Use your Google account' },
-    github: { label: 'Continue with GitHub', description: 'Use your GitHub account' },
-    password: { label: 'Email & password', description: 'Sign in with your email address and password' },
-    authenticator: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
-    'email-link': { label: 'Email link', description: 'Passwordless sign-in by email' },
-    passkey: { label: 'Passkey', description: 'Sign in with your fingerprint, face or screen lock' },
-  } satisfies Record<BuiltInMethodId, { label: string; description: string }>,
   /** The button of a sign-in provider, with the name an admin gave it. */
   continueWith: (name: string) => `Continue with ${name}`,
   /** The button of a provider (Google, GitHub) that adds it to the signed-in user's methods (`purpose: 'link'`). */
   connect: (name: string) => `Connect ${name}`,
   /**
-   * A method's name inside a sentence, e.g. after "with" ("mit" in German): in the redirect errors and the
-   * dialog's `otherMethod`, and in what a second factor will do (`authenticatorSetup.effects`, `smsSetup.effect`,
-   * `passkeySetup.effect`). `methodName` names an OpenID Connect provider by the name an admin gave it.
+   * A method's name inside a sentence, e.g. after "with" ("mit" in German) in the redirect errors and the
+   * dialog's sentences. `methodName` names an OpenID Connect provider by the name an admin gave it instead.
    */
   methodNames: { google: 'Google', github: 'GitHub', password: 'a password', authenticator: 'an authenticator app', 'email-link': 'an email link', passkey: 'a passkey' } satisfies Record<BuiltInMethodId, string>,
 
@@ -47,14 +50,6 @@ export const coreEn = {
 export type CoreStrings = typeof coreEn;
 
 export const coreDe: CoreStrings = {
-  methods: {
-    google: { label: 'Weiter mit Google', description: 'Mit Ihrem Google-Konto anmelden' },
-    github: { label: 'Weiter mit GitHub', description: 'Mit Ihrem GitHub-Konto anmelden' },
-    password: { label: 'E-Mail-Adresse und Passwort', description: 'Mit E-Mail-Adresse und Passwort anmelden' },
-    authenticator: { label: 'Authentifizierungs-App', description: 'Einmalcode aus Ihrer Authentifizierungs-App' },
-    'email-link': { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
-    passkey: { label: 'Passkey', description: 'Mit Fingerabdruck, Gesicht oder Bildschirmsperre anmelden' },
-  },
   continueWith: (name) => `Weiter mit ${name}`,
   connect: (name) => `${name} verbinden`,
   methodNames: { google: 'Google', github: 'GitHub', password: 'einem Passwort', authenticator: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link', passkey: 'einem Passkey' },

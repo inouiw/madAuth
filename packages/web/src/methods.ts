@@ -1,4 +1,4 @@
-import { coreEn } from './strings-core.js';
+import { methodTexts } from './strings-core.js';
 
 /** A built-in sign-in method shown in the login dialog. */
 export interface LoginMethod {
@@ -24,4 +24,4 @@ export const isBuiltInMethodId = (value: unknown): value is BuiltInMethodId => t
  * whose provider is passed to `Madauth.initialize` and not left out because the server doesn't offer them,
  * and the OpenID Connect providers the server offers after GitHub.
  */
-export const loginMethods: LoginMethod[] = order.map((id) => ({ id, ...coreEn.methods[id] }));
+export const loginMethods: LoginMethod[] = order.map((id) => ({ id, ...methodTexts[id] }));

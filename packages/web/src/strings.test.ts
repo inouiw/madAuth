@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coreDe, coreEn, coreStringsFor, languageOf } from './strings-core.js';
+import { coreDe, coreEn, coreStringsFor, languageOf, methodTexts } from './strings-core.js';
 import { de, en, stringsFor } from './strings.js';
 
 /** The keys of a string table, with the type of each text. */
@@ -44,7 +44,7 @@ describe('strings', () => {
   it("the dialog's tables extend the client's, so both show the same texts", () => {
     expect(en).toMatchObject(coreEn);
     expect(de).toMatchObject(coreDe);
-    expect(Object.keys(coreEn).sort()).toEqual(['connect', 'continueWith', 'methodNames', 'methods', 'redirectErrors', 'redirectFailed']);
+    expect(en.methods).toBe(methodTexts);
   });
 
   it('addresses the user formally in German', () => {
