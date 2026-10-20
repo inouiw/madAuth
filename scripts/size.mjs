@@ -78,10 +78,11 @@ async function measure(dir, source) {
 
 // The real path: on macOS the temporary directory is behind a symlink, and esbuild names its outputs by the real one.
 const dir = realpathSync(mkdtempSync(join(tmpdir(), 'madauth-size-')));
+// The directory goes away even when a build fails.
+process.on('exit', () => rmSync(dir, { recursive: true, force: true }));
 for (const app of apps) {
   const { initial, later } = await measure(dir, app.source);
   console.log(app.name);
   console.log(`  with the page:   ${kB(initial.gzip)} gzip, ${kB(initial.brotli)} brotli`);
   console.log(`  on first use:    ${kB(later.gzip)} gzip, ${kB(later.brotli)} brotli (zxcvbn-ts, on a new-password screen)`);
 }
-rmSync(dir, { recursive: true, force: true });
