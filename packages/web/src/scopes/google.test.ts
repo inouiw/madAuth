@@ -153,6 +153,21 @@ describe('Madauth.google.nonce and signIn: an ID token the app obtained itself',
     expect(server.requests.some((r) => r.path.startsWith('/auth/providers/google'))).toBe(false);
   });
 
+  it('H11: nonce fails, not throws, when a later initialize switched Google off meanwhile', async () => {
+    const server = fakeServer();
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    let release!: () => void;
+    server.held = new Promise<void>((resolve) => (release = resolve));
+    const pending = Madauth.google.nonce();
+    await settle();
+    server.held = undefined;
+    server.google = false;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    release();
+
+    expect(await pending).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+  });
+
   it('H11: returns the server’s error and signs nobody in', async () => {
     const server = fakeServer();
     server.verifyError = 'other_method';

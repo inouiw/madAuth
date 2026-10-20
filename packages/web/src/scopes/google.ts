@@ -1,6 +1,6 @@
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
 import { createButtonApi, type ButtonApi, type ButtonRenderOptions } from './button.js';
-import { serverCalls, type Core } from './core.js';
+import { noSession, serverCalls, type Core } from './core.js';
 import { signedIn } from './email.js';
 
 export type GoogleButtonOptions = ButtonRenderOptions;
@@ -30,8 +30,8 @@ export interface GoogleApi extends ButtonApi {
   /**
    * Starts a sign-in with an ID token the app obtains itself: resolves with the nonce to pass to Google's
    * sign-in, so that Google puts it into the token, and the server's Google client ID, which the token must be
-   * issued for. The server keeps the nonce in a cookie for five minutes and one attempt: get a new one for
-   * each. The token then goes to {@link signIn}. Fails with `flow_not_enabled` when the server has no Google
+   * issued for. The server keeps the nonce in a cookie for five minutes, and a sign-in uses it up: get a new
+   * one for each sign-in. The token then goes to {@link signIn}. Fails with `flow_not_enabled` when the server has no Google
    * provider that is on. A One Tap prompt of `GoogleFedcm` under way loses its nonce: don't mix the two.
    */
   nonce(): Promise<Result<{ nonce: string; clientId: string }>>;
@@ -57,14 +57,17 @@ export function createGoogleApi(core: Core): GoogleApi {
     ...createButtonApi(core, 'google', "Pass new GoogleFedcm() or new GoogleRedirect() to Madauth.initialize to render Google's button."),
     async nonce() {
       const result = await call<{ nonce: string }>('/auth/providers/google/nonce');
-      return result.isSuccess ? ok({ nonce: result.nonce, clientId: core.config()!.google!.clientId }) : result;
+      if (!result.isSuccess) return result;
+      // Read after the call: a later initialize may have replaced the settings meanwhile, with Google off.
+      const clientId = core.config()?.google?.clientId;
+      return clientId ? ok({ nonce: result.nonce, clientId }) : notOn();
     },
     async signIn({ credential, purpose }) {
       if (purpose === 'link') {
         const linked = await call('/auth/providers/google/link', { body: { credential }, session: true });
         if (!linked.isSuccess) return linked;
         const user = core.currentUser();
-        return user ? ok({ user }) : fail('no_session', 'Nobody is signed in.');
+        return user ? ok({ user }) : noSession();
       }
       return signedIn(core, 'google', await call<{ user: MadauthUser }>('/auth/providers/google/verify', { body: { credential, locale: core.locale() } }));
     },
