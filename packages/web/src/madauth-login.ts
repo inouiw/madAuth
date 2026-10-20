@@ -75,6 +75,7 @@ type View =
   | 'passkey-setup'
   | 'methods'
   | 'add-password'
+  | 'change-password'
   | 'api-keys'
   | 'api-key-create'
   | 'api-key-created'
@@ -994,6 +995,8 @@ export class MadauthLogin extends LitElement {
         return s.methodsView.heading;
       case 'add-password':
         return s.addPassword.heading;
+      case 'change-password':
+        return s.changePassword.heading;
       case 'admin-providers':
         return s.adminView.heading;
       case 'admin-add':
@@ -1054,6 +1057,7 @@ export class MadauthLogin extends LitElement {
     // What the server found wrong with a provider or the settings, for the admin: its message says what to change.
     if ((error.code === 'invalid_provider' || error.code === 'invalid_settings') && this.view.startsWith('admin-')) return error.message;
     if (error.code === 'invalid_credentials' && error.method === 'authenticator') return s.authenticatorInvalid;
+    if (error.code === 'invalid_credentials' && this.view === 'change-password') return s.changePassword.wrongCurrent;
     if (error.code === 'other_method' && error.methods?.length) {
       // The provider that was refused, when a provider's sign-in got the error.
       const instead = error.method && isProviderMethod(error.method) ? nameOfMethod(error.method, s) : undefined;
@@ -1148,6 +1152,8 @@ export class MadauthLogin extends LitElement {
         return this.renderMethods();
       case 'add-password':
         return this.renderAddPassword();
+      case 'change-password':
+        return this.renderChangePassword();
       case 'api-keys':
         return this.renderApiKeys();
       case 'api-key-create':
@@ -1850,7 +1856,7 @@ export class MadauthLogin extends LitElement {
   }
 
   /** To the list of methods, loaded anew, with what changed as the notice. */
-  private backToMethods(notice?: 'added' | 'removed'): void {
+  private backToMethods(notice?: 'added' | 'removed' | 'passwordChanged'): void {
     this.fromMethods = false;
     this.goTo('methods');
     if (notice) this.notice = (strings) => strings.methodsView[notice];
@@ -1902,6 +1908,10 @@ export class MadauthLogin extends LitElement {
                       <span class="label">${label}</span>
                       ${details.length ? html`<span class="hint">${details.join(' · ')}</span>` : null}
                     </span>
+                    ${m.method === 'password'
+                      ? html`<button class="link" part="link" type="button" data-action="change-password" ?disabled=${this.busy}
+                          @click=${() => this.goTo('change-password')}>${v.change}</button>`
+                      : null}
                     ${m.removable && !lastWayIn(m)
                       ? html`<button class="link" part="link" type="button" data-action="remove" aria-label=${v.removeLabel(label)} ?disabled=${this.busy}
                           @click=${() => this.onRemove(m)}>${v.remove}</button>`
@@ -2019,6 +2029,36 @@ export class MadauthLogin extends LitElement {
       return;
     }
     this.backToMethods('added');
+  }
+
+  /** A new password for the signed-in user, with the current one. */
+  private renderChangePassword() {
+    const s = this.strings;
+    return html`
+      <p class="lead">${s.changePassword.lead}</p>
+      <form part="form" class="change-password" @submit=${this.onChangePassword}>
+        <input type="email" name="username" autocomplete="username" .value=${Madauth.currentUser?.email ?? ''} hidden />
+        ${this.passwordField('password', s.changePassword.current, 'current')}
+        ${this.passwordField('new-password', s.newPassword)}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.changePassword.submit}</span>
+        </button>
+      </form>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="back-to-methods" @click=${() => this.backToMethods()}>${s.cancel}</button>
+      </p>
+    `;
+  }
+
+  private async onChangePassword(e: Event): Promise<void> {
+    const { current = '', password = '' } = this.fields(e);
+    const result = await this.run(() => Madauth.password.change({ current, password }));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, 'password');
+      return;
+    }
+    this.backToMethods('passwordChanged');
   }
 
   // --- The signed-in user's API keys ---
@@ -2673,9 +2713,10 @@ export class MadauthLogin extends LitElement {
 
   /**
    * A password field with an eye button that shows what was typed. A new password (`new-password`) gets the
-   * policy's minimum length and the strength meter under it, both read out with the field.
+   * policy's minimum length and the strength meter under it, both read out with the field. `name` is the form
+   * field's: another one tells the current password from the new one in a form with both.
    */
-  private passwordField(id: 'password' | 'new-password', label: string) {
+  private passwordField(id: 'password' | 'new-password', label: string, name = 'password') {
     const isNew = id === 'new-password';
     const minLength = isNew ? Madauth.password.policy?.minLength : undefined;
     const describedBy = [minLength ? 'new-password-hint' : '', isNew && this.passwordScore !== null ? 'new-password-strength' : '']
@@ -2685,7 +2726,7 @@ export class MadauthLogin extends LitElement {
       <div class="field">
         <label for=${id}>${label}</label>
         <div class="password">
-          <input part="input" id=${id} name="password" type="password" autocomplete=${isNew ? 'new-password' : 'current-password'}
+          <input part="input" id=${id} name=${name} type="password" autocomplete=${isNew ? 'new-password' : 'current-password'}
             aria-describedby=${describedBy || nothing} @input=${isNew ? this.onNewPassword : undefined} />
           <button class="reveal" type="button" aria-label=${this.strings.showPassword} aria-pressed="false" aria-controls=${id}
             @click=${this.togglePassword}>${eyeIcons}</button>

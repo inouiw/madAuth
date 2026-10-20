@@ -38,6 +38,7 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 | `confirmReset({ newPassword, token? })` or `confirmReset({ newPassword, email, code })` | `{ user }` | `link_invalid`, `code_invalid`, `codes_locked`, `weak_password`; `authenticator_required` or `second_factor_setup_required` like `signIn` |
 | `pendingReset` | `boolean` | True when the page was opened from a reset link |
 | `add({ password })` | — | Adds a password to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods): `weak_password`, `already_added`, `reauth_required`, `no_session` |
+| `change({ current, password })` | — | Changes the signed-in user's password; their other sessions end, this one goes on. Takes the current password instead of a recent sign-in: `invalid_credentials` (the current password is wrong), `weak_password`, `too_many_attempts`, `method_not_found` (no password: `add` adds one), `no_session` |
 | `policy` | `{ minLength, minScore, secondFactor } \| null` | The server's [password rules](server.md#password-rules), for a hint next to the field, and whether the method asks for a second factor (`none`, `optional`, `required`) |
 | `loadRating()` | `(password, userInputs?) => number` | For a strength meter: loads the rating the server uses for `minScore` and resolves to a function that rates a password from 0 to 4. Pass the user's name and e-mail address as `userInputs`, as the server does. It downloads zxcvbn-ts (about 220 kB compressed) on the first call, so call it when the password field is shown or first typed in. |
 
@@ -65,6 +66,8 @@ If Google or GitHub is one of your methods, say on the form that such a user has
 
 A completed reset signs the user in and ends their sessions on other devices.
 
+**Change password.** A signed-in user who knows their password changes it with `change({ current, password })`: give the form a hidden `username` field with their address, the current password (`autocomplete="current-password"`) and the new one (`new-password`). It ends their sessions on other devices; the session in this browser goes on, so tell them they stay signed in here.
+
 ```ts
 await Madauth.initialize({ providers: [new Password()], ui: 'custom' });
 if (Madauth.password.pendingReset) showNewPasswordForm();
@@ -89,8 +92,8 @@ Use these `autocomplete` values so browsers offer to save and fill passwords and
 | --- | --- |
 | E-mail, next to a password | `username` (with `type="email"`: password managers save and fill it together with the password) |
 | E-mail without a password (e-mail link, forgot password, authenticator app) | `email` |
-| Password when signing in | `current-password` |
-| Password when signing up or resetting | `new-password` |
+| Password when signing in, and the current one when changing it | `current-password` |
+| Password when signing up, resetting or changing it | `new-password` |
 | Code from the e-mail, or from an SMS | `one-time-code` |
 | Code from the authenticator app, or a recovery code | `off` |
 | Phone number | `tel` |

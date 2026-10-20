@@ -247,6 +247,34 @@ describe('<madauth-login> and passkeys', () => {
     expect(server.accounts.get('ada@example.com')).toMatchObject({ password: 'adas own password!' });
   });
 
+  it('DP16: a password user changes it from the list, with the current one', async () => {
+    const server = passkeyServer();
+    server.user = { id: 'usr_grace', email: 'grace@example.com', name: 'Grace Hopper' };
+    // The change takes no recent sign-in.
+    server.staleSignIn = true;
+    await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
+    void Madauth.showManageSignInMethodsDialog();
+    await settle();
+
+    await click('.method[data-method="password"] [data-action="change-password"]');
+    expect(text('h2')).toBe('Change password');
+    expect($<HTMLInputElement>('form.change-password input[name="username"]')!.value).toBe('grace@example.com');
+    expect($<HTMLInputElement>('form.change-password input[name="current"]')!.autocomplete).toBe('current-password');
+    expect($<HTMLInputElement>('form.change-password input[name="password"]')!.autocomplete).toBe('new-password');
+    fill({ current: 'wrong password', password: 'a brand new password' });
+    await submit('change-password');
+    expect(text('.notice.error')).toBe('The current password is wrong.');
+    // No way to sign in again is offered: the current password is what it asks for.
+    expect($('[data-action="sign-in-again"]')).toBeNull();
+
+    fill({ current: 'correct horse battery', password: 'a brand new password' });
+    await submit('change-password');
+
+    expect(text('h2')).toBe('Sign-in methods');
+    expect(text('.notice')).toBe('Password changed. You are signed out on your other devices.');
+    expect(server.accounts.get('grace@example.com')).toMatchObject({ password: 'a brand new password' });
+  });
+
   it('DP8: the autofill starts over before the server\'s ceremony expires, and ends before a passkey button\'s request', async () => {
     passkeyServer();
     const browser = stubWebAuthn({ conditional: true });

@@ -14,7 +14,7 @@ import {
 import { passwordAccountKey, toMadauthUser, type Users } from '../users.js';
 import { localeOf, type WebhookClient } from '../webhooks.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
-import { accepted, body, error, nameOf, recentUser, redirectTarget, signInAnswer, unavailable } from './helpers.js';
+import { accepted, body, error, nameOf, noSession, recentUser, redirectTarget, signInAnswer, unavailable } from './helpers.js';
 import { countSignInAttempt } from './lockout.js';
 
 export { MAIL_INTERVAL_MS, RESET_LINK_PARAM, RESET_TTL_MS, VERIFY_LINK_PARAM, VERIFY_TTL_MS } from './emails.js';
@@ -143,11 +143,43 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     const data = await body(c);
     const weak = await refused(c, data.password, [user.email, user.name]);
     if (weak) return weak;
-    const taken = () => error(c, 409, 'already_added', 'You have a password already. To change it, use "Forgot password?".');
+    const taken = () => error(c, 409, 'already_added', 'You have a password already. Change it instead.');
     if (await users.passwordAccount(user.id)) return taken();
     const secret = await hashPassword(data.password as string);
     if (!(await users.linkAccount(user.id, { key: passwordAccountKey(user.id), secret, primary: false }))) return taken();
     await ctx.emit('user.method_added', { user: toMadauthUser(user), method: 'password' });
+    return c.json({});
+  });
+
+  // A signed-in user with a password changes it. The current password proves who they are, so it takes no recent
+  // sign-in; it is counted like a sign-in, against guessing. The user's other sessions end, this one goes on.
+  app.post('/auth/password/change', async (c) => {
+    const signedIn = await ctx.currentSignIn(c);
+    if (!signedIn) return noSession(c);
+    const { stored: user } = signedIn;
+    const data = await body(c);
+    // Checked first, so fixing a weak password doesn't count as another attempt.
+    const weak = await refused(c, data.password, [user.email, user.name]);
+    if (weak) return weak;
+    const wrong = () => error(c, 401, 'invalid_credentials', 'The current password is wrong.');
+    const current = typeof data.current === 'string' ? data.current : '';
+    if (!current || current.length > MAX_PASSWORD_LENGTH * 4) return wrong();
+    const gone = () => error(c, 404, 'method_not_found', 'You have no password. Add one instead.');
+    const account = await users.passwordAccount(user.id);
+    if (!account?.secret) return gone();
+
+    const locked = await countSignInAttempt(c, users, account);
+    if (locked) return locked;
+    if (!(await verifyPassword(current, account.secret)).ok) return wrong();
+
+    const secret = await hashPassword(data.password as string);
+    // The password may have gone meanwhile (removed in another tab): then nothing was changed.
+    if (!(await users.updateAccount(account.id, { secret, failedAttempts: 0, lockedUntil: 0 }))) return gone();
+    // The new session version ends every other session; this one goes on with it, as the same sign-in.
+    const sessionVersion = user.sessionVersion + 1;
+    await users.updateUser(user.id, { sessionVersion });
+    await ctx.continueSession(c, signedIn, sessionVersion);
+    await ctx.emit('user.password_changed', { user: toMadauthUser({ ...user, sessionVersion }) });
     return c.json({});
   });
 

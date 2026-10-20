@@ -509,6 +509,90 @@ describe('password reset', () => {
   });
 });
 
+describe('changing the password', () => {
+  const change = (app: ReturnType<typeof passwordApp>['app'], cookie: string, body: Record<string, unknown>) =>
+    post(app, '/auth/password/change', body, { Cookie: `madauth_session=${cookie}` });
+  const session = (app: ReturnType<typeof passwordApp>['app'], cookie: string) =>
+    app.request('/auth/session', { headers: { Cookie: `madauth_session=${cookie}` } });
+
+  it('changes it with the current one, ends the other sessions and keeps this one', async () => {
+    const { app, hook } = passwordApp();
+    const here = await signUpVerified(app, hook);
+    const elsewhere = cookies(await signIn(app)).madauth_session.value;
+    hook.calls.length = 0;
+
+    const res = await change(app, here, { current: grace.password, password: 'new teapot sky!' });
+
+    expect(res.status).toBe(200);
+    const renewed = cookies(res).madauth_session.value;
+    expect((await session(app, renewed)).status).toBe(200);
+    expect((await session(app, here)).status).toBe(401);
+    expect((await session(app, elsewhere)).status).toBe(401);
+    expect((await signIn(app)).status).toBe(401);
+    expect((await signIn(app, { password: 'new teapot sky!' })).status).toBe(200);
+    expect(hook.calls[0]).toEqual({
+      type: 'user.password_changed',
+      data: { user: { id: expect.stringMatching(/^usr_/), email: grace.email, name: 'Grace Hopper' } },
+    });
+  });
+
+  it('takes no recent sign-in, and does not make the session count as one', async () => {
+    const { app, hook } = passwordApp();
+    const cookie = await signUpVerified(app, hook);
+    advance(3 * 60_000);
+
+    const res = await change(app, cookie, { current: grace.password, password: 'new teapot sky!' });
+
+    expect(res.status).toBe(200);
+    const renewed = cookies(res).madauth_session.value;
+    // A sensitive change still asks for a sign-in: the session keeps its sign-in time.
+    expect(await (await post(app, '/auth/methods/remove', { id: 'acc_none' }, { Cookie: `madauth_session=${renewed}` })).json()).toMatchObject({
+      error: 'reauth_required',
+    });
+  });
+
+  it('refuses a wrong current password, and counts it like a sign-in', async () => {
+    const { app, hook } = passwordApp();
+    const cookie = await signUpVerified(app, hook);
+
+    for (let i = 0; i < 5; i++) {
+      expect(await (await change(app, cookie, { current: 'wrong password', password: 'new teapot sky!' })).json()).toMatchObject({
+        error: 'invalid_credentials',
+      });
+    }
+    const locked = await change(app, cookie, { current: grace.password, password: 'new teapot sky!' });
+
+    expect(locked.status).toBe(429);
+    expect((await signIn(app)).status).toBe(429);
+    advance(1_100);
+    expect((await change(app, cookie, { current: grace.password, password: 'new teapot sky!' })).status).toBe(200);
+  });
+
+  it('refuses a weak new password before checking the current one', async () => {
+    const { app, hook } = passwordApp();
+    const cookie = await signUpVerified(app, hook);
+    const check = vi.spyOn(passwordModule, 'verifyPassword');
+
+    const res = await change(app, cookie, { current: grace.password, password: 'short' });
+
+    expect(await res.json()).toMatchObject({ error: 'weak_password' });
+    expect(check).not.toHaveBeenCalled();
+    expect((await signIn(app)).status).toBe(200);
+  });
+
+  it('needs a session and a password', async () => {
+    const { app } = passwordApp();
+    const anonymous = await post(app, '/auth/password/change', { current: grace.password, password: 'new teapot sky!' });
+    expect(await anonymous.json()).toMatchObject({ error: 'no_session' });
+
+    const { nonce, cookie } = await getNonce(app);
+    const google = cookies(await verify(app, await googleIdToken({ nonce }), cookie)).madauth_session.value;
+    expect(await (await change(app, google, { current: 'anything at all', password: 'new teapot sky!' })).json()).toMatchObject({
+      error: 'method_not_found',
+    });
+  });
+});
+
 describe('configuration', () => {
   it('A13: the password routes are off without a webhook that sends the e-mails', async () => {
     const app = testApp();

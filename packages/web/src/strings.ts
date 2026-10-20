@@ -196,6 +196,8 @@ export const en = {
     neverUsed: 'Not used yet',
     remove: 'Remove',
     removeLabel: (name: string) => `Remove ${name}`,
+    /** On the password's row. */
+    change: 'Change',
     add: 'Add a sign-in method',
     addPasskey: 'Add a passkey',
     addPassword: 'Add a password',
@@ -203,12 +205,21 @@ export const en = {
     addApp: 'Set up an authenticator app',
     added: 'Added.',
     removed: 'Removed.',
+    passwordChanged: 'Password changed. You are signed out on your other devices.',
     done: 'Done',
     loading: 'Loading…',
   },
   addPassword: {
     heading: 'Add a password',
     lead: 'From then on, you can also sign in with your email address and this password.',
+  },
+  changePassword: {
+    heading: 'Change password',
+    lead: 'You stay signed in here. Everywhere else, you are signed out.',
+    current: 'Current password',
+    submit: 'Change password',
+    /** `invalid_credentials`. */
+    wrongCurrent: 'The current password is wrong.',
   },
   apiKeysView: {
     heading: 'API keys',
@@ -519,6 +530,7 @@ export const de: Strings = {
     neverUsed: 'Noch nicht verwendet',
     remove: 'Entfernen',
     removeLabel: (name) => `${name} entfernen`,
+    change: 'Ändern',
     add: 'Anmeldemethode hinzufügen',
     addPasskey: 'Passkey hinzufügen',
     addPassword: 'Passwort hinzufügen',
@@ -526,12 +538,20 @@ export const de: Strings = {
     addApp: 'Authentifizierungs-App einrichten',
     added: 'Hinzugefügt.',
     removed: 'Entfernt.',
+    passwordChanged: 'Passwort geändert. Auf Ihren anderen Geräten sind Sie abgemeldet.',
     done: 'Fertig',
     loading: 'Wird geladen …',
   },
   addPassword: {
     heading: 'Passwort hinzufügen',
     lead: 'Danach können Sie sich auch mit Ihrer E-Mail-Adresse und diesem Passwort anmelden.',
+  },
+  changePassword: {
+    heading: 'Passwort ändern',
+    lead: 'Hier bleiben Sie angemeldet. Überall sonst werden Sie abgemeldet.',
+    current: 'Aktuelles Passwort',
+    submit: 'Passwort ändern',
+    wrongCurrent: 'Das aktuelle Passwort ist falsch.',
   },
   apiKeysView: {
     heading: 'API-Schlüssel',
