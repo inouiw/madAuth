@@ -3,6 +3,19 @@ import { defineConfig, normalizePath } from 'vite';
 
 /** The package's own sources (the path above it may contain `src` too), with the slashes Rollup's ids have. */
 const src = normalizePath(fileURLToPath(new URL('src/', import.meta.url)));
+const clientEntry = `${src}client.ts`;
+
+/** The ids of the modules `entry` imports, directly or through others; `entry` itself included. */
+function reachableFrom(entry: string, getModuleInfo: (id: string) => { importedIds: readonly string[] } | null): Set<string> {
+  const seen = new Set<string>();
+  const visit = (id: string): void => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    for (const imported of getModuleInfo(id)?.importedIds ?? []) visit(imported);
+  };
+  visit(entry);
+  return seen;
+}
 
 export default defineConfig({
   build: {
@@ -18,10 +31,10 @@ export default defineConfig({
       // like it. zxcvbn-ts is imported dynamically, so the app's bundler puts it in a chunk of its own.
       external: [/^lit/, 'uqr', /^@zxcvbn-ts\//],
       output: {
-        // The client the two entries share is `core.js` (`client.js` only re-exports it); Rollup would name it
-        // after its first module otherwise, with a hash.
+        // What the client entry reaches is `core.js` (`client.js` only re-exports it); what only the dialog
+        // reaches stays in `index.js`. Rollup would name the shared chunk after its first module otherwise, with a hash.
         chunkFileNames: '[name].js',
-        manualChunks: (id) => (id.startsWith(src) && !['index.ts', 'client.ts', 'madauth-login.ts'].includes(id.slice(src.length)) ? 'core' : undefined),
+        manualChunks: (id, { getModuleInfo }) => (id !== clientEntry && reachableFrom(clientEntry, getModuleInfo).has(id) ? 'core' : undefined),
       },
     },
   },
