@@ -1,8 +1,8 @@
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, normalizePath } from 'vite';
 
-/** The package's own sources (the path above it may contain `src` too). */
-const src = fileURLToPath(new URL('src/', import.meta.url));
+/** The package's own sources (the path above it may contain `src` too), with the slashes Rollup's ids have. */
+const src = normalizePath(fileURLToPath(new URL('src/', import.meta.url)));
 
 export default defineConfig({
   build: {

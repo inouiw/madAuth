@@ -168,6 +168,11 @@ function openDialogSoon(): void {
   dialogQueued = true;
   void whenReady().then(() => {
     dialogQueued = false;
+    // Without the dialog (`@madauth/web/client`) there is nothing to open: say so, since nobody awaits this.
+    if (!customElements.get('madauth-login')) {
+      console.error('[madauth]', 'invalid_options', "madAuth's dialog would open now, but '@madauth/web/client' leaves it out: pass ui: 'custom' to Madauth.initialize and show your own screen, or import from '@madauth/web'.");
+      return;
+    }
     void Madauth.showSignInDialog();
   });
 }

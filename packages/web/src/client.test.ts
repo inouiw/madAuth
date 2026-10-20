@@ -35,6 +35,15 @@ describe('@madauth/web/client', () => {
     expect(document.querySelector('madauth-login')).toBeNull();
   });
 
+  it('logs an error when the dialog would open by itself, e.g. after a reset link', async () => {
+    fakeServer();
+    location.hash = '#madauth_reset=reset-token';
+    await client.Madauth.initialize({ serverUrl: SERVER, providers: [new client.Password()] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(console.error).toHaveBeenCalledWith('[madauth]', 'invalid_options', expect.stringContaining("pass ui: 'custom'"));
+    expect(document.querySelector('madauth-login')).toBeNull();
+  });
+
   it('reports the initialize error first', async () => {
     fakeServer().down = true;
     await client.Madauth.initialize({ serverUrl: SERVER, providers: [] });
