@@ -41,13 +41,13 @@ Users can also make **API keys** for programs that call your API, or madAuth's a
 | | AWS Lambda, with an [AWS CDK template](deploy/aws/README.md) | available |
 | | Azure Functions | available |
 | | Your own Node server (`createApp`, a Hono app) | available |
-| | Cloudflare Workers | open |
-| | Deployment templates for Azure and Google Cloud | open |
+| | Cloudflare Workers | open ([#100](https://github.com/inouiw/madAuth/issues/100)) |
+| | Deployment templates for Azure and Google Cloud | open ([#101](https://github.com/inouiw/madAuth/issues/101)) |
 | Database | SQLite | available |
 | | Postgres | available |
 | | Amazon DynamoDB | available |
 | | Your own database, with a [custom store adapter](docs/server.md#custom-store-adapter) | available |
-| | MySQL / MariaDB, MongoDB, Azure Cosmos DB, Google Firestore (built in) | open |
+| | MySQL / MariaDB, MongoDB, Azure Cosmos DB, Google Firestore (built in) | open ([#102](https://github.com/inouiw/madAuth/issues/102)) |
 | Keys | In the server's memory, from `MADAUTH_SIGNING_KEY` | available |
 | | AWS KMS | available |
 | | A key service of your own, passed to `createApp` | available |
@@ -55,7 +55,7 @@ Users can also make **API keys** for programs that call your API, or madAuth's a
 | E-mail and SMS (a [webhook receiver](https://github.com/inouiw/madAuth-webhooks) sends them) | Development receiver that prints them | available |
 | | Amazon SES (e-mail) and Amazon SNS (SMS) | available |
 | | Any other service, with a receiver of your own | available |
-| | Ready-made receivers for other services (e.g. SendGrid, Twilio, Azure Communication Services) | open |
+| | Ready-made receivers for other services (e.g. SendGrid, Twilio, Azure Communication Services) | open ([#103](https://github.com/inouiw/madAuth/issues/103)) |
 
 New to madAuth? [Getting started](docs/getting-started.md) walks you through the server and the library on your machine.
 

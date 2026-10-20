@@ -10,7 +10,7 @@ packages/server  @madauth/server – the madAuth server for Docker, AWS Lambda a
 demo             demo page: plain HTML + TypeScript served by Vite, no framework (live at https://madauth.com/demo/)
 deploy/aws       AWS CDK template to host the madAuth server: Lambda, DynamoDB, keys in AWS KMS, secrets in SSM
 site             the madauth.com website (landing page and blog, see site/README.md) and its infrastructure (site/infra)
-scripts          the release script (see Releasing below)
+scripts          the release script (see Releasing below) and the bundle size measurement (see Bundle size)
 ```
 
 ## Running the demo locally
@@ -73,7 +73,13 @@ CI runs these three. `deploy/aws` and `site/infra` are npm projects of their own
 
 ## Bundle size
 
-The sizes the README names are those of an app bundled with esbuild (`--bundle --minify --splitting`), measured gzipped, that imports `@madauth/web` and passes all six providers to `initialize` (Lit and the QR code library included), or imports `@madauth/web/client` instead. zxcvbn-ts and its list of common passwords (about 220 kB compressed) aren't counted: they load on first use, only on a screen that asks for a new password (see [`strength.ts`](../packages/web/src/strength.ts)). Measure again after a change that adds to the client, and update the README if the numbers move.
+The sizes the README, the [`@madauth/web` README](../packages/web/README.md) and the landing page name come from:
+
+```bash
+npm run size
+```
+
+It builds `@madauth/web`, bundles two small apps with esbuild (minified, with code splitting) and prints the gzipped and Brotli sizes of what loads with the page: one that imports `@madauth/web` and passes all six providers to `initialize` (Lit and the QR code library included), and one that imports `@madauth/web/client` instead. zxcvbn-ts and its list of common passwords are printed apart: they load on first use, only on a screen that asks for a new password (see [`strength.ts`](../packages/web/src/strength.ts)). The script is [`scripts/size.mjs`](../scripts/size.mjs). Run it after a change that adds to the client, and update those three places if the numbers move.
 
 ## Adding a sign-in method
 
