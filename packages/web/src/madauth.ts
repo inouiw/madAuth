@@ -43,7 +43,7 @@ export interface MadauthOptions {
    * the error of a sign-in that failed outside it (a redirect, a link, One Tap) while nobody is signed in.
    * `'custom'`: your own login screen, built with `Madauth.password`, `Madauth.google`, `Madauth.github`,
    * `Madauth.provider(id)`, `Madauth.authenticator`, `Madauth.emailLink`, `Madauth.passkey`, `Madauth.sms` and `Madauth.methods`; the
-   * dialog never opens.
+   * dialog never opens. Such a page imports from `@madauth/web/client`, which leaves the dialog (and Lit) out.
    */
   ui?: 'dialog' | 'custom';
   /**
@@ -418,10 +418,16 @@ function dialogElement() {
   return dialog;
 }
 
-/** Fails unless madAuth is ready and shows its own dialog; `instead` names the calls for `ui: 'custom'`. */
+/**
+ * Fails unless madAuth is ready and shows its own dialog: not with `@madauth/web/client`, which leaves the dialog
+ * out, and not with `ui: 'custom'`; `instead` names the calls for a screen of the app's own.
+ */
 async function dialogReady(call: string, instead = ''): Promise<Result> {
   const ready = await whenReady();
   if (!ready.isSuccess) return ready;
+  if (!customElements.get('madauth-login')) {
+    return fail('invalid_options', `Madauth.${call}() opens madAuth's dialog, which '@madauth/web/client' leaves out: import from '@madauth/web' instead.${instead && ` Or use ${instead}.`}`);
+  }
   if (state!.ui === 'custom') {
     return fail('invalid_options', `Madauth.${call}() opens madAuth's dialog, but initialize was called with ui: 'custom'.${instead && ` Use ${instead} instead.`}`);
   }
