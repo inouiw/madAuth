@@ -30,7 +30,7 @@ import { createPasswordApi } from './scopes/password.js';
 import { createProviderApi, type ProviderApi } from './scopes/provider.js';
 import { createSmsApi } from './scopes/sms.js';
 import { createAuthenticatorApi } from './scopes/authenticator.js';
-import { stringsFor, type Strings } from './strings.js';
+import { coreStringsFor, type CoreStrings } from './strings-core.js';
 
 export interface MadauthOptions {
   /** Base URL of the madAuth server. Default: the page's own origin (e.g. behind a reverse proxy). */
@@ -273,9 +273,9 @@ function handleRedirectReturn(ctx: ProviderContext): LoginMethodId | undefined {
   const method: LoginMethodId = isProvider(via) ? via : 'google';
   if (error) {
     const code = toErrorCode(error);
-    const s = stringsFor(ctx.locale);
+    const s = coreStringsFor(ctx.locale);
     const name = methodName(ctx.config, method, s);
-    const message = Object.hasOwn(s.redirectErrors, code) ? s.redirectErrors[code as keyof Strings['redirectErrors']](name) : s.redirectFailed(name, error);
+    const message = Object.hasOwn(s.redirectErrors, code) ? s.redirectErrors[code as keyof CoreStrings['redirectErrors']](name) : s.redirectFailed(name, error);
     ctx.signInFailed({ code, message });
     return undefined;
   }
@@ -771,7 +771,7 @@ export function providerMethods(): string[] {
 }
 
 /** How the texts name a method: a provider by the name an admin gave it. */
-export function nameOfMethod(method: LoginMethodId, s: Strings): string {
+export function nameOfMethod(method: LoginMethodId, s: CoreStrings): string {
   return methodName(state?.config, method, s);
 }
 

@@ -1,12 +1,15 @@
 import type { BuiltInMethodId } from './methods.js';
 import type { MadauthErrorCode } from './result.js';
+import { coreDe, coreEn, languageOf } from './strings-core.js';
 
 /**
- * Every text madAuth shows to the user: the sign-in dialog's, and the buttons and the errors of the redirect
- * sign-ins (`GoogleRedirect`, `GitHub`). `de` has the same shape, so a text that is missing in one language
- * fails the type check.
+ * Every text the sign-in dialog shows: the client's (`strings-core.ts`: the methods' names, the buttons and
+ * the errors of the redirect sign-ins), and the dialog's own views. `de` has the same shape, so a text that is
+ * missing in one language fails the type check. A client without the dialog (`@madauth/web/client`) never
+ * loads this file.
  */
 export const en = {
+  ...coreEn,
   /** Default heading of the dialog, and the button of the sign-in form. */
   signIn: 'Sign in',
   /** Accessible name of the button with the cross. */
@@ -14,19 +17,8 @@ export const en = {
   /** Between the providers' buttons (Google, GitHub) and the e-mail & password form. */
   or: 'or',
   otherWays: 'Other ways to sign in',
-  /** The sign-in methods: `label` is the text of the button, `description` its tooltip. */
-  /** The button of a sign-in provider, with the name an admin gave it. */
-  continueWith: (name: string) => `Continue with ${name}`,
-  /** The tooltip of that button for an OpenID Connect provider. */
+  /** The tooltip of an OpenID Connect provider's button (`continueWith`). */
   useAccount: (name: string) => `Use your ${name} account`,
-  methods: {
-    google: { label: 'Continue with Google', description: 'Use your Google account' },
-    github: { label: 'Continue with GitHub', description: 'Use your GitHub account' },
-    password: { label: 'Email & password', description: 'Sign in with your email address and password' },
-    authenticator: { label: 'Authenticator app', description: 'One-time code from your authenticator' },
-    'email-link': { label: 'Email link', description: 'Passwordless sign-in by email' },
-    passkey: { label: 'Passkey', description: 'Sign in with your fingerprint, face or screen lock' },
-  } satisfies Record<BuiltInMethodId, { label: string; description: string }>,
 
   // Fields
   email: 'Email',
@@ -207,8 +199,6 @@ export const en = {
     addPassword: 'Add a password',
     addEmailLink: 'Sign in with email links',
     addApp: 'Set up an authenticator app',
-    /** The button of a provider (Google, GitHub) that adds it. */
-    connect: (name: string) => `Connect ${name}`,
     added: 'Added.',
     removed: 'Removed.',
     done: 'Done',
@@ -315,9 +305,7 @@ export const en = {
 
   /** `other_method` with the methods the server named, e.g. "a password", and the provider that was refused, if known. */
   otherMethod: (how: string, instead?: string) => `This email address signs in with ${how}. Use that instead${instead ? ` of ${instead}` : ''}.`,
-  /** A method's name inside a sentence, e.g. after "with" ("mit" in German) in `otherMethod` and in what a second factor will do (`authenticatorSetup.effects`, `smsSetup.effect`, `passkeySetup.effect`). */
-  methodNames: { google: 'Google', github: 'GitHub', password: 'a password', authenticator: 'an authenticator app', 'email-link': 'an email link', passkey: 'a passkey' },
-  /** Between alternatives in a sentence. */
+  /** Between alternatives in a sentence, e.g. the `methodNames` of `otherMethod`. */
   orList: ' or ',
 
   /** What the dialog shows for an error code. */
@@ -374,40 +362,17 @@ export const en = {
    */
   weakPassword: (serverMessage: string, _rule?: { minLength?: number; minScore?: number }) => serverMessage,
   tooManyAttempts: (serverMessage: string) => serverMessage,
-
-  /** The redirect sign-ins (`GoogleRedirect`, `GitHub`): why the sign-in failed, by the error code the server reported; `name` is the provider's. */
-  redirectErrors: {
-    cancelled: (name: string) => `The ${name} sign-in was cancelled.`,
-    verification_failed: (name: string) => `The ${name} sign-in could not be verified. Please try again.`,
-    email_unverified: (name: string) => `Your ${name} account’s email address is not verified.`,
-    signup_rejected: (name: string) => `Signing up with this ${name} account is not possible.`,
-    method_disabled: (name: string) => `${name} sign-in is switched off at the moment.`,
-    temporarily_unavailable: (name: string) => `${name} sign-in is not available right now. Please try again later.`,
-    other_method: (name: string) => `This email address signs in another way. Use that instead of ${name}.`,
-    account_taken: (name: string) => `This ${name} account signs in another user. Connect another one.`,
-    reauth_required: (name: string) => `To connect ${name}, sign in again first.`,
-    no_session: (name: string) => `To connect ${name}, sign in first.`,
-  } satisfies Partial<Record<MadauthErrorCode, (name: string) => string>>,
-  redirectFailed: (name: string, code: string) => `${name} sign-in failed (${code}).`,
 };
 
 export type Strings = typeof en;
 
 export const de: Strings = {
+  ...coreDe,
   signIn: 'Anmelden',
   close: 'Schließen',
   or: 'oder',
   otherWays: 'Weitere Anmeldemöglichkeiten',
-  continueWith: (name: string) => `Weiter mit ${name}`,
-  useAccount: (name: string) => `Mit Ihrem ${name}-Konto anmelden`,
-  methods: {
-    google: { label: 'Weiter mit Google', description: 'Mit Ihrem Google-Konto anmelden' },
-    github: { label: 'Weiter mit GitHub', description: 'Mit Ihrem GitHub-Konto anmelden' },
-    password: { label: 'E-Mail-Adresse und Passwort', description: 'Mit E-Mail-Adresse und Passwort anmelden' },
-    authenticator: { label: 'Authentifizierungs-App', description: 'Einmalcode aus Ihrer Authentifizierungs-App' },
-    'email-link': { label: 'E-Mail-Link', description: 'Ohne Passwort per E-Mail anmelden' },
-    passkey: { label: 'Passkey', description: 'Mit Fingerabdruck, Gesicht oder Bildschirmsperre anmelden' },
-  },
+  useAccount: (name) => `Mit Ihrem ${name}-Konto anmelden`,
 
   email: 'E-Mail-Adresse',
   password: 'Passwort',
@@ -549,7 +514,6 @@ export const de: Strings = {
     addPassword: 'Passwort hinzufügen',
     addEmailLink: 'Mit E-Mail-Links anmelden',
     addApp: 'Authentifizierungs-App einrichten',
-    connect: (name) => `${name} verbinden`,
     added: 'Hinzugefügt.',
     removed: 'Entfernt.',
     done: 'Fertig',
@@ -647,7 +611,6 @@ export const de: Strings = {
   signInAgain: 'Erneut anmelden',
 
   otherMethod: (how, instead) => `Diese E-Mail-Adresse meldet sich mit ${how} an. Verwenden Sie das ${instead ? `statt ${instead}` : 'stattdessen'}.`,
-  methodNames: { google: 'Google', github: 'GitHub', password: 'einem Passwort', authenticator: 'einer Authentifizierungs-App', 'email-link': 'einem E-Mail-Link', passkey: 'einem Passkey' },
   orList: ' oder ',
 
   errors: {
@@ -702,36 +665,11 @@ export const de: Strings = {
         ? 'Dieses Passwort ist zu leicht zu erraten. Fügen Sie ein, zwei Wörter hinzu oder wählen Sie weniger gebräuchliche.'
         : 'Dieses Passwort ist nicht zulässig. Bitte wählen Sie ein anderes.',
   tooManyAttempts: () => 'Zu viele Versuche. Bitte warten Sie einen Moment und versuchen Sie es erneut.',
-
-  redirectErrors: {
-    cancelled: (name) => `Die Anmeldung mit ${name} wurde abgebrochen.`,
-    verification_failed: (name) => `Die Anmeldung mit ${name} konnte nicht überprüft werden. Bitte versuchen Sie es erneut.`,
-    email_unverified: (name) => `Die E-Mail-Adresse Ihres ${name}-Kontos ist nicht bestätigt.`,
-    signup_rejected: (name) => `Mit diesem ${name}-Konto ist keine Registrierung möglich.`,
-    method_disabled: (name) => `Die Anmeldung mit ${name} ist derzeit abgeschaltet.`,
-    temporarily_unavailable: (name) => `Die Anmeldung mit ${name} ist derzeit nicht verfügbar. Bitte versuchen Sie es später erneut.`,
-    other_method: (name) => `Diese E-Mail-Adresse meldet sich auf andere Weise an. Verwenden Sie diese statt ${name}.`,
-    account_taken: (name) => `Mit diesem ${name}-Konto meldet sich ein anderer Benutzer an. Verbinden Sie ein anderes.`,
-    reauth_required: (name) => `Um ${name} zu verbinden, melden Sie sich zuerst erneut an.`,
-    no_session: (name) => `Um ${name} zu verbinden, melden Sie sich zuerst an.`,
-  },
-  redirectFailed: (name, code) => `Die Anmeldung mit ${name} ist fehlgeschlagen (${code}).`,
 };
 
 const languages = { en, de };
 
-/** A language madAuth has texts in. */
-export type Language = keyof typeof languages;
-
-/**
- * The language for a BCP 47 locale such as `de-CH`, by its primary subtag. English when madAuth has no
- * texts in that language, or without a locale.
- */
-export function languageOf(locale: string | undefined): Language {
-  const primary = locale?.trim().split(/[-_]/)[0].toLowerCase() ?? '';
-  return Object.hasOwn(languages, primary) ? (primary as Language) : 'en';
-}
-
+/** The dialog's texts in the language of `locale` (`languageOf`). */
 export function stringsFor(locale: string | undefined): Strings {
   return languages[languageOf(locale)];
 }

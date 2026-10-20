@@ -1,9 +1,9 @@
-import { en } from './strings.js';
+import { coreEn } from './strings-core.js';
 
 /** A built-in sign-in method shown in the login dialog. */
 export interface LoginMethod {
   id: BuiltInMethodId;
-  /** English name. The dialog shows the name in its own language, see `strings.ts`. */
+  /** English name. The dialog shows the name in its own language, see `strings-core.ts`. */
   label: string;
   /** Short English hint, the tooltip of the method's button. */
   description: string;
@@ -24,4 +24,4 @@ export const isBuiltInMethodId = (value: unknown): value is BuiltInMethodId => t
  * whose provider is passed to `Madauth.initialize` and not left out because the server doesn't offer them,
  * and the OpenID Connect providers the server offers after GitHub.
  */
-export const loginMethods: LoginMethod[] = order.map((id) => ({ id, ...en.methods[id] }));
+export const loginMethods: LoginMethod[] = order.map((id) => ({ id, ...coreEn.methods[id] }));
