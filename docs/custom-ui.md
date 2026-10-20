@@ -281,7 +281,8 @@ await Madauth.provider('gitlab').signIn(); // the browser goes to the provider a
 
 - `renderButton(container, options?)` renders a "Continue with <name>" button, with the name an admin gave the provider, in the dialog's colours with a neutral sign-in mark (nothing is loaded from the provider). Google's and GitHub's buttons are the ones of `Madauth.google` and `Madauth.github`. It takes the same options, and can be called before `initialize` has finished: when the server turns out not to offer the provider, `onResult` gets `flow_not_enabled`.
 - `signIn({ purpose? })` starts the redirect without a button of madAuth's. It fails with `flow_not_enabled` when the server doesn't offer the provider, or when it signs in without a redirect here (Google with `GoogleFedcm`).
-- Like GitHub's, the result arrives after the return: the user through `onAuthStateChanged`, a failure (e.g. `cancelled`, `email_unverified`, `other_method`) from `initialize`, a second step in `Madauth.authenticator.pendingStep` with the provider's id as `method`. With `purpose: 'link'` it adds the provider to the signed-in user's methods, and the page comes back with `linked: '<id>'`.
+- Like GitHub's, the result arrives after the return: the user through `onAuthStateChanged`, a failure (e.g. `cancelled`, `email_unverified`, `other_method`) from `initialize`, a second step in `Madauth.authenticator.pendingStep` with the provider's id as `method`.
+- An OpenID Connect provider that doesn't vouch for the address comes back with the pending step `{ step: 'email', method: '<id>', email: 'l•••@example.com' }`: the confirmation e-mail went to that (masked) address. Ask for the code from it and call `Madauth.provider(id).verifyEmail({ code })`, which resolves like a sign-in (the browser's cookie says whose sign-up it is); `sendVerificationEmail()` sends it again. The link in the e-mail works on its own. With `purpose: 'link'` it adds the provider to the signed-in user's methods, and the page comes back with `linked: '<id>'`.
 
 The ids the server offers, with their names, are in `GET /auth/config` (`providers`). The method of an OpenID Connect provider is its id: in `amr`, in the user's [methods](#a-users-sign-in-methods-madauthmethods) and in the TypeScript type `LoginMethodId`, which is any string besides madAuth's own ids (`BuiltInMethodId`).
 
@@ -315,7 +316,7 @@ With `policy.signUp`, `signUp({ email, name? })` creates an account that signs i
 | `list()` | `{ methods: [{ id, method, signIn, removable, createdAt, email?, name?, lastUsedAt? }] }` | `no_session` |
 | `remove(id)` | — | `only_method` (the user's last way in), `required_by_policy`, `reauth_required`, `method_not_found`, `no_session` |
 
-A user adds a method with its own call: `Madauth.passkey.add()`, `Madauth.password.add({ password })`, `Madauth.emailLink.add()`, a provider's button with `purpose: 'link'` (Google, GitHub, `Madauth.provider(id)`), or the app's setup. Adding and removing need a sign-in within the last ten minutes: otherwise they fail with `reauth_required`, and the user signs in again first. The authenticator app is removed with `Madauth.authenticator.remove`, which takes a code. See [Several sign-in methods](sign-in-methods.md).
+A user adds a method with its own call: `Madauth.passkey.add()`, `Madauth.password.add({ password })`, `Madauth.emailLink.add()`, a provider's button with `purpose: 'link'` (Google, GitHub, `Madauth.provider(id)`), or the app's setup. Adding and removing need a sign-in within the last two minutes: otherwise they fail with `reauth_required`, and the user signs in again first. The authenticator app is removed with `Madauth.authenticator.remove`, which takes a code. See [Several sign-in methods](sign-in-methods.md).
 
 ## API keys: `Madauth.apiKeys`
 
@@ -328,7 +329,7 @@ A user's keys for programs that call your API, or madAuth's admin API, in their 
 | `create({ name, scopes, expiresAt? })` | `{ key, apiKey }`: show `key` to the user to copy, it is never shown again | `invalid_options`, `invalid_scopes`, `scope_not_allowed`, `too_many_api_keys`, `reauth_required`, `temporarily_unavailable`, `no_session` |
 | `revoke(id)` | — | `api_key_not_found`, `no_session` |
 
-Making a key needs a sign-in within the last ten minutes, like adding a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. Offer only the scopes with `allowed`; the server refuses the others. `Madauth.admin.listApiKeys(email)` and `revokeApiKey(email, id)` let an admin revoke a user's key.
+Making a key needs a sign-in within the last two minutes, like adding a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. Offer only the scopes with `allowed`; the server refuses the others. `Madauth.admin.listApiKeys(email)` and `revokeApiKey(email, id)` let an admin revoke a user's key.
 
 ## Language
 

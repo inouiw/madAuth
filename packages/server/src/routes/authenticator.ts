@@ -22,7 +22,7 @@ import { authenticatorAccountKey, newId, toMadauthUser, type StoredAccount, type
 import { finishSignIn, isSignUpStep, pendingFactor, whoSetsUp } from './challenge.js';
 import { reclaimConfirmation, signUpThenSetUp } from './email.js';
 import { createEmails } from './emails.js';
-import { body, error, noSession, originHost, type Body } from './helpers.js';
+import { body, error, noSession, originHost, recentUser, type Body } from './helpers.js';
 import { removeAccount, removalRefused } from './methods.js';
 import { countSignInAttempt } from './lockout.js';
 
@@ -132,9 +132,9 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext): void {
   const issuerLabel = (c: Context): string => config.authenticatorIssuer || originHost(ctx, c);
 
   app.post(`${COOKIE_PATH}/setup`, async (c) => {
-    // Allowed as a sign-in method, a first app is a way in of its own: like adding a passkey, only within ten
-    // minutes of signing in, so a session someone took over gives them no lasting way in.
-    const who = await whoSetsUp(c, ctx, 'authenticator', async (user) => (await standalone(c)) && !(await users.authenticatorAccount(user.id)));
+    // Like every second factor, only right after signing in, so a session someone took over gives them no
+    // lasting way in (and, allowed as a sign-in method, a first app is a way in of its own).
+    const who = await whoSetsUp(c, ctx, 'authenticator', 'start');
     if (who instanceof Response) return who;
     // Replacing an app takes a current code from it (or a recovery code), like removing it: a stolen
     // session alone must not swap the app and the recovery codes for the thief's. The approval holds for
@@ -171,7 +171,7 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext): void {
   });
 
   app.post(`${COOKIE_PATH}/confirm`, async (c) => {
-    const who = await whoSetsUp(c, ctx, 'authenticator');
+    const who = await whoSetsUp(c, ctx, 'authenticator', 'finish');
     if (who instanceof Response) return who;
     const { challenge } = who;
     const data = await body(c);
@@ -248,8 +248,8 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext): void {
   });
 
   app.post(`${COOKIE_PATH}/remove`, async (c) => {
-    const user = await signedIn(c);
-    if (!user) return noSession(c);
+    const user = await recentUser(c, ctx);
+    if (user instanceof Response) return user;
     const accounts = await users.accounts(user.id);
     const account = accounts.find((a) => a.key === authenticatorAccountKey(user.id));
     if (!account) return c.json({});
@@ -268,8 +268,8 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext): void {
   });
 
   app.post(`${COOKIE_PATH}/recovery-codes`, async (c) => {
-    const user = await signedIn(c);
-    if (!user) return noSession(c);
+    const user = await recentUser(c, ctx);
+    if (user instanceof Response) return user;
     const account = await users.authenticatorAccount(user.id);
     if (!account) return error(c, 400, 'no_authenticator', 'No authenticator app is set up.');
     const via = await checkCode(c, ctx, user, account, await body(c));

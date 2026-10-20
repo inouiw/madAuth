@@ -23,7 +23,7 @@ export interface EmailLinkApi {
   verify(options: { email: string; code: string }): Promise<Result<{ user: MadauthUser }>>;
   /**
    * Adds the e-mail link to the signed-in user's methods: from then on a link to their address signs them
-   * in too. Within ten minutes of signing in only, else it fails with `reauth_required`. Fails with
+   * in too. Within two minutes of signing in only, else it fails with `reauth_required`. Fails with
    * `already_added` or `no_session`.
    */
   add(): Promise<Result>;

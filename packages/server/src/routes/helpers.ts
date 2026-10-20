@@ -36,10 +36,14 @@ export const accepted = (c: Context): Response => c.json({}, 202);
 export const noSession = (c: Context): Response => error(c, 401, 'no_session', 'Please sign in first.');
 
 /**
- * How recently the user must have signed in to change how they sign in: add or remove a method. A session
- * that someone took over can then not give its thief a way in of their own.
+ * How recently the user must have signed in for a sensitive change made with a session: adding or removing
+ * a sign-in method or a second factor, new recovery codes, an API key, deleting the account, and the admin
+ * API's changes. A session that someone took over then gives its thief nothing lasting: the change asks for
+ * the credentials again. A change of several steps (a setup, a provider's redirect) checks it when it starts.
+ * Two minutes, not one: after a sign-in with an SMS code, the code that removes or replaces the phone can only
+ * be sent a minute later (one SMS per minute).
  */
-export const RECENT_SIGN_IN_MS = 10 * 60 * 1000;
+export const RECENT_SIGN_IN_MS = 2 * 60 * 1000;
 
 /** The signed-in user as stored, and whether they signed in within RECENT_SIGN_IN_MS (renewals don't count); null without a session. */
 export async function signedInUser(c: Context, ctx: AppContext): Promise<{ user: StoredUser; recent: boolean } | null> {
@@ -49,7 +53,7 @@ export async function signedInUser(c: Context, ctx: AppContext): Promise<{ user:
   return { user, recent: signedInAt !== null && Date.now() - signedInAt <= RECENT_SIGN_IN_MS };
 }
 
-/** The signed-in user if they signed in recently, else why not: for the routes that change how a user signs in. */
+/** The signed-in user if they signed in recently, else why not: for the routes of a sensitive change. */
 export async function recentSignIn(c: Context, ctx: AppContext): Promise<StoredUser | 'no_session' | 'reauth_required'> {
   const signedIn = await signedInUser(c, ctx);
   return !signedIn ? 'no_session' : signedIn.recent ? signedIn.user : 'reauth_required';
@@ -62,9 +66,9 @@ export async function recentUser(c: Context, ctx: AppContext): Promise<StoredUse
   return result === 'reauth_required' ? reauthRequired(c) : result;
 }
 
-/** The answer when a change to how the user signs in needs a recent sign-in. */
+/** The answer when a sensitive change needs a recent sign-in. */
 export const reauthRequired = (c: Context): Response =>
-  error(c, 401, 'reauth_required', 'For your security, sign in again to change how you sign in.');
+  error(c, 401, 'reauth_required', 'For your security, sign in again to make this change: it takes a sign-in within the last two minutes.');
 
 export function redirectTarget(ctx: AppContext, c: Context, value: unknown): URL | Response {
   const url = ctx.allowedUrl(value);

@@ -8,6 +8,11 @@ export const REDIRECT_FACTORS_PARAM = 'madauth_factors';
 export const REDIRECT_METHOD_PARAM = 'madauth_method';
 /** After a redirect that added the provider to the signed-in user's methods (`#madauth_linked=github`). */
 export const REDIRECT_LINKED_PARAM = 'madauth_linked';
+/**
+ * Next to `madauth_next=email-confirmation` (a provider that doesn't vouch for the address): where the
+ * confirmation e-mail went, masked (`l•••@example.com`).
+ */
+export const REDIRECT_EMAIL_PARAM = 'madauth_email';
 
 /** Hash parameters of the links in madAuth's e-mails (`#madauth_verify=<token>`, `#madauth_reset=<token>`, `#madauth_signin=<token>`). */
 export const VERIFY_LINK_PARAM = 'madauth_verify';

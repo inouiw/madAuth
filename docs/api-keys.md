@@ -9,7 +9,7 @@ Code: [`packages/server/src/api-keys.ts`](../packages/server/src/api-keys.ts), [
 A signed-in user makes keys, as on GitHub: `Madauth.apiKeys.create()`, or the dialog of `Madauth.showManageApiKeysDialog()`. A key acts as its user: it has no rights of its own, only scopes that narrow down what the user may do.
 
 - **Shown once.** madAuth answers the new key once (`madauth_` and 43 random characters, 256 bits) and keeps only its SHA-256. A lost key is revoked and replaced. The prefix makes a leaked key easy to recognise, e.g. for secret scanning.
-- **Only within ten minutes of signing in**, like adding a sign-in method (`401 reauth_required` otherwise): a key is a way in that outlives the session, so a session someone took over must not be able to make one. See [Several sign-in methods](sign-in-methods.md#only-within-ten-minutes-of-signing-in).
+- **Only within two minutes of signing in**, like adding a sign-in method (`401 reauth_required` otherwise): a key is a way in that outlives the session, so a session someone took over must not be able to make one. See [Several sign-in methods](sign-in-methods.md#only-within-ten-minutes-of-signing-in).
 - **A name, at least one scope, and optionally an expiry.** The name (1 to 64 characters) says what the key is for. Without `expiresAt` the key works until it is revoked.
 - **At most 20 keys per user** (`409 too_many_api_keys`). Expired keys don't count: making a key removes the user's expired ones. Two requests at the same moment may each pass the limit by one.
 - **A key is no session.** It never signs in, never renews a session, and the routes for the signed-in user (making keys, changing methods) don't take it.

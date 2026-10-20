@@ -106,6 +106,11 @@ export interface FakeServer {
   usersAlone: Record<string, number>;
   /** The settings refuse to be set, with this message (`invalid_settings`). */
   settingsRefused: string | undefined;
+  /**
+   * A sign-up through a provider that doesn't vouch for the address, waiting for its confirmation e-mail: the
+   * browser's confirmation cookie names it, so the code comes without an address.
+   */
+  confirmation: { email: string; method: string } | undefined;
   /** The user signed in more than ten minutes ago: changing a method answers `reauth_required`. */
   staleSignIn: boolean;
   /** A setup under way (the setup cookie); set to undefined to simulate its expiry. */
@@ -173,6 +178,7 @@ export function fakeServer(): FakeServer {
     oidc: [],
     usersAlone: {},
     settingsRefused: undefined,
+    confirmation: undefined,
     staleSignIn: false,
     apiScopes: [
       { name: 'madauth:claims:read', description: "Read a user's claims and roles", role: 'admin', endpoints: ['POST /auth/admin/claims/get'] },
@@ -489,13 +495,22 @@ export function fakeServer(): FakeServer {
         return json({}, 202);
       case 'POST /auth/email/send-verification':
         if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
-        server.mails.push({ purpose: 'verify', to: email, redirectTo: body.redirectTo });
+        server.mails.push({ purpose: 'verify', to: email ?? server.confirmation?.email ?? '', redirectTo: body.redirectTo });
         return json({}, 202);
       case 'POST /auth/password/send-reset':
         if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
         server.mails.push({ purpose: 'reset', to: email, redirectTo: body.redirectTo });
         return json({}, 202);
       case 'POST /auth/email/verify': {
+        // The code without an address: the provider's sign-up the confirmation cookie names.
+        if (body.email === undefined && body.token === undefined && server.confirmation) {
+          if (body.code !== CODE) return json({ error: 'code_invalid', message: 'bad code' }, 400);
+          const { email: confirmed, method } = server.confirmation;
+          server.confirmation = undefined;
+          server.user = { ...userFor(confirmed), amr: [method] };
+          issued();
+          return json({ user: server.user });
+        }
         const target = body.token === VERIFY_TOKEN ? lastMailTo('verify') : body.code === CODE ? email : undefined;
         const account = target && server.accounts.get(target);
         if (!account) {
@@ -564,6 +579,8 @@ export function fakeServer(): FakeServer {
         if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         const who = whoSetsUp();
         if (!who) return json({ error: 'no_session' }, 401);
+        // The signed-in user starts a setup only right after signing in.
+        if (server.user?.email === who && server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         // Replacing an app: the current one has to agree.
         if (server.authenticators.has(who)) {
           if (body.code === undefined && body.recoveryCode === undefined) return json({ error: 'code_required', message: 'the current app has to agree' }, 401);
@@ -623,6 +640,8 @@ export function fakeServer(): FakeServer {
         if (!who) return json({ error: 'no_session' }, 401);
         const phone = normalizePhone(body.phone);
         if (!phone) return json({ error: 'invalid_phone', message: 'not a number' }, 400);
+        // A signed-in user's first number starts right after signing in; replacing one starts with `send`.
+        if (server.user?.email === who && server.staleSignIn && !server.phones.has(who)) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         // Replacing a number: the current one has to agree.
         if (server.phones.has(who)) {
           if (body.code === undefined) return json({ error: 'code_required', message: 'the current number has to agree' }, 401);
@@ -657,6 +676,8 @@ export function fakeServer(): FakeServer {
         if (!who) return json({ error: challenge === undefined && server.challenge ? 'challenge_expired' : 'no_session', message: 'nobody' }, 401);
         const phone = server.phones.get(who);
         if (!phone) return challenge ? json({ error: 'challenge_expired', message: 'no phone' }, 401) : json({ error: 'no_phone', message: 'none' }, 400);
+        // Signed in, the code approves a change to the number, which starts right after signing in.
+        if (!challenge && server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         if (server.smsTooSoon) return json({ error: 'too_soon', message: 'wait' }, 429);
         if (server.emailsDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
         server.texts.push({ to: phone, purpose: challenge ? 'signin' : 'approve' });

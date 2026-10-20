@@ -2,7 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { discover } from './oidc.js';
 import { parseProviderFields, parseProviderKind } from './providers.js';
-import { passwordApp, post, setClaims, signUpVerified } from './test/helpers.js';
+import { setupToken } from './setup.js';
+import { ISSUER, keyService, passwordApp, post, setClaims, signUpVerified } from './test/helpers.js';
 import { fakeOidcProvider, type FakeOidcProvider } from './test/oidc.js';
 
 afterEach(() => {
@@ -169,7 +170,7 @@ describe('signing in with an OpenID Connect provider', () => {
     expect(((await (await made.app.request('/auth/session', { headers: { Cookie: again.session! } })).json()) as { user: { email: string } }).user.email).toBe('linus@example.com');
   });
 
-  it('OP6: the address comes from userinfo when the ID token has none, and counts only verified, unless the provider is trusted', async () => {
+  it('OP6: the address comes from userinfo when the ID token has none, and counts as verified only so, or when the provider is trusted', async () => {
     const made = await withGitLab();
     expect((await signIn(made, { idToken: { sub: 'gl-2' }, userinfo: { sub: 'gl-2', email: 'mia@example.com', email_verified: true } })).location).toBe(`${APP}/page`);
     expect((await signIn(made, { idToken: { sub: 'gl-3' }, userinfo: { sub: 'someone-else', email: 'x@example.com', email_verified: true } })).location).toBe(`${APP}/page#madauth_error=verification_failed&madauth_method=gitlab`);
@@ -177,11 +178,15 @@ describe('signing in with an OpenID Connect provider', () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect((await signIn(made, { idToken: { sub: 'gl-3' }, userinfo: 'eyJ.signed.jwt' })).location).toBe(`${APP}/page#madauth_error=verification_failed&madauth_method=gitlab`);
     expect(logged).toHaveBeenCalledWith(expect.stringContaining('answered no JSON'));
-    expect((await signIn(made, { idToken: { sub: 'gl-4', email: 'eve@example.com', email_verified: false } })).location).toBe(`${APP}/page#madauth_error=email_unverified&madauth_method=gitlab`);
+    // Not verified: the address is confirmed by e-mail first (see OP12).
+    expect((await signIn(made, { idToken: { sub: 'gl-4', email: 'eve@example.com', email_verified: false } })).location).toBe(`${APP}/page#madauth_next=email-confirmation&madauth_email=e%E2%80%A2%E2%80%A2%E2%80%A2%40example.com&madauth_method=gitlab`);
     expect((await signIn(made, { idToken: { sub: 'gl-5', email: 'cognito@example.com', email_verified: 'true' } })).location).toBe(`${APP}/page`);
 
+    // Trusted, the provider vouches for the address: the sign-up that waited for it is confirmed and signs in.
     await admin(made, 'update', { id: 'gitlab', trustEmail: true });
-    expect((await signIn(made, { idToken: { sub: 'gl-4', email: 'eve@example.com' } })).location).toBe(`${APP}/page`);
+    const trusted = await signIn(made, { idToken: { sub: 'gl-4', email: 'eve@example.com' } });
+    expect(trusted.location).toBe(`${APP}/page`);
+    expect(((await (await made.app.request('/auth/session', { headers: { Cookie: trusted.session! } })).json()) as { user: { emailVerified?: boolean } }).user).toMatchObject({ email: 'eve@example.com' });
   });
 
   it('OP7: an ID token with another nonce or for another client is refused; one for several clients needs azp', async () => {
@@ -237,6 +242,108 @@ describe('signing in with an OpenID Connect provider', () => {
     await switchOn();
     const again = await signIn(made, linus);
     expect(await userOf(again.session)).toBe(await userOf(first.session));
+  });
+
+  /** The confirmation cookie the callback set, as the browser sends it back to /auth/email. */
+  const confirmationOf = (callback: Response) => callback.headers.getSetCookie().find((cookie) => cookie.startsWith('madauth_confirmation='))?.split(';')[0];
+  const linkAndCodeOf = (email: { data: Record<string, unknown> } | undefined) => {
+    const link = String(email?.data.link);
+    return { link, token: new URL(link).hash.split('=')[1]!, code: String(email?.data.code) };
+  };
+  const linus = { idToken: { sub: 'gl-20', email: 'linus@example.com', email_verified: false, name: 'Linus' } };
+
+  it('OP12: an unverified address signs up once its confirmation e-mail is used: the code, with the cookie that says whose', async () => {
+    const made = await withGitLab();
+    made.hook.calls.length = 0;
+    const { callback, location, session } = await signIn(made, linus);
+
+    expect(location).toBe(`${APP}/page#madauth_next=email-confirmation&madauth_email=l%E2%80%A2%E2%80%A2%E2%80%A2%40example.com&madauth_method=gitlab`);
+    expect(session).toBeUndefined();
+    const sent = made.hook.lastEmail();
+    expect(sent).toMatchObject({ type: 'email.send_verification', data: { to: 'linus@example.com' } });
+    expect(linkAndCodeOf(sent).link).toMatch(new RegExp(`^${APP}/page#madauth_verify=`));
+    const cookie = confirmationOf(callback)!;
+    expect(callback.headers.getSetCookie().find((c) => c.startsWith('madauth_confirmation='))).toMatch(/Path=\/auth\/email; HttpOnly; Secure; SameSite=Strict/);
+    expect(made.hook.calls.map((c) => c.type)).toEqual(['user.signing_up', 'email.send_verification']);
+
+    // The code alone, without the cookie, says nothing; with it, the sign-up is confirmed and signed in.
+    expect((await post(made.app, '/auth/email/verify', { code: linkAndCodeOf(sent).code })).status).toBe(400);
+    const confirmed = await post(made.app, '/auth/email/verify', { code: linkAndCodeOf(sent).code }, { Cookie: cookie });
+    expect(confirmed.status).toBe(200);
+    expect(((await confirmed.json()) as { user: Record<string, unknown> }).user).toMatchObject({ email: 'linus@example.com', name: 'Linus', amr: ['gitlab'] });
+    expect(made.hook.calls.filter((c) => c.type === 'user.signed_up').at(-1)?.data).toMatchObject({ method: 'gitlab' });
+
+    // From then on the account signs in at once, without an e-mail.
+    made.hook.calls.length = 0;
+    expect((await signIn(made, linus)).location).toBe(`${APP}/page`);
+    expect(made.hook.emails()).toEqual([]);
+  });
+
+  it('OP13: the link works too, in any browser; signing in again before it is used sends it again, and the page may ask for it again', async () => {
+    const made = await withGitLab();
+    const first = await signIn(made, linus);
+    // Again before confirming: no session, the e-mail again (a minute later).
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 61_000 });
+    const again = await signIn(made, linus);
+    expect(again.location).toContain('#madauth_next=email-confirmation');
+    expect(again.session).toBeUndefined();
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 61_000 });
+    const resent = await post(made.app, '/auth/email/send-verification', { redirectTo: `${APP}/page` }, { Cookie: confirmationOf(first.callback)! });
+    expect(resent.status).toBe(202);
+    const emails = made.hook.emails().filter((e) => e.data.to === 'linus@example.com');
+    expect(emails).toHaveLength(3);
+
+    const confirmed = await post(made.app, '/auth/email/verify', { token: linkAndCodeOf(emails.at(-1)).token });
+    expect(((await confirmed.json()) as { user: Record<string, unknown> }).user).toMatchObject({ email: 'linus@example.com', amr: ['gitlab'] });
+  });
+
+  it('OP14: never sends anything for an address that signs in another way, and without e-mails an unverified address is refused', async () => {
+    const made = await withGitLab();
+    made.hook.calls.length = 0;
+    expect((await signIn(made, { idToken: { sub: 'gl-21', email: 'ada@example.com', email_verified: false } })).location).toBe(`${APP}/page#madauth_error=other_method&madauth_method=gitlab`);
+    expect(made.hook.emails()).toEqual([]);
+
+    // A server without the webhook's e-mails can't confirm an address: it refuses one the provider doesn't vouch for.
+    const idp = await fakeOidcProvider();
+    const quiet = { ...passwordApp({ google: undefined, password: undefined, oidcFetch: idp.fetch, webhook: undefined }), idp, cookie: '' };
+    const bearer = { Authorization: `Bearer ${await setupToken(keyService, ISSUER)}` };
+    expect((await post(quiet.app, '/auth/admin/providers/add', { ...GITLAB, issuer: idp.issuer }, bearer)).status).toBe(200);
+    expect((await post(quiet.app, '/auth/admin/settings/set', { methods: { gitlab: ON } }, bearer)).status).toBe(200);
+    expect((await signIn(quiet, linus)).location).toBe(`${APP}/page#madauth_error=email_unverified&madauth_method=gitlab`);
+    expect((await signIn(quiet, { idToken: { ...linus.idToken, email_verified: true } })).location).toBe(`${APP}/page`);
+  });
+
+  it('OP15: a sign-up that waits for its address takes nothing over: another sign-up for the address drops its account', async () => {
+    const made = await withGitLab();
+    // Someone signs in at the provider with an address that isn't theirs.
+    await signIn(made, { idToken: { sub: 'gl-mallory', email: 'grace@example.com', email_verified: false } });
+    // Grace signs up with a password (more than a minute later: one e-mail per minute) and confirms her address.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 61_000 });
+    await post(made.app, '/auth/password/signup', { email: 'grace@example.com', password: 'correct horse battery', redirectTo: `${APP}/page` });
+    const sent = made.hook.emails().filter((e) => e.data.to === 'grace@example.com');
+    expect(sent).toHaveLength(2);
+    expect((await post(made.app, '/auth/email/verify', { token: linkAndCodeOf(sent.at(-1)).token })).status).toBe(200);
+
+    // The provider's account went with the unconfirmed sign-up: it signs nobody in, and it can't sign up again for her address.
+    expect((await signIn(made, { idToken: { sub: 'gl-mallory', email: 'grace@example.com', email_verified: false } })).location).toBe(`${APP}/page#madauth_error=other_method&madauth_method=gitlab`);
+  });
+
+  it('OP16: the other way round: a password nobody confirmed goes when the provider sign-up for the address is confirmed', async () => {
+    const made = await withGitLab();
+    await post(made.app, '/auth/password/signup', { email: 'linus@example.com', password: 'someone elses password', redirectTo: `${APP}/page` });
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 61_000 });
+    const { callback } = await signIn(made, linus);
+    const sent = made.hook.emails().filter((e) => e.data.to === 'linus@example.com').at(-1);
+    expect((await post(made.app, '/auth/email/verify', { code: linkAndCodeOf(sent).code }, { Cookie: confirmationOf(callback)! })).status).toBe(200);
+
+    expect((await post(made.app, '/auth/password/signin', { email: 'linus@example.com', password: 'someone elses password' })).status).toBe(401);
+  });
+
+  it('OP17: a signed-in user may add an account whose address is not verified: the address is only noted', async () => {
+    const made = await withGitLab();
+    const { location } = await signIn(made, { idToken: { sub: 'gl-ada-2', email: 'someone@elsewhere.example.com', email_verified: false } }, '&link=1');
+    expect(location).toBe(`${APP}/page#madauth_linked=gitlab`);
+    expect(made.hook.emails().filter((e) => e.data.to === 'someone@elsewhere.example.com')).toEqual([]);
   });
 
   it('OP10: a signed-in user adds the provider to their methods, sees its address there, and removes it', async () => {

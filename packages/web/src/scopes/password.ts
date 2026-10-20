@@ -65,7 +65,7 @@ export interface PasswordApi {
   confirmReset(options: ConfirmResetOptions): Promise<Result<{ user: MadauthUser }>>;
   /**
    * Adds a password to the signed-in user's methods (e.g. a Google user's): from then on it signs them in
-   * too, with their address. Within ten minutes of signing in only, else it fails with `reauth_required`.
+   * too, with their address. Within two minutes of signing in only, else it fails with `reauth_required`.
    * Fails with `weak_password`, `already_added` (they have one: "Forgot password?" changes it) or `no_session`.
    */
   add(options: { password: string }): Promise<Result>;

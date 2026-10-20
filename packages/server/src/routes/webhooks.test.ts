@@ -332,10 +332,11 @@ describe('user.signed_up', () => {
     const { app, hook, store } = passwordApp();
     await signUp(app);
     const [user] = await store.findMany('user', {});
-    // Another sign-up won meanwhile: the user has a sign-in method the unproven ones don't drop.
+    // Another sign-up won meanwhile: the user has a sign-in method the unproven ones don't drop (a passkey; a
+    // provider's account on a user nobody confirmed is a sign-up that waits for its address, and goes).
     await store.delete('account', { key: `password:${user.id}` });
     await store.create('account', {
-      id: 'acc_won', userId: user.id, key: 'google:9009', secret: null, failedAttempts: 0, lockedUntil: 0, email: grace.email,
+      id: 'acc_won', userId: user.id, key: 'passkey:cred-won', secret: null, failedAttempts: 0, lockedUntil: 0, email: null,
       lastUsedStep: 0, setupId: null, phone: null, primaryUserId: user.id, createdAt: 1,
     });
     advance(61_000);
@@ -348,7 +349,7 @@ describe('user.signed_up', () => {
     hook.calls.length = 0;
     expect((await post(app, '/auth/email-link/send', { email: grace.email, redirectTo: REDIRECT_TO })).status).toBe(202);
     expect(hook.types()).toEqual(['user.signing_up']);
-    expect((await store.findMany('account', { userId: user.id })).map((a) => a.key)).toEqual(['google:9009']);
+    expect((await store.findMany('account', { userId: user.id })).map((a) => a.key)).toEqual(['passkey:cred-won']);
   });
 
   it('waits for the second factor a policy requires, and comes when the policy no longer does', async () => {

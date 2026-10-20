@@ -541,6 +541,8 @@ export function createApp(config: MadauthConfig): Hono {
   app.post('/auth/account/delete', async (c) => {
     const user = await currentSession(c);
     if (!user) return c.json({ error: 'no_session' }, 401);
+    // Like every sensitive change, only right after signing in: a session someone took over can't end the account.
+    if (!(await signedInUser(c, ctx))?.recent) return reauthRequired(c);
     // An admin never removes themselves, so a lone admin stays: another admin takes the role from them first.
     // Checked before the code, which a refused deletion must not use up.
     if (isAdmin(user)) {
@@ -615,14 +617,25 @@ export function createApp(config: MadauthConfig): Hono {
   };
 
   /**
-   * Who changes the providers or settings: an admin as {@link admin} has it, or, while no admin exists, whoever
-   * has the setup token (see setup.ts), who has no address (`by` is null). `fresh` asks an admin for a session
-   * (no API keys) with a sign-in within the last ten minutes, as changing a user's methods does.
+   * An admin's change (as {@link admin}): with a session, only within RECENT_SIGN_IN_MS of signing in, as every
+   * sensitive change; an API key with the scope is its own proof, since a key has no sign-in.
+   */
+  const adminChange = async (c: Context, scope: MadauthScope): ReturnType<typeof admin> => {
+    const caller = await admin(c, scope);
+    if ('answer' in caller) return caller;
+    if (!caller.byApiKey && !(await signedInUser(c, ctx))?.recent) return { answer: reauthRequired(c) };
+    return caller;
+  };
+
+  /**
+   * Who reads or changes the providers or settings: an admin as {@link admin} has it, or, while no admin exists,
+   * whoever has the setup token (see setup.ts), who has no address (`by` is null). `need`: `read` as {@link admin};
+   * `change` as {@link adminChange}; `session`, for the providers, a session (no API keys) with a recent sign-in.
    */
   const adminOrSetup = async (
     c: Context,
     scope: MadauthScope | undefined,
-    fresh: boolean,
+    need: 'read' | 'change' | 'session',
   ): Promise<{ by: string | null; setup: boolean; byApiKey?: { id: string; name: string } } | { answer: Response }> => {
     const bearer = bearerTokenOf(c.req.header('authorization'));
     if (bearer?.startsWith(SETUP_TOKEN_PREFIX)) {
@@ -630,12 +643,12 @@ export function createApp(config: MadauthConfig): Hono {
       const message = 'This setup token is not valid, or the setup is over: an admin signs in instead.';
       return { answer: c.json({ error: 'invalid_setup_token', message }, 401) };
     }
-    if (fresh && bearer !== undefined) {
+    if (need === 'session' && bearer !== undefined) {
       return { answer: c.json({ error: 'forbidden', message: "An API key can't change the sign-in providers: an admin signs in to do it." }, 403) };
     }
-    const caller = await admin(c, fresh ? undefined : scope);
+    const caller = need === 'change' && scope ? await adminChange(c, scope) : await admin(c, need === 'session' ? undefined : scope);
     if ('answer' in caller) return caller;
-    if (fresh && !(await signedInUser(c, ctx))?.recent) return { answer: reauthRequired(c) };
+    if (need === 'session' && !(await signedInUser(c, ctx))?.recent) return { answer: reauthRequired(c) };
     return { by: caller.email, setup: false, ...byApiKey(caller) };
   };
   /** What an event made with an API key adds: the key, next to its user's address in `by`. */
@@ -664,7 +677,7 @@ export function createApp(config: MadauthConfig): Hono {
   });
 
   app.post('/auth/admin/claims/set', async (c) => {
-    const caller = await admin(c, 'madauth:claims:write');
+    const caller = await adminChange(c, 'madauth:claims:write');
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     if (!isValidEmail(data.email)) return invalidEmail(c);
@@ -716,14 +729,14 @@ export function createApp(config: MadauthConfig): Hono {
   });
 
   app.post('/auth/admin/settings/get', async (c) => {
-    const caller = await adminOrSetup(c, 'madauth:settings:read', false);
+    const caller = await adminOrSetup(c, 'madauth:settings:read', 'read');
     if ('answer' in caller) return caller.answer;
     const [now, password] = await Promise.all([ctx.methods(c), settings.passwordRules()]);
     return c.json(settingsAnswer(now, now.settings, password));
   });
 
   app.post('/auth/admin/settings/set', async (c) => {
-    const caller = await adminOrSetup(c, 'madauth:settings:write', false);
+    const caller = await adminOrSetup(c, 'madauth:settings:write', 'change');
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
@@ -765,7 +778,7 @@ export function createApp(config: MadauthConfig): Hono {
 
   // One method's entry, changed in the stored list itself: what another admin changes meanwhile stays.
   app.post('/auth/admin/settings/method', async (c) => {
-    const caller = await adminOrSetup(c, 'madauth:settings:write', false);
+    const caller = await adminOrSetup(c, 'madauth:settings:write', 'change');
     if ('answer' in caller) return caller.answer;
     const { method, setting } = await body(c);
     const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
@@ -811,7 +824,7 @@ export function createApp(config: MadauthConfig): Hono {
   const providerNotFound = (c: Context) => c.json({ error: 'provider_not_found', message: 'There is no provider with this id.' }, 404);
 
   app.post('/auth/admin/providers/list', async (c) => {
-    const caller = await adminOrSetup(c, 'madauth:providers:read', false);
+    const caller = await adminOrSetup(c, 'madauth:providers:read', 'read');
     if ('answer' in caller) return caller.answer;
     // `callbackBase`: a new provider's callback URL is `<callbackBase><id>/callback`, which the admin registers
     // at the provider before adding it.
@@ -819,7 +832,7 @@ export function createApp(config: MadauthConfig): Hono {
   });
 
   app.post('/auth/admin/providers/add', async (c) => {
-    const caller = await adminOrSetup(c, undefined, true);
+    const caller = await adminOrSetup(c, undefined, 'session');
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     const named = parseProviderKind(data);
@@ -843,7 +856,7 @@ export function createApp(config: MadauthConfig): Hono {
   });
 
   app.post('/auth/admin/providers/update', async (c) => {
-    const caller = await adminOrSetup(c, undefined, true);
+    const caller = await adminOrSetup(c, undefined, 'session');
     if ('answer' in caller) return caller.answer;
     const { id, ...data } = await body(c);
     const current = (await ctx.methods(c)).providers.find((provider) => provider.id === id);
@@ -862,7 +875,7 @@ export function createApp(config: MadauthConfig): Hono {
     const { id, dryRun } = await body(c);
     if (dryRun !== undefined && typeof dryRun !== 'boolean') return c.json({ error: 'invalid_options', message: 'dryRun must be true or false.' }, 400);
     // A dry run only counts, so reading the providers is enough for it; removing takes a fresh sign-in.
-    const caller = dryRun ? await adminOrSetup(c, 'madauth:providers:read', false) : await adminOrSetup(c, undefined, true);
+    const caller = dryRun ? await adminOrSetup(c, 'madauth:providers:read', 'read') : await adminOrSetup(c, undefined, 'session');
     if ('answer' in caller) return caller.answer;
     const now = await ctx.methods(c);
     const provider = typeof id === 'string' ? now.providers.find((p) => p.id === id) : undefined;
@@ -885,7 +898,7 @@ export function createApp(config: MadauthConfig): Hono {
   // The way back for a user who lost every way in, whatever they had: they sign up again and keep their id.
   // See "Resetting a user's sign-in" in docs/server.md.
   app.post('/auth/admin/sign-in/reset', async (c) => {
-    const caller = await admin(c, 'madauth:sign-in:reset');
+    const caller = await adminChange(c, 'madauth:sign-in:reset');
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     if (!isValidEmail(data.email)) return invalidEmail(c);

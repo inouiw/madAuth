@@ -484,3 +484,26 @@ describe('Madauth.showSetUpAuthenticatorDialog', () => {
     expect(await result).toEqual({ isSuccess: true, recoveryCodes: RECOVERY_CODES });
   });
 });
+
+describe('the setup with a sign-in that is no longer recent', () => {
+  it('D14: asks to sign in again, then starts the setup where it was', async () => {
+    const server = fakeServer();
+    server.policy.password = 'optional';
+    server.user = grace;
+    server.staleSignIn = true;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
+
+    void Madauth.showSetUpAuthenticatorDialog();
+    await settle();
+    expect($('[part="error"]')!.dataset.code).toBe('reauth_required');
+    expect($('[part="qr"]')).toBeNull();
+    await click('[data-action="sign-in-again"]');
+    expect(text('h2')).toBe('Sign in');
+    server.staleSignIn = false;
+    fill(credentials);
+    await submit('signin');
+
+    expect(text('h2')).toBe('Set up authenticator app');
+    expect($('[part="qr"] path')).not.toBeNull();
+  });
+});

@@ -97,6 +97,15 @@ async function appUser(methods: TestMethods = standalone) {
 
 const signInWithApp = (app: App, body: Record<string, unknown>) => post(app, '/auth/authenticator/signin', body);
 
+/** Grace signs in again with the app alone, as the dialog's "Sign in again" does; returns the new session. */
+async function signInAgain(app: App, secret: Buffer): Promise<string> {
+  const res = await signInWithApp(app, { email: grace.email, code: codeFor(secret) });
+  expect(res.status).toBe(200);
+  // The next code is from a later step: a code works once.
+  advance(31_000);
+  return cookies(res).madauth_session.value;
+}
+
 const sessionClaims = async (app: App, res: Response) => {
   const jwks = createLocalJWKSet(await (await app.request('/.well-known/jwks.json')).json());
   return (await jwtVerify(cookies(res).madauth_session.value, jwks, { issuer: ISSUER })).payload;
@@ -219,24 +228,28 @@ describe('setting up the authenticator app while signed in', () => {
     expect((await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).status).toBe(200);
   });
 
-  it('T30: the current app\'s approval holds for ten minutes, so starting again costs no second code', async () => {
-    const { app, store, session, userId, recoveryCodes } = await enrolled(standalone);
+  it('T30: the current app\'s approval holds for ten minutes, so starting again costs no second code; every start takes a recent sign-in', async () => {
+    const { app, store, session, userId, recoveryCodes, secret } = await enrolled(standalone);
     advance(60_000);
     const first = await post(app, '/auth/authenticator/setup', { recoveryCode: recoveryCodes[0] }, withSession(session));
     expect(first.status).toBe(200);
     expect(await store.findMany('recoveryCode', { userId })).toHaveLength(9);
     const approval = `madauth_authenticator_setup=${cookies(first).madauth_authenticator_setup.value}`;
 
-    // Starting again within ten minutes: the earlier approval counts, no code is used up.
+    // Starting again within ten minutes: the earlier approval counts, no code is used up. The start itself
+    // takes a recent sign-in, as every setup does.
     advance(5 * 60_000);
-    const again = await post(app, '/auth/authenticator/setup', {}, withSession(session, approval));
+    expect(await (await post(app, '/auth/authenticator/setup', {}, withSession(session, approval))).json()).toMatchObject({ error: 'reauth_required' });
+    const fresh = await signInAgain(app, secret);
+    const again = await post(app, '/auth/authenticator/setup', {}, withSession(fresh, approval));
     expect(again.status).toBe(200);
     expect(await store.findMany('recoveryCode', { userId })).toHaveLength(9);
     // Another browser, without the setup cookie, needs a code.
-    expect((await post(app, '/auth/authenticator/setup', {}, withSession(session))).status).toBe(401);
+    expect((await post(app, '/auth/authenticator/setup', {}, withSession(fresh))).status).toBe(401);
     // Ten minutes after the code, a code is needed again, although the latest setup cookie is still valid.
     advance(6 * 60_000);
-    const late = await post(app, '/auth/authenticator/setup', {}, withSession(session, `madauth_authenticator_setup=${cookies(again).madauth_authenticator_setup.value}`));
+    const later = await signInAgain(app, secret);
+    const late = await post(app, '/auth/authenticator/setup', {}, withSession(later, `madauth_authenticator_setup=${cookies(again).madauth_authenticator_setup.value}`));
     expect(late.status).toBe(401);
     expect(await late.json()).toMatchObject({ error: 'code_required' });
   });
@@ -256,16 +269,18 @@ describe('setting up the authenticator app while signed in', () => {
     advance(60_000);
     expect(await (await signInWithApp(app, { email: grace.email, code: codeFor(secret) })).json()).toMatchObject({ error: 'method_disabled' });
 
-    // With password sign-in off, the app is her last way in: it can't go.
+    // With password sign-in off, the app is her last way in: it can't go. Removing it takes a recent sign-in.
     await setMethods(store, { google: {}, authenticator: {} });
     advance(60_000);
-    const last = await post(app, '/auth/authenticator/remove', { code: codeFor(secret) }, withSession(session));
+    expect(await (await post(app, '/auth/authenticator/remove', { code: codeFor(secret) }, withSession(session))).json()).toMatchObject({ error: 'reauth_required' });
+    const fresh = await signInAgain(app, secret);
+    const last = await post(app, '/auth/authenticator/remove', { code: codeFor(secret) }, withSession(fresh));
     expect(last.status).toBe(403);
     expect(await last.json()).toMatchObject({ error: 'only_method' });
     // With her password on again, it can.
     await setMethods(store, standalone);
     advance(60_000);
-    expect((await post(app, '/auth/authenticator/remove', { code: codeFor(secret) }, withSession(session))).status).toBe(200);
+    expect((await post(app, '/auth/authenticator/remove', { code: codeFor(secret) }, withSession(fresh))).status).toBe(200);
   });
 
   it('T32: a setup confirms only the state it started in, so the app and its recovery codes always belong together', async () => {
