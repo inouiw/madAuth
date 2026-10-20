@@ -293,6 +293,7 @@ const rowIcons: Partial<Record<LoginMethodId, TemplateResult>> = {
  * @csspart qr - The QR code of the authenticator app's key (an inline SVG, dark on a white background).
  * @csspart codes - The list of recovery codes.
  * @csspart api-key - A new API key, shown once to copy.
+ * @csspart branding - The line "by madAuth" at the bottom, with the link to madauth.com.
  */
 export class MadauthLogin extends LitElement {
   static override properties = {
@@ -1083,6 +1084,9 @@ export class MadauthLogin extends LitElement {
             : null}
           ${this.error ? this.renderError(this.error) : null}
           ${this.renderView()}
+          <footer part="branding" class="branding">
+            ${s.by} <a href="https://madauth.com" target="_blank" rel="noopener">madAuth</a>
+          </footer>
         </div>
       </dialog>
     `;
@@ -3290,6 +3294,24 @@ export class MadauthLogin extends LitElement {
     }
 
     .link:hover:not(:disabled) {
+      color: var(--_text);
+    }
+
+    /* "by madAuth" at the bottom of every view. */
+    .branding {
+      margin: -4px 0 -12px;
+      font-size: 0.75rem;
+      line-height: 18px;
+      text-align: center;
+      color: var(--_muted);
+    }
+
+    .branding a {
+      color: inherit;
+      text-underline-offset: 2px;
+    }
+
+    .branding a:hover {
       color: var(--_text);
     }
 
