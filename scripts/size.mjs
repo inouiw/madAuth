@@ -2,14 +2,21 @@
 // with code splitting) and prints the gzipped and Brotli sizes of what loads with the page, and of what loads
 // later (zxcvbn-ts and its password list, imported on first use). The numbers the README, the @madauth/web README
 // and the landing page name come from here: run `npm run size` and update them when they move.
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+// `npm run size -- --check` (CI runs it) fails when a size in kB in those files is more than 1 kB off every measured one.
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
 import { build } from 'esbuild';
 
-const dist = fileURLToPath(new URL('../packages/web/dist/', import.meta.url));
+const root = fileURLToPath(new URL('../', import.meta.url));
+const dist = join(root, 'packages/web/dist/');
+/** The files that name the sizes, checked by --check. */
+const claimFiles = ['README.md', 'packages/web/README.md', 'site/index.html'];
+/** How far a size named in those files may be from a measured one. */
+const TOLERANCE_KB = 1;
+const check = process.argv.includes('--check');
 const providers = 'GoogleFedcm, GitHub, Password, Passkey, Authenticator, EmailLink';
 const providerList = 'new GoogleFedcm(), new GitHub(), new Password(), new Passkey(), new Authenticator(), new EmailLink()';
 
@@ -80,9 +87,28 @@ async function measure(dir, source) {
 const dir = realpathSync(mkdtempSync(join(tmpdir(), 'madauth-size-')));
 // The directory goes away even when a build fails.
 process.on('exit', () => rmSync(dir, { recursive: true, force: true }));
+const measured = [];
 for (const app of apps) {
   const { initial, later } = await measure(dir, app.source);
   console.log(app.name);
   console.log(`  with the page:   ${kB(initial.gzip)} gzip, ${kB(initial.brotli)} brotli`);
   console.log(`  on first use:    ${kB(later.gzip)} gzip, ${kB(later.brotli)} brotli (zxcvbn-ts, on a new-password screen)`);
+  measured.push(initial.gzip / 1000, later.gzip / 1000);
+}
+
+/** Every size in kB the file names (`49 kB`, `18&nbsp;kB`), with its line. */
+function claimsIn(file) {
+  const lines = readFileSync(join(root, file), 'utf8').split('\n');
+  return lines.flatMap((line, index) => [...line.matchAll(/(\d+(?:\.\d+)?)(?:\s|&nbsp;)kB\b/g)].map((match) => ({ file, line: index + 1, kB: Number(match[1]) })));
+}
+
+if (check) {
+  const claims = claimFiles.flatMap(claimsIn);
+  const off = claims.filter((claim) => measured.every((size) => Math.abs(size - claim.kB) > TOLERANCE_KB));
+  for (const claim of off) console.error(`${claim.file}:${claim.line}: ${claim.kB} kB is more than ${TOLERANCE_KB} kB off every measured size`);
+  if (off.length > 0) {
+    console.error(`Update the sizes in ${claimFiles.join(', ')} to the numbers above.`);
+    process.exit(1);
+  }
+  console.log(`All ${claims.length} sizes in ${claimFiles.join(', ')} are within ${TOLERANCE_KB} kB of the measured ones.`);
 }

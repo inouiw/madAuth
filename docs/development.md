@@ -69,7 +69,7 @@ npm run typecheck
 npm test
 ```
 
-CI runs these three. `deploy/aws` and `site/infra` are npm projects of their own, outside the workspaces: see [`.github/workflows/infra.yml`](../.github/workflows/infra.yml) for what CI runs there.
+CI runs these three, and the [size check](#bundle-size). `deploy/aws` and `site/infra` are npm projects of their own, outside the workspaces: see [`.github/workflows/infra.yml`](../.github/workflows/infra.yml) for what CI runs there.
 
 ## Bundle size
 
@@ -79,7 +79,13 @@ The sizes the README, the [`@madauth/web` README](../packages/web/README.md) and
 npm run size
 ```
 
-It builds `@madauth/web`, bundles two small apps with esbuild (minified, with code splitting) and prints the gzipped and Brotli sizes of what loads with the page: one that imports `@madauth/web` and passes all six providers to `initialize` (Lit and the QR code library included), and one that imports `@madauth/web/client` instead. zxcvbn-ts and its list of common passwords are printed apart: they load on first use, only on a screen that asks for a new password (see [`strength.ts`](../packages/web/src/strength.ts)). The script is [`scripts/size.mjs`](../scripts/size.mjs). Run it after a change that adds to the client, and update those three places if the numbers move.
+It builds `@madauth/web`, bundles two small apps with esbuild (minified, with code splitting) and prints the gzipped and Brotli sizes of what loads with the page: one that imports `@madauth/web` and passes all six providers to `initialize` (Lit and the QR code library included), and one that imports `@madauth/web/client` instead. zxcvbn-ts and its list of common passwords are printed apart: they load on first use, only on a screen that asks for a new password (see [`strength.ts`](../packages/web/src/strength.ts)). The script is [`scripts/size.mjs`](../scripts/size.mjs). Run it after a change that adds to the client, and update those three places if the numbers move. CI checks them:
+
+```bash
+npm run size -- --check
+```
+
+fails when a size in kB that one of those files names is more than 1 kB off every measured size, and names the file and line.
 
 ## Adding a sign-in method
 
