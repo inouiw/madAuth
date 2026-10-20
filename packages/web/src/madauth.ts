@@ -409,6 +409,7 @@ const core: Core = {
     pendingStep = undefined;
     setUser(signedIn);
   },
+  currentUser: () => user,
   pendingStep: () => pendingStep ?? null,
   setPendingStep: stepPending,
 };
@@ -716,7 +717,10 @@ export const Madauth = {
   /** E-mail & password sign-in for custom login screens. Needs `new Password()`. */
   password: createPasswordApi(core),
 
-  /** Google sign-in for custom login screens. Needs `new GoogleFedcm()` or `new GoogleRedirect()`. */
+  /**
+   * Google sign-in for custom login screens: its button (needs `new GoogleFedcm()` or `new GoogleRedirect()`),
+   * or an ID token the app obtained itself (`nonce` and `signIn`, which need neither).
+   */
   google: createGoogleApi(core),
 
   /** GitHub sign-in for custom login screens. Needs `new GitHub()`. */

@@ -9,7 +9,7 @@ Every user is stored, whichever way they sign in, through a [store adapter](#cus
 ## How it works
 
 1. The browser signs in:
-   - with Google, either in the browser with FedCM / One Tap (`GoogleFedcm`) or through the server-side redirect flow (`GoogleRedirect`). The server verifies Google's ID token: signature, issuer, audience, expiry, nonce and a verified e-mail address.
+   - with Google, either in the browser with FedCM / One Tap (`GoogleFedcm`), through the server-side redirect flow (`GoogleRedirect`), or with an ID token the app obtained itself, e.g. natively in a Capacitor app (`Madauth.google.signIn`, see [Custom UI](custom-ui.md#an-id-token-the-app-obtained-itself)). The server verifies Google's ID token: signature, issuer, audience, expiry, nonce and a verified e-mail address.
    - or with GitHub (`GitHub`), through the server-side redirect flow: GitHub has no other. The server exchanges the code, reads the account from GitHub's API and takes an address GitHub has verified. See [GitHub security](github-security.md).
    - or with an e-mail address and password (`Password`). The server checks the password against its scrypt hash; new accounts confirm their address first. See [Password security](password-security.md).
    - or with an e-mail link (`EmailLink`): the address, then the link or the code from the e-mail madAuth sends. A new address is signed up on first use. See [E-mail link security](email-link-security.md).
@@ -582,7 +582,7 @@ madAuth has these methods, named by these ids in the settings:
 
 | Id | Method | In the web library |
 | --- | --- | --- |
-| `google` | Google sign-in (One Tap / FedCM or the redirect flow) | `GoogleFedcm`, `GoogleRedirect`, `Madauth.google` |
+| `google` | Google sign-in (One Tap / FedCM, the redirect flow, or an ID token the app obtained itself) | `GoogleFedcm`, `GoogleRedirect`, `Madauth.google` |
 | `github` | [GitHub sign-in](github-security.md) (the redirect flow) | `GitHub`, `Madauth.github` |
 | the provider's id, e.g. `gitlab` | An [OpenID Connect provider](#openid-connect-provider-setup) an admin added (the redirect flow) | `Madauth.provider(id)` |
 | `password` | E-mail & password | `Password`, `Madauth.password` |
@@ -879,9 +879,9 @@ Your app lists the scopes of its API at `API_KEY_SCOPES_URL`; see [API keys](api
 | Method & path | Description |
 | --- | --- |
 | `GET /auth/config` | Public settings for the web library: `{ google: { clientId, codeFlow, secondFactor } \| null, github: { secondFactor } \| null, password: { minLength, minScore, secondFactor } \| null, authenticator: { signIn, signUp } \| null, email: { verification }, emailLink: { secondFactor } \| null, sms, passkey: { signIn, signUp, secondFactor } \| null, providers: [{ id, kind, name, secondFactor }] }` (`sms`: whether SMS codes are on as a second factor; `signIn`: whether the app or passkeys sign in on their own; `signUp`: whether people can sign up with them alone; `providers`: the [providers](#providers) that are on). A method is `null` when it is not configured or [switched off](#sign-in-methods). |
-| `POST /auth/providers/google/nonce` | Starts a FedCM / One Tap sign-in: returns `{ nonce }` and sets a 5-minute nonce cookie |
-| `POST /auth/providers/google/verify` | `{ credential, locale? }` (Google ID token) → `{ user }` and the session cookie, or the [second step](#the-second-step); 403 `signup_rejected` (a first sign-in the sign-up check refused), 403 `other_method` (the address signs in another way; `methods` says how), 503 `temporarily_unavailable` |
-| `POST /auth/providers/google/link` | `{ credential }` (an ID token, with the nonce cookie), signed in within two minutes → `{}`: adds the Google account to the user's [methods](sign-in-methods.md); 401 `reauth_required` or `no_session`, 409 `account_taken` (it signs in another user) |
+| `POST /auth/providers/google/nonce` | Starts a sign-in with an ID token (FedCM / One Tap, or one the app obtains itself: `Madauth.google.nonce()`): returns `{ nonce }` and sets a 5-minute nonce cookie |
+| `POST /auth/providers/google/verify` | `{ credential, locale? }` (a Google ID token with that nonce; `Madauth.google.signIn`) → `{ user }` and the session cookie, or the [second step](#the-second-step); 403 `signup_rejected` (a first sign-in the sign-up check refused), 403 `other_method` (the address signs in another way; `methods` says how), 503 `temporarily_unavailable` |
+| `POST /auth/providers/google/link` | `{ credential }` (an ID token, with the nonce cookie; `Madauth.google.signIn` with `purpose: 'link'`), signed in within two minutes → `{}`: adds the Google account to the user's [methods](sign-in-methods.md); 401 `reauth_required` or `no_session`, 409 `account_taken` (it signs in another user) |
 | `GET /auth/providers/google/start?return_to=` | Starts the redirect flow (needs the Google provider's client secret); with `&link=1`, for a user signed in within two minutes, it adds the Google account to their methods instead |
 | `GET /auth/providers/google/callback` | Google redirects here; redirects back to `return_to`, to `return_to#madauth_error=<code>`, or to `return_to#madauth_next=passkey` / `authenticator` / `sms` / `second-factor-setup` (`passkey-setup` for the passkey of a sign-up with one, which no redirect flow reaches today) for the second step, with `&madauth_factors=passkey,authenticator,sms` naming the factors that can finish it (or be set up); `&madauth_method=google` names the method in both cases. After `link=1`: `return_to#madauth_linked=google`, or the error (`account_taken`, `reauth_required`, `no_session`) |
 | `GET /auth/providers/github/start?return_to=` | Starts GitHub's redirect flow; `&link=1` adds GitHub to the signed-in user's methods, like Google's |

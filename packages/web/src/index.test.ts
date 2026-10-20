@@ -52,7 +52,7 @@ describe('@madauth/web', () => {
     expect(Object.keys(madauth.Madauth.password).sort()).toEqual(
       ['add', 'confirmReset', 'loadRating', 'pendingReset', 'policy', 'sendResetEmail', 'sendVerificationEmail', 'signIn', 'signUp', 'verifyEmail'].sort(),
     );
-    expect(Object.keys(madauth.Madauth.google)).toEqual(['renderButton']);
+    expect(Object.keys(madauth.Madauth.google).sort()).toEqual(['nonce', 'renderButton', 'signIn']);
     expect(Object.keys(madauth.Madauth.github)).toEqual(['renderButton']);
     expect(Object.keys(madauth.Madauth.provider('gitlab')).sort()).toEqual(['renderButton', 'sendVerificationEmail', 'signIn', 'verifyEmail']);
     expectTypeOf(madauth.Madauth.provider('gitlab')).toEqualTypeOf<madauth.ProviderApi>();

@@ -19,6 +19,8 @@ export interface Core {
   locale(): string | undefined;
   request<T>(path: string, init?: RequestInit): Promise<HttpResult<T>>;
   signedIn(user: MadauthUser): void;
+  /** The last known signed-in user, or null. */
+  currentUser(): MadauthUser | null;
   /** What a sign-in still needs with the authenticator app, if one is under way. */
   pendingStep(): PendingStep | null;
   /** A sign-in's first step is done and the authenticator app is next, or (null) the sign-in is over. */
@@ -39,6 +41,9 @@ interface Gate {
   switchedOff(): { isSuccess: false; error: MadauthError };
 }
 
+/** The failure of a call for the signed-in user when nobody is. */
+export const noSession = () => fail('no_session', 'Nobody is signed in.');
+
 /** A scope's calls to the server: each waits for initialize, checks `gate`, then sends the request (`POST` unless said). */
 export function serverCalls(core: Core, gate?: Gate) {
   return async <T extends object>(path: string, init: CallInit = {}): Promise<Result<T>> => {
@@ -47,7 +52,7 @@ export function serverCalls(core: Core, gate?: Gate) {
     if (gate && !gate.isOn(core.config())) return gate.switchedOff();
     const res = await core.request<T>(path, { method: init.method ?? 'POST', body: init.body });
     if (res.ok) return ok(res.data);
-    if (init.session && res.status === 401 && res.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
+    if (init.session && res.status === 401 && res.error.code === 'no_session') return noSession();
     return { isSuccess: false, error: res.error };
   };
 }
