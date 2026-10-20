@@ -6,7 +6,7 @@
     <title>madAuth – self-hostable authentication</title>
     <meta
       name="description"
-      content="madAuth is a self-hostable alternative to Cognito and Auth0: Google and GitHub sign-in, e-mail & password, passwordless e-mail links, passkeys and an authenticator app, with a login UI that works in any framework."
+      content="madAuth is a self-hostable alternative to Cognito and Auth0: Google, GitHub, OpenID Connect, passwords, e-mail links, passkeys and 2FA, in a 49 kB login UI for any framework."
     />
     <meta name="robots" content="max-image-preview:large" />
     <link rel="canonical" href="https://madauth.com/" />
@@ -50,15 +50,27 @@
       <section class="features">
         <article>
           <h2>Sign-in methods</h2>
-          <p>Google (One Tap / FedCM or redirect), GitHub, e-mail &amp; password with confirmation and password reset, passwordless e-mail links, passkeys, and an authenticator app or SMS codes as a second factor. Users can have several methods, and you decide which sign in on their own. Users make API keys for the scripts that call your API in their name.</p>
+          <p>Google (One Tap / FedCM or redirect), GitHub, any OpenID Connect provider such as GitLab, Keycloak or Okta, e-mail &amp; password with confirmation and password reset, passwordless e-mail links, passkeys, and an authenticator app or SMS codes as a second factor. Users can have several methods, and you decide which sign in on their own. Users make API keys for the scripts that call your API in their name.</p>
         </article>
         <article>
           <h2>Any framework</h2>
           <p>The login UI is a standard web component: plain HTML, React, Angular, Vue, Svelte or Capacitor.</p>
         </article>
         <article>
+          <h2>Small in the browser</h2>
+          <p>The login dialog with every sign-in method adds about 49&nbsp;kB (gzipped) to your app. With a login screen of your own, the client alone is about 18&nbsp;kB.</p>
+        </article>
+        <article>
           <h2>Your infrastructure</h2>
-          <p>Docker, AWS Lambda with DynamoDB, or Azure Functions. Your users stay in your database.</p>
+          <p>Node, Docker, AWS Lambda or Azure Functions, with SQLite, Postgres, DynamoDB or a database of your own. Your users stay in your database.</p>
+        </article>
+        <article>
+          <h2>Keys outside the server</h2>
+          <p>On AWS, the signing and encryption keys stay in AWS KMS and never leave it: someone who breaks into the server can't take them away. The AWS template creates and rotates them.</p>
+        </article>
+        <article>
+          <h2>Secure by default</h2>
+          <p>Failed sign-ins are slowed down per account, answers don't reveal who has an account, and adding or removing a sign-in method needs a sign-in within the last two minutes.</p>
         </article>
       </section>
       <!-- latest-posts -->
