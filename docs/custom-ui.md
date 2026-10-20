@@ -2,14 +2,16 @@
 
 madAuth's dialog (`Madauth.showSignInDialog()`) is optional. Everything it does is available as methods, grouped by sign-in method, so you can build a login screen that fits your app. The dialog itself is built only on these methods.
 
+Import from `@madauth/web/client`: it exports what `@madauth/web` exports, without `<madauth-login>`, so neither the dialog nor Lit, which only the dialog uses, ends up in your bundle (about half of it).
+
 ```ts
-import { Madauth, GoogleFedcm, GitHub, Password, Passkey, Authenticator, EmailLink } from '@madauth/web';
+import { Madauth, GoogleFedcm, GitHub, Password, Passkey, Authenticator, EmailLink } from '@madauth/web/client';
 
 Madauth.initialize({ providers: [new GoogleFedcm(), new GitHub(), new Password(), new Passkey(), new Authenticator(), new EmailLink()], ui: 'custom' });
 Madauth.onAuthStateChanged(handleAuthStateChanged); // (user | null) => void
 ```
 
-`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.showSignInDialog()`, `Madauth.showSetUpAuthenticatorDialog()`, `Madauth.showSetUpSmsDialog()`, `Madauth.showSetUpPasskeyDialog()`, `Madauth.showManageSignInMethodsDialog()`, `Madauth.showManageApiKeysDialog()` and `Madauth.showAdminDialog()` return an `invalid_options` error: the calls whose name starts with `show` and ends in `Dialog` open madAuth's dialog, the others only talk to the server.
+`ui: 'custom'` tells madAuth that the page shows its own screen: the dialog never opens by itself, and `Madauth.showSignInDialog()`, `Madauth.showSetUpAuthenticatorDialog()`, `Madauth.showSetUpSmsDialog()`, `Madauth.showSetUpPasskeyDialog()`, `Madauth.showManageSignInMethodsDialog()`, `Madauth.showManageApiKeysDialog()` and `Madauth.showAdminDialog()` return an `invalid_options` error (as they do with `@madauth/web/client`, whichever `ui` is passed): the calls whose name starts with `show` and ends in `Dialog` open madAuth's dialog, the others only talk to the server.
 
 All methods resolve to a result object and never throw for expected failures:
 

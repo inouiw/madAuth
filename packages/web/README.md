@@ -22,6 +22,19 @@ signInButton.onclick = () => Madauth.showSignInDialog();
 
 The server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 'https://auth.example.com'` to `initialize` if it runs elsewhere on the same site.
 
+## Without the dialog
+
+An app with a login screen of its own imports from `@madauth/web/client`: the same `Madauth` and providers, without the dialog. Neither the dialog nor Lit, which only the dialog uses, ends up in your bundle, which is about half the size.
+
+```ts
+import { Madauth, Password } from '@madauth/web/client';
+
+Madauth.initialize({ providers: [new Password()], ui: 'custom' });
+const result = await Madauth.password.signIn({ email, password });
+```
+
+See [Building your own login screen](https://github.com/inouiw/madAuth/blob/main/docs/custom-ui.md).
+
 ## Documentation
 
 - [Using madAuth in your app](https://github.com/inouiw/madAuth#using-madauth-in-your-app)

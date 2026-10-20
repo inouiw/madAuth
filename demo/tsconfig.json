@@ -4,7 +4,8 @@
     "noEmit": true,
     "types": ["vite/client"],
     "paths": {
-      "@madauth/web": ["../packages/web/src/index.ts"]
+      "@madauth/web": ["../packages/web/src/index.ts"],
+      "@madauth/web/client": ["../packages/web/src/client.ts"]
     }
   },
   "include": ["src"]

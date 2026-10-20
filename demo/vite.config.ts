@@ -8,10 +8,12 @@ export default defineConfig({
   // The path the demo is served under, e.g. DEMO_BASE=/demo/ on madauth.com. The page links are relative.
   base: process.env.DEMO_BASE ?? '/',
   resolve: {
-    alias: {
-      // Use the library source directly so edits hot-reload without rebuilding it.
-      '@madauth/web': fileURLToPath(new URL('../packages/web/src/index.ts', import.meta.url)),
-    },
+    // Use the library source directly so edits hot-reload without rebuilding it. The entry without the dialog
+    // comes first: the package name alone would match it too.
+    alias: [
+      { find: '@madauth/web/client', replacement: fileURLToPath(new URL('../packages/web/src/client.ts', import.meta.url)) },
+      { find: '@madauth/web', replacement: fileURLToPath(new URL('../packages/web/src/index.ts', import.meta.url)) },
+    ],
   },
   build: {
     rollupOptions: {

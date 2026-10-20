@@ -1,5 +1,6 @@
-// A custom login screen: everything madAuth's dialog does, built with the headless API.
-import { Authenticator, EmailLink, GitHub, GoogleFedcm, Madauth, Passkey, Password, type MadauthError, type MadauthUser, type Result, type SecondFactor } from '@madauth/web';
+// A custom login screen: everything madAuth's dialog does, built with the headless API. `@madauth/web/client` is
+// the client without the dialog, so neither it nor Lit ends up in this page's bundle.
+import { Authenticator, EmailLink, GitHub, GoogleFedcm, Madauth, Passkey, Password, type MadauthError, type MadauthUser, type Result, type SecondFactor } from '@madauth/web/client';
 
 type View =
   | 'signin'
