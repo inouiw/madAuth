@@ -233,7 +233,7 @@ When the server allows the app as a sign-in method (`policy.signIn`), `signIn({ 
 
 ## Google: `Madauth.google`
 
-Needs `new GoogleFedcm()` or `new GoogleRedirect()` in `initialize`.
+`renderButton` needs `new GoogleFedcm()` or `new GoogleRedirect()` in `initialize`. `nonce` and `signIn`, for an ID token the app obtained itself, need neither, see [below](#an-id-token-the-app-obtained-itself).
 
 ```ts
 const result = Madauth.google.renderButton(document.querySelector('#google-button')!, {
@@ -254,6 +254,28 @@ You can call `renderButton` before `initialize` has finished. The button appears
 One Tap (`GoogleFedcm` with its default `autoPrompt: true`) works on custom screens as well.
 
 With `purpose: 'link'`, the button adds a Google account to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods) instead of signing in: with `GoogleFedcm`, `onResult` gets the user as they are, or `account_taken` (the Google account signs in another user) or `reauth_required`; with `GoogleRedirect`, the page comes back with `linked: 'google'` in the result of `Madauth.initialize`, or with the error. The button says "Connect Google" for the redirect; Google's own button keeps its text.
+
+### An ID token the app obtained itself
+
+An app that gets a Google ID token without Google's script, e.g. a Capacitor app with a native One Tap plugin such as [`capacitor-native-google-one-tap-signin`](https://github.com/inouiw/capacitor-native-google-one-tap-signin), hands it to madAuth with `nonce` and `signIn`. They need no provider in `initialize` and load nothing from Google; the server's Google provider has to be on (else `flow_not_enabled`).
+
+```ts
+import { GoogleOneTapAuth } from 'capacitor-native-google-one-tap-signin';
+
+const start = await Madauth.google.nonce(); // { nonce, clientId }
+if (!start.isSuccess) return showError(start.error);
+await GoogleOneTapAuth.initialize({ clientId: start.clientId, nonce: start.nonce });
+const signIn = await GoogleOneTapAuth.tryAutoOrOneTapSignIn();
+if (!signIn.isSuccess) return; // the user dismissed it
+const result = await Madauth.google.signIn({ credential: signIn.success!.idToken });
+if (!result.isSuccess) showError(result.error); // or the second step, see below
+```
+
+- `nonce()` resolves with the nonce to pass to Google's sign-in, so that Google puts it into the token, and the server's Google client ID (`clientId`), which the token must be issued for (the plugin's "client ID of type Web application"). The server keeps the nonce in a cookie for five minutes, and a sign-in uses it up: get a new one for each sign-in. A One Tap prompt of `GoogleFedcm` under way loses its nonce, so don't mix the two.
+- `signIn({ credential })` sends the token to the server, which verifies it (signature, audience, nonce, a verified address); the user arrives in the result and through `onAuthStateChanged`. It fails with `verification_failed` (also for a token without the nonce: Google's iOS library sets one since GoogleSignIn-iOS 9.0.0), `email_unverified`, `other_method` (the address signs in another way; `methods` says how), `signup_rejected` or `method_disabled`. When the policy asks for a second factor, it ends with `passkey_required`, `authenticator_required`, `sms_required` or `second_factor_setup_required` instead, and the sign-in goes on as after `password.signIn`, see [The second step](#the-second-step); `pendingStep` has `method: 'google'`.
+- `signIn({ credential, purpose: 'link' })` adds the Google account to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods) instead, within two minutes of signing in, and resolves with the user as they are; it fails with `account_taken`, `reauth_required` or `no_session`.
+
+The session is a cookie, as with every other method: the app's origin must be in `ALLOWED_ORIGINS`, and the same-site rule in [server.md](server.md) applies.
 
 ## GitHub: `Madauth.github`
 

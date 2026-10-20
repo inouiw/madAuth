@@ -70,7 +70,7 @@ export interface FakeServer {
   /** E-mails "sent": what for, to whom and the link's page. */
   mails: { purpose: 'verify' | 'reset' | 'signin' | 'registered'; to: string; redirectTo: unknown }[];
   user: MadauthUser | null;
-  /** Error code that /auth/providers/google/verify answers with, if set. */
+  /** Error code that /auth/providers/google/verify and /link answer with, if set. */
   verifyError: string | undefined;
   /** Makes every request fail like an unreachable server. */
   down: boolean;
@@ -552,6 +552,14 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/providers/google/verify':
         if (server.verifyError) return json({ error: server.verifyError, message: 'rejected in test' }, 401);
         return afterPrimary(ada.email!, 'google');
+      case 'POST /auth/providers/google/link': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        if (server.verifyError) return json({ error: server.verifyError, message: 'rejected in test' }, server.verifyError === 'account_taken' ? 409 : 401);
+        server.linked.set(user, (server.linked.get(user) ?? new Set()).add('google'));
+        return json({});
+      }
       case 'POST /auth/logout':
         server.user = null;
         setExpiryCookie(null);
