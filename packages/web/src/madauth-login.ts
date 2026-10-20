@@ -1085,7 +1085,7 @@ export class MadauthLogin extends LitElement {
           ${this.error ? this.renderError(this.error) : null}
           ${this.renderView()}
           <footer part="branding" class="branding">
-            ${s.by} <a href="https://madauth.com" target="_blank" rel="noopener">madAuth</a>
+            ${s.by} <a href="https://madauth.com" target="_blank" rel="noopener" aria-label=${s.madauthLink}>madAuth</a>
           </footer>
         </div>
       </dialog>
@@ -3306,7 +3306,11 @@ export class MadauthLogin extends LitElement {
       color: var(--_muted);
     }
 
+    /* The padding makes a 24px tap target; the negative margin keeps the layout as without it. */
     .branding a {
+      display: inline-block;
+      margin: -3px 0;
+      padding: 3px 0;
       color: inherit;
       text-underline-offset: 2px;
     }

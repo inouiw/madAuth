@@ -19,6 +19,8 @@ export const en = {
   otherWays: 'Other ways to sign in',
   /** Before the link "madAuth" (to madauth.com) at the bottom of the dialog. */
   by: 'by',
+  /** Accessible name of that link: it opens madauth.com in a new tab. */
+  madauthLink: 'madAuth, opens in a new tab',
   /** The tooltip of an OpenID Connect provider's button (`continueWith`). */
   useAccount: (name: string) => `Use your ${name} account`,
   /** The sign-in methods: `label` is the text of the button, `description` its tooltip. */
@@ -388,6 +390,7 @@ export const de: Strings = {
   or: 'oder',
   otherWays: 'Weitere Anmeldemöglichkeiten',
   by: 'von',
+  madauthLink: 'madAuth, öffnet in einem neuen Tab',
   useAccount: (name) => `Mit Ihrem ${name}-Konto anmelden`,
   methods: {
     google: { label: 'Weiter mit Google', description: 'Mit Ihrem Google-Konto anmelden' },

@@ -61,6 +61,7 @@ describe('<madauth-login>', () => {
     expect(link.href).toBe('https://madauth.com/');
     expect(link.target).toBe('_blank');
     expect(link.rel).toBe('noopener');
+    expect(link.getAttribute('aria-label')).toBe('madAuth, opens in a new tab');
   });
 
   it('lists no method without providers (madAuth not initialized)', () => {
