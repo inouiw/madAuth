@@ -1908,7 +1908,7 @@ export class MadauthLogin extends LitElement {
                       <span class="label">${label}</span>
                       ${details.length ? html`<span class="hint">${details.join(' · ')}</span>` : null}
                     </span>
-                    ${m.method === 'password'
+                    ${m.method === 'password' && providerFor('password') && Madauth.password.policy
                       ? html`<button class="link" part="link" type="button" data-action="change-password" ?disabled=${this.busy}
                           @click=${() => this.goTo('change-password')}>${v.change}</button>`
                       : null}

@@ -108,6 +108,13 @@ export function createPasswordApi(core: Core): PasswordApi {
     return res.ok ? ok(res.data) : { isSuccess: false, error: res.error };
   }
 
+  /** {@link call} for the signed-in user, whose result is only whether it worked. */
+  async function callSignedIn(path: string, body: Record<string, unknown>): Promise<Result> {
+    const result = await call(path, body);
+    if (!result.isSuccess && result.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
+    return result.isSuccess ? ok() : result;
+  }
+
   const confirmation = emailConfirmation(core, 'password', call);
 
   return {
@@ -159,17 +166,8 @@ export function createPasswordApi(core: Core): PasswordApi {
       return result;
     },
 
-    async add({ password }) {
-      const result = await call('/auth/password/add', { password });
-      if (!result.isSuccess && result.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
-      return result.isSuccess ? ok() : result;
-    },
-
-    async change({ current, password }) {
-      const result = await call('/auth/password/change', { current, password });
-      if (!result.isSuccess && result.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
-      return result.isSuccess ? ok() : result;
-    },
+    add: ({ password }) => callSignedIn('/auth/password/add', { password }),
+    change: ({ current, password }) => callSignedIn('/auth/password/change', { current, password }),
 
     loadRating: loadPasswordRating,
 

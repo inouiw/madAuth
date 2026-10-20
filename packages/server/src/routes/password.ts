@@ -11,7 +11,7 @@ import {
   verifyPassword,
   type PasswordProblem,
 } from '../password.js';
-import { passwordAccountKey, toMadauthUser, type Users } from '../users.js';
+import { passwordAccountKey, toMadauthUser, type StoredAccount, type Users } from '../users.js';
 import { localeOf, type WebhookClient } from '../webhooks.js';
 import { MAIL_INTERVAL_MS, createEmails } from './emails.js';
 import { accepted, body, error, nameOf, noSession, recentUser, redirectTarget, signInAnswer, unavailable } from './helpers.js';
@@ -19,6 +19,21 @@ import { countSignInAttempt } from './lockout.js';
 
 export { MAIL_INTERVAL_MS, RESET_LINK_PARAM, RESET_TTL_MS, VERIFY_LINK_PARAM, VERIFY_TTL_MS } from './emails.js';
 export { FREE_ATTEMPTS, MAX_LOCK_MS } from './lockout.js';
+
+/** The password a request sent, or '' if none. Absurdly long input counts as none: it isn't hashed, so it can't tie up the CPU. */
+function passwordOf(value: unknown): string {
+  return typeof value === 'string' && value.length <= MAX_PASSWORD_LENGTH * 4 ? value : '';
+}
+
+/**
+ * Counts an attempt on the account, then checks the password against its hash `secret` (counted first, so attempts sent at
+ * the same time can't get around the wait; see routes/lockout.ts). The answer to send if the account is locked,
+ * else the check's result.
+ */
+async function checkPassword(c: Context, users: Users, account: StoredAccount, secret: string, password: string) {
+  const locked = await countSignInAttempt(c, users, account);
+  return locked ?? verifyPassword(password, secret);
+}
 
 /** A new password breaks the rules: the message, and what the dialog needs to say it in the user's language. */
 function weakPassword(c: Context, problem: PasswordProblem): Response {
@@ -47,9 +62,8 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
   app.post('/auth/password/signin', async (c) => {
     const data = await body(c);
     const wrong = () => error(c, 401, 'invalid_credentials', 'E-mail or password is wrong.');
-    const pw = typeof data.password === 'string' ? data.password : '';
-    // Absurdly long input is rejected before hashing, so it can't be used to tie up the CPU.
-    if (!isValidEmail(data.email) || !pw || pw.length > MAX_PASSWORD_LENGTH * 4) return wrong();
+    const pw = passwordOf(data.password);
+    if (!isValidEmail(data.email) || !pw) return wrong();
 
     const user = await users.findByEmail(normalizeEmail(data.email));
     const account = user ? await users.passwordAccount(user.id) : null;
@@ -59,11 +73,9 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
       return wrong();
     }
 
-    // Counted before the slow password check; see routes/lockout.ts.
-    const refused = await countSignInAttempt(c, users, account);
-    if (refused) return refused;
-
-    const { ok, needsRehash } = await verifyPassword(pw, account.secret);
+    const checked = await checkPassword(c, users, account, account.secret, pw);
+    if (checked instanceof Response) return checked;
+    const { ok, needsRehash } = checked;
     if (!ok) return wrong();
     await users.updateAccount(account.id, {
       failedAttempts: 0,
@@ -162,15 +174,15 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     const weak = await refused(c, data.password, [user.email, user.name]);
     if (weak) return weak;
     const wrong = () => error(c, 401, 'invalid_credentials', 'The current password is wrong.');
-    const current = typeof data.current === 'string' ? data.current : '';
-    if (!current || current.length > MAX_PASSWORD_LENGTH * 4) return wrong();
+    const current = passwordOf(data.current);
+    if (!current) return wrong();
     const gone = () => error(c, 404, 'method_not_found', 'You have no password. Add one instead.');
     const account = await users.passwordAccount(user.id);
     if (!account?.secret) return gone();
 
-    const locked = await countSignInAttempt(c, users, account);
-    if (locked) return locked;
-    if (!(await verifyPassword(current, account.secret)).ok) return wrong();
+    const checked = await checkPassword(c, users, account, account.secret, current);
+    if (checked instanceof Response) return checked;
+    if (!checked.ok) return wrong();
 
     const secret = await hashPassword(data.password as string);
     // The password may have gone meanwhile (removed in another tab): then nothing was changed.
@@ -178,6 +190,8 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     // The new session version ends every other session; this one goes on with it, as the same sign-in.
     const sessionVersion = user.sessionVersion + 1;
     await users.updateUser(user.id, { sessionVersion });
+    // A reset link or code sent before would otherwise still set a password, as after a reset.
+    await users.clearVerifications(user.id);
     await ctx.continueSession(c, signedIn, sessionVersion);
     await ctx.emit('user.password_changed', { user: toMadauthUser({ ...user, sessionVersion }) });
     return c.json({});

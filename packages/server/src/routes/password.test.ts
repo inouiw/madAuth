@@ -536,6 +536,19 @@ describe('changing the password', () => {
     });
   });
 
+  it('ends a reset link sent before', async () => {
+    const { app, hook } = passwordApp();
+    const cookie = await signUpVerified(app, hook);
+    advance(61_000);
+    await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
+    const { token } = linkAndCode(hook.lastEmail());
+
+    expect((await change(app, cookie, { current: grace.password, password: 'new teapot sky!' })).status).toBe(200);
+
+    expect(await (await post(app, '/auth/password/reset', { token, password: 'other password!' })).json()).toMatchObject({ error: 'link_invalid' });
+    expect((await signIn(app, { password: 'new teapot sky!' })).status).toBe(200);
+  });
+
   it('takes no recent sign-in, and does not make the session count as one', async () => {
     const { app, hook } = passwordApp();
     const cookie = await signUpVerified(app, hook);
