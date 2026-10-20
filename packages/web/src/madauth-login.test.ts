@@ -53,6 +53,17 @@ describe('<madauth-login>', () => {
     expect($('h2').textContent).toBe('Log in to projectmatch');
   });
 
+  it('shows "by madAuth" with a link to madauth.com at the bottom', () => {
+    const footer = $<HTMLElement>('footer.branding');
+    const link = footer.querySelector('a')!;
+
+    expect(footer.textContent!.replace(/\s+/g, ' ').trim()).toBe('by madAuth');
+    expect(link.href).toBe('https://madauth.com/');
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toBe('noopener');
+    expect(link.getAttribute('aria-label')).toBe('madAuth, opens in a new tab');
+  });
+
   it('lists no method without providers (madAuth not initialized)', () => {
     expect(login.shadowRoot!.querySelectorAll('[data-method]')).toHaveLength(0);
     expect($('form.signin')).toBeNull();

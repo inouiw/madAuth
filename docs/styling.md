@@ -66,6 +66,7 @@ Use `::part()` to style an element directly.
 | `codes` | The list of recovery codes, shown once after the setup. |
 | `api-key` | A new [API key](api-keys.md), shown once to copy (monospace, selected with one click). |
 | `callback-url` | In the admin dialog, the callback URL to register at a sign-in provider (monospace, selected with one click, like `api-key`). |
+| `branding` | The line "by madAuth" at the bottom of the dialog, with the link to [madauth.com](https://madauth.com). |
 | `strength` | The strength meter under a new password (create account, new password): four bars and a word. It has `data-score` (0 to 4), and `data-too-easy` while the password is below the server's `minScore`. |
 
 ```css
