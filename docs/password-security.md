@@ -27,7 +27,7 @@ As [NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html) recommends,
 - **Easy to guess:** [zxcvbn-ts](https://zxcvbn-ts.github.io/zxcvbn/) rates the password from 0 to 4, and it needs at least `minScore` (default 2). The rating knows about 49,000 common passwords, keyboard patterns, repeats, dates, l33t and passwords close to these, and counts the user's e-mail address and name as easy to guess. This replaces a list of forbidden passwords you'd have to keep up to date. Only the first 64 characters are rated (a longer password is strong anyway), which keeps the rating at about 0.1 s even for 256 characters: it runs on the server's main thread, before any per-account limit.
 - **No rules like "one digit and one symbol":** they make users pick `Password1!`, which zxcvbn rates 0.
 
-Spaces and any Unicode characters are allowed, and leading and trailing spaces are kept. Admins set both rules while the server runs, see [Password rules](server.md#password-rules); they apply to sign-up, reset and a password a user adds, and only to new passwords. The rating runs inside madAuth, so the password is never sent anywhere. A reset checks the new password before the link or code is used, so a refused password doesn't use them up.
+Spaces and any Unicode characters are allowed, and leading and trailing spaces are kept. Admins set both rules while the server runs, see [Password rules](server.md#password-rules); they apply to sign-up, reset, a change and a password a user adds, and only to new passwords. The rating runs inside madAuth, so the password is never sent anywhere. A reset checks the new password before the link or code is used, so a refused password doesn't use them up.
 
 Code: `checkPasswordPolicy` in [`password.ts`](../packages/server/src/password.ts) and [`strength.ts`](../packages/server/src/strength.ts).
 
@@ -97,7 +97,13 @@ A password reset increases the session version and deletes the user's unused con
 
 **Limit:** your own backends usually check the JWT offline with [`createSessionVerifier`](server.md#verifying-the-session-in-your-backend), without asking madAuth. They accept an older session token until it expires, and with it the [claims](server.md#claims) it was issued with. That is `SESSION_TTL` at the longest (8 hours by default): after it, a session only continues if the madAuth server renews it, and it does not renew a session that a reset has ended. A shorter `SESSION_TTL` shortens this window without making users sign in more often.
 
-Code: `GET /auth/session` in [`packages/server/src/app.ts`](../packages/server/src/app.ts).
+### Changing the password
+
+A signed-in user changes their password with the current one and a new one (`POST /auth/password/change`, `Madauth.password.change`, or "Change" on the password in `Madauth.showManageSignInMethodsDialog()`). The current password proves who they are, as at GitHub, so it takes no [recent sign-in](sign-in-methods.md#only-within-two-minutes-of-signing-in); it is counted like a sign-in (see [Brute force](#brute-force)), so a stolen session can't be used to guess it faster. The new password is checked against the rules first, so a refused one doesn't count as an attempt. No second factor is asked for: the session passed it when the user signed in, and the new password alone signs in nowhere the old one didn't.
+
+The change increases the session version, which ends the user's other sessions as a reset does, and deletes their unused links and codes (a reset link sent before would otherwise still set a password) (with the same limit for backends that check the token offline). The session that made it gets new cookies for the same sign-in: its sign-in time and `amr` stay, so the change doesn't count as a recent sign-in for the changes that need one. The webhook is told with `user.password_changed`.
+
+Code: `GET /auth/session` in [`packages/server/src/app.ts`](../packages/server/src/app.ts), `/auth/password/change` in [`routes/password.ts`](../packages/server/src/routes/password.ts).
 
 ## Cross-site requests
 
@@ -106,7 +112,6 @@ All password endpoints are `POST` requests. madAuth only accepts them from an `O
 ## Not covered yet
 
 - Checking new passwords against lists of leaked passwords (e.g. Have I Been Pwned).
-- Changing the password while signed in (use "Forgot password?" meanwhile).
 - Moving users with existing password hashes from another system.
 
 A second factor for the password is covered: the [authenticator app](authenticator-security.md).

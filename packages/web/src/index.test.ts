@@ -50,7 +50,7 @@ describe('@madauth/web', () => {
 
   it('H12: scopes each sign-in method’s actions', () => {
     expect(Object.keys(madauth.Madauth.password).sort()).toEqual(
-      ['add', 'confirmReset', 'loadRating', 'pendingReset', 'policy', 'sendResetEmail', 'sendVerificationEmail', 'signIn', 'signUp', 'verifyEmail'].sort(),
+      ['add', 'change', 'confirmReset', 'loadRating', 'pendingReset', 'policy', 'sendResetEmail', 'sendVerificationEmail', 'signIn', 'signUp', 'verifyEmail'].sort(),
     );
     expect(Object.keys(madauth.Madauth.google).sort()).toEqual(['nonce', 'renderButton', 'signIn']);
     expect(Object.keys(madauth.Madauth.github)).toEqual(['renderButton']);

@@ -432,6 +432,17 @@ export function fakeServer(): FakeServer {
         }
         return json({});
       }
+      case 'POST /auth/password/change': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        const weak = weakPassword(body.password);
+        if (weak) return weak;
+        const account = server.accounts.get(user);
+        if (!account?.password) return json({ error: 'method_not_found', message: 'no password' }, 404);
+        if (account.password !== body.current) return json({ error: 'invalid_credentials', message: 'wrong' }, 401);
+        account.password = body.password as string;
+        return json({});
+      }
       // --- The e-mail link ---
       case 'POST /auth/email-link/send': {
         if (!server.emailLink) break;

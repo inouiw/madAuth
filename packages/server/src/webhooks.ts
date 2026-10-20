@@ -18,6 +18,7 @@ export const WEBHOOK_TYPES = [
   'user.signed_up',
   'user.email_verified',
   'user.password_reset',
+  'user.password_changed',
   'user.signed_in',
   'user.deleted',
   'user.claims_changed',

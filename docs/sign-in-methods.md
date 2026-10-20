@@ -27,7 +27,7 @@ What it covers:
 
 A change of several steps checks it when it starts, and its own state finishes it: the setup of the app or a phone (its setup cookie), a passkey's ceremony, a provider's redirect. Replacing or removing the phone starts with the code to the current number (`Madauth.sms.send()`), which the setup or the removal then takes. Two minutes rather than one, since after a sign-in with an SMS code the next SMS can only go a minute later.
 
-Exempt: an API key with the scope for the admin API (a key has no sign-in; making one takes the recent sign-in), the [setup token](server.md#first-setup), and what only takes access away: revoking an API key, an admin revoking a user's key, signing out.
+Exempt: changing the password, which takes the current one instead (see [Changing the password](password-security.md#changing-the-password)); an API key with the scope for the admin API (a key has no sign-in; making one takes the recent sign-in), the [setup token](server.md#first-setup), and what only takes access away: revoking an API key, an admin revoking a user's key, signing out.
 
 Code: `recentUser` in [`routes/helpers.ts`](../packages/server/src/routes/helpers.ts), `auth_time` in [`tokens.ts`](../packages/server/src/tokens.ts).
 
@@ -59,5 +59,4 @@ Code: `resetSignIn` in [`users.ts`](../packages/server/src/users.ts), `/auth/adm
 ## Not covered yet
 
 - Adding a method by signing in with it: an address that has a password never gets Google by a Google sign-in, also when Google verified the address.
-- Changing a password while signed in: "Forgot password?" sets a new one.
 - Revoking Google's grant when Google is removed.

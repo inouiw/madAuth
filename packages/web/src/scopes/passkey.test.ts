@@ -234,6 +234,12 @@ describe('Madauth.methods', () => {
     expect(await Madauth.methods.remove('acc_1')).toEqual({ isSuccess: true });
     expect(await Madauth.methods.remove('acc_1')).toMatchObject({ isSuccess: false, error: { code: 'method_not_found' } });
     expect(await Madauth.password.add({ password: 'another one, please' })).toMatchObject({ isSuccess: false, error: { code: 'already_added' } });
+    expect(await Madauth.password.change({ current: 'wrong password', password: 'another one, please' })).toMatchObject({
+      isSuccess: false,
+      error: { code: 'invalid_credentials' },
+    });
+    expect(await Madauth.password.change({ current: 'correct horse battery', password: 'another one, please' })).toEqual({ isSuccess: true });
+    expect(server.accounts.get(grace.email!)).toMatchObject({ password: 'another one, please' });
     server.staleSignIn = true;
     expect(await Madauth.methods.remove('acc_password')).toMatchObject({ isSuccess: false, error: { code: 'reauth_required' } });
 

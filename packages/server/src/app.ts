@@ -77,6 +77,8 @@ export interface SignIn {
   /** The user as stored, read with the session's check. */
   stored: StoredUser;
   signedInAt: number | null;
+  /** How the user signed in, as the session's token says. */
+  amr: string[];
 }
 
 /** What a request finds the server set up for: read from the store, so a change applies on every instance at once. */
@@ -116,6 +118,11 @@ export interface AppContext {
     signIn: { method: string; signedUpAt: number | null },
     extra?: { sv?: number },
   ): Promise<MadauthUser>;
+  /**
+   * Sets new session cookies for the same sign-in with the session version `sv`, e.g. after a change that ended
+   * the user's other sessions: its time and `amr` stay, so the change doesn't count as a recent sign-in.
+   */
+  continueSession(c: Context, signIn: SignIn, sv: number): Promise<void>;
   /**
    * Finishes a primary sign-in method that succeeded: the session, or the next step with a second factor
    * as the policy of `method` and what the user has set up demand. `amr` is how the user signed in so far;
@@ -269,6 +276,7 @@ export function createApp(config: MadauthConfig): Hono {
   const signInOf = (user: { user: MadauthUser; stored: StoredUser }, claims: SessionClaims): SignIn => ({
     ...user,
     signedInAt: typeof claims.auth_time === 'number' ? claims.auth_time * 1000 : null,
+    amr: claims.amr,
   });
 
   /**
@@ -344,6 +352,9 @@ export function createApp(config: MadauthConfig): Hono {
       // The first admin exists: the setup token stops working.
       if (promoted) await setup.close();
       return result;
+    },
+    async continueSession(c, { user, amr, signedInAt }, sv) {
+      await issueSession(c, user, amr, { sv, ...(signedInAt !== null ? { auth_time: Math.floor(signedInAt / 1000) } : {}) });
     },
     async secondStep(c, user, amr, method, profile) {
       const now = await this.methods(c);

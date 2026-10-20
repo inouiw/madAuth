@@ -66,9 +66,17 @@ export interface PasswordApi {
   /**
    * Adds a password to the signed-in user's methods (e.g. a Google user's): from then on it signs them in
    * too, with their address. Within two minutes of signing in only, else it fails with `reauth_required`.
-   * Fails with `weak_password`, `already_added` (they have one: "Forgot password?" changes it) or `no_session`.
+   * Fails with `weak_password`, `already_added` (they have one: {@link change} changes it) or `no_session`.
    */
   add(options: { password: string }): Promise<Result>;
+  /**
+   * Changes the signed-in user's password: `current` is the one they have, `password` the new one. Takes no
+   * recent sign-in: the current password proves who they are, and wrong ones count toward the same wait as a
+   * sign-in's. The user's other sessions end; this one goes on. Fails with `invalid_credentials` (the current
+   * password is wrong), `weak_password`, `too_many_attempts`, `method_not_found` (they have no password:
+   * {@link add} adds one) or `no_session`.
+   */
+  change(options: { current: string; password: string }): Promise<Result>;
   /**
    * The server's rules for new passwords, for hints in your form: the fewest characters (`minLength`) and how
    * hard to guess a password must be (`minScore`, 0 to 4 as zxcvbn rates it). And whether the method asks for
@@ -98,6 +106,13 @@ export function createPasswordApi(core: Core): PasswordApi {
     if (!provider()) return notRegistered();
     const res = await core.request<T>(path, { method: 'POST', body });
     return res.ok ? ok(res.data) : { isSuccess: false, error: res.error };
+  }
+
+  /** {@link call} for the signed-in user, whose result is only whether it worked. */
+  async function callSignedIn(path: string, body: Record<string, unknown>): Promise<Result> {
+    const result = await call(path, body);
+    if (!result.isSuccess && result.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
+    return result.isSuccess ? ok() : result;
   }
 
   const confirmation = emailConfirmation(core, 'password', call);
@@ -151,11 +166,8 @@ export function createPasswordApi(core: Core): PasswordApi {
       return result;
     },
 
-    async add({ password }) {
-      const result = await call('/auth/password/add', { password });
-      if (!result.isSuccess && result.error.code === 'no_session') return fail('no_session', 'Nobody is signed in.');
-      return result.isSuccess ? ok() : result;
-    },
+    add: ({ password }) => callSignedIn('/auth/password/add', { password }),
+    change: ({ current, password }) => callSignedIn('/auth/password/change', { current, password }),
 
     loadRating: loadPasswordRating,
 
