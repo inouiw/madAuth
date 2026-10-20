@@ -19,6 +19,8 @@ export interface Core {
   locale(): string | undefined;
   request<T>(path: string, init?: RequestInit): Promise<HttpResult<T>>;
   signedIn(user: MadauthUser): void;
+  /** The last known signed-in user, or null. */
+  currentUser(): MadauthUser | null;
   /** What a sign-in still needs with the authenticator app, if one is under way. */
   pendingStep(): PendingStep | null;
   /** A sign-in's first step is done and the authenticator app is next, or (null) the sign-in is over. */

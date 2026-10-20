@@ -4,7 +4,7 @@ import { Madauth } from '../madauth.js';
 import { GoogleFedcm } from '../providers/google-fedcm.js';
 import { GoogleRedirect } from '../providers/google-redirect.js';
 import { Password } from '../providers/password.js';
-import { SERVER, ada, fakeGis, fakeServer, resetAll, settle } from '../test-helpers.js';
+import { CLIENT_ID, CODE, SERVER, ada, fakeGis, fakeServer, gisScripts, grace, resetAll, settle } from '../test-helpers.js';
 
 beforeEach(() => {
   resetAll();
@@ -115,5 +115,104 @@ describe('Madauth.google.renderButton', () => {
     await settle();
 
     expect(gis.id.renderButton).not.toHaveBeenCalled();
+  });
+});
+
+describe('Madauth.google.nonce and signIn: an ID token the app obtained itself', () => {
+  it('H11: signs in with the token, without a Google provider in initialize and without Google’s script', async () => {
+    const server = fakeServer();
+    const listener = vi.fn();
+    Madauth.onAuthStateChanged(listener);
+    void Madauth.initialize({ serverUrl: SERVER, providers: [new Password()], ui: 'custom' });
+
+    // Works before initialize has finished.
+    const start = await Madauth.google.nonce();
+    expect(start).toEqual({ isSuccess: true, nonce: 'nonce-1', clientId: CLIENT_ID });
+    const result = await Madauth.google.signIn({ credential: 'native-id-token' });
+
+    expect(result).toEqual({ isSuccess: true, user: ada });
+    expect(server.requests.find((r) => r.path === '/auth/providers/google/nonce')).toMatchObject({ method: 'POST', credentials: 'include' });
+    expect(server.requests.find((r) => r.path === '/auth/providers/google/verify')).toMatchObject({
+      method: 'POST',
+      body: { credential: 'native-id-token', locale: navigator.language },
+      credentials: 'include',
+    });
+    expect(Madauth.currentUser).toEqual(ada);
+    expect(listener).toHaveBeenLastCalledWith(ada);
+    expect(gisScripts()).toHaveLength(0);
+  });
+
+  it('H11: fails before initialize, and when the server has no Google provider that is on', async () => {
+    expect(await Madauth.google.nonce()).toMatchObject({ isSuccess: false, error: { code: 'not_initialized' } });
+    const server = fakeServer();
+    server.google = false;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+
+    expect(await Madauth.google.nonce()).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+    expect(await Madauth.google.signIn({ credential: 'native-id-token' })).toMatchObject({ isSuccess: false, error: { code: 'flow_not_enabled' } });
+    expect(server.requests.some((r) => r.path.startsWith('/auth/providers/google'))).toBe(false);
+  });
+
+  it('H11: returns the server’s error and signs nobody in', async () => {
+    const server = fakeServer();
+    server.verifyError = 'other_method';
+    const listener = vi.fn();
+    Madauth.onAuthStateChanged(listener);
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    await settle();
+    listener.mockClear();
+
+    const result = await Madauth.google.signIn({ credential: 'native-id-token' });
+
+    expect(result).toEqual({ isSuccess: false, error: { code: 'other_method', message: 'rejected in test' } });
+    expect(Madauth.currentUser).toBeNull();
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('H11: goes on with the second step when the policy asks for one, like a password sign-in', async () => {
+    const server = fakeServer();
+    server.policy.google = 'optional';
+    server.authenticators.add(ada.email!);
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()], ui: 'custom' });
+
+    const first = await Madauth.google.signIn({ credential: 'native-id-token' });
+
+    expect(first).toMatchObject({ isSuccess: false, error: { code: 'authenticator_required', method: 'google', factors: ['authenticator'] } });
+    expect(Madauth.authenticator.pendingStep).toEqual({ step: 'code', method: 'google', factors: ['authenticator'] });
+    expect(Madauth.currentUser).toBeNull();
+
+    expect(await Madauth.authenticator.verify({ code: CODE })).toEqual({ isSuccess: true, user: ada });
+    expect(Madauth.authenticator.pendingStep).toBeNull();
+    expect(Madauth.currentUser).toEqual(ada);
+  });
+
+  it('H11: with purpose link, adds the Google account to the signed-in user and resolves with them as they are', async () => {
+    const server = fakeServer();
+    server.user = grace;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+
+    expect(await Madauth.google.signIn({ credential: 'native-id-token', purpose: 'link' })).toEqual({ isSuccess: true, user: grace });
+
+    expect(server.requests.find((r) => r.path === '/auth/providers/google/link')?.body).toEqual({ credential: 'native-id-token' });
+    expect(server.requests.some((r) => r.path === '/auth/providers/google/verify')).toBe(false);
+    expect(server.linked.get(grace.email!)).toContain('google');
+    expect(Madauth.currentUser).toEqual(grace);
+  });
+
+  it('H11: linking fails with reauth_required after two minutes, no_session for nobody, and account_taken', async () => {
+    const server = fakeServer();
+    server.user = grace;
+    server.staleSignIn = true;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password()] });
+    expect(await Madauth.google.signIn({ credential: 'native-id-token', purpose: 'link' })).toMatchObject({ isSuccess: false, error: { code: 'reauth_required' } });
+
+    server.staleSignIn = false;
+    server.verifyError = 'account_taken';
+    expect(await Madauth.google.signIn({ credential: 'native-id-token', purpose: 'link' })).toMatchObject({ isSuccess: false, error: { code: 'account_taken' } });
+
+    server.verifyError = undefined;
+    await Madauth.signOut();
+    expect(await Madauth.google.signIn({ credential: 'native-id-token', purpose: 'link' })).toEqual({ isSuccess: false, error: { code: 'no_session', message: 'Nobody is signed in.' } });
+    expect(server.linked.get(grace.email!)).toBeUndefined();
   });
 });
