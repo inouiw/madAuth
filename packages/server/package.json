@@ -1,6 +1,6 @@
 {
   "name": "@madauth/server",
-  "version": "0.7.0-beta.2",
+  "version": "0.7.0-beta.3",
   "description": "madAuth server: Google, GitHub, OpenID Connect, e-mail & password, e-mail link, passkey, authenticator-app and SMS-code sign-in with madAuth sessions, for Node, Docker, AWS Lambda and Azure Functions.",
   "license": "MIT",
   "author": "David Neuy",

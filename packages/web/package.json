@@ -1,6 +1,6 @@
 {
   "name": "@madauth/web",
-  "version": "0.7.0-beta.2",
+  "version": "0.7.0-beta.3",
   "description": "madAuth sign-in client and dialog as framework-agnostic web components: Google, GitHub, OpenID Connect, e-mail & password, e-mail link, passkeys, authenticator app and SMS codes.",
   "license": "MIT",
   "author": "David Neuy",
