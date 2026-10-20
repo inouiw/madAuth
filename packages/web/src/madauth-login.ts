@@ -21,7 +21,8 @@ import { pendingStepOf, secondStepOf, type PendingStep, type SecondFactorPolicy 
 import type { CodeOptions } from './scopes/authenticator.js';
 import { qrModules, qrViewBox, type QrModules } from './qr.js';
 import { SECOND_FACTORS, type MadauthError, type MadauthErrorCode, type MadauthUser, type Result, type SecondFactor } from './result.js';
-import { languageOf, stringsFor, type Strings } from './strings.js';
+import { languageOf } from './strings-core.js';
+import { stringsFor, type Strings } from './strings.js';
 
 export interface SignedInDetail {
   method: LoginMethodId;
@@ -1939,7 +1940,7 @@ export class MadauthLogin extends LitElement {
               </ul>
               ${connectable.length
                 ? html`<div class="buttons">
-                    ${connectable.map((m) => html`<div class="button-slot ${m}-slot" data-button=${m} data-purpose="link" title=${v.connect(nameOfMethod(m, s))}></div>`)}
+                    ${connectable.map((m) => html`<div class="button-slot ${m}-slot" data-button=${m} data-purpose="link" title=${s.connect(nameOfMethod(m, s))}></div>`)}
                   </div>`
                 : null}
             </section>

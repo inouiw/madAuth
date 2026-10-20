@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { de, en, languageOf, stringsFor } from './strings.js';
+import { coreDe, coreEn, coreStringsFor, languageOf, methodTexts } from './strings-core.js';
+import { de, en, stringsFor } from './strings.js';
 
 /** The keys of a string table, with the type of each text. */
 function shape(value: unknown): unknown {
@@ -22,18 +23,28 @@ describe('strings', () => {
     expect(stringsFor('DE_at')).toBe(de);
     expect(stringsFor('en')).toBe(en);
     expect(stringsFor('en-GB')).toBe(en);
+    expect(coreStringsFor('de-CH')).toBe(coreDe);
+    expect(coreStringsFor('en-GB')).toBe(coreEn);
   });
 
   it('falls back to English for other languages and without a locale', () => {
     for (const locale of ['fr', 'fr-DE', 'deu', 'toString', '', undefined]) {
       expect(languageOf(locale)).toBe('en');
       expect(stringsFor(locale)).toBe(en);
+      expect(coreStringsFor(locale)).toBe(coreEn);
     }
   });
 
   it('has every text in both languages', () => {
     expect(shape(de)).toEqual(shape(en));
+    expect(shape(coreDe)).toEqual(shape(coreEn));
     expect(texts(de).filter((text) => !text.trim())).toEqual([]);
+  });
+
+  it("the dialog's tables extend the client's, so both show the same texts", () => {
+    expect(en).toMatchObject(coreEn);
+    expect(de).toMatchObject(coreDe);
+    expect(en.methods).toBe(methodTexts);
   });
 
   it('addresses the user formally in German', () => {
