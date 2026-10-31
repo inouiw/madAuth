@@ -24,6 +24,7 @@ import { createEmailLinkApi } from './scopes/email-link.js';
 import { createGitHubApi } from './scopes/github.js';
 import { createGoogleApi } from './scopes/google.js';
 import { createMethodsApi } from './scopes/methods.js';
+import { createSecondFactorApi } from './scopes/second-factor.js';
 import { createApiKeysApi } from './scopes/api-keys.js';
 import { createPasskeyApi, type PasskeyInfo } from './scopes/passkey.js';
 import { createPasswordApi } from './scopes/password.js';
@@ -749,6 +750,9 @@ export const Madauth = {
 
   /** The signed-in user's sign-in methods: listing and removing them. */
   methods: createMethodsApi(core),
+
+  /** The signed-in user's second factors: which one a sign-in asks for first. */
+  secondFactor: createSecondFactorApi(core),
 
   /** The signed-in user's API keys, for programs that call your app's API or madAuth's admin API: making, listing and revoking them. */
   apiKeys: createApiKeysApi(core),

@@ -1,4 +1,5 @@
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
+import { live } from 'lit/directives/live.js';
 import {
   Madauth,
   currentLocale,
@@ -324,6 +325,8 @@ export class MadauthLogin extends LitElement {
     factors: { state: true },
     passwordScore: { state: true },
     methodList: { state: true },
+    secondFactors: { state: true },
+    preferredFactor: { state: true },
     appStatus: { state: true },
     appAction: { state: true },
     apiKeyList: { state: true },
@@ -406,6 +409,9 @@ export class MadauthLogin extends LitElement {
   private setupFactors?: SecondFactor[];
   /** The signed-in user's methods, in the methods view; undefined while they load. */
   private methodList?: SignInMethodInfo[];
+  /** The user's second factors in the order a sign-in asks for them, and the one they prefer; with the list. */
+  private secondFactors?: SecondFactor[];
+  private preferredFactor?: SecondFactor | null;
   /** The signed-in user's API keys, in the API keys view; undefined while they load. */
   private apiKeyList?: ApiKeyInfo[];
   /** The scopes the user may give a new key, in its form; undefined while they load. */
@@ -723,6 +729,8 @@ export class MadauthLogin extends LitElement {
     this.smsCodePurpose = 'signin';
     this.setupFactors = undefined;
     this.methodList = undefined;
+    this.secondFactors = undefined;
+    this.preferredFactor = undefined;
     this.apiKeyList = undefined;
     this.apiKeyScopes = undefined;
     this.chosenScopes = 0;
@@ -1899,7 +1907,7 @@ export class MadauthLogin extends LitElement {
   }
 
   /** To the list of methods, loaded anew, with what changed as the notice. */
-  private backToMethods(notice?: 'added' | 'removed' | 'passwordChanged' | 'codesReplaced' | 'appReplaced'): void {
+  private backToMethods(notice?: 'added' | 'removed' | 'passwordChanged' | 'codesReplaced' | 'appReplaced' | 'saved'): void {
     this.fromMethods = false;
     this.appAction = undefined;
     this.goTo('methods');
@@ -1915,6 +1923,40 @@ export class MadauthLogin extends LitElement {
       return;
     }
     this.methodList = result.methods;
+    this.secondFactors = result.secondFactors;
+    this.preferredFactor = result.preferredSecondFactor;
+  }
+
+  /** The second factors the user has, when there is a choice: which one a sign-in asks for first. */
+  private renderPreferredFactor() {
+    const factors = this.secondFactors ?? [];
+    if (factors.length < 2) return null;
+    const v = this.strings.methodsView;
+    // Without a preference, the first in the usual order is the one asked for: it is what the select shows. The
+    // options are reused when the order changes, and the user's choice is in the DOM: `live` sets each anew.
+    const current = this.preferredFactor ?? factors[0];
+    return html`
+      <div class="field preferred-factor">
+        <label for="preferred-factor">${v.askFirst}</label>
+        <select part="input" id="preferred-factor" name="preferredFactor" ?disabled=${this.busy} @change=${this.onPreferredFactor}>
+          ${factors.map((factor) => html`<option value=${factor} .selected=${live(factor === current)}>${v.factors[factor]}</option>`)}
+        </select>
+        <p class="hint">${v.askFirstHint}</p>
+      </div>
+    `;
+  }
+
+  private async onPreferredFactor(e: Event): Promise<void> {
+    const factor = (e.target as HTMLSelectElement).value as SecondFactor;
+    const result = await this.run(() => Madauth.secondFactor.setPreferred(factor));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      // The select shows what is stored again.
+      void this.loadMethods();
+      return;
+    }
+    this.backToMethods('saved');
   }
 
   /** A date as the user's language writes it, e.g. "3 Oct 2026". */
@@ -1968,6 +2010,7 @@ export class MadauthLogin extends LitElement {
                 `;
               })}
             </ul>
+            ${this.renderPreferredFactor()}
           `
         : html`<p class="hint" role="status">${v.loading}</p>`}
       ${list
@@ -3484,7 +3527,8 @@ export class MadauthLogin extends LitElement {
     }
 
     .method-list,
-    .app-actions {
+    .app-actions,
+    .preferred-factor {
       margin: 0 0 16px;
     }
     .method {

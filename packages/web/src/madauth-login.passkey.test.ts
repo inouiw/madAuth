@@ -247,6 +247,38 @@ describe('<madauth-login> and passkeys', () => {
     expect(server.accounts.get('ada@example.com')).toMatchObject({ password: 'adas own password!' });
   });
 
+  it('DP17: with more than one second factor, the user picks the one a sign-in asks for first', async () => {
+    const server = passkeyServer();
+    server.user = { id: 'usr_grace', email: 'grace@example.com', name: 'Grace Hopper' };
+    server.passkeys.set('cred-1', { email: 'grace@example.com', id: 'acc_1', name: 'Laptop' });
+    // Like the change of the password, it takes no recent sign-in.
+    server.staleSignIn = true;
+    await Madauth.initialize({ serverUrl: SERVER, providers: providers() });
+    void Madauth.showManageSignInMethodsDialog();
+    await settle();
+    // One factor: nothing to choose.
+    expect($('#preferred-factor')).toBeNull();
+    await click('[data-action="done"]');
+
+    server.authenticators.add('grace@example.com');
+    void Madauth.showManageSignInMethodsDialog();
+    await settle();
+    const select = () => $<HTMLSelectElement>('#preferred-factor')!;
+    expect(text('label[for="preferred-factor"]')).toBe('Second factor to ask for first');
+    expect([...select().options].map((o) => o.textContent)).toEqual(['Passkey', 'Authenticator app']);
+    // No preference yet: the usual order's first.
+    expect(select().value).toBe('passkey');
+
+    select().value = 'authenticator';
+    select().dispatchEvent(new Event('change'));
+    await settle();
+
+    expect(text('.notice')).toBe('Saved.');
+    expect(server.preferredFactors.get('grace@example.com')).toBe('authenticator');
+    expect(select().value).toBe('authenticator');
+    expect([...select().options].map((o) => o.value)).toEqual(['authenticator', 'passkey']);
+  });
+
   it('DP16: a password user changes it from the list, with the current one', async () => {
     const server = passkeyServer();
     server.user = { id: 'usr_grace', email: 'grace@example.com', name: 'Grace Hopper' };

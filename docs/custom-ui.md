@@ -340,10 +340,12 @@ With `policy.signUp`, `signUp({ email, name? })` creates an account that signs i
 
 | Method | Resolves to | Errors |
 | --- | --- | --- |
-| `list()` | `{ methods: [{ id, method, signIn, removable, createdAt, email?, name?, lastUsedAt? }] }` | `no_session` |
+| `list()` | `{ methods: [{ id, method, signIn, removable, createdAt, email?, name?, lastUsedAt? }], secondFactors, preferredSecondFactor }`: `secondFactors` are the user's second factors that are on (`passkey`, `authenticator`, `sms`), in the order a sign-in asks for them; `preferredSecondFactor` is the one the user chose to come first, or null | `no_session` |
 | `remove(id)` | — | `only_method` (the user's last way in), `required_by_policy`, `reauth_required`, `method_not_found`, `no_session` |
 
 A user adds a method with its own call: `Madauth.passkey.add()`, `Madauth.password.add({ password })`, `Madauth.emailLink.add()`, a provider's button with `purpose: 'link'` (Google, GitHub, `Madauth.provider(id)`), or the app's setup. Adding and removing need a sign-in within the last two minutes: otherwise they fail with `reauth_required`, and the user signs in again first. The authenticator app is removed with `Madauth.authenticator.remove`, gets new recovery codes with `newRecoveryCodes` and is replaced with `startSetup`, all of which take a code from it (or a recovery code); `status()` says how many recovery codes are left. See [Several sign-in methods](sign-in-methods.md).
+
+A user with more than one second factor chooses which one a sign-in asks for first with `Madauth.secondFactor.setPreferred(factor)` (`passkey`, `authenticator` or `sms`; `null` for the usual order: a passkey, then the app, then SMS). The others stay offered in `factors`. It takes no recent sign-in, and fails with `method_not_found` for a factor the user doesn't have or that is off. While the preferred one is gone, the usual order applies.
 
 ## API keys: `Madauth.apiKeys`
 
