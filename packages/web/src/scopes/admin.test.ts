@@ -170,8 +170,8 @@ describe('Madauth.admin', () => {
     const native = await Madauth.admin.addClient({ name: 'Editor', redirectUris: ['vscode://x/cb'], public: true });
     expect(native.isSuccess && 'clientSecret' in native).toBe(false);
     expect(await Madauth.admin.listClients()).toMatchObject({ isSuccess: true, clients: [{ id: 'mc_1' }, { id: 'mc_2' }] });
-    expect(await Madauth.admin.updateClient('mc_1', { name: 'Grafana 2', newSecret: true })).toMatchObject({ isSuccess: true, client: { name: 'Grafana 2' }, clientSecret: 'mcs_new' });
-    expect(server.requests.at(-1)!.body).toEqual({ id: 'mc_1', name: 'Grafana 2', newSecret: true });
+    expect(await Madauth.admin.updateClient('mc_1', { name: 'Grafana 2', newSecret: true, deviceFlow: true })).toMatchObject({ isSuccess: true, client: { name: 'Grafana 2', deviceFlow: true }, clientSecret: 'mcs_new' });
+    expect(server.requests.at(-1)!.body).toEqual({ id: 'mc_1', name: 'Grafana 2', newSecret: true, deviceFlow: true });
     expect(await Madauth.admin.removeClient('mc_1')).toMatchObject({ isSuccess: true, client: { id: 'mc_1' } });
     expect(await Madauth.admin.removeClient('mc_1')).toMatchObject({ isSuccess: false, error: { code: 'client_not_found' } });
     expect(await Madauth.admin.addClient({ name: 'Bad', redirectUris: [] })).toMatchObject({ isSuccess: false, error: { code: 'invalid_client' } });

@@ -136,7 +136,11 @@ export interface FakeServer {
   /** The app's login page an admin set; null: `/`. */
   loginUrl: string | null;
   /** The OpenID Connect clients an admin registered. */
-  clients: { id: string; name: string; public: boolean; redirectUris: string[]; postLogoutRedirectUris: string[]; createdAt: number; updatedAt: number }[];
+  clients: { id: string; name: string; public: boolean; redirectUris: string[]; postLogoutRedirectUris: string[]; deviceFlow: boolean; createdAt: number; updatedAt: number }[];
+  /** The devices waiting for a user's approval, by their user code without the dash. */
+  devices: { code: string; client: { id: string; name: string }; scope: string[]; expiresAt: number; boundTo?: string; decided?: 'approved' | 'denied' }[];
+  /** Whether the user typed too many wrong device codes. */
+  deviceLookupBlocked: boolean;
 }
 
 /** Sets or clears the cookie in which the real server tells when the session expires. */
@@ -198,6 +202,8 @@ export function fakeServer(): FakeServer {
     apiKeys: [],
     loginUrl: null,
     clients: [],
+    devices: [],
+    deviceLookupBlocked: false,
   };
   const mask = (phone: string) => `${phone.slice(0, 3)} ${'•'.repeat(Math.max(0, phone.length - 5))} ${phone.slice(-2)}`;
   const normalizePhone = (value: unknown) => {
@@ -839,6 +845,25 @@ export function fakeServer(): FakeServer {
         server.apiKeys.splice(index, 1);
         return json({ email, userId });
       }
+      // A device's sign-in: the code binds to whoever looks it up first, who then approves or denies it.
+      case 'POST /auth/device/lookup':
+      case 'POST /auth/device/approve':
+      case 'POST /auth/device/deny': {
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        const action = url.pathname.split('/').at(-1);
+        if (action === 'lookup' && server.deviceLookupBlocked) return json({ error: 'too_many_attempts', message: 'Too many wrong codes. Try again in a few minutes.' }, 429);
+        const code = String((body as { code?: unknown }).code ?? '').replace(/[\s-]/g, '').toUpperCase();
+        const request = server.devices.find((d) => d.code === code);
+        const invalid = () => json({ error: 'device_code_invalid', message: 'unknown' }, 404);
+        if (!request || request.decided || (request.boundTo && request.boundTo !== server.user.id)) return invalid();
+        if (action === 'lookup') {
+          request.boundTo = server.user.id;
+          return json({ code: `${code.slice(0, 4)}-${code.slice(4)}`, client: request.client, scope: request.scope, expiresAt: request.expiresAt });
+        }
+        if (!request.boundTo) return invalid();
+        request.decided = action === 'approve' ? 'approved' : 'denied';
+        return json({});
+      }
       // The OpenID Connect clients: a confidential one's secret shows when it is added or gets a new one.
       case 'POST /auth/admin/clients/list':
       case 'POST /auth/admin/clients/add':
@@ -849,10 +874,10 @@ export function fakeServer(): FakeServer {
         const action = url.pathname.split('/').at(-1);
         if (action === 'list') return json({ clients: server.clients });
         if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
-        const data = body as unknown as { id?: string; name?: string; redirectUris?: string[]; postLogoutRedirectUris?: string[]; public?: boolean; newSecret?: boolean };
+        const data = body as unknown as { id?: string; name?: string; redirectUris?: string[]; postLogoutRedirectUris?: string[]; public?: boolean; newSecret?: boolean; deviceFlow?: boolean };
         if (action === 'add') {
           if (!data.name || !data.redirectUris?.length) return json({ error: 'invalid_client', message: 'name and redirectUris' }, 400);
-          const client = { id: `mc_${server.clients.length + 1}`, name: data.name, public: !!data.public, redirectUris: data.redirectUris, postLogoutRedirectUris: data.postLogoutRedirectUris ?? [], createdAt: 1, updatedAt: 1 };
+          const client = { id: `mc_${server.clients.length + 1}`, name: data.name, public: !!data.public, redirectUris: data.redirectUris, postLogoutRedirectUris: data.postLogoutRedirectUris ?? [], deviceFlow: !!data.deviceFlow, createdAt: 1, updatedAt: 1 };
           server.clients.push(client);
           return json({ client, ...(client.public ? {} : { clientSecret: 'mcs_secret' }) });
         }
@@ -862,7 +887,7 @@ export function fakeServer(): FakeServer {
           server.clients.splice(server.clients.indexOf(client), 1);
           return json({ client });
         }
-        Object.assign(client, { ...(data.name ? { name: data.name } : {}), ...(data.redirectUris ? { redirectUris: data.redirectUris } : {}) });
+        Object.assign(client, { ...(data.name ? { name: data.name } : {}), ...(data.redirectUris ? { redirectUris: data.redirectUris } : {}), ...(data.deviceFlow !== undefined ? { deviceFlow: data.deviceFlow } : {}) });
         return json({ client, ...(data.newSecret && !client.public ? { clientSecret: 'mcs_new' } : {}) });
       }
       // The providers as the admin API answers them: an admin adds, changes and removes Google, GitHub and

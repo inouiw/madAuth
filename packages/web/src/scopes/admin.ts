@@ -117,6 +117,8 @@ export interface ClientInfo {
   redirectUris: string[];
   /** Where it may be sent back to after it signed the user out. */
   postLogoutRedirectUris: string[];
+  /** Whether it may sign in from a device without a browser (the device authorization grant). Absent from servers before 0.7. */
+  deviceFlow?: boolean;
   /** Milliseconds since 1970. */
   createdAt: number;
   updatedAt: number;
@@ -131,6 +133,8 @@ export interface ClientChanges {
   name?: string;
   redirectUris?: string[];
   postLogoutRedirectUris?: string[];
+  /** Whether it may use the device authorization grant: a TV or a command-line tool shows a code the user approves (default `false`). */
+  deviceFlow?: boolean;
 }
 
 /** A new application: its name and at least one redirect URI; `public: true` for one without a secret (default `false`). */

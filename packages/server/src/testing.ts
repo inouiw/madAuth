@@ -29,6 +29,8 @@ function testUser(overrides: Row = {}): Row {
     signedUpAt: null,
     signUpMethod: null,
     preferredSecondFactor: null,
+    wrongDeviceCodes: null,
+    wrongDeviceCodeAt: null,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };

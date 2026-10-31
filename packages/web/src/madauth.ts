@@ -20,6 +20,7 @@ import { FACTOR_STEPS, pendingStepOf, type DeletedAccount, type PendingStep, typ
 import { fail, isSecondFactor, ok, toErrorCode, type MadauthError, type MadauthUser, type Result } from './result.js';
 import type { Core } from './scopes/core.js';
 import { createAdminApi } from './scopes/admin.js';
+import { createDeviceApi } from './scopes/device.js';
 import { createEmailLinkApi } from './scopes/email-link.js';
 import { createGitHubApi } from './scopes/github.js';
 import { createGoogleApi } from './scopes/google.js';
@@ -600,6 +601,24 @@ export const Madauth = {
    * user to sign in again when needed. Fails with `no_session` when nobody is signed in. With `ui: 'custom'`
    * use `Madauth.apiKeys`.
    */
+  /**
+   * Opens the dialog to sign in a device without a browser (a TV, a command-line tool) that shows a code: the
+   * user types it, or `code` comes from the page's URL (`madauth_device`, see "OpenID Connect provider" in
+   * docs/server.md), sees which application asks, and approves or denies it. A user who isn't signed in signs
+   * in first. Resolves with `approved` once the user decided; fails with `cancelled` when the dialog is closed
+   * before. With `ui: 'custom'` use `Madauth.device`.
+   */
+  async showDeviceApprovalDialog(options: { code?: string } = {}): Promise<Result<{ approved: boolean }>> {
+    const ready = await dialogReady('showDeviceApprovalDialog', 'Madauth.device');
+    if (!ready.isSuccess) return ready;
+    if (options.code !== undefined && typeof options.code !== 'string') return fail('invalid_options', 'code must be a string.');
+    return dialogFlow<Result<{ approved: boolean }>>(
+      (element) => element.openDevice(options.code),
+      { 'madauth-device-decided': (event) => ok({ approved: event.detail.approved }) },
+      fail('cancelled', 'The dialog was closed.'),
+    );
+  },
+
   async showManageApiKeysDialog(): Promise<Result> {
     const ready = await dialogReady('showManageApiKeysDialog', 'Madauth.apiKeys');
     if (!ready.isSuccess) return ready;
@@ -759,6 +778,8 @@ export const Madauth = {
 
   /** Reading and setting claims and settings, for users with the role `admin`. */
   admin: createAdminApi(core),
+  /** Approving a device's sign-in (a TV, a command-line tool) on a custom screen; the dialog does it with `showDeviceApprovalDialog`. */
+  device: createDeviceApi(core),
 
   /**
    * Calls `listener` with the current user once it is known, and again on every sign-in and sign-out.

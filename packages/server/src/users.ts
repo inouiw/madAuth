@@ -38,6 +38,9 @@ export interface StoredUser {
    * has is ignored. Empty for the usual order, and in records from before schema version 11.
    */
   preferredSecondFactor: string | null;
+  /** Wrong device codes typed since `wrongDeviceCodeAt` (see routes/oidc-endpoints.ts). Empty in records from before schema version 13. */
+  wrongDeviceCodes: number | null;
+  wrongDeviceCodeAt: number | null;
   createdAt: number;
 }
 
@@ -480,6 +483,8 @@ export class Users {
       signedUpAt: 0,
       signUpMethod: data.signUpMethod ?? null,
       preferredSecondFactor: null,
+      wrongDeviceCodes: null,
+      wrongDeviceCodeAt: null,
       createdAt: Date.now(),
     };
     if (!(await this.store.create('user', user as unknown as Row))) return null;
@@ -556,6 +561,7 @@ export class Users {
     await this.store.delete('apiKey', { userId });
     await this.store.delete('oidcCode', { userId });
     await this.store.delete('oidcRefreshToken', { userId });
+    await this.store.delete('oidcDeviceCode', { userId });
     return removed;
   }
 
@@ -698,10 +704,16 @@ export class Users {
       await this.store.delete('apiKey', { userId: user.id });
       await this.store.delete('oidcCode', { userId: user.id });
       await this.store.delete('oidcRefreshToken', { userId: user.id });
+      await this.store.delete('oidcDeviceCode', { userId: user.id });
     } catch (e) {
       console.error(`[madauth] Deleted user ${user.id}, but not all of their records: ${(e as Error).message}`);
     }
     return true;
+  }
+
+  /** Counts a wrong device code, if the user's count is still the one read: false if another request counted meanwhile. */
+  async countDeviceCode(user: StoredUser, patch: Pick<StoredUser, 'wrongDeviceCodes' | 'wrongDeviceCodeAt'>): Promise<boolean> {
+    return (await this.store.update('user', { id: user.id, wrongDeviceCodes: user.wrongDeviceCodes }, patch)) === 1;
   }
 
   async updateUser(id: string, patch: Partial<Omit<StoredUser, 'id'>>): Promise<void> {

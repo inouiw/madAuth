@@ -9,14 +9,21 @@ import type { AppContext } from '../app.js';
 import { claimsFromJson } from '../claims.js';
 import {
   ACCESS_TOKEN_TTL_S,
+  DEVICE_CODE_TTL_MS,
+  DEVICE_POLL_INTERVAL_S,
   ID_TOKEN_TTL_S,
+  MAX_WRONG_DEVICE_CODES,
   OIDC_SCOPES,
+  WRONG_DEVICE_CODES_WINDOW_MS,
   clientInfo,
+  formatUserCode,
   matchesRedirectUri,
+  normalizeUserCode,
   type Grant,
   type OidcClients,
   type StoredClient,
 } from '../oidc-clients.js';
+import { body, error, noSession, reauthRequired } from './helpers.js';
 import { SIGNING_ALG } from '../keys.js';
 import { parseLoginUrl } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
@@ -37,6 +44,18 @@ export const ID_TOKEN_TYP = 'JWT';
  * that sent them there (`<issuer>/auth/oidc/authorize?…`).
  */
 export const LOGIN_RETURN_PARAM = 'madauth_return';
+
+/**
+ * Query parameter of the app's login page with a device's user code (`verification_uri_complete`, e.g. from a QR
+ * code): the page opens the approval with it, so the user needn't type it.
+ */
+export const DEVICE_CODE_PARAM = 'madauth_device';
+
+/** The grant type of the device authorization grant (RFC 8628). */
+const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
+
+/** The scopes madAuth knows among those asked for, as a grant stores them. */
+const knownScopes = (scope: string | undefined): string[] => (scope ?? '').split(' ').filter((s) => (OIDC_SCOPES as readonly string[]).includes(s));
 
 /** The claims of an access token beyond the standard ones. */
 interface AccessTokenClaims extends JWTPayload {
@@ -99,7 +118,8 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       scopes_supported: OIDC_SCOPES,
       response_types_supported: ['code'],
       response_modes_supported: ['query'],
-      grant_types_supported: ['authorization_code', 'refresh_token'],
+      device_authorization_endpoint: endpoint('device'),
+      grant_types_supported: ['authorization_code', 'refresh_token', DEVICE_GRANT],
       subject_types_supported: ['public'],
       id_token_signing_alg_values_supported: [SIGNING_ALG],
       token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
@@ -117,9 +137,11 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
   /** An authorization request that can't go back to the client: its client or redirect URI is unknown. */
   const badRequest = (c: Context, message: string) => c.text(`This sign-in request is not valid: ${message}`, 400);
 
+  /** The app's login page, as an admin set it; it also approves devices. */
+  const appPage = async (): Promise<URL> => new URL(parseLoginUrl(await ctx.settings.loginUrl(), ctx.config.allowedOrigins) ?? '/', issuer);
   /** The app's login page, which signs the user in and goes back to `returnTo`. */
   const loginPage = async (returnTo: URL): Promise<string> => {
-    const login = new URL(parseLoginUrl(await ctx.settings.loginUrl(), ctx.config.allowedOrigins) ?? '/', issuer);
+    const login = await appPage();
     login.searchParams.set(LOGIN_RETURN_PARAM, returnTo.toString());
     return login.toString();
   };
@@ -177,7 +199,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     const grant: Grant = {
       clientId: client.id,
       userId: user.id,
-      scope: scopes.filter((scope) => (OIDC_SCOPES as readonly string[]).includes(scope)).join(' '),
+      scope: knownScopes(params.scope).join(' '),
       authTime: Math.floor(signIn.signedInAt! / 1000),
       amr: signIn.amr.join(' '),
       sessionVersion: user.sessionVersion,
@@ -215,8 +237,8 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     return proven ? client : invalidClient();
   };
 
-  /** The tokens of a grant: an access token, an ID token (with the scope `openid`) and the refresh token given. */
-  const tokens = async (c: Context, user: StoredUser, grant: Grant, scope: string, refreshToken: string, nonce: string | null) => {
+  /** The tokens of a grant: an access token, an ID token (with the scope `openid`) and the refresh token given, if any. */
+  const tokens = async (c: Context, user: StoredUser, grant: Grant, scope: string, refreshToken: string | null, nonce: string | null) => {
     const extra = userClaims(user, scope);
     const amr = grant.amr.split(' ').filter(Boolean);
     const access: AccessTokenClaims = {
@@ -237,8 +259,19 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       { sub: user.id, aud: grant.clientId, auth_time: grant.authTime, amr, ...(nonce !== null ? { nonce } : {}), at_hash: atHash(accessToken), ...extra },
       ID_TOKEN_TTL_S,
     );
-    return c.json({ access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TOKEN_TTL_S, ...(idToken ? { id_token: idToken } : {}), refresh_token: refreshToken, scope });
+    return c.json({
+      access_token: accessToken,
+      token_type: 'Bearer',
+      expires_in: ACCESS_TOKEN_TTL_S,
+      ...(idToken ? { id_token: idToken } : {}),
+      ...(refreshToken ? { refresh_token: refreshToken } : {}),
+      scope,
+    });
   };
+
+  /** A refresh token for a grant with the scope `offline_access`; none otherwise. */
+  const refreshTokenFor = async (grant: Grant): Promise<string | null> =>
+    grant.scope.split(' ').includes('offline_access') ? clients.startRefreshChain(grant) : null;
 
   /** The user of a grant if their sessions haven't ended since: a password reset or change, or a sign-in reset, ends the grant. */
   const userOf = async (grant: Grant): Promise<StoredUser | null> => {
@@ -260,8 +293,24 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       if (!form.code_verifier || !pkceMatches(form.code_verifier, code.codeChallenge)) return tokenError(c, 400, 'invalid_grant', 'code_verifier does not match the code_challenge.');
       const user = await userOf(code);
       if (!user) return tokenError(c, 400, 'invalid_grant', 'The sign-in has ended.');
-      const refreshToken = await clients.startRefreshChain(code);
-      return tokens(c, user, code, code.scope, refreshToken, code.nonce);
+      return tokens(c, user, code, code.scope, await refreshTokenFor(code), code.nonce);
+    }
+
+    if (form.grant_type === DEVICE_GRANT) {
+      const polled = form.device_code ? await clients.pollDevice(form.device_code, client.id) : ({ error: 'invalid_grant' } as const);
+      if ('error' in polled) {
+        const descriptions = {
+          invalid_grant: 'The device code is unknown.',
+          authorization_pending: 'The user has not approved the sign-in yet.',
+          slow_down: `Poll every ${DEVICE_POLL_INTERVAL_S} seconds at most.`,
+          expired_token: 'The device code expired: start again.',
+          access_denied: 'The user denied the sign-in.',
+        };
+        return tokenError(c, 400, polled.error, descriptions[polled.error]);
+      }
+      const user = await userOf(polled.grant);
+      if (!user) return tokenError(c, 400, 'invalid_grant', 'The sign-in has ended.');
+      return tokens(c, user, polled.grant, polled.grant.scope, await refreshTokenFor(polled.grant), null);
     }
 
     if (form.grant_type === 'refresh_token') {
@@ -279,8 +328,86 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       return tokens(c, user, used.chain, asked.join(' '), used.token, null);
     }
 
-    return tokenError(c, 400, 'unsupported_grant_type', 'grant_type must be authorization_code or refresh_token.');
+    return tokenError(c, 400, 'unsupported_grant_type', `grant_type must be authorization_code, refresh_token or ${DEVICE_GRANT}.`);
   });
+
+  // --- The device authorization grant (RFC 8628): the device's side ---
+
+  // A device without a browser (a TV, a command-line tool) asks for a code the user types on another device.
+  app.post(`${OIDC_PATH}device`, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const form = await paramsOf(c);
+    const client = await authenticate(c, form);
+    if (client instanceof Response) return client;
+    if (!client.deviceFlow) return tokenError(c, 400, 'unauthorized_client', 'This application may not use the device authorization grant: an admin allows it with deviceFlow.');
+    const started = await clients.startDevice(client.id, knownScopes(form.scope).join(' '));
+    const page = await appPage();
+    const complete = new URL(page);
+    complete.searchParams.set(DEVICE_CODE_PARAM, formatUserCode(started.userCode));
+    return c.json({
+      device_code: started.deviceCode,
+      user_code: formatUserCode(started.userCode),
+      verification_uri: page.toString(),
+      verification_uri_complete: complete.toString(),
+      expires_in: Math.floor(DEVICE_CODE_TTL_MS / 1000),
+      interval: DEVICE_POLL_INTERVAL_S,
+    });
+  });
+
+  // --- The device authorization grant: the user's side, on the app's page with a session ---
+
+  const invalidDeviceCode = (c: Context) => error(c, 404, 'device_code_invalid', 'This code is unknown, expired or was used already.');
+
+  /**
+   * Takes one of the user's five tries of ten minutes before a code is looked up: a code of 34 bits is guessable
+   * with enough tries, also with many requests at once. The write lands only against the count it read, so
+   * parallel requests count one each. Resolves to the answer when the user has to wait, else to null; a right
+   * code gives the tries back.
+   */
+  const takeGuess = async (c: Context, userId: string): Promise<Response | null> => {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const user = await ctx.users.findById(userId);
+      if (!user) return noSession(c);
+      const now = Date.now();
+      const inWindow = user.wrongDeviceCodeAt !== null && now - user.wrongDeviceCodeAt < WRONG_DEVICE_CODES_WINDOW_MS;
+      const wrong = inWindow ? (user.wrongDeviceCodes ?? 0) : 0;
+      if (wrong >= MAX_WRONG_DEVICE_CODES) return error(c, 429, 'too_many_attempts', 'Too many wrong codes. Try again in a few minutes.');
+      const patch = { wrongDeviceCodes: wrong + 1, wrongDeviceCodeAt: inWindow ? user.wrongDeviceCodeAt : now };
+      if (await ctx.users.countDeviceCode(user, patch)) return null;
+    }
+    return error(c, 429, 'too_many_attempts', 'Too many codes at once. Try again in a moment.');
+  };
+
+  // What the device asks for, bound to this user from now on: only they can approve or deny it.
+  app.post('/auth/device/lookup', async (c) => {
+    const signIn = await ctx.currentSignIn(c);
+    if (!signIn) return noSession(c);
+    const wait = await takeGuess(c, signIn.user.id);
+    if (wait) return wait;
+    const userCode = normalizeUserCode((await body(c)).code);
+    const pending = userCode ? await clients.lookupDevice(userCode, signIn.user.id) : null;
+    if (!pending) return invalidDeviceCode(c);
+    // A right code: the tries are the user's again.
+    await ctx.users.updateUser(signIn.user.id, { wrongDeviceCodes: 0 });
+    // The client exists: it authenticated when it started.
+    const client = await clients.find(pending.clientId);
+    if (!client) return invalidDeviceCode(c);
+    return c.json({ code: formatUserCode(pending.userCode), client: { id: client.id, name: client.name }, scope: pending.scope.split(' ').filter(Boolean), expiresAt: pending.expiresAt });
+  });
+
+  // The user's decision, with how they signed in, which the device's tokens carry (auth_time, amr).
+  const decide = (decision: 'approved' | 'denied') => async (c: Context) => {
+    const signIn = await ctx.currentSignIn(c);
+    if (!signIn) return noSession(c);
+    const userCode = normalizeUserCode((await body(c)).code);
+    // The device's tokens say when the user signed in: a session that doesn't know (from before 0.6) signs in again.
+    if (decision === 'approved' && signIn.signedInAt === null) return reauthRequired(c);
+    const authTime = Math.floor((signIn.signedInAt ?? Date.now()) / 1000);
+    const made = userCode ? await clients.decideDevice(userCode, signIn.user.id, decision, { authTime, amr: signIn.amr.join(' '), sessionVersion: signIn.stored.sessionVersion }) : false;
+    return made ? c.json({}) : invalidDeviceCode(c);
+  };
+  app.post('/auth/device/approve', decide('approved'));
+  app.post('/auth/device/deny', decide('denied'));
 
   // --- User info ---
 

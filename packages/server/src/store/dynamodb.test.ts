@@ -112,6 +112,8 @@ const user = {
   signedUpAt: null,
   signUpMethod: null,
   preferredSecondFactor: null,
+  wrongDeviceCodes: null,
+  wrongDeviceCodeAt: null,
   createdAt: 1,
 };
 
@@ -131,6 +133,8 @@ const userItem = {
   signedUpAt: { NULL: true },
   signUpMethod: { NULL: true },
   preferredSecondFactor: { NULL: true },
+  wrongDeviceCodes: { NULL: true },
+  wrongDeviceCodeAt: { NULL: true },
   createdAt: { N: '1' },
 };
 

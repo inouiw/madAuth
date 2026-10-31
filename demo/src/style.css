@@ -106,6 +106,7 @@ main {
 #sign-out:focus-visible,
 #manage-methods:focus-visible,
 #manage-api-keys:focus-visible,
+#approve-device:focus-visible,
 #admin-dialog:focus-visible,
 #theme-toggle:focus-visible,
 #flow a:focus-visible,
@@ -536,6 +537,7 @@ pre {
 /* The ways into the dialog's lists of the user's sign-in methods and API keys, and of the providers for admins: the name, and the call below it. */
 #manage-methods,
 #manage-api-keys,
+#approve-device,
 #admin-dialog {
   display: grid;
   gap: 2px;
@@ -552,12 +554,14 @@ pre {
 
 #manage-methods:hover,
 #manage-api-keys:hover,
+#approve-device:hover,
 #admin-dialog:hover {
   background: light-dark(#f3f4f5, #2c2d32);
 }
 
 #manage-methods code,
 #manage-api-keys code,
+#approve-device code,
 #admin-dialog code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8125rem;

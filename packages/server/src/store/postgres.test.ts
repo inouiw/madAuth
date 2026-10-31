@@ -70,6 +70,8 @@ describe.skipIf(!url)('Postgres adapter with a database', () => {
     signedUpAt: null,
     signUpMethod: null,
     preferredSecondFactor: null,
+    wrongDeviceCodes: null,
+    wrongDeviceCodeAt: null,
     createdAt: 1,
   };
 

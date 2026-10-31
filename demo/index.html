@@ -98,6 +98,11 @@
           API Keys
           <code>Madauth.showManageApiKeysDialog()</code>
         </button>
+        <!-- A device without a browser (a TV, a command-line tool) shows a code: Madauth.showDeviceApprovalDialog() lets it sign in as the user. -->
+        <button id="approve-device" type="button" data-call="approveDevice">
+          Sign in a device
+          <code>Madauth.showDeviceApprovalDialog()</code>
+        </button>
         <p class="api-keys-hint">
           The demo's own scopes (<code>notes:read</code>, <code>notes:write</code>) are examples from
           <a href="api-scopes.json">api-scopes.json</a>, which the server reads from <code>API_KEY_SCOPES_URL</code>; the demo
