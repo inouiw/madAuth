@@ -556,8 +556,8 @@ export class Users {
   }
 
   /**
-   * Raises the session version and marks the address unconfirmed, with wrong codes counted from zero and no
-   * pending sign-up's method.
+   * Raises the session version and marks the address unconfirmed, with wrong codes counted from zero, no
+   * pending sign-up's method and no preferred second factor.
    */
   private async endSignIns(userId: string): Promise<void> {
     const user = await this.findById(userId);

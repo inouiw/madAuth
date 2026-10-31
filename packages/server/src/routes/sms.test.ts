@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_ORIGIN, WEBHOOK_SECRET, WEBHOOK_URL, cookies, passwordApp, post, signUpVerified, setMethods, type TestMethods } from '../test/helpers.js';
 import { base32Decode, stepOf, totp } from '../authenticator.js';
+import { Users } from '../users.js';
 
 type Made = ReturnType<typeof passwordApp>;
 type App = Made['app'];
@@ -466,5 +467,17 @@ describe('the preferred second factor', () => {
     // Back on, the preference holds again: it was never forgotten.
     await setMethods(store, { google: {}, password: { secondFactor: 'optional' }, sms: {} });
     expect(await askedFor(app)).toMatchObject({ error: 'sms_required' });
+  });
+
+  it('a sign-in reset forgets it, with the factors', async () => {
+    const { app, store, session } = await withBoth();
+    await prefer(app, session, 'sms');
+    const users = new Users(store);
+    const grace = (await users.findByEmail('grace@example.com'))!;
+    expect(grace.preferredSecondFactor).toBe('sms');
+
+    await users.resetSignIn(grace.id);
+
+    expect((await users.findById(grace.id))!.preferredSecondFactor).toBeNull();
   });
 });
