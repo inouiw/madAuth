@@ -1,10 +1,11 @@
-# Publishes a release when a version tag (v1.2.3, or v1.2.3-beta.1 for a prerelease) is pushed:
-# @madauth/google-identity, @madauth/web and @madauth/server to npm, the server image to GHCR, and the server bundles to a GitHub release.
+# Publishes a release when a version tag is pushed. A madAuth tag (v1.2.3, or v1.2.3-beta.1 for a prerelease)
+# publishes @madauth/web and @madauth/server to npm, the server image to GHCR, and the server bundles to a GitHub
+# release. A google-identity-v1.2.3 tag publishes @madauth/google-identity to npm, which has a version of its own.
 name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*', 'google-identity-v*']
 
 permissions:
   contents: read
@@ -15,6 +16,9 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      # The workspaces the tag releases, space-separated, and whether it is a madAuth release (image, GitHub release).
+      packages: ${{ steps.version.outputs.packages }}
+      madauth: ${{ steps.version.outputs.madauth }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -24,8 +28,11 @@ jobs:
       - name: Check the tag matches the package versions
         id: version
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          for pkg in packages/google-identity packages/web packages/server; do
+          case "$GITHUB_REF_NAME" in
+            google-identity-v*) version="${GITHUB_REF_NAME#google-identity-v}"; packages="packages/google-identity"; madauth=false ;;
+            *) version="${GITHUB_REF_NAME#v}"; packages="packages/web packages/server"; madauth=true ;;
+          esac
+          for pkg in $packages; do
             actual=$(node -p "require('./$pkg/package.json').version")
             if [ "$actual" != "$version" ]; then
               echo "::error::$pkg is at version $actual, but the tag is $GITHUB_REF_NAME"
@@ -33,6 +40,8 @@ jobs:
             fi
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          echo "madauth=$madauth" >> "$GITHUB_OUTPUT"
           if [[ "$version" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
       - run: npm ci
       - run: npm run typecheck
@@ -55,14 +64,22 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
       - run: npm ci
-      - run: npm run build -w packages/google-identity -w packages/server -w packages/web
+      - name: Build the packages the tag releases
+        env:
+          PACKAGES: ${{ needs.check.outputs.packages }}
+        run: |
+          # @madauth/web's build needs @madauth/google-identity's, so that one is always built.
+          args="-w packages/google-identity"
+          for pkg in $PACKAGES; do [ "$pkg" = packages/google-identity ] || args="$args -w $pkg"; done
+          npm run build $args
       # Skips a package whose version is already on npm, e.g. the hand-published first version or a re-run.
       - name: Publish to npm
         env:
           VERSION: ${{ needs.check.outputs.version }}
           DIST_TAG: ${{ needs.check.outputs.prerelease == 'true' && 'next' || 'latest' }}
+          PACKAGES: ${{ needs.check.outputs.packages }}
         run: |
-          for pkg in packages/google-identity packages/server packages/web; do
+          for pkg in $PACKAGES; do
             name=$(node -p "require('./$pkg/package.json').name")
             if npm view "$name@$VERSION" version >/dev/null 2>&1; then
               echo "$name@$VERSION is already published, skipping"
@@ -74,6 +91,7 @@ jobs:
   docker:
     # After npm, so the image isn't pushed for a release that npm rejected or that is still waiting for approval.
     needs: [check, npm]
+    if: needs.check.outputs.madauth == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -107,6 +125,7 @@ jobs:
 
   github-release:
     needs: [check, npm, docker]
+    if: needs.check.outputs.madauth == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -122,10 +141,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # The notes start at the previous madAuth release, not at a google-identity tag that may be more recent.
+          git fetch --quiet --tags
+          previous=$(git tag --list 'v*' --sort=-v:refname | grep -vx "$GITHUB_REF_NAME" | head -1)
           cd packages/server/dist/standalone
           cp main.mjs madauth-server-node.mjs
           cp lambda.mjs madauth-server-lambda.mjs
           cp azure.mjs madauth-server-azure.mjs
-          gh release create "$GITHUB_REF_NAME" --generate-notes \
+          gh release create "$GITHUB_REF_NAME" --generate-notes ${previous:+--notes-start-tag "$previous"} \
             ${{ needs.check.outputs.prerelease == 'true' && '--prerelease' || '' }} \
             madauth-server-node.mjs madauth-server-lambda.mjs madauth-server-azure.mjs
