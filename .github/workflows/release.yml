@@ -64,8 +64,14 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
       - run: npm ci
-      # @madauth/web's build needs @madauth/google-identity's.
-      - run: npm run build -w packages/google-identity -w packages/server -w packages/web
+      - name: Build the packages the tag releases
+        env:
+          PACKAGES: ${{ needs.check.outputs.packages }}
+        run: |
+          # @madauth/web's build needs @madauth/google-identity's, so that one is always built.
+          args="-w packages/google-identity"
+          for pkg in $PACKAGES; do [ "$pkg" = packages/google-identity ] || args="$args -w $pkg"; done
+          npm run build $args
       # Skips a package whose version is already on npm, e.g. the hand-published first version or a re-run.
       - name: Publish to npm
         env:
@@ -135,10 +141,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # The notes start at the previous madAuth release, not at a google-identity tag that may be more recent.
+          git fetch --quiet --tags
+          previous=$(git tag --list 'v*' --sort=-v:refname | grep -vx "$GITHUB_REF_NAME" | head -1)
           cd packages/server/dist/standalone
           cp main.mjs madauth-server-node.mjs
           cp lambda.mjs madauth-server-lambda.mjs
           cp azure.mjs madauth-server-azure.mjs
-          gh release create "$GITHUB_REF_NAME" --generate-notes \
+          gh release create "$GITHUB_REF_NAME" --generate-notes ${previous:+--notes-start-tag "$previous"} \
             ${{ needs.check.outputs.prerelease == 'true' && '--prerelease' || '' }} \
             madauth-server-node.mjs madauth-server-lambda.mjs madauth-server-azure.mjs

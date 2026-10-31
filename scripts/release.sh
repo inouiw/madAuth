@@ -83,11 +83,13 @@ if [ "$package" = madauth ]; then
   satisfied=$(node -e '
     const range = require("./packages/web/package.json").dependencies["@madauth/google-identity"];
     const v = require("./packages/google-identity/package.json").version;
-    // A caret range on the same major (and the same minor below 1.0), from the range'"'"'s version upwards.
+    // A caret range on the same major (and the same minor below 1.0), from the range'"'"'s version upwards. Like npm,
+    // a prerelease only satisfies a range whose version has the same major.minor.patch (and a prerelease itself).
     const [rv, vv] = [range.replace(/^\^/, ""), v].map((s) => s.split(/[-.]/).slice(0, 3).map(Number));
     const sameLine = rv[0] === vv[0] && (rv[0] > 0 || rv[1] === vv[1]);
     const notBelow = vv[0] > rv[0] || (vv[0] === rv[0] && (vv[1] > rv[1] || (vv[1] === rv[1] && vv[2] >= rv[2])));
-    console.log(range.startsWith("^") && sameLine && notBelow);
+    const prerelease = v.includes("-") ? range.includes("-") && rv.join(".") === vv.join(".") : true;
+    console.log(range.startsWith("^") && sameLine && notBelow && prerelease);
   ')
   [ "$satisfied" = true ] ||
     fail "packages/web's dependency on @madauth/google-identity ($(node -p "require('./packages/web/package.json').dependencies['@madauth/google-identity']")) does not take packages/google-identity's version $(node -p "require('./packages/google-identity/package.json').version"): set it to a caret range that does (release @madauth/google-identity first if it is new)."
