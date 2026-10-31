@@ -118,6 +118,15 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
     version: 11,
     sql: (dialect) => `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('preferredSecondFactor')} ${columnType(dialect, madauthSchema.models.user.fields.preferredSecondFactor)};`,
   },
+  {
+    // madAuth as an OpenID Connect provider: its clients, authorization codes and refresh tokens.
+    version: 12,
+    sql: (dialect) =>
+      createTablesSql(dialect, {
+        version: 12,
+        models: { oidcClient: madauthSchema.models.oidcClient, oidcCode: madauthSchema.models.oidcCode, oidcRefreshToken: madauthSchema.models.oidcRefreshToken },
+      }),
+  },
 ];
 
 /**

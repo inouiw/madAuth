@@ -114,6 +114,7 @@ describe.skipIf(!url)('Postgres adapter with a database', () => {
     expect(await store.update('user', { id: 'usr_1', wrongCodes: 0 }, { wrongCodes: 1 })).toBe(1);
     expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ email: null, lastUsedStep: 0, primaryUserId: null, secondFactor: null });
     expect(await store.create('apiKey', { id: 'key_1', userId: 'usr_1', hash: 'h', name: 'k', scopes: 'orders:read', createdAt: 1, expiresAt: null, lastUsedAt: 0 })).toBe(true);
+    expect(await store.create('oidcClient', { id: 'mc_1', name: 'Grafana', secretHash: null, redirectUris: '[]', postLogoutRedirectUris: '[]', createdAt: 1, updatedAt: 1, updatedBy: null })).toBe(true);
   });
 
   it('P5: refuses a database written by a newer madAuth', async () => {

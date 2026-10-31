@@ -29,6 +29,7 @@ madAuth's scopes, one per admin task, need the role `admin`:
 | `madauth:sign-in:reset` | `POST /auth/admin/sign-in/reset` |
 | `madauth:users:read` | `POST /auth/admin/users/search` |
 | `madauth:providers:read` | `POST /auth/admin/providers/list` |
+| `madauth:clients:read` | `POST /auth/admin/clients/list` |
 
 **A key never does more than its user may.** A user gives a key only scopes whose role they hold (`403 scope_not_allowed`), and every use checks again with the user's roles of now: a scope whose role the user lost, or that your app no longer lists, stops counting, and comes back with the role. So a key doesn't keep a power its user lost.
 
@@ -107,7 +108,7 @@ A revoked key stops working at madAuth at once, and in your backend once the ver
 
 ## Not covered yet
 
-- Keys for machines that act for no user (service accounts), and the OAuth client credentials grant, which needs madAuth as an [OpenID Connect provider](https://github.com/inouiw/madAuth/issues/53).
+- Keys for machines that act for no user (service accounts), and the OAuth client credentials grant, which madAuth's [OpenID Connect provider](server.md#openid-connect-provider) doesn't offer yet.
 - Limiting a key to certain IP addresses, or rate limits per key.
 - Registering the `madauth_` prefix with GitHub secret scanning.
 - Showing which calls a key made (an audit log): `lastUsedAt` says when it was last used, to the hour.

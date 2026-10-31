@@ -274,6 +274,7 @@ describe('switching sign-in methods off and on', () => {
     expect(off.status).toBe(200);
     expect(await off.json()).toEqual({
       password: { minLength: 8, minScore: 2 },
+      loginUrl: null,
       methods: {
         google: { configured: true, enabled: true, allowAsSignInMethod: true, secondFactor: 'none' },
         github: { configured: false, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
