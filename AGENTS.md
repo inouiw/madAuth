@@ -26,6 +26,7 @@ Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/age
 madAuth/
 ├── packages/server/  # @madauth/server — the sign-in service and its CLI
 ├── packages/web/     # @madauth/web — the browser client and UI components
+├── packages/google-identity/  # @madauth/google-identity — a Google ID token in the browser (FedCM, One Tap, the button), no backend; @madauth/web's GoogleFedcm builds on it
 ├── demo/             # Demo app, served at madauth.com/demo
 ├── site/             # madauth.com landing page
 ├── deploy/aws/       # User-facing AWS CDK template for running the server

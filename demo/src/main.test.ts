@@ -159,10 +159,10 @@ vi.stubGlobal(
 vi.stubGlobal('confirm', vi.fn(() => true));
 // Records what the page does with Google Identity Services. (Plain counters: Vitest clears mock calls between tests.)
 const gis = { prompts: 0, buttons: 0, callback: undefined as ((response: { credential: string }) => void) | undefined };
-window.google = {
+(window as { google?: unknown }).google = {
   accounts: {
     id: {
-      initialize: (config) => (gis.callback = config.callback),
+      initialize: (config: { callback?: (response: { credential: string }) => void }) => (gis.callback = config.callback),
       prompt: () => gis.prompts++,
       renderButton: () => gis.buttons++,
       disableAutoSelect: () => {},

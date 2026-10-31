@@ -13,6 +13,7 @@ export default defineConfig({
     alias: [
       { find: '@madauth/web/client', replacement: fileURLToPath(new URL('../packages/web/src/client.ts', import.meta.url)) },
       { find: '@madauth/web', replacement: fileURLToPath(new URL('../packages/web/src/index.ts', import.meta.url)) },
+      { find: '@madauth/google-identity', replacement: fileURLToPath(new URL('../packages/google-identity/src/index.ts', import.meta.url)) },
     ],
   },
   build: {

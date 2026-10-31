@@ -4,6 +4,7 @@ WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
+COPY packages/google-identity/package.json packages/google-identity/
 COPY demo/package.json demo/
 COPY site/package.json site/
 RUN npm ci --workspace @madauth/server --include-workspace-root=false --ignore-scripts

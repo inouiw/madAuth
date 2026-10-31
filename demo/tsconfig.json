@@ -5,7 +5,8 @@
     "types": ["vite/client"],
     "paths": {
       "@madauth/web": ["../packages/web/src/index.ts"],
-      "@madauth/web/client": ["../packages/web/src/client.ts"]
+      "@madauth/web/client": ["../packages/web/src/client.ts"],
+      "@madauth/google-identity": ["../packages/google-identity/src/index.ts"]
     }
   },
   "include": ["src"]
