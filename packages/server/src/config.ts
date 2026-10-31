@@ -520,17 +520,13 @@ async function webhookFromEnv(
  */
 async function webhookSigning(url: string, secret: string | undefined, previousSecret: string | undefined, auth: string | undefined): Promise<WebhookAuth> {
   if (auth === 'aws-iam') {
-    if (previousSecret) {
-      throw new ConfigError(
-        'WEBHOOK_PREVIOUS_SECRET is set, but with WEBHOOK_AUTH=aws-iam madAuth signs the webhook calls with its AWS role and no secret: remove it ' +
-          '(from .env, or on AWS from the Parameter Store). See "AWS IAM" in docs/server.md.',
-      );
-    }
     // As with MADAUTH_KEY_SERVICE=aws-kms: no secret is left in a variable, where it would still let others call the receiver.
-    if (secret) {
+    const set = [...(secret ? ['WEBHOOK_SECRET'] : []), ...(previousSecret ? ['WEBHOOK_PREVIOUS_SECRET'] : [])];
+    if (set.length) {
+      const several = set.length > 1;
       throw new ConfigError(
-        'WEBHOOK_SECRET is set, but with WEBHOOK_AUTH=aws-iam madAuth signs the webhook calls with its AWS role and no secret: remove it ' +
-          '(from .env, or on AWS from the Parameter Store), and the receiver checks the caller instead. See "AWS IAM" in docs/server.md.',
+        `${set.join(' and ')} ${several ? 'are' : 'is'} set, but with WEBHOOK_AUTH=aws-iam madAuth signs the webhook calls with its AWS role and no secret: ` +
+          `remove ${several ? 'them' : 'it'} (from .env, or on AWS from the Parameter Store), and the receiver checks the caller instead. See "AWS IAM" in docs/server.md.`,
       );
     }
     const region = functionUrlRegion(url);

@@ -238,6 +238,9 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, ...iam, WEBHOOK_PREVIOUS_SECRET: generateWebhookSecret() })).rejects.toThrow(
       /WEBHOOK_PREVIOUS_SECRET is set, but with WEBHOOK_AUTH=aws-iam madAuth signs the webhook calls with its AWS role and no secret: remove it/,
     );
+    await expect(loadConfig({ ...env, ...iam, WEBHOOK_SECRET, WEBHOOK_PREVIOUS_SECRET: generateWebhookSecret() })).rejects.toThrow(
+      /WEBHOOK_SECRET and WEBHOOK_PREVIOUS_SECRET are set, but .*: remove them/,
+    );
     await expect(loadConfig({ ...env, WEBHOOK_AUTH: 'aws-iam' })).rejects.toThrow(
       new ConfigError('WEBHOOK_SECRET, WEBHOOK_PREVIOUS_SECRET, WEBHOOK_AUTH and WEBHOOK_EVENTS need WEBHOOK_URL.'),
     );

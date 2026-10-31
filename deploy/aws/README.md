@@ -106,7 +106,7 @@ The receiver needs the server's role and the server the receiver's function, so 
 2. Deploy the receiver with `AWS_IAM` auth and that role, e.g. the aws-ses-mailer with `MadauthRoleArn` (see its README). Note its URL and its function's ARN.
 3. Set `webhookUrl` and `webhookFunctionArn` in `cdk.json` and deploy madAuth again. The server's role may now invoke the receiver through its URL (`lambda:InvokeFunctionUrl`, and `lambda:InvokeFunction` with `lambda:InvokedViaFunctionUrl`), and madAuth signs every call with it (`WEBHOOK_AUTH=aws-iam`).
 
-There must be no `<secretsPath>/WEBHOOK_SECRET` and no `<secretsPath>/WEBHOOK_PREVIOUS_SECRET`: madAuth refuses to start with a secret and `WEBHOOK_AUTH=aws-iam`, so the deploy fails while one exists, and the running server keeps working. To move an existing deployment, see [Switching the webhook receiver to AWS IAM](#switching-the-webhook-receiver-to-aws-iam).
+There must be no `<secretsPath>/WEBHOOK_SECRET` and no `<secretsPath>/WEBHOOK_PREVIOUS_SECRET`: madAuth refuses to start with a secret and `WEBHOOK_AUTH=aws-iam`. The deploy that switches to the receiver with AWS IAM checks for both and fails while one exists, and the running server keeps working. Later deploys don't check again: a secret stored after the switch stops every new instance from starting, until you delete it. To move an existing deployment, see [Switching the webhook receiver to AWS IAM](#switching-the-webhook-receiver-to-aws-iam).
 
 ## Using the construct in your own CDK app
 
