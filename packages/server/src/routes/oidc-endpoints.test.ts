@@ -444,6 +444,18 @@ describe('madAuth as an OpenID Connect provider', () => {
     expect(logout.status).toBe(302);
     expect(logout.headers.get('location')).toBe(LOGOUT_URI);
 
+    // The key gone meanwhile (the store is shared): the token endpoint answers server_error before it uses the code up.
+    const without2 = passwordApp({ allowedOrigins: [APP_ORIGIN, ISSUER], store: made.store });
+    const request = await authorizationRequest(await relyingParty(made.app, client.id, clientSecret));
+    const sent = new URL((await made.app.request(request.url.toString(), { headers: { Cookie: made.cookie } })).headers.get('location')!);
+    const tokenForm = { grant_type: 'authorization_code', code: sent.searchParams.get('code')!, redirect_uri: REDIRECT_URI, code_verifier: request.verifier, client_id: client.id, client_secret: clientSecret! };
+    const failed = await without2.app.request('/auth/oidc/token', form(tokenForm));
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toMatchObject({ error: 'server_error', error_description: expect.stringContaining('RS256') });
+    const kept = await made.app.request('/auth/oidc/token', form(tokenForm));
+    expect(kept.status).toBe(200);
+    expect(decodeProtectedHeader((await kept.json()).id_token)).toMatchObject({ alg: 'RS256' });
+
     // Back to ES256 for the client; the list shows the algorithm.
     const back = await (await admin(made, 'clients/update', { id: client.id, idTokenAlg: 'ES256' })).json();
     expect(back.client.idTokenAlg).toBe('ES256');

@@ -41,10 +41,14 @@ export const thumbprintMembers = (jwk: JWK): JWK =>
 
 /** Why `jwk` is not a private ES256 (P-256) or RS256 (RSA, 2048 bits or more) key, or null if it is one. */
 export function signingJwkProblem(jwk: unknown): string | null {
-  const { kty, crv, d, x, y, n, e } = (jwk && typeof jwk === 'object' ? jwk : {}) as JWK;
+  const { kty, crv, d, x, y, n, e, p, q, dp, dq, qi } = (jwk && typeof jwk === 'object' ? jwk : {}) as JWK;
   if (kty === 'EC' && crv === 'P-256' && d && x && y) return null;
-  if (kty === 'RSA' && d && n && e) return n.length >= MIN_RSA_MODULUS_CHARS ? null : 'is an RSA key shorter than 2048 bits';
-  return 'must be a private EC P-256 JWK (kty "EC", crv "P-256", with d, x and y) or a private RSA JWK (kty "RSA", with n, e and d)';
+  if (kty === 'RSA' && n && e && d) {
+    // WebCrypto imports a private RSA key only with its CRT members, as generate-key writes them.
+    if (!(p && q && dp && dq && qi)) return 'is an RSA key without p, q, dp, dq and qi: generate it with generate-key --rs256';
+    return n.length >= MIN_RSA_MODULUS_CHARS ? null : 'is an RSA key shorter than 2048 bits';
+  }
+  return 'must be a private EC P-256 JWK (kty "EC", crv "P-256", with d, x and y) or a private RSA JWK (kty "RSA", with n, e, d, p, q, dp, dq and qi)';
 }
 
 /** Throws if `jwk` is not a private signing key. */

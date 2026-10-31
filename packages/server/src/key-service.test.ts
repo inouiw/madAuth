@@ -69,6 +69,11 @@ describe('the local key service', () => {
     expect(await parseSigningKeys(JSON.stringify({ keys: [newKey, oldKey, rsaKey] }))).toEqual({ keys: [newKey, oldKey, rsaKey] });
     expect(await parseSigningKeys(JSON.stringify(rsaKey))).toMatchObject({ problem: expect.stringContaining('has no EC P-256 key') });
     expect(await parseSigningKeys(JSON.stringify({ keys: [newKey, { ...rsaKey, n: 'short' }] }))).toMatchObject({ problem: expect.stringContaining('shorter than 2048 bits') });
+    const { p: _p, ...withoutCrt } = rsaKey;
+    expect(await parseSigningKeys(JSON.stringify({ keys: [newKey, withoutCrt] }))).toMatchObject({ problem: expect.stringContaining('without p, q, dp, dq and qi') });
+    // A key service from before RS256 publishes keys without `alg`: they are ES256 keys.
+    const legacy = { ...before, verificationKeys: async () => (await before.verificationKeys()).map(({ alg: _alg, ...key }) => key) };
+    expect(decodeProtectedHeader(await signToken(legacy, ISSUER, 'madauth-test+jwt', { sub: 'usr_1' }, 60))).toMatchObject({ alg: 'ES256', kid: oldKey.kid });
     await expect(createLocalKeyService([rsaKey])).rejects.toThrow('at least one ES256 key');
 
     const withRsa = await createLocalKeyService([newKey, rsaKey, oldKey]);

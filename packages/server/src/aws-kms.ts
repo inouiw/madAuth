@@ -146,7 +146,7 @@ export async function createAwsKmsKeyService(kms: Kms, deployment: string): Prom
   const load = async (): Promise<State | string> => {
     const keys = await deploymentKeys(kms, deployment);
     const { signing, mac, encryption } = keys;
-    const rsa = keys['signing-rsa'];
+    const rsaKeys = keys['signing-rsa'];
     if (!signing.current || !mac.current || !encryption) {
       return `the KMS keys of ${aliasPrefix(deployment)} are missing: create them with the AWS template (deploy/aws) or with npx @madauth/server kms-setup`;
     }
@@ -162,9 +162,10 @@ export async function createAwsKmsKeyService(kms: Kms, deployment: string): Prom
     };
     const ec = await publish('signing', SIGNING_ALG);
     if (typeof ec === 'string') return ec;
-    const rsaJwks = rsa.current ? await publish('signing-rsa', RSA_SIGNING_ALG) : [];
-    if (typeof rsaJwks === 'string') return rsaJwks;
-    const jwks = [...ec, ...rsaJwks];
+    const rsa = rsaKeys.current ? await publish('signing-rsa', RSA_SIGNING_ALG) : [];
+    // RS256 is optional: without its key the server runs on, and the clients set to RS256 get server_error.
+    if (typeof rsa === 'string') console.error(`[madauth] ${rsa}: no RS256 ID tokens until it is enabled again or the alias removed.`);
+    const jwks = [...ec, ...(typeof rsa === 'string' ? [] : rsa)];
     const macKeys = [mac.current, ...mac.generations.map((g) => g.keyId).reverse().filter((id) => id !== mac.current)];
     return {
       verificationKeys: jwks.map((key) => key.jwk),

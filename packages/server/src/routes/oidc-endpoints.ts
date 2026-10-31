@@ -251,13 +251,10 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
 
   /**
    * The tokens of a grant: an access token (ES256), an ID token (with the scope `openid`, in the client's algorithm)
-   * and the refresh token given, if any. A client set to RS256 whose key is gone gets `server_error`.
+   * and the refresh token given, if any. The token endpoint checked that the client's algorithm has its key.
    */
   const tokens = async (c: Context, client: StoredClient, user: StoredUser, grant: Grant, scope: string, refreshToken: string | null, nonce: string | null) => {
     const idTokenAlg: SigningAlg = idTokenAlgOf(client);
-    if (idTokenAlg !== SIGNING_ALG && !(await canSign(keys, idTokenAlg))) {
-      return tokenError(c, 500, 'server_error', `This application's ID tokens are signed with ${idTokenAlg}, but the key service has no such key any more.`);
-    }
     const extra = userClaims(user, scope);
     const amr = grant.amr.split(' ').filter(Boolean);
     const access: AccessTokenClaims = {
@@ -305,6 +302,11 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     const form = await paramsOf(c);
     const client = await authenticate(c, form);
     if (client instanceof Response) return client;
+    // Before any grant is used up: a client set to RS256 whose key is gone gets server_error and keeps its code.
+    const idTokenAlg = idTokenAlgOf(client);
+    if (idTokenAlg !== SIGNING_ALG && !(await canSign(keys, idTokenAlg))) {
+      return tokenError(c, 500, 'server_error', `This application's ID tokens are signed with ${idTokenAlg}, but the key service has no such key any more.`);
+    }
 
     if (form.grant_type === 'authorization_code') {
       const code = form.code ? await clients.useCode(form.code, client.id) : null;

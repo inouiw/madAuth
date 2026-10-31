@@ -220,9 +220,14 @@ describe('setting up and rotating the KMS keys', () => {
       `Disabled the signing-rsa key ${first} and removed ${prefix}/signing-rsa/20261017T120000Z: the tokens it signed have expired.`,
     );
     expect(kmsKeys.get(first)!.enabled).toBe(false);
+    // The RS256 key disabled by hand: the server runs on without RS256, and says so.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await kms.disableKey(aliases.get(`${prefix}/signing-rsa`)!);
+    expect((await (await keyServiceOf(kms)).verificationKeys()).map((key) => key.alg)).toEqual(['ES256']);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining(`${prefix}/signing-rsa is disabled`));
     // Half of it gone: the rotation says so, like for the other keys.
     aliases.delete(`${prefix}/signing-rsa`);
-    expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 400 * DAY)).problems).toEqual([`There is no signing-rsa key with its aliases under ${prefix}: run kms-setup first.`]);
+    expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 400 * DAY)).problems).toEqual([`There is no signing-rsa key with its aliases under ${prefix}: run kms-setup --rs256 first.`]);
   });
 
   it("KR5: the server's role may only use keys with its deployment's aliases", () => {

@@ -87,7 +87,7 @@ export async function rotateKmsKeys(
     const { current, generations } = keys[kind];
     const newest = generations.at(-1);
     if (!current || !newest) {
-      problems.push(`There is no ${kind} key with its aliases under ${prefix}: run kms-setup first.`);
+      problems.push(`There is no ${kind} key with its aliases under ${prefix}: run kms-setup${kind === 'signing-rsa' ? ' --rs256' : ''} first.`);
       continue;
     }
     if (newest.keyId !== current && now - newest.madeAt >= publishMs) {

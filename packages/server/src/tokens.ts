@@ -10,9 +10,12 @@ export function randomString(bytes = 32): string {
 
 const encodeJson = (value: object) => base64url.encode(JSON.stringify(value));
 
+/** The algorithm of a published key: a key without `alg` (a key service from before RS256) is an ES256 key. */
+const algOfKey = (key: JWK): string => key.alg ?? SIGNING_ALG;
+
 /** Whether the key service has a key that signs with `alg` right now. */
 export async function canSign(keys: KeyService, alg: SigningAlg): Promise<boolean> {
-  return (await keys.verificationKeys()).some((key) => key.alg === alg);
+  return (await keys.verificationKeys()).some((key) => algOfKey(key) === alg);
 }
 
 /**
@@ -21,7 +24,7 @@ export async function canSign(keys: KeyService, alg: SigningAlg): Promise<boolea
  * apart, so one can never be accepted as another. Throws when the key service has no key of that algorithm.
  */
 export async function signToken(keys: KeyService, issuer: string, typ: string, claims: JWTPayload, ttlSeconds: number, alg: SigningAlg = SIGNING_ALG): Promise<string> {
-  const signing = (await keys.verificationKeys()).find((key) => key.alg === alg);
+  const signing = (await keys.verificationKeys()).find((key) => algOfKey(key) === alg);
   if (!signing?.kid) throw new Error(`The key service has no ${alg} key.`);
   const kid = signing.kid;
   const now = Math.floor(Date.now() / 1000);
