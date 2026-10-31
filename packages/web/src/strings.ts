@@ -51,6 +51,7 @@ export const en = {
   noAccount: { question: 'No account?', action: 'Create one' },
   haveAccount: { question: 'Already have an account?', action: 'Sign in' },
   backToSignIn: 'Back to sign in',
+  back: 'Back',
   sendEmail: 'Send email',
   sendEmailAgain: 'Send the email again',
   continue: 'Continue',
@@ -202,6 +203,9 @@ export const en = {
     removeLabel: (name: string) => `Remove ${name}`,
     /** On the password's row. */
     change: 'Change',
+    /** On the authenticator app's row: opens its view. */
+    manage: 'Manage',
+    manageLabel: (name: string) => `Manage ${name}`,
     add: 'Add a sign-in method',
     addPasskey: 'Add a passkey',
     addPassword: 'Add a password',
@@ -210,12 +214,32 @@ export const en = {
     added: 'Added.',
     removed: 'Removed.',
     passwordChanged: 'Password changed. You are signed out on your other devices.',
+    codesReplaced: 'New recovery codes are ready. The old ones no longer work.',
+    appReplaced: 'The new authenticator app is set up. The old one no longer works.',
     done: 'Done',
     loading: 'Loading…',
   },
   addPassword: {
     heading: 'Add a password',
     lead: 'From then on, you can also sign in with your email address and this password.',
+  },
+  /** The signed-in user's authenticator app, opened from its row in the methods view. */
+  appManage: {
+    heading: 'Authenticator app',
+    lead: 'Your app gives you a code when you sign in. If you don’t have it at hand, a recovery code works instead.',
+    codesLeft: (count: number) => `${count} recovery codes left.`,
+    /** From 3 codes left on: shown as a warning. */
+    fewCodesLeft: (count: number) =>
+      count === 0
+        ? 'No recovery codes left. Get new ones, so you can still sign in if you lose your app.'
+        : `Only ${count === 1 ? '1 recovery code' : `${count} recovery codes`} left. Get new ones, so you can still sign in if you lose your app.`,
+    /** The actions, and the heading and button of the code step each one takes. */
+    actions: { codes: 'New recovery codes', replace: 'Set up a new app', remove: 'Remove the app' },
+    confirmLead: {
+      codes: 'Enter a code from your app. Your current recovery codes stop working.',
+      replace: 'Enter a code from your current app. The new one replaces it.',
+      remove: 'Enter a code from your app to remove it.',
+    },
   },
   changePassword: {
     heading: 'Change password',
@@ -420,6 +444,7 @@ export const de: Strings = {
   noAccount: { question: 'Noch kein Konto?', action: 'Konto erstellen' },
   haveAccount: { question: 'Sie haben bereits ein Konto?', action: 'Anmelden' },
   backToSignIn: 'Zurück zur Anmeldung',
+  back: 'Zurück',
   sendEmail: 'E-Mail senden',
   sendEmailAgain: 'E-Mail erneut senden',
   continue: 'Weiter',
@@ -537,6 +562,8 @@ export const de: Strings = {
     remove: 'Entfernen',
     removeLabel: (name) => `${name} entfernen`,
     change: 'Ändern',
+    manage: 'Verwalten',
+    manageLabel: (name) => `${name} verwalten`,
     add: 'Anmeldemethode hinzufügen',
     addPasskey: 'Passkey hinzufügen',
     addPassword: 'Passwort hinzufügen',
@@ -545,12 +572,29 @@ export const de: Strings = {
     added: 'Hinzugefügt.',
     removed: 'Entfernt.',
     passwordChanged: 'Passwort geändert. Auf Ihren anderen Geräten sind Sie abgemeldet.',
+    codesReplaced: 'Die neuen Wiederherstellungscodes sind bereit. Die alten funktionieren nicht mehr.',
+    appReplaced: 'Die neue Authentifizierungs-App ist eingerichtet. Die alte funktioniert nicht mehr.',
     done: 'Fertig',
     loading: 'Wird geladen …',
   },
   addPassword: {
     heading: 'Passwort hinzufügen',
     lead: 'Danach können Sie sich auch mit Ihrer E-Mail-Adresse und diesem Passwort anmelden.',
+  },
+  appManage: {
+    heading: 'Authentifizierungs-App',
+    lead: 'Ihre App zeigt Ihnen bei der Anmeldung einen Code. Haben Sie sie nicht zur Hand, funktioniert stattdessen ein Wiederherstellungscode.',
+    codesLeft: (count) => `${count} Wiederherstellungscodes übrig.`,
+    fewCodesLeft: (count) =>
+      count === 0
+        ? 'Keine Wiederherstellungscodes mehr übrig. Erstellen Sie neue, damit Sie sich auch anmelden können, wenn Sie Ihre App verlieren.'
+        : `Nur noch ${count === 1 ? '1 Wiederherstellungscode' : `${count} Wiederherstellungscodes`} übrig. Erstellen Sie neue, damit Sie sich auch anmelden können, wenn Sie Ihre App verlieren.`,
+    actions: { codes: 'Neue Wiederherstellungscodes', replace: 'Neue App einrichten', remove: 'App entfernen' },
+    confirmLead: {
+      codes: 'Geben Sie einen Code aus Ihrer App ein. Ihre bisherigen Wiederherstellungscodes funktionieren danach nicht mehr.',
+      replace: 'Geben Sie einen Code aus Ihrer bisherigen App ein. Die neue ersetzt sie.',
+      remove: 'Geben Sie einen Code aus Ihrer App ein, um sie zu entfernen.',
+    },
   },
   changePassword: {
     heading: 'Passwort ändern',

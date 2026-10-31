@@ -627,6 +627,7 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/authenticator/remove': {
         if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         if (!server.user?.email) return json({ error: 'no_session' }, 401);
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         if (server.policy.google === 'required' || server.policy.password === 'required') return json({ error: 'required_by_policy', message: 'required' }, 403);
         if (!server.authenticators.has(server.user.email)) return json({});
         // A sign-up with the app has no other way in.
@@ -640,6 +641,7 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/authenticator/recovery-codes': {
         if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         if (!server.user?.email) return json({ error: 'no_session' }, 401);
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         if (!server.authenticators.has(server.user.email)) return json({ error: 'no_authenticator', message: 'none' }, 400);
         if (!codeOk(server.user.email, body)) return json({ error: 'code_invalid', message: 'wrong' }, 401);
         const fresh = RECOVERY_CODES.map((code) => code.split('').reverse().join(''));
