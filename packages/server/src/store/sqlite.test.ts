@@ -31,6 +31,7 @@ const user = {
   claims: null,
   signedUpAt: null,
   signUpMethod: null,
+  preferredSecondFactor: null,
   createdAt: 1,
 };
 
@@ -126,7 +127,8 @@ describe('createTablesSql', () => {
   });
 
   it('upgradeTablesSql lists what newer schema versions added, per dialect', () => {
-    const V10 = 'CREATE TABLE madauth_api_key (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  hash TEXT NOT NULL UNIQUE,\n  name TEXT NOT NULL,\n  scopes TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION,\n  last_used_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_api_key_user_id ON madauth_api_key (user_id);';
+    const V11 = 'ALTER TABLE madauth_user ADD COLUMN preferred_second_factor TEXT;';
+    const V10 = 'CREATE TABLE madauth_api_key (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  hash TEXT NOT NULL UNIQUE,\n  name TEXT NOT NULL,\n  scopes TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION,\n  last_used_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_api_key_user_id ON madauth_api_key (user_id);\n' + V11;
     const V9 = 'ALTER TABLE madauth_user ADD COLUMN sign_up_method TEXT;\n' + V10;
     const V8 =
       'ALTER TABLE madauth_account ADD COLUMN name TEXT;\n' +
@@ -177,6 +179,8 @@ describe('createTablesSql', () => {
     // Version 10 added API keys.
     expect(upgradeTablesSql('postgres', 9)).toBe(V10);
     expect(upgradeTablesSql('mysql', 9).split('\n')[1]).toBe('  id VARCHAR(255) PRIMARY KEY,');
+    // Version 11 added the second factor a user wants to be asked for first.
+    expect(upgradeTablesSql('postgres', 10)).toBe(V11);
     expect(upgradeTablesSql('sqlite', madauthSchema.version)).toBe('');
   });
 

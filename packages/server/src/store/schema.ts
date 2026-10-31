@@ -53,7 +53,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 10,
+  version: 11,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -85,6 +85,11 @@ export const madauthSchema = {
          * 9 (since version 9).
          */
         signUpMethod: { type: 'string', nullable: true },
+        /**
+         * The second factor the user wants to be asked for first: `passkey`, `authenticator` or `sms`. Empty for
+         * the usual order, and in records from before version 11 (since version 11).
+         */
+        preferredSecondFactor: { type: 'string', nullable: true },
         createdAt: { type: 'number' },
       },
     },

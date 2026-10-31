@@ -113,6 +113,11 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
     version: 10,
     sql: (dialect) => createTablesSql(dialect, { version: 10, models: { apiKey: madauthSchema.models.apiKey } }),
   },
+  {
+    // The second factor a user wants to be asked for first.
+    version: 11,
+    sql: (dialect) => `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('preferredSecondFactor')} ${columnType(dialect, madauthSchema.models.user.fields.preferredSecondFactor)};`,
+  },
 ];
 
 /**

@@ -1,8 +1,8 @@
 import { madauthSchema, type Schema } from '../store/schema.js';
 
 // Schema version 1, to test upgrades: users had no count of wrong codes and no claims, accounts no e-mail and
-// no last code, and there were no settings, no recovery codes and no API keys.
-const { wrongCodes: _, claims: __, lastSmsAt: ___, signedUpAt: ____, signUpMethod: _____, ...userFields } = madauthSchema.models.user.fields;
+// no last code, and there were no settings, no recovery codes and no API keys (nor a preferred second factor).
+const { wrongCodes: _, claims: __, lastSmsAt: ___, signedUpAt: ____, signUpMethod: _____, preferredSecondFactor: ______, ...userFields } = madauthSchema.models.user.fields;
 const {
   email: _a,
   lastUsedStep: _b,

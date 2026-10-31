@@ -205,7 +205,8 @@ describe('deployment entry points', () => {
     const fromFour = await runCli(['schema', '--from', '4']);
     expect(fromFour.output).toMatch(/^ALTER TABLE madauth_account ADD COLUMN last_used_step DOUBLE PRECISION NOT NULL DEFAULT 0;/);
     expect(fromFour.output).toContain('CREATE TABLE madauth_recovery_code (');
-    const V10 = 'CREATE TABLE madauth_api_key (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  hash TEXT NOT NULL UNIQUE,\n  name TEXT NOT NULL,\n  scopes TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION,\n  last_used_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_api_key_user_id ON madauth_api_key (user_id);';
+    const V11 = 'ALTER TABLE madauth_user ADD COLUMN preferred_second_factor TEXT;';
+    const V10 = 'CREATE TABLE madauth_api_key (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  hash TEXT NOT NULL UNIQUE,\n  name TEXT NOT NULL,\n  scopes TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION,\n  last_used_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_api_key_user_id ON madauth_api_key (user_id);\n' + V11;
     const V8 = '\nALTER TABLE madauth_account ADD COLUMN name TEXT;\nALTER TABLE madauth_account ADD COLUMN credential_id TEXT;\nALTER TABLE madauth_account ADD COLUMN sign_count DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN transports TEXT;\nALTER TABLE madauth_account ADD COLUMN last_used_at DOUBLE PRECISION;\nALTER TABLE madauth_account ADD COLUMN rp_id TEXT;\nALTER TABLE madauth_user ADD COLUMN sign_up_method TEXT;\n' + V10;
     expect(await runCli(['schema', '--from', '5'])).toEqual({
       exitCode: 0,
@@ -217,10 +218,11 @@ describe('deployment entry points', () => {
     expect(await runCli(['schema', '--from', '7'])).toEqual({ exitCode: 0, output: V8.slice(1) });
     expect(await runCli(['schema', '--from', '8'])).toEqual({ exitCode: 0, output: 'ALTER TABLE madauth_user ADD COLUMN sign_up_method TEXT;\n' + V10 });
     expect(await runCli(['schema', '--from', '9'])).toEqual({ exitCode: 0, output: V10 });
-    expect(await runCli(['schema', '--from', '10'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
+    expect(await runCli(['schema', '--from', '10'])).toEqual({ exitCode: 0, output: V11 });
+    expect(await runCli(['schema', '--from', '11'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
     expect(await runCli(['schema', '--from', 'x'])).toMatchObject({ exitCode: 1 });
     // A version this madAuth does not know yet.
-    expect(await runCli(['schema', '--from', '11'])).toMatchObject({ exitCode: 1 });
+    expect(await runCli(['schema', '--from', '12'])).toMatchObject({ exitCode: 1 });
   });
 
   it('generate-webhook-secret prints a usable secret', async () => {

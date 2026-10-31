@@ -230,7 +230,17 @@ describe('Madauth.methods', () => {
         { id: 'acc_password', method: 'password', signIn: true, removable: true, createdAt: 1 },
         { id: 'acc_1', method: 'passkey', signIn: true, removable: true, createdAt: 1, name: 'Laptop', lastUsedAt: 0 },
       ],
+      secondFactors: ['passkey'],
+      preferredSecondFactor: null,
     });
+    // With the app too, the user picks which one a sign-in asks for first.
+    server.authenticators.add(grace.email!);
+    expect(await Madauth.secondFactor.setPreferred('authenticator')).toEqual({ isSuccess: true });
+    expect(await Madauth.methods.list()).toMatchObject({ secondFactors: ['authenticator', 'passkey'], preferredSecondFactor: 'authenticator' });
+    expect(await Madauth.secondFactor.setPreferred('sms')).toMatchObject({ isSuccess: false, error: { code: 'method_not_found' } });
+    expect(await Madauth.secondFactor.setPreferred(null)).toEqual({ isSuccess: true });
+    expect(await Madauth.methods.list()).toMatchObject({ secondFactors: ['passkey', 'authenticator'], preferredSecondFactor: null });
+    server.authenticators.delete(grace.email!);
     expect(await Madauth.methods.remove('acc_1')).toEqual({ isSuccess: true });
     expect(await Madauth.methods.remove('acc_1')).toMatchObject({ isSuccess: false, error: { code: 'method_not_found' } });
     expect(await Madauth.password.add({ password: 'another one, please' })).toMatchObject({ isSuccess: false, error: { code: 'already_added' } });

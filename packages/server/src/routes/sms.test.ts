@@ -416,3 +416,55 @@ describe('SMS codes as the second step', () => {
     void hook;
   });
 });
+
+describe('the preferred second factor', () => {
+  type Methods = { secondFactors: string[]; preferredSecondFactor: string | null };
+  const methodsOf = async (app: App, session: string) => (await (await app.request('/auth/methods', { headers: withSession(session) })).json()) as Methods;
+  const prefer = (app: App, session: string, factor: unknown) => post(app, '/auth/second-factor/preferred', { factor }, withSession(session));
+  const askedFor = async (app: App) => (await (await signIn(app)).json()) as { error: string; factors: string[] };
+
+  /** Grace with a phone and the app; the sign-in asks for the app first, in the usual order. */
+  async function withBoth() {
+    const made = await withPhone();
+    await addApp(made.app, made.session);
+    return made;
+  }
+
+  it('asks for the preferred factor first and still offers the others; null brings the usual order back', async () => {
+    const { app, session } = await withBoth();
+    expect(await methodsOf(app, session)).toMatchObject({ secondFactors: ['authenticator', 'sms'], preferredSecondFactor: null });
+    expect(await askedFor(app)).toMatchObject({ error: 'authenticator_required', factors: ['authenticator', 'sms'] });
+
+    // It weakens nothing, so a sign-in of long ago may change it.
+    advance(10 * 60_000);
+    expect((await prefer(app, session, 'sms')).status).toBe(200);
+
+    expect(await methodsOf(app, session)).toMatchObject({ secondFactors: ['sms', 'authenticator'], preferredSecondFactor: 'sms' });
+    expect(await askedFor(app)).toMatchObject({ error: 'sms_required', factors: ['sms', 'authenticator'] });
+    expect((await prefer(app, session, null)).status).toBe(200);
+    expect(await askedFor(app)).toMatchObject({ error: 'authenticator_required', factors: ['authenticator', 'sms'] });
+  });
+
+  it('takes only a factor the user has and that is on, for a signed-in user', async () => {
+    const { app, session } = await withBoth();
+
+    expect(await (await post(app, '/auth/second-factor/preferred', { factor: 'sms' })).json()).toMatchObject({ error: 'no_session' });
+    expect(await (await prefer(app, session, 'email-link')).json()).toMatchObject({ error: 'invalid_options' });
+    expect(await (await prefer(app, session, undefined)).json()).toMatchObject({ error: 'invalid_options' });
+    expect(await (await prefer(app, session, 'passkey')).json()).toMatchObject({ error: 'method_not_found' });
+    expect((await methodsOf(app, session)).preferredSecondFactor).toBeNull();
+  });
+
+  it('falls back to the usual order while the preferred factor is switched off', async () => {
+    const { app, store, session } = await withBoth();
+    await prefer(app, session, 'sms');
+
+    await setMethods(store, { google: {}, password: { secondFactor: 'optional' } });
+
+    expect(await askedFor(app)).toMatchObject({ error: 'authenticator_required', factors: ['authenticator'] });
+    expect(await methodsOf(app, session)).toMatchObject({ secondFactors: ['authenticator'], preferredSecondFactor: null });
+    // Back on, the preference holds again: it was never forgotten.
+    await setMethods(store, { google: {}, password: { secondFactor: 'optional' }, sms: {} });
+    expect(await askedFor(app)).toMatchObject({ error: 'sms_required' });
+  });
+});

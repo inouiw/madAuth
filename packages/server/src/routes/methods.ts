@@ -9,9 +9,10 @@ import {
   requiringSecondFactor,
   signInPredicate,
   type MethodWithSecondFactor,
+  type SecondFactor,
 } from '../settings.js';
 import { nameOfMethod } from '../providers.js';
-import { factorsAmong, isProviderAccount, lastWayIn, methodOf, toMadauthUser, type StoredAccount } from '../users.js';
+import { factorsAmong, isProviderAccount, lastWayIn, methodOf, preferredFirst, toMadauthUser, type StoredAccount } from '../users.js';
 import { body, error, noSession, recentUser } from './helpers.js';
 
 /** A sign-in method of the user as the list shows it. */
@@ -93,9 +94,10 @@ export function methodRoutes(app: Hono, ctx: AppContext, onRemoved: (account: St
   const { users } = ctx;
 
   app.get('/auth/methods', async (c) => {
-    const session = await ctx.currentUser(c);
-    if (!session) return noSession(c);
-    const [methods, accounts] = await Promise.all([ctx.methods(c), users.accounts(session.id)]);
+    const signedIn = await ctx.currentSignIn(c);
+    if (!signedIn) return noSession(c);
+    const { stored: user } = signedIn;
+    const [methods, accounts] = await Promise.all([ctx.methods(c), users.accounts(user.id)]);
     const signsIn = signInPredicate(methods.configured, methods.settings);
     const entries = accounts
       .filter((account) => methodOf(account) !== 'sms')
@@ -111,7 +113,30 @@ export function methodRoutes(app: Hono, ctx: AppContext, onRemoved: (account: St
           ...(method === 'passkey' ? { name: account.name ?? '', lastUsedAt: account.lastUsedAt ?? 0 } : {}),
         };
       });
-    return c.json({ methods: entries });
+    // The second factors the user has that are on, the preferred one first; it counts only while they have it.
+    const secondFactors = preferredFirst(factorsAmong(accounts, factorsOn(methods.configured, methods.settings)), user.preferredSecondFactor);
+    const preferred = secondFactors.find((factor) => factor === user.preferredSecondFactor) ?? null;
+    return c.json({ methods: entries, secondFactors, preferredSecondFactor: preferred });
+  });
+
+  // The second factor a sign-in asks for first; null for the usual order. It weakens nothing (every factor is one
+  // the user set up), so it takes no recent sign-in.
+  app.post('/auth/second-factor/preferred', async (c) => {
+    const signedIn = await ctx.currentSignIn(c);
+    if (!signedIn) return noSession(c);
+    const { stored: user } = signedIn;
+    const { factor } = await body(c);
+    if (factor !== null && !isFactor(String(factor))) {
+      return error(c, 400, 'invalid_options', `factor must be one of ${SECOND_FACTORS.join(', ')}, or null for the usual order.`);
+    }
+    if (factor !== null) {
+      const [methods, accounts] = await Promise.all([ctx.methods(c), users.accounts(user.id)]);
+      if (!factorsAmong(accounts, factorsOn(methods.configured, methods.settings)).includes(factor as SecondFactor)) {
+        return error(c, 404, 'method_not_found', "You have no such second factor, or it is switched off: set it up first.");
+      }
+    }
+    await users.updateUser(user.id, { preferredSecondFactor: factor as SecondFactor | null });
+    return c.json({});
   });
 
   app.post('/auth/methods/remove', async (c) => {

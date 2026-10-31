@@ -33,6 +33,11 @@ export interface StoredUser {
    * version 9, and for users who signed up without a confirmation e-mail.
    */
   signUpMethod: string | null;
+  /**
+   * The second factor the user wants to be asked for first, see {@link preferredFirst}; one the user no longer
+   * has is ignored. Empty for the usual order, and in records from before schema version 11.
+   */
+  preferredSecondFactor: string | null;
   createdAt: number;
 }
 
@@ -224,6 +229,12 @@ export function factorsAmong(accounts: StoredAccount[], on: readonly SecondFacto
     sms: accounts.some((account) => methodOf(account) === 'sms' && !!account.phone),
   };
   return on.filter((factor) => has[factor]);
+}
+
+/** `factors` with `preferred` first, if it is among them; otherwise as they are. */
+export function preferredFirst(factors: readonly SecondFactor[], preferred: string | null): SecondFactor[] {
+  const first = factors.find((factor) => factor === preferred);
+  return first ? [first, ...factors.filter((factor) => factor !== first)] : [...factors];
 }
 
 /**
@@ -468,6 +479,7 @@ export class Users {
       claims: null,
       signedUpAt: 0,
       signUpMethod: data.signUpMethod ?? null,
+      preferredSecondFactor: null,
       createdAt: Date.now(),
     };
     if (!(await this.store.create('user', user as unknown as Row))) return null;
@@ -549,7 +561,7 @@ export class Users {
    */
   private async endSignIns(userId: string): Promise<void> {
     const user = await this.findById(userId);
-    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0, signUpMethod: null });
+    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0, signUpMethod: null, preferredSecondFactor: null });
   }
 
   /**
