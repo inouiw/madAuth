@@ -550,6 +550,29 @@ describe('the app in the methods dialog', () => {
     expect(events).toEqual([]);
   });
 
+  it('D18: closing the dialog on the new recovery codes says nothing about a new app either', async () => {
+    const { events } = await openApp();
+
+    await click('[data-action="app-codes"]');
+    fill({ code: CODE });
+    await submit('authenticator-confirm');
+    expect(text('h2')).toBe('Save your recovery codes');
+    await click('.close');
+
+    expect(events).toEqual([]);
+  });
+
+  it('D18: a status that can\'t be read shows the error, not a count', async () => {
+    const { server } = await openApp();
+    await click('[data-action="back-to-methods"]');
+    server.statusDown = true;
+    await click('.method[data-method="authenticator"] [data-action="manage-app"]');
+
+    expect($('[part="error"]')).not.toBeNull();
+    expect($('[data-codes-left]')).toBeNull();
+    expect($('.hint[role="status"]')).toBeNull();
+  });
+
   it('D18: warns when few recovery codes are left', async () => {
     await openApp(2);
     expect(text('[part="warning"]')).toBe('Only 2 recovery codes left. Get new ones, so you can still sign in if you lose your app.');

@@ -427,8 +427,8 @@ export class MadauthLogin extends LitElement {
   private reauthThen?: ChangeView;
   /** The passkey's setup or the app's was started from the methods view: it goes back there after. */
   private fromMethods = false;
-  /** The signed-in user's app, in its view: how many recovery codes are left; undefined while loading. */
-  private appStatus?: { recoveryCodesLeft: number };
+  /** The signed-in user's app, in its view: how many recovery codes are left; undefined while loading, null if it couldn't be read. */
+  private appStatus?: { recoveryCodesLeft: number } | null;
   /** What the app's view does once the user gives a code: new recovery codes, a new app, or removing it. */
   private appAction?: AppAction;
   /** Passkeys offered in the e-mail field's autofill, while the sign-in view is shown: how to stop it, and when it has stopped. */
@@ -783,13 +783,16 @@ export class MadauthLogin extends LitElement {
     const recoveryCodes = this.recoveryCodes;
     if (!recoveryCodes) return;
     this.recoveryCodes = undefined;
+    // New codes leave the app as it was: no event says it was set up, also when the dialog was closed on them.
+    const action = this.appAction;
+    const enabled = () => {
+      if (action === 'codes') return;
+      const detail: AuthenticatorEnabledDetail = { recoveryCodes };
+      this.dispatchEvent(new CustomEvent('madauth-authenticator-enabled', { detail, bubbles: true, composed: true }));
+    };
     if (this.fromMethods && this.dialog.open) {
-      // Set up, replaced or given new codes from the list of methods: back to it. New codes leave the app as it was.
-      const action = this.appAction;
-      if (action !== 'codes') {
-        const detail: AuthenticatorEnabledDetail = { recoveryCodes };
-        this.dispatchEvent(new CustomEvent('madauth-authenticator-enabled', { detail, bubbles: true, composed: true }));
-      }
+      // Set up, replaced or given new codes from the list of methods: back to it.
+      enabled();
       this.backToMethods(action === 'codes' ? 'codesReplaced' : action === 'replace' ? 'appReplaced' : 'added');
       return;
     }
@@ -801,8 +804,7 @@ export class MadauthLogin extends LitElement {
         return;
       }
     } else {
-      const detail: AuthenticatorEnabledDetail = { recoveryCodes };
-      this.dispatchEvent(new CustomEvent('madauth-authenticator-enabled', { detail, bubbles: true, composed: true }));
+      enabled();
     }
     this.dialog.returnValue = 'done';
     if (this.dialog.open) this.dialog.close('done');
@@ -1357,6 +1359,18 @@ export class MadauthLogin extends LitElement {
         `;
   }
 
+  /** A form that asks for a code from the app, or a recovery code ({@link codeField}), with its submit button. */
+  private codeForm(name: string, onSubmit: (e: Event) => void, label: string) {
+    return html`
+      <form part="form" class=${name} @submit=${onSubmit}>
+        ${this.codeField()}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${label}</span>
+        </button>
+      </form>
+    `;
+  }
+
   /** The input for the code from the app, in {@link codeField} and in the setup; {@link codeAutocomplete} applies. */
   private appCodeInput() {
     return html`<input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete=${this.codeAutocomplete || 'off'} maxlength="7" />`;
@@ -1415,12 +1429,7 @@ export class MadauthLogin extends LitElement {
     const s = this.strings;
     return html`
       <p class="lead">${this.setupNeedsCode ? s.authenticatorCode.replaceLead : s.authenticatorCode.lead}</p>
-      <form part="form" class="authenticator-code" @submit=${this.onAuthenticatorVerify}>
-        ${this.codeField()}
-        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
-          <span class="label">${s.continue}</span>
-        </button>
-      </form>
+      ${this.codeForm('authenticator-code', this.onAuthenticatorVerify, s.continue)}
       <p class="links">
         ${this.toggleRecoveryLink()}
         ${this.setupNeedsCode ? null : this.stepAlternatives('authenticator')}
@@ -2051,7 +2060,10 @@ export class MadauthLogin extends LitElement {
 
   private async loadAppStatus(): Promise<void> {
     const result = await Madauth.authenticator.status();
+    // The user moved on meanwhile: the answer is for a view that is gone.
+    if (this.view !== 'authenticator-manage') return;
     if (!result.isSuccess) {
+      this.appStatus = null;
       this.showError(result.error, 'authenticator');
       return;
     }
@@ -2062,15 +2074,18 @@ export class MadauthLogin extends LitElement {
   private renderAppManage() {
     const s = this.strings;
     const v = s.appManage;
-    const left = this.appStatus?.recoveryCodesLeft;
+    const status = this.appStatus;
+    const left = status?.recoveryCodesLeft;
     const actions: AppAction[] = ['codes', 'replace', 'remove'];
     return html`
       <p class="lead">${v.lead}</p>
-      ${left === undefined
+      ${status === undefined
         ? html`<p class="hint" role="status">${s.methodsView.loading}</p>`
-        : left <= FEW_RECOVERY_CODES
-          ? html`<p class="notice" part="warning" data-codes-left=${left}>${infoIcon}<span>${v.fewCodesLeft(left)}</span></p>`
-          : html`<p class="hint" data-codes-left=${left}>${v.codesLeft(left)}</p>`}
+        : left === undefined
+          ? null
+          : left <= FEW_RECOVERY_CODES
+            ? html`<p class="notice" part="warning" data-codes-left=${left}>${infoIcon}<span>${v.fewCodesLeft(left)}</span></p>`
+            : html`<p class="hint" data-codes-left=${left}>${v.codesLeft(left)}</p>`}
       <ul class="app-actions">
         ${actions.map(
           (action) => html`
@@ -2101,12 +2116,7 @@ export class MadauthLogin extends LitElement {
     const action = this.appAction ?? 'codes';
     return html`
       <p class="lead">${s.appManage.confirmLead[action]}</p>
-      <form part="form" class="authenticator-confirm" @submit=${this.onAppAction}>
-        ${this.codeField()}
-        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
-          <span class="label">${s.appManage.actions[action]}</span>
-        </button>
-      </form>
+      ${this.codeForm('authenticator-confirm', this.onAppAction, s.appManage.actions[action])}
       <p class="links">
         ${this.toggleRecoveryLink()}
         <button class="link" part="link" type="button" data-action="back-to-app" @click=${() => this.openAppManage()}>${s.back}</button>
