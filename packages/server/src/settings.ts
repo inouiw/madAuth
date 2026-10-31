@@ -70,6 +70,21 @@ export const METHODS_SETTING = 'methods';
 /** The id of the setting that holds {@link PasswordRules}. */
 export const PASSWORD_SETTING = 'password';
 
+/** The id of the setting that holds the app's login page, see {@link parseLoginUrl}. */
+export const LOGIN_URL_SETTING = 'loginUrl';
+
+/**
+ * The app's login page as an admin sets it, or null if `value` is none: a path on the issuer's origin (`/login`),
+ * or an absolute URL on one of `allowedOrigins`. madAuth sends people there when an application that signs in with
+ * madAuth as its OpenID Connect provider needs them to sign in (see "OpenID Connect provider" in docs/server.md).
+ */
+export function parseLoginUrl(value: unknown, allowedOrigins: readonly string[]): string | null {
+  if (typeof value !== 'string' || value.length > 2048) return null;
+  if (value.startsWith('/')) return value.startsWith('//') || value.includes('#') ? null : value;
+  if (!URL.canParse(value) || value.includes('#')) return null;
+  return allowedOrigins.includes(new URL(value).origin) ? value : null;
+}
+
 /** The rules for new passwords: at sign-up, at a reset, and when a user adds a password. */
 export interface PasswordRules {
   /** The fewest characters a password may have, from 1 to {@link MAX_MIN_LENGTH}. */
@@ -325,6 +340,12 @@ export class Settings {
     initial: MethodSettings = {},
   ): Promise<MethodSettings | null> {
     return this.change<MethodSettings>(METHODS_SETTING, (current) => apply(this.current(current, initial)), updatedBy);
+  }
+
+  /** The app's login page as an admin set it (see {@link parseLoginUrl}); null: the issuer's `/`. */
+  async loginUrl(): Promise<string | null> {
+    const stored = await this.get<unknown>(LOGIN_URL_SETTING);
+    return typeof stored === 'string' ? stored : null;
   }
 
   /** The rules for new passwords; the defaults until an admin set them. */

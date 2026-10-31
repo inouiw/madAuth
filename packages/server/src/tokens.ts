@@ -33,17 +33,24 @@ const keySetOf = (keys: JWK[]): JWTVerifyGetKey => {
   return set;
 };
 
-/** Verifies a token from {@link signToken}, with any of the key service's keys. Returns null if it is invalid, expired or of another kind. */
+/**
+ * Verifies a token from {@link signToken}, with any of the key service's keys. Returns null if it is invalid,
+ * expired or of another kind. `allowExpired` accepts one that expired, for a token that only names who it was for
+ * (an OpenID Connect `id_token_hint`).
+ */
 export async function readToken<T extends JWTPayload>(
   keys: KeyService,
   issuer: string,
   typ: string,
   token: string | undefined,
+  { allowExpired = false } = {},
 ): Promise<(T & { iat: number; exp: number }) | null> {
   if (!token) return null;
   const keySet = keySetOf(await keys.verificationKeys());
+  // Checked as of 1970, no token has expired yet.
+  const asOf = allowExpired ? { currentDate: new Date(0) } : {};
   // jose answers every invalid token with an exception: they all mean "no token".
-  const verified = await jwtVerify<T>(token, keySet, { issuer, typ, algorithms: [SIGNING_ALG] }).catch(() => null);
+  const verified = await jwtVerify<T>(token, keySet, { issuer, typ, algorithms: [SIGNING_ALG], ...asOf }).catch(() => null);
   return verified ? (verified.payload as T & { iat: number; exp: number }) : null;
 }
 

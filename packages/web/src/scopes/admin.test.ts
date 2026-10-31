@@ -61,6 +61,7 @@ describe('Madauth.admin', () => {
     expect(await Madauth.admin.getSettings()).toEqual({
       isSuccess: true,
       password: { minLength: 8, minScore: 2 },
+      loginUrl: null,
       methods: {
         google: { configured: true, enabled: true, allowAsSignInMethod: true, secondFactor: 'none' },
         github: { configured: false, enabled: false, allowAsSignInMethod: false, secondFactor: 'none' },
@@ -156,6 +157,28 @@ describe('Madauth.admin', () => {
     expect(await Madauth.admin.removeProvider('github')).toMatchObject({ isSuccess: true, usersWithoutSignIn: 0 });
     expect(server.requests.at(-1)!.body).toEqual({ id: 'github' });
     expect(await Madauth.admin.removeProvider('github')).toMatchObject({ isSuccess: false, error: { code: 'provider_not_found' } });
+  });
+
+  it('an admin registers, lists, changes and removes an OpenID Connect client, and sets the login page', async () => {
+    const server = fakeServer();
+    server.user = admin;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [] });
+
+    const added = await Madauth.admin.addClient({ name: 'Grafana', redirectUris: ['https://grafana.example.org/cb'] });
+    expect(added).toMatchObject({ isSuccess: true, client: { id: 'mc_1', name: 'Grafana', public: false }, clientSecret: 'mcs_secret' });
+    expect(server.requests.at(-1)).toMatchObject({ path: '/auth/admin/clients/add', body: { name: 'Grafana', redirectUris: ['https://grafana.example.org/cb'] } });
+    const native = await Madauth.admin.addClient({ name: 'Editor', redirectUris: ['vscode://x/cb'], public: true });
+    expect(native.isSuccess && 'clientSecret' in native).toBe(false);
+    expect(await Madauth.admin.listClients()).toMatchObject({ isSuccess: true, clients: [{ id: 'mc_1' }, { id: 'mc_2' }] });
+    expect(await Madauth.admin.updateClient('mc_1', { name: 'Grafana 2', newSecret: true })).toMatchObject({ isSuccess: true, client: { name: 'Grafana 2' }, clientSecret: 'mcs_new' });
+    expect(server.requests.at(-1)!.body).toEqual({ id: 'mc_1', name: 'Grafana 2', newSecret: true });
+    expect(await Madauth.admin.removeClient('mc_1')).toMatchObject({ isSuccess: true, client: { id: 'mc_1' } });
+    expect(await Madauth.admin.removeClient('mc_1')).toMatchObject({ isSuccess: false, error: { code: 'client_not_found' } });
+    expect(await Madauth.admin.addClient({ name: 'Bad', redirectUris: [] })).toMatchObject({ isSuccess: false, error: { code: 'invalid_client' } });
+
+    expect(await Madauth.admin.setSettings({ loginUrl: '/login' })).toMatchObject({ isSuccess: true, loginUrl: '/login' });
+    expect(server.requests.at(-1)!.body).toEqual({ loginUrl: '/login' });
+    expect(await Madauth.admin.getSettings()).toMatchObject({ isSuccess: true, loginUrl: '/login' });
   });
 
   it('waits for initialize, and reports when madAuth is not set up', async () => {

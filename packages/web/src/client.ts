@@ -41,6 +41,6 @@ export type { MethodsApi, SignInMethodInfo } from './scopes/methods.js';
 export type { ApiKeyInfo, ApiKeyScope, ApiKeysApi, CreateApiKeyOptions } from './scopes/api-keys.js';
 export type { ButtonRenderOptions } from './scopes/button.js';
 export type { ProviderApi } from './scopes/provider.js';
-export type { AdminApi, Claims, FoundUser, MethodId, MethodSetting, MethodToSet, MethodsToSet, PasswordRules, NewProvider, ProviderChanges, ProviderInfo, ProviderKind, Settings, UserSearch } from './scopes/admin.js';
+export type { AdminApi, Claims, ClientChanges, ClientInfo, FoundUser, NewClient, MethodId, MethodSetting, MethodToSet, MethodsToSet, PasswordRules, NewProvider, ProviderChanges, ProviderInfo, ProviderKind, Settings, UserSearch } from './scopes/admin.js';
 export type { RatePassword } from './strength.js';
 export { loginMethods, type BuiltInMethodId, type LoginMethod, type LoginMethodId } from './methods.js';

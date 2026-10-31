@@ -71,6 +71,7 @@ describe('SQLite adapter', () => {
     expect(await store.update('user', { id: 'usr_1', wrongCodes: 0 }, { wrongCodes: 1 })).toBe(1);
     expect(await store.create('setting', { id: 'methods', value: '{}', updatedAt: 1, updatedBy: null })).toBe(true);
     expect(await store.create('apiKey', { id: 'key_1', userId: 'usr_1', hash: 'h', name: 'k', scopes: 'orders:read', createdAt: 1, expiresAt: null, lastUsedAt: 0 })).toBe(true);
+    expect(await store.create('oidcClient', { id: 'mc_1', name: 'Grafana', secretHash: null, redirectUris: '[]', postLogoutRedirectUris: '[]', createdAt: 1, updatedAt: 1, updatedBy: null })).toBe(true);
     // An account from before version 5 reads as if no authenticator code was ever used, before 6 has no phone,
     // and before 7 doesn't say whether it is the user's sign-in method.
     expect(await store.findOne('account', { id: 'acc_1' })).toMatchObject({ email: null, lastUsedStep: 0, setupId: null, phone: null, primaryUserId: null, secondFactor: null, name: null, credentialId: null });
@@ -126,7 +127,8 @@ describe('createTablesSql', () => {
   });
 
   it('upgradeTablesSql lists what newer schema versions added, per dialect', () => {
-    const V10 = 'CREATE TABLE madauth_api_key (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  hash TEXT NOT NULL UNIQUE,\n  name TEXT NOT NULL,\n  scopes TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION,\n  last_used_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_api_key_user_id ON madauth_api_key (user_id);';
+    const V11 = "CREATE TABLE madauth_oidc_client (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  secret_hash TEXT,\n  redirect_uris TEXT NOT NULL,\n  post_logout_redirect_uris TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  updated_at DOUBLE PRECISION NOT NULL,\n  updated_by TEXT\n);\nCREATE TABLE madauth_oidc_code (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL,\n  user_id TEXT NOT NULL,\n  redirect_uri TEXT NOT NULL,\n  scope TEXT NOT NULL,\n  nonce TEXT,\n  code_challenge TEXT NOT NULL,\n  auth_time DOUBLE PRECISION NOT NULL,\n  amr TEXT NOT NULL,\n  session_version DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_oidc_code_user_id ON madauth_oidc_code (user_id);\nCREATE TABLE madauth_oidc_refresh_token (\n  id TEXT PRIMARY KEY,\n  hash TEXT NOT NULL,\n  client_id TEXT NOT NULL,\n  user_id TEXT NOT NULL,\n  scope TEXT NOT NULL,\n  auth_time DOUBLE PRECISION NOT NULL,\n  amr TEXT NOT NULL,\n  session_version DOUBLE PRECISION NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL,\n  last_used_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_oidc_refresh_token_client_id ON madauth_oidc_refresh_token (client_id);\nCREATE INDEX madauth_oidc_refresh_token_user_id ON madauth_oidc_refresh_token (user_id);";
+    const V10 = 'CREATE TABLE madauth_api_key (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  hash TEXT NOT NULL UNIQUE,\n  name TEXT NOT NULL,\n  scopes TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION,\n  last_used_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_api_key_user_id ON madauth_api_key (user_id);\n' + V11;
     const V9 = 'ALTER TABLE madauth_user ADD COLUMN sign_up_method TEXT;\n' + V10;
     const V8 =
       'ALTER TABLE madauth_account ADD COLUMN name TEXT;\n' +
@@ -176,6 +178,8 @@ describe('createTablesSql', () => {
     expect(upgradeTablesSql('mysql', 8).split('\n')[0]).toBe('ALTER TABLE madauth_user ADD COLUMN sign_up_method TEXT;');
     // Version 10 added API keys.
     expect(upgradeTablesSql('postgres', 9)).toBe(V10);
+    // Version 11 added the OpenID Connect clients, authorization codes and refresh tokens.
+    expect(upgradeTablesSql('postgres', 10)).toBe(V11);
     expect(upgradeTablesSql('mysql', 9).split('\n')[1]).toBe('  id VARCHAR(255) PRIMARY KEY,');
     expect(upgradeTablesSql('sqlite', madauthSchema.version)).toBe('');
   });
@@ -185,6 +189,6 @@ describe('createTablesSql', () => {
     db.exec(createTablesSql('sqlite'));
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((r) => r.name);
-    expect(tables).toEqual(['madauth_account', 'madauth_api_key', 'madauth_recovery_code', 'madauth_setting', 'madauth_user', 'madauth_verification']);
+    expect(tables).toEqual(['madauth_account', 'madauth_api_key', 'madauth_oidc_client', 'madauth_oidc_code', 'madauth_oidc_refresh_token', 'madauth_recovery_code', 'madauth_setting', 'madauth_user', 'madauth_verification']);
   });
 });

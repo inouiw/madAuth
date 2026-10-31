@@ -44,6 +44,12 @@ export type MethodId = 'google' | 'github' | 'password' | 'authenticator' | 'ema
 export interface Settings {
   methods: Record<MethodId, MethodSetting>;
   password: PasswordRules;
+  /**
+   * The app's login page, where madAuth sends people when an application that signs in with madAuth as its OpenID
+   * Connect provider needs them to sign in: a path on the server's origin (`/login`) or a URL on an allowed origin;
+   * `null` is `/`. Absent from servers before 0.7.
+   */
+  loginUrl?: string | null;
 }
 
 /**
@@ -97,6 +103,39 @@ export interface ProviderChanges {
 /** A new provider: Google or GitHub by its kind, an OpenID Connect provider with its id, name and issuer. */
 export type NewProvider = ({ kind: 'google' | 'github' } | { kind: 'oidc'; id: string; name: string; issuer: string; clientId: string; clientSecret: string }) & ProviderChanges;
 
+/**
+ * An application that signs its users in with madAuth as its OpenID Connect provider, as the admin API answers it:
+ * never its secret. See "OpenID Connect provider" in docs/server.md.
+ */
+export interface ClientInfo {
+  /** The client ID it sends (`mc_…`). */
+  id: string;
+  name: string;
+  /** Without a secret: a native or browser app, which proves itself with PKCE alone. */
+  public: boolean;
+  /** Where it may be sent back to after the sign-in. */
+  redirectUris: string[];
+  /** Where it may be sent back to after it signed the user out. */
+  postLogoutRedirectUris: string[];
+  /** Milliseconds since 1970. */
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * What an admin sets of an application; left out: kept. A redirect URI is https, http on this computer
+ * (`http://127.0.0.1`, `http://[::1]` or `http://localhost`, which match at any port) or an app's own scheme
+ * (`vscode://…`), without a fragment.
+ */
+export interface ClientChanges {
+  name?: string;
+  redirectUris?: string[];
+  postLogoutRedirectUris?: string[];
+}
+
+/** A new application: its name and at least one redirect URI; `public: true` for one without a secret (default `false`). */
+export type NewClient = { name: string; redirectUris: string[]; public?: boolean } & ClientChanges;
+
 /** What `searchUsers` looks for; every filter given must match. */
 export interface UserSearch {
   /** Users whose `claims.roles` hold this role. */
@@ -130,9 +169,10 @@ export interface FoundUser {
 }
 
 /**
- * Managing claims, settings and users' API keys, and resetting a user's sign-in, for users with the role `admin`
+ * Managing claims, settings, users' API keys, sign-in providers and the applications that sign in with madAuth
+ * (OpenID Connect clients), and resetting a user's sign-in, for users with the role `admin`
  * (`claims.roles`). The first admin is the user who signs in with the address in the server's
- * `INITIAL_ADMIN_EMAIL`. A change (claims, settings, providers, a sign-in reset) takes a sign-in within the last
+ * `INITIAL_ADMIN_EMAIL`. A change (claims, settings, providers, clients, a sign-in reset) takes a sign-in within the last
  * two minutes, else it fails with `reauth_required`; reading, and revoking a user's API key, take none.
  */
 export interface AdminApi {
@@ -157,7 +197,7 @@ export interface AdminApi {
    * in `password`, what is left out takes its default. Fails with `forbidden`, or `invalid_settings` (e.g.
    * when every method would go off).
    */
-  setSettings(settings: { methods?: MethodsToSet; password?: Partial<PasswordRules> }): Promise<Result<Settings>>;
+  setSettings(settings: { methods?: MethodsToSet; password?: Partial<PasswordRules>; loginUrl?: string | null }): Promise<Result<Settings>>;
   /**
    * Switches one method on with `setting`, or off with `null`, leaving the others as they are: the server changes
    * its entry in the stored list, so what another admin changes meanwhile stays. Checked like `setSettings`.
@@ -213,6 +253,21 @@ export interface AdminApi {
    * `reauth_required` or `provider_not_found`.
    */
   removeProvider(id: string, options?: { dryRun?: boolean }): Promise<Result<{ provider: ProviderInfo; usersWithoutSignIn: number }>>;
+  /** The applications that sign in with madAuth as their OpenID Connect provider, without their secrets. Fails with `forbidden`. */
+  listClients(): Promise<Result<{ clients: ClientInfo[] }>>;
+  /**
+   * Registers an application. `clientSecret` is its secret, which only this answer ever shows (none for a public
+   * one). Needs a sign-in within the last two minutes, and no API key. Fails with `forbidden`, `reauth_required`
+   * or `invalid_client`.
+   */
+  addClient(client: NewClient): Promise<Result<{ client: ClientInfo; clientSecret?: string }>>;
+  /**
+   * Changes an application; `newSecret: true` gives a confidential one a new secret, and the old one stops working at
+   * once. Needs a recent sign-in. Fails with `forbidden`, `reauth_required`, `invalid_client` or `client_not_found`.
+   */
+  updateClient(id: string, changes: ClientChanges & { newSecret?: boolean }): Promise<Result<{ client: ClientInfo; clientSecret?: string }>>;
+  /** Removes an application and ends its refresh tokens. Needs a recent sign-in. Fails with `forbidden`, `reauth_required` or `client_not_found`. */
+  removeClient(id: string): Promise<Result<{ client: ClientInfo }>>;
 }
 
 export function createAdminApi(core: Core): AdminApi {
@@ -223,13 +278,14 @@ export function createAdminApi(core: Core): AdminApi {
     return res.ok ? { isSuccess: true, ...pick(res.data) } : { isSuccess: false, error: res.error };
   }
   const claims = (data: { userId: string; claims: Claims }) => ({ userId: data.userId, claims: data.claims });
-  const settings = (data: Settings) => ({ methods: data.methods, password: data.password });
+  const settings = (data: Settings) => ({ methods: data.methods, password: data.password, ...(data.loginUrl !== undefined ? { loginUrl: data.loginUrl } : {}) });
+  const client = (data: { client: ClientInfo; clientSecret?: string }) => ({ client: data.client, ...(data.clientSecret ? { clientSecret: data.clientSecret } : {}) });
 
   return {
     getClaims: (email) => call('claims/get', { email }, claims),
     setClaims: (email, value) => call('claims/set', { email, claims: value }, claims),
     getSettings: () => call('settings/get', {}, settings),
-    setSettings: (value) => call('settings/set', { methods: value.methods, password: value.password }, settings),
+    setSettings: (value) => call('settings/set', { methods: value.methods, password: value.password, loginUrl: value.loginUrl }, settings),
     setMethod: (method, setting) => call('settings/method', { method, setting }, settings),
     resetSignIn: (email) => call('sign-in/reset', { email }, (data: { userId: string }) => ({ userId: data.userId })),
     listApiKeys: (email) => call('api-keys/list', { email }, (data: { userId: string; apiKeys: ApiKeyInfo[] }) => ({ userId: data.userId, apiKeys: data.apiKeys })),
@@ -245,5 +301,9 @@ export function createAdminApi(core: Core): AdminApi {
     updateProvider: (id, changes) => call('providers/update', { id, ...changes }, (data: { provider: ProviderInfo }) => ({ provider: data.provider })),
     removeProvider: (id, options = {}) =>
       call('providers/remove', { id, ...(options.dryRun ? { dryRun: true } : {}) }, (data: { provider: ProviderInfo; usersWithoutSignIn: number }) => ({ provider: data.provider, usersWithoutSignIn: data.usersWithoutSignIn })),
+    listClients: () => call('clients/list', {}, (data: { clients: ClientInfo[] }) => ({ clients: data.clients })),
+    addClient: (value) => call('clients/add', { ...value }, client),
+    updateClient: (id, changes) => call('clients/update', { id, ...changes }, client),
+    removeClient: (id) => call('clients/remove', { id }, (data: { client: ClientInfo }) => ({ client: data.client })),
   };
 }

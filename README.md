@@ -32,6 +32,8 @@ A user can have several of these: they sign up with one and add more while signe
 
 Users can also make **API keys** for programs that call your API, or madAuth's admin API, in their name, each limited to scopes; your backend checks them with `createApiKeyVerifier`. See [API keys](docs/api-keys.md).
 
+Other applications (Grafana, Nextcloud, internal tools, native and command-line apps) can sign their users in with madAuth as their **OpenID Connect provider**: the authorization code flow with PKCE, refresh tokens, user info and sign-out, with the sign-in on your app's login page. See [OpenID Connect provider](docs/server.md#openid-connect-provider).
+
 ## Runs on your infrastructure
 
 | Part | Option | Status |

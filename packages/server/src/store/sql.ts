@@ -113,6 +113,15 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
     version: 10,
     sql: (dialect) => createTablesSql(dialect, { version: 10, models: { apiKey: madauthSchema.models.apiKey } }),
   },
+  {
+    // madAuth as an OpenID Connect provider: its clients, authorization codes and refresh tokens.
+    version: 11,
+    sql: (dialect) =>
+      createTablesSql(dialect, {
+        version: 11,
+        models: { oidcClient: madauthSchema.models.oidcClient, oidcCode: madauthSchema.models.oidcCode, oidcRefreshToken: madauthSchema.models.oidcRefreshToken },
+      }),
+  },
 ];
 
 /**

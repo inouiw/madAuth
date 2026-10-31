@@ -131,6 +131,10 @@ export interface FakeServer {
   apiScopes: { name: string; description: string; role: string | null; endpoints: string[] }[];
   /** The API keys the users made, with the key and whose it is. */
   apiKeys: { id: string; email: string; key: string; name: string; scopes: string[]; createdAt: number; expiresAt: number | null; lastUsedAt: number }[];
+  /** The app's login page an admin set; null: `/`. */
+  loginUrl: string | null;
+  /** The OpenID Connect clients an admin registered. */
+  clients: { id: string; name: string; public: boolean; redirectUris: string[]; postLogoutRedirectUris: string[]; createdAt: number; updatedAt: number }[];
 }
 
 /** Sets or clears the cookie in which the real server tells when the session expires. */
@@ -189,6 +193,8 @@ export function fakeServer(): FakeServer {
       { name: 'orders:refund', description: 'Refund orders', role: 'staff', endpoints: [] },
     ],
     apiKeys: [],
+    loginUrl: null,
+    clients: [],
   };
   const mask = (phone: string) => `${phone.slice(0, 3)} ${'•'.repeat(Math.max(0, phone.length - 5))} ${phone.slice(-2)}`;
   const normalizePhone = (value: unknown) => {
@@ -766,8 +772,9 @@ export function fakeServer(): FakeServer {
           } else return json({ error: 'invalid_settings', message: `"${method}" is no sign-in method of this server` }, 400);
         }
         if (url.pathname.endsWith('/set')) {
-          const { password } = body as { password?: { minLength?: number; minScore?: number } };
+          const { password, loginUrl } = body as { password?: { minLength?: number; minScore?: number }; loginUrl?: string | null };
           if (password) server.passwordRules = { minLength: password.minLength ?? 8, minScore: password.minScore ?? 2 };
+          if (loginUrl !== undefined) server.loginUrl = loginUrl;
         }
         if (url.pathname.endsWith('/set') && (body as { methods?: unknown }).methods !== undefined) {
           const methods = (body as { methods?: Record<string, unknown> }).methods;
@@ -784,6 +791,7 @@ export function fakeServer(): FakeServer {
         }
         return json({
           password: server.passwordRules,
+          loginUrl: server.loginUrl,
           methods: {
             google: setting(server.google, server.methods.google, true, server.policy.google),
             github: setting(server.github, server.methods.github, true, server.policy.github),
@@ -810,6 +818,32 @@ export function fakeServer(): FakeServer {
         if (index < 0) return json({ error: 'api_key_not_found', message: 'gone' }, 404);
         server.apiKeys.splice(index, 1);
         return json({ email, userId });
+      }
+      // The OpenID Connect clients: a confidential one's secret shows when it is added or gets a new one.
+      case 'POST /auth/admin/clients/list':
+      case 'POST /auth/admin/clients/add':
+      case 'POST /auth/admin/clients/update':
+      case 'POST /auth/admin/clients/remove': {
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        const action = url.pathname.split('/').at(-1);
+        if (action === 'list') return json({ clients: server.clients });
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        const data = body as unknown as { id?: string; name?: string; redirectUris?: string[]; postLogoutRedirectUris?: string[]; public?: boolean; newSecret?: boolean };
+        if (action === 'add') {
+          if (!data.name || !data.redirectUris?.length) return json({ error: 'invalid_client', message: 'name and redirectUris' }, 400);
+          const client = { id: `mc_${server.clients.length + 1}`, name: data.name, public: !!data.public, redirectUris: data.redirectUris, postLogoutRedirectUris: data.postLogoutRedirectUris ?? [], createdAt: 1, updatedAt: 1 };
+          server.clients.push(client);
+          return json({ client, ...(client.public ? {} : { clientSecret: 'mcs_secret' }) });
+        }
+        const client = server.clients.find((c) => c.id === data.id);
+        if (!client) return json({ error: 'client_not_found', message: 'gone' }, 404);
+        if (action === 'remove') {
+          server.clients.splice(server.clients.indexOf(client), 1);
+          return json({ client });
+        }
+        Object.assign(client, { ...(data.name ? { name: data.name } : {}), ...(data.redirectUris ? { redirectUris: data.redirectUris } : {}) });
+        return json({ client, ...(data.newSecret && !client.public ? { clientSecret: 'mcs_new' } : {}) });
       }
       // The providers as the admin API answers them: an admin adds, changes and removes Google, GitHub and
       // OpenID Connect providers; a removal or its dry run counts `usersAlone`.

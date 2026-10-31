@@ -74,6 +74,17 @@ void Madauth.initialize({ providers: [google, new GitHub(), new Password(), new 
 });
 Madauth.onAuthStateChanged(handleAuthStateChanged);
 
+// This page is the login page of madAuth as an OpenID Connect provider (see docs/server.md): an application that
+// signs in with madAuth sends people here with `madauth_return`, its authorization request, to go back to once
+// signed in. Only that request of this origin, never another address.
+const returnTo = new URLSearchParams(location.search).get('madauth_return');
+const oidcReturn = returnTo && URL.canParse(returnTo) && new URL(returnTo).origin === location.origin && new URL(returnTo).pathname === '/auth/oidc/authorize' ? returnTo : null;
+Madauth.onAuthStateChanged((user) => {
+  if (!oidcReturn) return;
+  if (user) location.assign(oidcReturn);
+  else void Madauth.showSignInDialog();
+});
+
 $('#sign-in').addEventListener('click', () => void Madauth.showSignInDialog());
 $('#sign-out').addEventListener('click', () => void Madauth.signOut());
 

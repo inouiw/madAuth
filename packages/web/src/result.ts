@@ -50,6 +50,8 @@ const errorCodes = [
   'invalid_provider',
   'provider_exists',
   'provider_not_found',
+  'invalid_client',
+  'client_not_found',
   'invalid_setup_token',
   'authenticator_required',
   'authenticator_setup_required',

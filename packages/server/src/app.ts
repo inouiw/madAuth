@@ -25,6 +25,7 @@ import {
   METHODS,
   MAX_MIN_LENGTH,
   DEFAULT_PASSWORD_RULES,
+  LOGIN_URL_SETTING,
   METHODS_SETTING,
   SECOND_FACTOR_POLICIES,
   Settings,
@@ -34,6 +35,7 @@ import {
   initialMethods,
   isConfigured,
   isOn,
+  parseLoginUrl,
   parseMethodSettings,
   parsePasswordRules,
   policyOf,
@@ -47,6 +49,8 @@ import {
 import { methodRoutes } from './routes/methods.js';
 import { apiKeyNotFound, apiKeyRoutes, invalidApiKey, keyCaller } from './routes/api-keys.js';
 import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
+import { OIDC_PATH, oidcEndpoints } from './routes/oidc-endpoints.js';
+import { OidcClients, clientInfo, parseClientFields } from './oidc-clients.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { parseUserSearch, searchUsers } from './user-search.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, bearerTokenOf, type MadauthUser } from './user.js';
@@ -123,6 +127,8 @@ export interface AppContext {
    * the user's other sessions: its time and `amr` stay, so the change doesn't count as a recent sign-in.
    */
   continueSession(c: Context, signIn: SignIn, sv: number): Promise<void>;
+  /** Ends the session at this browser, and a sign-in that waits for its second step. */
+  signOut(c: Context): void;
   /**
    * Finishes a primary sign-in method that succeeded: the session, or the next step with a second factor
    * as the policy of `method` and what the user has set up demand. `amr` is how the user signed in so far;
@@ -177,6 +183,7 @@ export function createApp(config: MadauthConfig): Hono {
   const admins = new Admins(settings, users);
   const setup = new Setup(settings, users, keys, issuer);
   const apiKeys = new ApiKeys(config.store);
+  const oidcClients = new OidcClients(config.store);
   const scopeCatalog = new ScopeCatalog(config.apiKeyScopesUrl, config.scopesFetch);
   const emailVerification = sendsVerificationEmails(config);
 
@@ -356,6 +363,10 @@ export function createApp(config: MadauthConfig): Hono {
     async continueSession(c, { user, amr, signedInAt }, sv) {
       await issueSession(c, user, amr, { sv, ...(signedInAt !== null ? { auth_time: Math.floor(signedInAt / 1000) } : {}) });
     },
+    signOut(c) {
+      clearSession(c);
+      clearChallenge(c, secure);
+    },
     async secondStep(c, user, amr, method, profile) {
       const now = await this.methods(c);
       const methods = now.settings;
@@ -446,22 +457,24 @@ export function createApp(config: MadauthConfig): Hono {
 
   const app = new Hono();
 
-  app.use(
-    '/auth/*',
-    cors({
-      origin: (origin) => (isAllowedOrigin(origin) ? origin : null),
-      credentials: true,
-      allowMethods: ['GET', 'POST'],
-      allowHeaders: ['Content-Type'],
-      maxAge: 600,
-    }),
-  );
+  const appCors = cors({
+    origin: (origin) => (isAllowedOrigin(origin) ? origin : null),
+    credentials: true,
+    allowMethods: ['GET', 'POST'],
+    allowHeaders: ['Content-Type'],
+    maxAge: 600,
+  });
+  // The OpenID Connect endpoints serve other applications: their own servers and apps call them, from any origin,
+  // without cookies (the authorization and sign-out are page visits). See routes/oidc-endpoints.ts.
+  const isOidcEndpoint = (c: Context) => c.req.path.startsWith(OIDC_PATH);
+  const oidcCors = cors({ origin: '*', allowMethods: ['GET', 'POST'], allowHeaders: ['Authorization', 'Content-Type'], maxAge: 600 });
+  app.use('/auth/*', (c, next) => (isOidcEndpoint(c) ? oidcCors(c, next) : appCors(c, next)));
 
   // Only the configured apps may start sign-ins or change the session. A request with an API key (any
   // `Authorization` header) comes from a program: no page makes a browser send that header to madAuth, since
   // it isn't one CORS allows, and a program has no user's cookies.
   app.use('/auth/*', async (c, next) => {
-    if (c.req.method === 'POST' && c.req.header('authorization') === undefined && !isAllowedOrigin(c.req.header('origin'))) {
+    if (c.req.method === 'POST' && !isOidcEndpoint(c) && c.req.header('authorization') === undefined && !isAllowedOrigin(c.req.header('origin'))) {
       return c.json({ error: 'forbidden_origin' }, 403);
     }
     await next();
@@ -470,8 +483,9 @@ export function createApp(config: MadauthConfig): Hono {
   app.get('/health', (c) => c.text('ok'));
 
   app.get('/.well-known/jwks.json', async (c) => {
-
     c.header('Cache-Control', 'public, max-age=3600');
+    // Read by browser apps too, e.g. to check an ID token.
+    c.header('Access-Control-Allow-Origin', '*');
     // Every key that verifies tokens: also those signed before a rotation.
     return c.json({ keys: await keys.verificationKeys() });
   });
@@ -516,6 +530,7 @@ export function createApp(config: MadauthConfig): Hono {
   authenticatorRoutes(app, ctx);
   passkeyRoutes(app, ctx);
   apiKeyRoutes(app, ctx, apiKeys, scopeCatalog);
+  oidcEndpoints(app, ctx, oidcClients);
   /**
    * The GitHub OAuth App's ID and secret, to take back a user's authorization; null without a GitHub provider, whose
    * accounts then stay authorized at GitHub until the user removes the app there.
@@ -542,8 +557,7 @@ export function createApp(config: MadauthConfig): Hono {
   });
 
   app.post('/auth/logout', (c) => {
-    clearSession(c);
-    clearChallenge(c, secure);
+    ctx.signOut(c);
     return c.body(null, 204);
   });
 
@@ -720,11 +734,12 @@ export function createApp(config: MadauthConfig): Hono {
 
   /**
    * The settings as the admin API answers them: for each method (and `sms`), whether the server is configured
-   * for it, whether it is on, whether it signs in on its own and whether it asks for a second factor; and
-   * the rules for new passwords.
+   * for it, whether it is on, whether it signs in on its own and whether it asks for a second factor; the
+   * rules for new passwords; and the app's login page (null: the issuer's `/`).
    */
-  const settingsAnswer = (now: MethodsNow, methods: MethodSettings, password: PasswordRules) => ({
+  const settingsAnswer = (now: MethodsNow, methods: MethodSettings, password: PasswordRules, loginUrl: string | null) => ({
     password,
+    loginUrl,
     methods: Object.fromEntries(
       // madAuth's own methods, then the OpenID Connect providers' by their ids.
       [...METHODS, ...now.providers.filter((provider) => provider.kind === 'oidc').map((provider) => provider.id)].map((method) => [
@@ -742,8 +757,8 @@ export function createApp(config: MadauthConfig): Hono {
   app.post('/auth/admin/settings/get', async (c) => {
     const caller = await adminOrSetup(c, 'madauth:settings:read', 'read');
     if ('answer' in caller) return caller.answer;
-    const [now, password] = await Promise.all([ctx.methods(c), settings.passwordRules()]);
-    return c.json(settingsAnswer(now, now.settings, password));
+    const [now, password, loginUrl] = await Promise.all([ctx.methods(c), settings.passwordRules(), settings.loginUrl()]);
+    return c.json(settingsAnswer(now, now.settings, password, loginUrl));
   });
 
   app.post('/auth/admin/settings/set', async (c) => {
@@ -751,7 +766,7 @@ export function createApp(config: MadauthConfig): Hono {
     if ('answer' in caller) return caller.answer;
     const data = await body(c);
     const invalid = (message: string) => c.json({ error: 'invalid_settings', message }, 400);
-    if (data.methods === undefined && data.password === undefined) return invalid('Pass methods, password or both.');
+    if (data.methods === undefined && data.password === undefined && data.loginUrl === undefined) return invalid('Pass methods, password, loginUrl or several of them.');
     // Both are checked before either is written.
     const next = data.methods === undefined ? undefined : parseMethodSettings(data.methods);
     if (next === null) {
@@ -769,22 +784,30 @@ export function createApp(config: MadauthConfig): Hono {
           `{ "minLength": 10, "minScore": 3 }. What is left out takes its default (${DEFAULT_PASSWORD_RULES.minLength}, ${DEFAULT_PASSWORD_RULES.minScore}).`,
       );
     }
+    const loginUrl = data.loginUrl === undefined || data.loginUrl === null ? data.loginUrl : parseLoginUrl(data.loginUrl, allowedOrigins);
+    if (loginUrl === null && data.loginUrl !== null) {
+      return invalid(`loginUrl must be a path on the issuer's origin (e.g. "/login"), an absolute URL on one of ALLOWED_ORIGINS, or null for "/".`);
+    }
     const now = await ctx.methods(c);
     const wrong = next ? checkMethodSettings(next, now) : null;
     if (wrong) return invalid(wrong);
-    // Two writes: if the second fails, the first is undone, so a failed request has changed nothing.
-    const previousRules = rules && next ? await settings.passwordRules() : undefined;
-    const password = rules ? await settings.setPasswordRules(rules, caller.by) : await settings.passwordRules();
-    if (next) {
+    const [previousRules, previousLoginUrl] = await Promise.all([settings.passwordRules(), settings.loginUrl()]);
+    // Each write with its undo: if a later one fails, the earlier ones are undone, so a failed request has changed nothing.
+    const writes = [
+      ...(rules ? [{ write: () => settings.setPasswordRules(rules, caller.by), undo: () => settings.setPasswordRules(previousRules, caller.by) }] : []),
+      ...(loginUrl !== undefined ? [{ write: () => settings.set(LOGIN_URL_SETTING, loginUrl, caller.by), undo: () => settings.set(LOGIN_URL_SETTING, previousLoginUrl, caller.by) }] : []),
+      // The whole list is replaced.
+      ...(next ? [{ write: () => settings.changeMethods(() => next, caller.by), undo: async () => {} }] : []),
+    ];
+    for (const [i, step] of writes.entries()) {
       try {
-        // The whole list is replaced.
-        await settings.changeMethods(() => next, caller.by);
+        await step.write();
       } catch (e) {
-        if (previousRules) await settings.setPasswordRules(previousRules, caller.by).catch(() => {});
+        for (const done of writes.slice(0, i).reverse()) await done.undo().catch(() => {});
         throw e;
       }
     }
-    return c.json(settingsAnswer(now, next ?? now.settings, password));
+    return c.json(settingsAnswer(now, next ?? now.settings, rules ?? previousRules, loginUrl === undefined ? previousLoginUrl : loginUrl));
   });
 
   // One method's entry, changed in the stored list itself: what another admin changes meanwhile stays.
@@ -812,7 +835,8 @@ export function createApp(config: MadauthConfig): Hono {
       now.settings,
     );
     if (!changed) return invalid(wrong ?? 'The settings could not be changed.');
-    return c.json(settingsAnswer(now, changed, await settings.passwordRules()));
+    const [password, loginUrl] = await Promise.all([settings.passwordRules(), settings.loginUrl()]);
+    return c.json(settingsAnswer(now, changed, password, loginUrl));
   });
 
   // --- Admin: the sign-in providers (see providers.ts) ---
@@ -904,6 +928,66 @@ export function createApp(config: MadauthConfig): Hono {
     );
     await ctx.emit('provider.removed', { provider: providerInfo(removed.provider), ...changedBy(caller) });
     return c.json({ provider: providerInfo(removed.provider), usersWithoutSignIn: stranded });
+  });
+
+  // --- Admin: the applications that sign in with madAuth as their OpenID Connect provider (see oidc-clients.ts) ---
+
+  /**
+   * An admin's change (as {@link admin}) that only a session makes, with a recent sign-in: one whose answer shows a
+   * secret. `byKey` is the answer to a request with an API key.
+   */
+  const adminSessionChange = async (c: Context, byKey: string): ReturnType<typeof admin> => {
+    if (c.req.header('authorization') !== undefined) return { answer: c.json({ error: 'forbidden', message: byKey }, 403) };
+    const caller = await admin(c);
+    if ('answer' in caller) return caller;
+    if (!(await signedInUser(c, ctx))?.recent) return { answer: reauthRequired(c) };
+    return caller;
+  };
+  const clientsByKey = "An API key can't change the applications that sign in with madAuth: an admin signs in to do it.";
+  const clientNotFound = (c: Context) => c.json({ error: 'client_not_found', message: 'There is no application with this client ID.' }, 404);
+  const invalidClient = (c: Context, message: string) => c.json({ error: 'invalid_client', message }, 400);
+
+  app.post('/auth/admin/clients/list', async (c) => {
+    const caller = await admin(c, 'madauth:clients:read');
+    if ('answer' in caller) return caller.answer;
+    return c.json({ clients: (await oidcClients.list()).map(clientInfo) });
+  });
+
+  // The secret shows only in this answer: madAuth keeps its SHA-256.
+  app.post('/auth/admin/clients/add', async (c) => {
+    const caller = await adminSessionChange(c, clientsByKey);
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    if (data.public !== undefined && typeof data.public !== 'boolean') return invalidClient(c, 'public must be true or false.');
+    const fields = parseClientFields(data, true);
+    if ('error' in fields) return c.json(fields, 400);
+    // A new client's fields always have a name and redirect URIs.
+    const added = await oidcClients.add({ ...fields, name: fields.name!, redirectUris: fields.redirectUris! }, data.public === true, caller.email);
+    return c.json({ client: clientInfo(added.client), ...(added.secret ? { clientSecret: added.secret } : {}) });
+  });
+
+  // `newSecret: true` replaces a confidential client's secret: the old one stops working at once.
+  app.post('/auth/admin/clients/update', async (c) => {
+    const caller = await adminSessionChange(c, clientsByKey);
+    if ('answer' in caller) return caller.answer;
+    const { id, newSecret, ...data } = await body(c);
+    if (newSecret !== undefined && typeof newSecret !== 'boolean') return invalidClient(c, 'newSecret must be true or false.');
+    if (data.public !== undefined) return invalidClient(c, 'Whether a client is public can\'t change: add a new one.');
+    const fields = parseClientFields(data, false);
+    if ('error' in fields) return c.json(fields, 400);
+    const updated = typeof id === 'string' ? await oidcClients.update(id, fields, newSecret === true, caller.email) : null;
+    if (!updated) return clientNotFound(c);
+    return c.json({ client: clientInfo(updated.client), ...(updated.secret ? { clientSecret: updated.secret } : {}) });
+  });
+
+  // Its refresh tokens end with it; access tokens it has work until they expire (15 minutes).
+  app.post('/auth/admin/clients/remove', async (c) => {
+    const caller = await adminSessionChange(c, clientsByKey);
+    if ('answer' in caller) return caller.answer;
+    const { id } = await body(c);
+    const removed = typeof id === 'string' ? await oidcClients.remove(id) : null;
+    if (!removed) return clientNotFound(c);
+    return c.json({ client: clientInfo(removed) });
   });
 
   // The way back for a user who lost every way in, whatever they had: they sign up again and keep their id.

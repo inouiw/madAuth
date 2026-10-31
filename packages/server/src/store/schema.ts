@@ -53,7 +53,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 10,
+  version: 11,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -178,6 +178,70 @@ export const madauthSchema = {
         /** When it stops working; empty: never. */
         expiresAt: { type: 'number', nullable: true },
         /** When it was last used, to the hour; 0: never. */
+        lastUsedAt: { type: 'number' },
+      },
+    },
+    /**
+     * An application that signs its users in with madAuth as its OpenID Connect provider (since version 11),
+     * registered by an admin. `id` is its client ID; its secret is never stored, only its SHA-256.
+     */
+    oidcClient: {
+      fields: {
+        id: { type: 'string', primaryKey: true },
+        name: { type: 'string' },
+        /** The SHA-256 of its secret; empty for a public client (a native or browser app), which has none. */
+        secretHash: { type: 'string', nullable: true },
+        /** Where it may be sent back to after the sign-in, as a JSON list. */
+        redirectUris: { type: 'string' },
+        /** Where it may be sent back to after signing the user out, as a JSON list. */
+        postLogoutRedirectUris: { type: 'string' },
+        createdAt: { type: 'number' },
+        updatedAt: { type: 'number' },
+        /** The address of the admin who changed it last. */
+        updatedBy: { type: 'string', nullable: true },
+      },
+    },
+    /**
+     * An authorization code that a client exchanges for its tokens (since version 11). `id` is the code's
+     * SHA-256; the record goes when the code is used.
+     */
+    oidcCode: {
+      fields: {
+        id: { type: 'string', primaryKey: true },
+        clientId: { type: 'string' },
+        userId: { type: 'string', index: true },
+        redirectUri: { type: 'string' },
+        /** The scopes granted, separated by spaces. */
+        scope: { type: 'string' },
+        nonce: { type: 'string', nullable: true },
+        /** The PKCE challenge (S256). */
+        codeChallenge: { type: 'string' },
+        /** When the user signed in, in seconds since 1970. */
+        authTime: { type: 'number' },
+        /** How the user signed in, separated by spaces, e.g. `pwd otp`. */
+        amr: { type: 'string' },
+        /** The user's session version at the sign-in: ending their sessions ends what came of it. */
+        sessionVersion: { type: 'number' },
+        expiresAt: { type: 'number' },
+      },
+    },
+    /**
+     * A chain of refresh tokens of a client for a user (since version 11). Each use replaces its token: `hash`
+     * is the SHA-256 of the one that works now. A token used twice ends the chain.
+     */
+    oidcRefreshToken: {
+      fields: {
+        id: { type: 'string', primaryKey: true },
+        hash: { type: 'string' },
+        clientId: { type: 'string', index: true },
+        userId: { type: 'string', index: true },
+        scope: { type: 'string' },
+        authTime: { type: 'number' },
+        amr: { type: 'string' },
+        sessionVersion: { type: 'number' },
+        createdAt: { type: 'number' },
+        /** 30 days after its last use. */
+        expiresAt: { type: 'number' },
         lastUsedAt: { type: 'number' },
       },
     },
