@@ -129,6 +129,7 @@ export const envVars = {
   PASSKEY_RP_ID: false,
   WEBHOOK_URL: false,
   WEBHOOK_SECRET: false,
+  WEBHOOK_PREVIOUS_SECRET: false,
   WEBHOOK_AUTH: false,
   WEBHOOK_EVENTS: false,
   API_KEY_SCOPES_URL: false,
@@ -240,7 +241,7 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
     );
   }
 
-  const webhook = await webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_AUTH'), read('WEBHOOK_EVENTS'));
+  const webhook = await webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_PREVIOUS_SECRET'), read('WEBHOOK_AUTH'), read('WEBHOOK_EVENTS'));
   // E-mail & password sign-in needs its e-mails sent, so it is on exactly when the webhook handles them.
   const sendsEmails = !!webhook && REQUIRED_EMAIL_TYPES.every((type) => webhook.events.has(type));
   const password = sendsEmails ? {} : undefined;
@@ -466,11 +467,14 @@ function isServiceUrl(value: string): boolean {
 async function webhookFromEnv(
   url: string | undefined,
   secret: string | undefined,
+  previousSecret: string | undefined,
   auth: string | undefined,
   events: string | undefined,
 ): Promise<WebhookSettings | undefined> {
   if (!url) {
-    if (secret || auth || events) throw new ConfigError('WEBHOOK_SECRET, WEBHOOK_AUTH and WEBHOOK_EVENTS need WEBHOOK_URL.');
+    if (secret || previousSecret || auth || events) {
+      throw new ConfigError('WEBHOOK_SECRET, WEBHOOK_PREVIOUS_SECRET, WEBHOOK_AUTH and WEBHOOK_EVENTS need WEBHOOK_URL.');
+    }
     return undefined;
   }
   let parsed: URL;
@@ -483,7 +487,7 @@ async function webhookFromEnv(
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && LOCAL_HOSTS.includes(parsed.hostname))) {
     throw new ConfigError(`WEBHOOK_URL must be an https URL (http only for localhost) but is "${url}".`);
   }
-  const signing = await webhookSigning(parsed.href, secret, auth);
+  const signing = await webhookSigning(parsed.href, secret, previousSecret, auth);
   // Nothing is sent that the receiver did not ask for: a type it does not know could make it answer with an
   // error, and an unanswered user.signing_up refuses every sign-up.
   const selected = new Set((events ?? '').split(',').map((e) => e.trim()).filter(Boolean));
@@ -511,11 +515,17 @@ async function webhookFromEnv(
 }
 
 /**
- * How the webhook calls are signed: with WEBHOOK_SECRET, or with WEBHOOK_AUTH=aws-iam with madAuth's AWS credentials,
- * for a receiver behind a Lambda Function URL with AWS_IAM auth.
+ * How the webhook calls are signed: with WEBHOOK_SECRET (and WEBHOOK_PREVIOUS_SECRET while the secret is being changed),
+ * or with WEBHOOK_AUTH=aws-iam with madAuth's AWS credentials, for a receiver behind a Lambda Function URL with AWS_IAM auth.
  */
-async function webhookSigning(url: string, secret: string | undefined, auth: string | undefined): Promise<WebhookAuth> {
+async function webhookSigning(url: string, secret: string | undefined, previousSecret: string | undefined, auth: string | undefined): Promise<WebhookAuth> {
   if (auth === 'aws-iam') {
+    if (previousSecret) {
+      throw new ConfigError(
+        'WEBHOOK_PREVIOUS_SECRET is set, but with WEBHOOK_AUTH=aws-iam madAuth signs the webhook calls with its AWS role and no secret: remove it ' +
+          '(from .env, or on AWS from the Parameter Store). See "AWS IAM" in docs/server.md.',
+      );
+    }
     // As with MADAUTH_KEY_SERVICE=aws-kms: no secret is left in a variable, where it would still let others call the receiver.
     if (secret) {
       throw new ConfigError(
@@ -544,7 +554,14 @@ async function webhookSigning(url: string, secret: string | undefined, auth: str
   if (problem) {
     throw new ConfigError(`WEBHOOK_SECRET ${problem}. Generate one with: npx @madauth/server generate-webhook-secret`);
   }
-  return { secret };
+  if (!previousSecret) return { secret };
+  const previousProblem = checkWebhookSecret(previousSecret);
+  if (previousProblem) throw new ConfigError(`WEBHOOK_PREVIOUS_SECRET ${previousProblem}: it is the secret WEBHOOK_SECRET had before.`);
+  console.warn(
+    '[madauth] WEBHOOK_PREVIOUS_SECRET is set: every webhook call is signed with it and with WEBHOOK_SECRET. Remove it once your ' +
+      'receiver has the new secret. See "Changing the webhook secret" in docs/server.md.',
+  );
+  return { secret, previousSecret };
 }
 
 /** Whether `host` is `domain` or one of its subdomains, as WebAuthn requires of a page and its passkeys' domain. */

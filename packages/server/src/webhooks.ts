@@ -128,9 +128,15 @@ export function verifyWebhook(
 
 /**
  * How the calls are signed: with the secret the receiver checks (WEBHOOK_SECRET), or with AWS IAM (WEBHOOK_AUTH=aws-iam):
- * with madAuth's AWS credentials, which AWS checks before the receiver runs.
+ * with madAuth's AWS credentials, which AWS checks before the receiver runs. While the secret is being changed,
+ * `previousSecret` (WEBHOOK_PREVIOUS_SECRET) signs every call as well, so a receiver that still has it accepts them.
  */
-export type WebhookAuth = { secret: string } | { awsIam: WebhookSigner };
+export type WebhookAuth = { secret: string; previousSecret?: string } | { awsIam: WebhookSigner };
+
+/** The `webhook-signature` header value for a call signed with each of `secrets`, space-separated as Standard Webhooks allows. */
+export function signWebhookWithEach(secrets: readonly string[], id: string, timestamp: number, body: string): string {
+  return secrets.map((secret) => signWebhook(secret, id, timestamp, body)).join(' ');
+}
 
 export type WebhookSettings = {
   url: string;
@@ -147,6 +153,9 @@ export interface WebhookClient {
   call(type: WebhookType, data: Record<string, unknown>, timeoutMs: number): Promise<WebhookResult>;
 }
 
+/** The secrets that sign each call: the current one, and the previous one while it is set. */
+const secretsOf = (auth: { secret: string; previousSecret?: string }): string[] => [auth.secret, ...(auth.previousSecret ? [auth.previousSecret] : [])];
+
 export function createWebhookClient(settings: WebhookSettings, fetchImpl: typeof fetch = fetch): WebhookClient {
   const wants = (type: WebhookType) => settings.events.has(type);
   return {
@@ -162,7 +171,7 @@ export function createWebhookClient(settings: WebhookSettings, fetchImpl: typeof
       const headers = { 'Content-Type': 'application/json', 'webhook-id': id, 'webhook-timestamp': String(timestamp) };
       const signed =
         'secret' in settings
-          ? { headers: { ...headers, 'webhook-signature': signWebhook(settings.secret, id, timestamp, body) } }
+          ? { headers: { ...headers, 'webhook-signature': signWebhookWithEach(secretsOf(settings), id, timestamp, body) } }
           : await settings.awsIam({ url: settings.url, headers, body });
       if ('problem' in signed) return { ok: false, reason: signed.problem };
       let response: Response;

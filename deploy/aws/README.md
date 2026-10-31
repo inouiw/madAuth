@@ -106,7 +106,7 @@ The receiver needs the server's role and the server the receiver's function, so 
 2. Deploy the receiver with `AWS_IAM` auth and that role, e.g. the aws-ses-mailer with `MadauthRoleArn` (see its README). Note its URL and its function's ARN.
 3. Set `webhookUrl` and `webhookFunctionArn` in `cdk.json` and deploy madAuth again. The server's role may now invoke the receiver through its URL (`lambda:InvokeFunctionUrl`, and `lambda:InvokeFunction` with `lambda:InvokedViaFunctionUrl`), and madAuth signs every call with it (`WEBHOOK_AUTH=aws-iam`).
 
-There must be no `<secretsPath>/WEBHOOK_SECRET`: madAuth refuses to start with a secret and `WEBHOOK_AUTH=aws-iam`, so the deploy fails while it exists, and the running server keeps working. To move an existing deployment, see [Switching the webhook receiver to AWS IAM](#switching-the-webhook-receiver-to-aws-iam).
+There must be no `<secretsPath>/WEBHOOK_SECRET` and no `<secretsPath>/WEBHOOK_PREVIOUS_SECRET`: madAuth refuses to start with a secret and `WEBHOOK_AUTH=aws-iam`, so the deploy fails while one exists, and the running server keeps working. To move an existing deployment, see [Switching the webhook receiver to AWS IAM](#switching-the-webhook-receiver-to-aws-iam).
 
 ## Using the construct in your own CDK app
 
@@ -191,6 +191,28 @@ For a deployment whose receiver checks `WEBHOOK_SECRET`, to a receiver with AWS 
 3. Deploy the receiver with `AWS_IAM` auth and the output `RoleArn`, e.g. the aws-ses-mailer with `MadauthRoleArn` and without `WebhookSecret`.
 
 From step 2 until step 3 is deployed, the receiver refuses madAuth's calls (they carry no secret's signature any more): no e-mail is sent, and with `user.signing_up` nobody signs up; users see that it failed and can try again. A receiver in the same CDK app (see the construct above) switches in the same deploy as the server.
+
+## Changing the webhook secret
+
+For a receiver that checks `WEBHOOK_SECRET`, without a gap in which it refuses madAuth's calls (see [Changing the webhook secret](../../docs/server.md#changing-the-webhook-secret)). The server reads the Parameter Store when an instance starts, so after each change to the parameters, make it start new instances: any change to the server function's configuration does, e.g. `cdk deploy` with a changed `environment` value, or `aws lambda update-function-configuration --function-name <the server's function> --description "<anything new>"`.
+
+1. Keep the old secret as the previous one and store a new one:
+
+   ```bash
+   aws ssm put-parameter --name /madauth/WEBHOOK_PREVIOUS_SECRET --type SecureString --value "$(aws ssm get-parameter --name /madauth/WEBHOOK_SECRET --with-decryption --query Parameter.Value --output text)"
+   ```
+
+   ```bash
+   aws ssm put-parameter --name /madauth/WEBHOOK_SECRET --type SecureString --overwrite --value "$(npx --yes @madauth/server generate-webhook-secret)"
+   ```
+
+   Then make the server start new instances. Every call now carries both signatures.
+2. Give the receiver the new secret, e.g. the aws-ses-mailer's `WebhookSecret`.
+3. Delete the previous secret and make the server start new instances again:
+
+   ```bash
+   aws ssm delete-parameter --name /madauth/WEBHOOK_PREVIOUS_SECRET
+   ```
 
 ## Administration
 

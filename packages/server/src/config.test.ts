@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ConfigError, envVars, loadConfig, methodConfig } from './config.js';
 import { CLIENT_ID, WEBHOOK_SECRET, WEBHOOK_URL, signingKey } from './test/helpers.js';
 import { createSqliteAdapter } from './store/sqlite.js';
-import { checkWebhookSecret } from './webhooks.js';
+import { checkWebhookSecret, generateWebhookSecret } from './webhooks.js';
 
 const env = {
   MADAUTH_ISSUER: 'https://auth.example.com/',
@@ -235,7 +235,28 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, ...iam, WEBHOOK_URL: 'https://hooks.example.com/x' })).rejects.toThrow(
       'WEBHOOK_AUTH=aws-iam signs the calls for a Lambda Function URL with AWS_IAM auth, so WEBHOOK_URL must be one, e.g. https://<id>.lambda-url.<region>.on.aws/, but is "https://hooks.example.com/x".',
     );
-    await expect(loadConfig({ ...env, WEBHOOK_AUTH: 'aws-iam' })).rejects.toThrow(new ConfigError('WEBHOOK_SECRET, WEBHOOK_AUTH and WEBHOOK_EVENTS need WEBHOOK_URL.'));
+    await expect(loadConfig({ ...env, ...iam, WEBHOOK_PREVIOUS_SECRET: generateWebhookSecret() })).rejects.toThrow(
+      /WEBHOOK_PREVIOUS_SECRET is set, but with WEBHOOK_AUTH=aws-iam madAuth signs the webhook calls with its AWS role and no secret: remove it/,
+    );
+    await expect(loadConfig({ ...env, WEBHOOK_AUTH: 'aws-iam' })).rejects.toThrow(
+      new ConfigError('WEBHOOK_SECRET, WEBHOOK_PREVIOUS_SECRET, WEBHOOK_AUTH and WEBHOOK_EVENTS need WEBHOOK_URL.'),
+    );
+  });
+
+  it('K7: WEBHOOK_PREVIOUS_SECRET signs the calls too while the secret is changed, with a warning; a bad one is refused', async () => {
+    const previous = generateWebhookSecret();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect((await loadConfig({ ...env, ...hook, WEBHOOK_PREVIOUS_SECRET: previous })).webhook).toMatchObject({ secret: WEBHOOK_SECRET, previousSecret: previous });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('WEBHOOK_PREVIOUS_SECRET is set: every webhook call is signed with it and with WEBHOOK_SECRET'));
+    warn.mockClear();
+    // Without it, nothing is said.
+    expect((await loadConfig({ ...env, ...hook })).webhook).not.toHaveProperty('previousSecret');
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('WEBHOOK_PREVIOUS_SECRET'));
+    warn.mockRestore();
+
+    await expect(loadConfig({ ...env, ...hook, WEBHOOK_PREVIOUS_SECRET: 'not-a-secret' })).rejects.toThrow(/WEBHOOK_PREVIOUS_SECRET must start with/);
+    await expect(loadConfig({ ...env, WEBHOOK_PREVIOUS_SECRET: previous })).rejects.toThrow(/need WEBHOOK_URL/);
   });
 
   it('K7: without WEBHOOK_AUTH the calls are signed with WEBHOOK_SECRET; another value is refused', async () => {

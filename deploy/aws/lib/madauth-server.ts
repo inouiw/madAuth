@@ -202,8 +202,9 @@ export class MadAuthServer extends Construct {
     const deployment = deploymentOf(issuer);
     for (const statement of serverKmsPolicy(deployment)) this.function.addToRolePolicy(iam.PolicyStatement.fromJson(statement));
     const signingKeyParameter = `${secretsPath}/MADAUTH_SIGNING_KEY`;
-    // With AWS IAM, a webhook secret left in the Parameter Store would keep the server from starting: the deploy checks.
-    const webhookSecretParameter = awsIamReceiver ? `${secretsPath}/WEBHOOK_SECRET` : undefined;
+    // With AWS IAM, a webhook secret (or the previous one) left in the Parameter Store would keep the server from starting:
+    // the deploy checks.
+    const webhookSecretParameters: Record<string, string> = awsIamReceiver ? { WEBHOOK_SECRET_PARAMETER: `${secretsPath}/WEBHOOK_SECRET`, WEBHOOK_PREVIOUS_SECRET_PARAMETER: `${secretsPath}/WEBHOOK_PREVIOUS_SECRET` } : {};
     this.keyManager = new nodejs.NodejsFunction(this, 'Keys', {
       entry: fileURLToPath(new URL('../lambda/keys.ts', import.meta.url)),
       handler: 'handler',
@@ -214,7 +215,7 @@ export class MadAuthServer extends Construct {
       environment: {
         MADAUTH_ISSUER: issuer,
         SIGNING_KEY_PARAMETER: signingKeyParameter,
-        ...(webhookSecretParameter ? { WEBHOOK_SECRET_PARAMETER: webhookSecretParameter } : {}),
+        ...webhookSecretParameters,
       },
       // What was rotated when, for a year.
       logGroup: new logs.LogGroup(this, 'KeysLogs', {
@@ -241,10 +242,10 @@ export class MadAuthServer extends Construct {
         resources: [kmsArn('alias', `madauth/${deployment}/*`), kmsArn('key', '*')],
       }),
       new iam.PolicyStatement({ actions: ['kms:DescribeKey', 'kms:DisableKey'], resources: [kmsArn('key', '*')], conditions: deploymentAliases }),
-      // Whether the local key service's key (and with AWS IAM the webhook secret) is still there; no value is read.
+      // Whether the local key service's key (and with AWS IAM the webhook secrets) is still there; no value is read.
       new iam.PolicyStatement({
         actions: ['ssm:GetParameters'],
-        resources: [signingKeyParameter, ...(webhookSecretParameter ? [webhookSecretParameter] : [])].map((name) => parameterArn(name.slice(1))),
+        resources: [signingKeyParameter, ...Object.values(webhookSecretParameters)].map((name) => parameterArn(name.slice(1))),
       }),
     ];
     for (const statement of keyManagerStatements) this.keyManager.addToRolePolicy(statement);

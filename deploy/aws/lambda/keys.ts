@@ -42,13 +42,14 @@ export async function handler(event: KeysEvent): Promise<{ PhysicalResourceId: s
         `Delete it, which signs every user out (see "AWS KMS" in docs/server.md), then deploy again: aws ssm delete-parameter --name ${signingKey}`,
     );
   }
-  // The same for the webhook secret, when the server signs its webhook calls with its role (WEBHOOK_AUTH=aws-iam).
-  const webhookSecret = process.env.WEBHOOK_SECRET_PARAMETER;
-  if (webhookSecret && (await parameterExists(webhookSecret))) {
+  // The same for the webhook secret and the previous one, when the server signs its webhook calls with its role (WEBHOOK_AUTH=aws-iam).
+  const webhookSecrets = [process.env.WEBHOOK_SECRET_PARAMETER, process.env.WEBHOOK_PREVIOUS_SECRET_PARAMETER].filter((name): name is string => !!name);
+  const present = (await Promise.all(webhookSecrets.map(async (name) => ((await parameterExists(name)) ? [name] : [])))).flat();
+  if (present.length) {
     throw new Error(
-      `${webhookSecret} is in the Parameter Store, but madAuth signs its webhook calls with its AWS role now (WEBHOOK_AUTH=aws-iam) and refuses to start while a webhook secret is set. ` +
-        `Delete it, then deploy again right away: the running server can't start new instances without it (see "Switching the webhook receiver to AWS IAM" in deploy/aws/README.md): ` +
-        `aws ssm delete-parameter --name ${webhookSecret}`,
+      `${present.join(' and ')} ${present.length > 1 ? 'are' : 'is'} in the Parameter Store, but madAuth signs its webhook calls with its AWS role now (WEBHOOK_AUTH=aws-iam) and refuses to start while a webhook secret is set. ` +
+        `Delete ${present.length > 1 ? 'them' : 'it'}, then deploy again right away: the running server can't start new instances without it (see "Switching the webhook receiver to AWS IAM" in deploy/aws/README.md): ` +
+        `aws ssm delete-parameters --names ${present.join(' ')}`,
     );
   }
   for (const message of await setUpKmsKeys(sdk.kms, deployment)) console.log(message);
