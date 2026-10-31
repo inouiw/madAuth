@@ -1,5 +1,5 @@
 import type { LoginMethodId } from '../methods.js';
-import { ok, type Result } from '../result.js';
+import { isSecondFactor, ok, type Result, type SecondFactor } from '../result.js';
 import { serverCalls, type Core } from './core.js';
 
 /** A sign-in method of the signed-in user, as `Madauth.methods.list` returns it. */
@@ -20,6 +20,18 @@ export interface SignInMethodInfo {
   lastUsedAt?: number;
 }
 
+/** What `Madauth.methods.list` resolves to. */
+export interface SignInMethods {
+  methods: SignInMethodInfo[];
+  /**
+   * The second factors the user has that are on, in the order a sign-in asks for them: the preferred one first,
+   * then a passkey, the app, SMS. Empty with a server before madAuth 0.7.
+   */
+  secondFactors: SecondFactor[];
+  /** The one a sign-in asks for first, set with `Madauth.secondFactor.setPreferred`; null for the usual order. */
+  preferredSecondFactor: SecondFactor | null;
+}
+
 /**
  * The signed-in user's sign-in methods: which they have, and removing one. A user adds one with the method's
  * own call: `Madauth.passkey.add()`, `Madauth.password.add()`, `Madauth.emailLink.add()`, the Google or GitHub
@@ -27,8 +39,11 @@ export interface SignInMethodInfo {
  * all of this in madAuth's dialog.
  */
 export interface MethodsApi {
-  /** The user's methods, the authenticator app among them (the phone for SMS codes is `Madauth.sms.status()`). Fails with `no_session`. */
-  list(): Promise<Result<{ methods: SignInMethodInfo[] }>>;
+  /**
+   * The user's methods, the authenticator app among them (the phone for SMS codes is `Madauth.sms.status()`), and
+   * their second factors with the preferred one. Fails with `no_session`.
+   */
+  list(): Promise<Result<SignInMethods>>;
   /**
    * Removes a password, Google, GitHub, the e-mail link or a passkey (the authenticator app takes a code:
    * `Madauth.authenticator.remove`). Only within two minutes of signing in, else it fails with
@@ -44,8 +59,14 @@ export function createMethodsApi(core: Core): MethodsApi {
 
   return {
     async list() {
-      const result = await call<{ methods: SignInMethodInfo[] }>('/auth/methods', { method: 'GET', session: true });
-      return result.isSuccess ? ok({ methods: result.methods }) : result;
+      const result = await call<{ methods: SignInMethodInfo[]; secondFactors?: unknown[]; preferredSecondFactor?: unknown }>('/auth/methods', { method: 'GET', session: true });
+      if (!result.isSuccess) return result;
+      const preferred = result.preferredSecondFactor;
+      return ok({
+        methods: result.methods,
+        secondFactors: (result.secondFactors ?? []).filter(isSecondFactor),
+        preferredSecondFactor: isSecondFactor(preferred) ? preferred : null,
+      });
     },
     async remove(id) {
       const result = await call('/auth/methods/remove', { body: { id }, session: true });

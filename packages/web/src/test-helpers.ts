@@ -115,6 +115,8 @@ export interface FakeServer {
   staleSignIn: boolean;
   /** The app's status can't be read: GET /auth/authenticator/status fails. */
   statusDown: boolean;
+  /** The second factor each user wants to be asked for first, by e-mail address. */
+  preferredFactors: Map<string, string>;
   /** A setup under way (the setup cookie); set to undefined to simulate its expiry. */
   authenticatorSetup: { email: string } | undefined;
   /** The phone numbers of the users who added one, by e-mail address. */
@@ -187,6 +189,7 @@ export function fakeServer(): FakeServer {
     confirmation: undefined,
     staleSignIn: false,
     statusDown: false,
+    preferredFactors: new Map(),
     apiScopes: [
       { name: 'madauth:claims:read', description: "Read a user's claims and roles", role: 'admin', endpoints: ['POST /auth/admin/claims/get'] },
       { name: 'orders:read', description: 'Read your orders', role: null, endpoints: ['GET /api/orders'] },
@@ -220,6 +223,12 @@ export function fakeServer(): FakeServer {
   const authenticatorOn = () => server.methods.authenticator || server.policy.google !== 'none' || server.policy.github !== 'none' || server.policy.password !== 'none' || server.policy['email-link'] !== 'none';
   /** What follows a primary method that succeeded: the session, or a code (from the app, or by SMS) or the app's setup. */
   const passkeysOf = (email: string) => [...server.passkeys.values()].filter((p) => p.email === email);
+  /** The second factors a user has, in the usual order. */
+  const factorsOf = (email: string) => [
+    ...(passkeysOf(email).length ? ['passkey'] : []),
+    ...(server.authenticators.has(email) ? ['authenticator'] : []),
+    ...(server.phones.has(email) ? ['sms'] : []),
+  ];
   const afterPrimary = (email: string, method: 'google' | 'github' | 'password' | 'email-link' | 'passkey') => {
     const policy = method === 'passkey' ? (server.passkey?.secondFactor ?? 'none') : server.policy[method];
     const app = server.authenticators.has(email);
@@ -408,7 +417,18 @@ export function fakeServer(): FakeServer {
           ...(server.authenticators.has(user) ? [{ id: 'acc_authenticator', method: 'authenticator', signIn: server.methods.authenticator, removable: false, createdAt: 1 }] : []),
           ...passkeysOf(user).map((p) => ({ id: p.id, method: 'passkey', signIn: !!server.passkey?.signIn, removable: true, createdAt: 1, name: p.name, lastUsedAt: 0 })),
         ];
-        return json({ methods });
+        const has = factorsOf(user);
+        const preferred = has.find((factor) => factor === server.preferredFactors.get(user)) ?? null;
+        return json({ methods, secondFactors: preferred ? [preferred, ...has.filter((f) => f !== preferred)] : has, preferredSecondFactor: preferred });
+      }
+      case 'POST /auth/second-factor/preferred': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        const factor = (body as { factor?: unknown }).factor;
+        if (factor === null) server.preferredFactors.delete(user);
+        else if (typeof factor === 'string' && factorsOf(user).includes(factor)) server.preferredFactors.set(user, factor);
+        else return json({ error: 'method_not_found', message: 'none' }, 404);
+        return json({});
       }
       case 'POST /auth/methods/remove': {
         const user = server.user?.email;

@@ -54,7 +54,7 @@ import { OidcClients, clientInfo, parseClientFields } from './oidc-clients.js';
 import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { parseUserSearch, searchUsers } from './user-search.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, bearerTokenOf, type MadauthUser } from './user.js';
-import { Users, factorsAmong, methodOf, toMadauthUser, type StoredUser } from './users.js';
+import { Users, factorsAmong, methodOf, preferredFirst, toMadauthUser, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
 /** How long madAuth waits for an event call; events never make a request fail. */
@@ -388,10 +388,12 @@ export function createApp(config: MadauthConfig): Hono {
         const policy = policyOf(method, methods);
         if (policy !== 'none') {
           // The second factors that are on, but never the method itself: a passkey is no second factor of a
-          // passkey sign-in. They come in the order of SECOND_FACTORS: the client offers a switch to the others.
+          // passkey sign-in. They come in the order of SECOND_FACTORS, the user's preferred one first: the client
+          // offers a switch to the others.
           const on = factorsOn(now.configured, methods, method);
-          // A passkey answers only on the domain it was made for: one of another app's is no factor here.
-          const has = factorsAmong(await users.accounts(user.id), on, usableOn(passkeyDomain(config, appOriginOf(c))));
+          // A passkey answers only on the domain it was made for: one of another app's is no factor here. The
+          // factor the user prefers comes first, if they have it here.
+          const has = preferredFirst(factorsAmong(await users.accounts(user.id), on, usableOn(passkeyDomain(config, appOriginOf(c)))), user.preferredSecondFactor);
           next = has[0] ?? (policy === 'required' ? 'second-factor-setup' : null);
           factors = has.length ? has : on;
         }

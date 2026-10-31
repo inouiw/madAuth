@@ -1,5 +1,5 @@
 import type { BuiltInMethodId } from './methods.js';
-import type { MadauthErrorCode } from './result.js';
+import type { MadauthErrorCode, SecondFactor } from './result.js';
 import { coreDe, coreEn, languageOf, methodTexts } from './strings-core.js';
 
 /**
@@ -215,6 +215,11 @@ export const en = {
     removed: 'Removed.',
     passwordChanged: 'Password changed. You are signed out on your other devices.',
     codesReplaced: 'New recovery codes are ready. The old ones no longer work.',
+    saved: 'Saved.',
+    /** The select of the second factor a sign-in asks for first, shown when the user has more than one. */
+    askFirst: 'Second factor to ask for first',
+    askFirstHint: 'When signing in asks for a second factor, it starts with this one. You can still switch to another.',
+    factors: { passkey: 'Passkey', authenticator: 'Authenticator app', sms: 'Code by SMS' } satisfies Record<SecondFactor, string>,
     appReplaced: 'The new authenticator app is set up. The old one no longer works.',
     done: 'Done',
     loading: 'Loading…',
@@ -573,6 +578,10 @@ export const de: Strings = {
     removed: 'Entfernt.',
     passwordChanged: 'Passwort geändert. Auf Ihren anderen Geräten sind Sie abgemeldet.',
     codesReplaced: 'Die neuen Wiederherstellungscodes sind bereit. Die alten funktionieren nicht mehr.',
+    saved: 'Gespeichert.',
+    askFirst: 'Zuerst gefragter zweiter Faktor',
+    askFirstHint: 'Fragt die Anmeldung nach einem zweiten Faktor, beginnt sie mit diesem. Sie können trotzdem zu einem anderen wechseln.',
+    factors: { passkey: 'Passkey', authenticator: 'Authentifizierungs-App', sms: 'Code per SMS' },
     appReplaced: 'Die neue Authentifizierungs-App ist eingerichtet. Die alte funktioniert nicht mehr.',
     done: 'Fertig',
     loading: 'Wird geladen …',

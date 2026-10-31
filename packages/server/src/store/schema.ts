@@ -53,7 +53,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 11,
+  version: 12,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -85,6 +85,11 @@ export const madauthSchema = {
          * 9 (since version 9).
          */
         signUpMethod: { type: 'string', nullable: true },
+        /**
+         * The second factor the user wants to be asked for first: `passkey`, `authenticator` or `sms`. Empty for
+         * the usual order, and in records from before version 11 (since version 11).
+         */
+        preferredSecondFactor: { type: 'string', nullable: true },
         createdAt: { type: 'number' },
       },
     },
@@ -182,7 +187,7 @@ export const madauthSchema = {
       },
     },
     /**
-     * An application that signs its users in with madAuth as its OpenID Connect provider (since version 11),
+     * An application that signs its users in with madAuth as its OpenID Connect provider (since version 12),
      * registered by an admin. `id` is its client ID; its secret is never stored, only its SHA-256.
      */
     oidcClient: {
@@ -202,7 +207,7 @@ export const madauthSchema = {
       },
     },
     /**
-     * An authorization code that a client exchanges for its tokens (since version 11). `id` is the code's
+     * An authorization code that a client exchanges for its tokens (since version 12). `id` is the code's
      * SHA-256; the record goes when the code is used.
      */
     oidcCode: {
@@ -226,7 +231,7 @@ export const madauthSchema = {
       },
     },
     /**
-     * A chain of refresh tokens of a client for a user (since version 11). Each use replaces its token: `hash`
+     * A chain of refresh tokens of a client for a user (since version 12). Each use replaces its token: `hash`
      * is the SHA-256 of the one that works now. A token used twice ends the chain.
      */
     oidcRefreshToken: {

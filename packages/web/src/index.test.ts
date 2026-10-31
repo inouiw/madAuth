@@ -31,6 +31,7 @@ describe('@madauth/web', () => {
         'passkey',
         'password',
         'provider',
+        'secondFactor',
         'sessionReady',
         'setLocale',
         'showAdminDialog',

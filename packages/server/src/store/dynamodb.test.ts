@@ -111,6 +111,7 @@ const user = {
   claims: null,
   signedUpAt: null,
   signUpMethod: null,
+  preferredSecondFactor: null,
   createdAt: 1,
 };
 
@@ -129,6 +130,7 @@ const userItem = {
   claims: { NULL: true },
   signedUpAt: { NULL: true },
   signUpMethod: { NULL: true },
+  preferredSecondFactor: { NULL: true },
   createdAt: { N: '1' },
 };
 
