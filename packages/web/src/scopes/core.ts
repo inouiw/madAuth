@@ -18,6 +18,8 @@ export interface Core {
    */
   locale(): string | undefined;
   request<T>(path: string, init?: RequestInit): Promise<HttpResult<T>>;
+  /** The madAuth server's URL, once `initialize` was called. */
+  serverUrl(): string | undefined;
   signedIn(user: MadauthUser): void;
   /** The last known signed-in user, or null. */
   currentUser(): MadauthUser | null;

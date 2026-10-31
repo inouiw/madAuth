@@ -45,6 +45,7 @@ describe('@madauth/web', () => {
         'showSignInDialog',
         'signOut',
         'sms',
+        'tokens',
         'authenticator',
       ].sort(),
     );

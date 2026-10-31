@@ -1,5 +1,10 @@
 # Upgrading
 
+## To 0.7.1
+
+- **New: the token exchange for native apps.** A Capacitor or other native app whose WebView gets no cookies from the madAuth server signs in as a registered application of the OpenID Connect provider and gets tokens: `Madauth.tokens.nonce({ clientId })` for Google's sign-in, `exchange({ clientId, credential })` with the Google ID token, `refresh({ clientId, refreshToken })`; on the server `POST /auth/oidc/nonce` and `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` at `/auth/oidc/token` (RFC 8693). An admin allows it per application with `tokenExchange: true`. New error codes `invalid_grant`, `interaction_required`, `unauthorized_client` and `invalid_request` in `@madauth/web`. See [Native apps](server.md#native-apps).
+- **Schema version 14:** `oidcClient.tokenExchange` and the new model `oidcNonce`. SQLite and Postgres upgrade themselves, DynamoDB needs nothing; for your own SQL tables run `npx @madauth/server schema --dialect <yours> --from 13` and apply it before you deploy.
+
 ## To 0.7
 
 - **New: Postgres is built in.** `DATABASE_URL=postgres://<user>:<password>@<host>:5432/<database>` (or `postgresql://…`) stores the users in Postgres; madAuth creates and upgrades its tables at start, under a lock, so several instances can start at once. `DATABASE_MIGRATE=false` turns that off for a database user that may not change tables. The Docker image and the bundles contain the driver; with madAuth from npm, install `pg`. A custom adapter built from the former "Example: Postgres" keeps working; to switch to the built-in one, record its schema version first (the error at start says how). See [Postgres](server.md#postgres).

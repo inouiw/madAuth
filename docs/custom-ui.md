@@ -280,7 +280,7 @@ if (!result.isSuccess) showError(result.error); // or the second step, see below
 - `signIn({ credential })` sends the token to the server, which verifies it (signature, audience, nonce, a verified address); the user arrives in the result and through `onAuthStateChanged`. It fails with `verification_failed` (also for a token without the nonce: Google's iOS library sets one since GoogleSignIn-iOS 9.0.0), `email_unverified`, `other_method` (the address signs in another way; `methods` says how), `signup_rejected` or `method_disabled`. When the policy asks for a second factor, it ends with `passkey_required`, `authenticator_required`, `sms_required` or `second_factor_setup_required` instead, and the sign-in goes on as after `password.signIn`, see [The second step](#the-second-step); `pendingStep` has `method: 'google'`.
 - `signIn({ credential, purpose: 'link' })` adds the Google account to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods) instead, within two minutes of signing in, and resolves with the user as they are; it fails with `account_taken`, `reauth_required` or `no_session`.
 
-The session is a cookie, as with every other method: the app's origin must be in `ALLOWED_ORIGINS`, and the same-site rule in [server.md](server.md) applies.
+The session is a cookie, as with every other method: the app's origin must be in `ALLOWED_ORIGINS`, and the same-site rule in [server.md](server.md) applies. A Capacitor app gets a same-site origin with `server.hostname`; one that can't, or that wants tokens for its own backend, uses `Madauth.tokens` instead, see [Native apps](server.md#native-apps).
 
 ## GitHub: `Madauth.github`
 
@@ -367,6 +367,10 @@ A TV or a command-line tool that signs in with madAuth as its [OpenID Connect pr
 - `Madauth.device.lookup(code)` resolves to what the device asks for, `{ code, client: { id, name }, scope, expiresAt }`, from the code in any case, with or without the dash. From then on only this user can decide it. Fails with `no_session`, `device_code_invalid` (unknown, expired, used, or someone else's) or `too_many_attempts` (five wrong codes within ten minutes; the server's message says so).
 - Show the application's name and the code, and tell the user to approve only a sign-in they started on a device of theirs. `Madauth.device.approve(code)` lets the device sign in as the user; `deny(code)` refuses it. Each works once, after `lookup`. `approve` fails with `reauth_required` for a session that has no sign-in time (from before madAuth 0.6): the user signs in again.
 - `verification_uri_complete` brings the user with `?madauth_device=<code>`: read it and look it up without the form.
+
+## Tokens for a native app: `Madauth.tokens`
+
+A native app on a cross-site origin, where the madAuth server's cookies don't arrive, signs in as a registered application of the [OpenID Connect provider](server.md#native-apps) and gets tokens: `Madauth.tokens.nonce({ clientId })` for Google's sign-in, `exchange({ clientId, credential })` with the Google ID token for `{ accessToken, idToken, refreshToken, expiresIn, scope }`, and `refresh({ clientId, refreshToken })` later. `exchange` fails with `interaction_required` when the sign-in needs a second factor or a setup: finish it through the authorization code flow in the system browser. None of these calls use cookies or `Madauth.currentUser`; `initialize` is still needed for the server URL.
 
 ## Language
 

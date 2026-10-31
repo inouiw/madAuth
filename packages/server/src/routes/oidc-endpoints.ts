@@ -4,12 +4,18 @@
 // clients are registered through the admin API (app.ts). See "OpenID Connect provider" in docs/server.md.
 import { createHash } from 'node:crypto';
 import type { Context, Hono } from 'hono';
-import type { JWTPayload } from 'jose';
+import { decodeJwt, type JWTPayload } from 'jose';
+import { verifyGoogleIdToken } from '../google.js';
+import { providerOf } from '../providers.js';
+import { localeOf } from '../webhooks.js';
+import { GOOGLE, toProfile } from './google.js';
+import { resolveProviderUser } from './oauth.js';
 import type { AppContext } from '../app.js';
 import { claimsFromJson } from '../claims.js';
 import {
   ACCESS_TOKEN_TTL_S,
   DEVICE_CODE_TTL_MS,
+  EXCHANGE_NONCE_TTL_MS,
   DEVICE_POLL_INTERVAL_S,
   ID_TOKEN_TTL_S,
   MAX_WRONG_DEVICE_CODES,
@@ -53,6 +59,10 @@ export const DEVICE_CODE_PARAM = 'madauth_device';
 
 /** The grant type of the device authorization grant (RFC 8628). */
 const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
+
+/** The grant type of the token exchange (RFC 8693): a native app's Google ID token for madAuth's tokens. */
+const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
+const ID_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id_token';
 
 /** The scopes madAuth knows among those asked for, as a grant stores them. */
 const knownScopes = (scope: string | undefined): string[] => (scope ?? '').split(' ').filter((s) => (OIDC_SCOPES as readonly string[]).includes(s));
@@ -119,7 +129,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       response_types_supported: ['code'],
       response_modes_supported: ['query'],
       device_authorization_endpoint: endpoint('device'),
-      grant_types_supported: ['authorization_code', 'refresh_token', DEVICE_GRANT],
+      grant_types_supported: ['authorization_code', 'refresh_token', DEVICE_GRANT, TOKEN_EXCHANGE_GRANT],
       subject_types_supported: ['public'],
       id_token_signing_alg_values_supported: [SIGNING_ALG],
       token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
@@ -328,8 +338,70 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       return tokens(c, user, used.chain, asked.join(' '), used.token, null);
     }
 
-    return tokenError(c, 400, 'unsupported_grant_type', `grant_type must be authorization_code, refresh_token or ${DEVICE_GRANT}.`);
+    if (form.grant_type === TOKEN_EXCHANGE_GRANT) return exchange(c, client, form);
+
+    return tokenError(c, 400, 'unsupported_grant_type', `grant_type must be authorization_code, refresh_token, ${DEVICE_GRANT} or ${TOKEN_EXCHANGE_GRANT}.`);
   });
+
+  // --- The token exchange (RFC 8693): a native app signs in with a Google ID token it obtained itself ---
+
+  /** The Google provider, if it signs in now. */
+  const googleSignIn = async (c: Context) => ((await ctx.enabled(c, 'google')) ? providerOf(await ctx.methods(c), 'google') : null);
+
+  // The nonce for Google's sign-in, kept for the client for five minutes and used once, so the ID token that comes
+  // back was asked for by this client, just now. A WebView gets no cookie for it (see "Native apps" in docs/server.md).
+  app.post(`${OIDC_PATH}nonce`, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const form = await paramsOf(c);
+    const client = await authenticate(c, form);
+    if (client instanceof Response) return client;
+    if (!client.tokenExchange) return tokenError(c, 400, 'unauthorized_client', 'This application may not exchange tokens: an admin allows it with tokenExchange.');
+    const google = await googleSignIn(c);
+    if (!google) return tokenError(c, 400, 'invalid_request', 'Google sign-in is off on this server.');
+    const nonce = await clients.issueNonce(client.id);
+    return c.json({ nonce, google_client_id: google.clientId, expires_in: Math.floor(EXCHANGE_NONCE_TTL_MS / 1000) });
+  });
+
+  /** The exchange: the Google ID token's user, signed in as with `google/verify`, gets this client's tokens. */
+  const exchange = async (c: Context, client: StoredClient, form: Record<string, string>) => {
+    if (!client.tokenExchange) return tokenError(c, 400, 'unauthorized_client', 'This application may not exchange tokens: an admin allows it with tokenExchange.');
+    if (form.subject_token_type !== ID_TOKEN_TYPE) return tokenError(c, 400, 'invalid_request', `subject_token_type must be ${ID_TOKEN_TYPE}: a Google ID token.`);
+    const subject = form.subject_token;
+    if (!subject) return tokenError(c, 400, 'invalid_request', 'subject_token is missing.');
+    const google = await googleSignIn(c);
+    if (!google) return tokenError(c, 400, 'invalid_grant', 'Google sign-in is off on this server.');
+    // The nonce in the token must be one this client got from madAuth, fresh and unused: used up before Google's
+    // signature is checked, so a token that fails there takes a new nonce too.
+    let nonce: unknown;
+    try {
+      nonce = decodeJwt(subject).nonce;
+    } catch {
+      return tokenError(c, 400, 'invalid_grant', 'subject_token is not a JWT.');
+    }
+    if (typeof nonce !== 'string' || !(await clients.useNonce(nonce, client.id))) {
+      return tokenError(c, 400, 'invalid_grant', 'The nonce in subject_token is not one this application got from madAuth, or it expired or was used already.');
+    }
+    const verified = await verifyGoogleIdToken(subject, { clientId: google.clientId, nonce: nonce as string, keys: ctx.config.jwksResolver });
+    if (!verified.ok) return tokenError(c, 400, 'invalid_grant', `subject_token: ${verified.reason}.`);
+    const resolved = await resolveProviderUser(ctx, GOOGLE, toProfile(verified.profile), localeOf(form.locale));
+    if (!resolved.ok) {
+      if (resolved.error === 'temporarily_unavailable') return c.json({ error: 'temporarily_unavailable', error_description: resolved.message }, 503);
+      return tokenError(c, 400, 'invalid_grant', resolved.message);
+    }
+    const step = await ctx.signInForTokens(c, resolved.user, ['google'], 'google', verified.profile);
+    if ('disabled' in step) return tokenError(c, 400, 'invalid_grant', 'Google sign-in is off on this server.');
+    // A second factor, or a setup: only a browser can take that step, through the authorization code flow.
+    if ('next' in step) return c.json({ error: 'interaction_required', error_description: 'The sign-in needs a step a browser takes: sign in through the authorization endpoint.', next: step.next, factors: step.factors }, 400);
+    const grant: Grant = {
+      clientId: client.id,
+      userId: step.stored.id,
+      scope: knownScopes(form.scope).join(' '),
+      authTime: Math.floor(Date.now() / 1000),
+      amr: 'google',
+      sessionVersion: step.stored.sessionVersion,
+    };
+    return tokens(c, step.stored, grant, grant.scope, await refreshTokenFor(grant), null);
+  };
 
   // --- The device authorization grant (RFC 8628): the device's side ---
 

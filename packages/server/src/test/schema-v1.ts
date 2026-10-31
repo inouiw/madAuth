@@ -19,6 +19,6 @@ const {
   rpId: _l,
   ...accountFields
 } = madauthSchema.models.account.fields;
-const { setting: _m, recoveryCode: _n, apiKey: _o, oidcClient: _p, oidcCode: _q, oidcRefreshToken: _r, oidcDeviceCode: _s, ...models } = madauthSchema.models;
+const { setting: _m, recoveryCode: _n, apiKey: _o, oidcClient: _p, oidcCode: _q, oidcRefreshToken: _r, oidcDeviceCode: _s, oidcNonce: _t, ...models } = madauthSchema.models;
 
 export const schemaV1: Schema = { version: 1, models: { ...models, user: { fields: userFields }, account: { fields: accountFields } } };

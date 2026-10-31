@@ -27,8 +27,8 @@ function columnType(dialect: SqlDialect, def: FieldDef): string {
   return dialect === 'mysql' && def.type === 'string' && keyed ? 'VARCHAR(255)' : columnTypes[dialect][def.type];
 }
 
-/** The client model as version 12 created it: without `deviceFlow`, which version 13 adds. */
-const { deviceFlow: _deviceFlow, ...oidcClientFieldsV12 } = madauthSchema.models.oidcClient.fields;
+/** The client model as version 12 created it: without `deviceFlow` (version 13) and `tokenExchange` (version 14). */
+const { deviceFlow: _deviceFlow, tokenExchange: _tokenExchange, ...oidcClientFieldsV12 } = madauthSchema.models.oidcClient.fields;
 
 /** What each schema version after the first one added, as SQL for tables created by an older version. */
 const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
@@ -139,6 +139,15 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
         `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('wrongDeviceCodes')} ${columnType(dialect, madauthSchema.models.user.fields.wrongDeviceCodes)};`,
         `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('wrongDeviceCodeAt')} ${columnType(dialect, madauthSchema.models.user.fields.wrongDeviceCodeAt)};`,
         createTablesSql(dialect, { version: 13, models: { oidcDeviceCode: madauthSchema.models.oidcDeviceCode } }),
+      ].join('\n'),
+  },
+  {
+    // The token exchange: which clients may use it, and its nonces.
+    version: 14,
+    sql: (dialect) =>
+      [
+        `ALTER TABLE ${tableName('oidcClient')} ADD COLUMN ${columnName('tokenExchange')} ${columnType(dialect, madauthSchema.models.oidcClient.fields.tokenExchange)};`,
+        createTablesSql(dialect, { version: 14, models: { oidcNonce: madauthSchema.models.oidcNonce } }),
       ].join('\n'),
   },
 ];
