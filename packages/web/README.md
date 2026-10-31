@@ -41,6 +41,11 @@ See [Building your own login screen](https://github.com/inouiw/madAuth/blob/main
 - [Building your own login screen](https://github.com/inouiw/madAuth/blob/main/docs/custom-ui.md)
 - [Styling the login form](https://github.com/inouiw/madAuth/blob/main/docs/styling.md)
 
+---
+
+Created by David Neuy and
+[contributors](https://github.com/inouiw/madAuth/graphs/contributors).
+
 ## License
 
 MIT
