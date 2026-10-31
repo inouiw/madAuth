@@ -10,6 +10,7 @@ export {
   type PasskeyAddedDetail,
   type SignedInDetail,
   type SmsEnabledDetail,
+  type DeviceDecidedDetail,
   type SmsFailedDetail,
 } from './madauth-login.js';
 

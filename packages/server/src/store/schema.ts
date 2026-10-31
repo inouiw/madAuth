@@ -53,7 +53,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 12,
+  version: 13,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -90,6 +90,12 @@ export const madauthSchema = {
          * the usual order, and in records from before version 11 (since version 11).
          */
         preferredSecondFactor: { type: 'string', nullable: true },
+        /**
+         * Wrong device codes (the device authorization grant) the user typed since `wrongDeviceCodeAt`: after five
+         * within ten minutes, the lookup waits. Empty in records from before version 13 (since version 13).
+         */
+        wrongDeviceCodes: { type: 'number', nullable: true },
+        wrongDeviceCodeAt: { type: 'number', nullable: true },
         createdAt: { type: 'number' },
       },
     },
@@ -204,6 +210,8 @@ export const madauthSchema = {
         updatedAt: { type: 'number' },
         /** The address of the admin who changed it last. */
         updatedBy: { type: 'string', nullable: true },
+        /** Whether it may use the device authorization grant (RFC 8628). Empty in records from before version 13: no (since version 13). */
+        deviceFlow: { type: 'boolean', nullable: true },
       },
     },
     /**
@@ -228,6 +236,33 @@ export const madauthSchema = {
         /** The user's session version at the sign-in: ending their sessions ends what came of it. */
         sessionVersion: { type: 'number' },
         expiresAt: { type: 'number' },
+      },
+    },
+    /**
+     * A device's pending sign-in (the device authorization grant, RFC 8628; since version 13): `id` is the SHA-256
+     * of the device code the device polls with, `userCode` the code the user types. The record goes when the device
+     * gets its tokens, or its answer that the user denied.
+     */
+    oidcDeviceCode: {
+      fields: {
+        id: { type: 'string', primaryKey: true },
+        /** The user code without its dash, e.g. `BCDFGHJK`. */
+        userCode: { type: 'string', unique: true },
+        clientId: { type: 'string' },
+        /** The scopes asked for, separated by spaces. */
+        scope: { type: 'string' },
+        /** `pending`, `approved` or `denied`. */
+        status: { type: 'string' },
+        /** The user who looked the code up, who alone can approve or deny it; empty until then. */
+        userId: { type: 'string', nullable: true, index: true },
+        /** When and how the approving user signed in, and their session version; empty until approved. */
+        authTime: { type: 'number', nullable: true },
+        amr: { type: 'string', nullable: true },
+        sessionVersion: { type: 'number', nullable: true },
+        createdAt: { type: 'number' },
+        expiresAt: { type: 'number' },
+        /** When the device last polled, so one that polls too often is told to slow down; 0 before the first poll. */
+        lastPolledAt: { type: 'number' },
       },
     },
     /**

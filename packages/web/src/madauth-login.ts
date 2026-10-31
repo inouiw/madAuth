@@ -17,6 +17,7 @@ import { isBuiltInMethodId, loginMethods, type LoginMethod, type LoginMethodId }
 import type { SignInMethodInfo } from './scopes/methods.js';
 import type { NewProvider, ProviderChanges, ProviderInfo, ProviderKind, Settings } from './scopes/admin.js';
 import type { ApiKeyInfo, ApiKeyScope } from './scopes/api-keys.js';
+import type { DeviceRequest } from './scopes/device.js';
 import type { PasskeyInfo } from './scopes/passkey.js';
 import { pendingStepOf, secondStepOf, type PendingStep, type SecondFactorPolicy } from './providers/provider.js';
 import type { CodeOptions } from './scopes/authenticator.js';
@@ -45,6 +46,13 @@ export interface AuthenticatorFailedDetail {
 /** `madauth-sms-enabled`: the signed-in user added (or replaced) their phone number for SMS codes. `phone` is masked. */
 export interface SmsEnabledDetail {
   phone: string;
+}
+
+/** `madauth-device-decided`: the user approved or denied a device's sign-in in the dialog of `Madauth.showDeviceApprovalDialog()`. */
+export interface DeviceDecidedDetail {
+  approved: boolean;
+  /** The application on the device. */
+  client: { id: string; name: string };
 }
 
 /** `madauth-sms-failed`: the setup opened by `Madauth.showSetUpSmsDialog()` can't go on. */
@@ -88,6 +96,9 @@ type View =
   | 'api-keys'
   | 'api-key-create'
   | 'api-key-created'
+  | 'device-code'
+  | 'device-approve'
+  | 'device-done'
   | 'admin-providers'
   | 'admin-add'
   | 'admin-provider'
@@ -105,6 +116,7 @@ const changeViews = [
   'authenticator-manage',
   'authenticator-confirm',
   'api-key-create',
+  'device-code',
   'authenticator-setup',
   'sms-setup',
   'sms-code',
@@ -337,6 +349,8 @@ export class MadauthLogin extends LitElement {
     adminSettings: { state: true },
     providerForm: { state: true },
     removal: { state: true },
+    deviceRequest: { state: true },
+    deviceDecision: { state: true },
   };
 
   /** Title shown at the top of the dialog. Default: "Sign in" in the dialog's language. */
@@ -431,6 +445,10 @@ export class MadauthLogin extends LitElement {
   private removal?: { provider: ProviderInfo; usersWithoutSignIn: number };
   /** The view that changes the user's methods and asked them to sign in again: the dialog goes back to it after. */
   private reauthThen?: ChangeView;
+  /** The device's code as typed or given, what it asks for once looked up, and what the user decided. */
+  private deviceCode = '';
+  private deviceRequest?: DeviceRequest;
+  private deviceDecision?: 'approved' | 'denied';
   /** The passkey's setup or the app's was started from the methods view: it goes back there after. */
   private fromMethods = false;
   /** The signed-in user's app, in its view: how many recovery codes are left; undefined while loading, null if it couldn't be read. */
@@ -614,6 +632,29 @@ export class MadauthLogin extends LitElement {
   }
 
   /**
+   * Opens the dialog to approve a device's sign-in: the code's form, or with `code` straight to what the device
+   * asks for. A user who isn't signed in signs in first. Usually called through `Madauth.showDeviceApprovalDialog()`.
+   */
+  async openDevice(code?: string): Promise<void> {
+    this.setupForSignIn = false;
+    this.deviceCode = code ?? '';
+    this.deviceRequest = undefined;
+    this.deviceDecision = undefined;
+    if (Madauth.currentUser) this.view = 'device-code';
+    else {
+      // The sign-in, which comes back here once done.
+      this.view = 'signin';
+      this.reauthThen = 'device-code';
+    }
+    const ready = await this.show();
+    if (!ready.isSuccess) {
+      this.showError(ready.error);
+      return;
+    }
+    if (this.view === 'device-code' && this.deviceCode) await this.lookupDevice(this.deviceCode);
+  }
+
+  /**
    * Opens the dialog on the signed-in user's API keys. Usually called through
    * `Madauth.showManageApiKeysDialog()`, which resolves when the dialog is closed.
    */
@@ -777,6 +818,7 @@ export class MadauthLogin extends LitElement {
     if (then === 'methods') this.backToMethods();
     else if (then === 'authenticator-manage') this.openAppManage();
     else if (then === 'api-key-create') void this.startApiKeyCreate();
+    else if (then === 'device-code') void this.startDevice();
     // The setup starts again: its first step is what needed the sign-in.
     else if (then === 'authenticator-setup') {
       this.goTo('authenticator-setup');
@@ -1040,6 +1082,10 @@ export class MadauthLogin extends LitElement {
         return s.adminView.removeHeading(this.removal?.provider.name ?? '');
       case 'api-keys':
         return s.apiKeysView.heading;
+      case 'device-code':
+      case 'device-approve':
+      case 'device-done':
+        return s.deviceView.heading;
       case 'api-key-create':
         return s.apiKeyCreate.heading;
       case 'api-key-created':
@@ -1200,6 +1246,12 @@ export class MadauthLogin extends LitElement {
         return this.renderChangePassword();
       case 'api-keys':
         return this.renderApiKeys();
+      case 'device-code':
+        return this.renderDeviceCode();
+      case 'device-approve':
+        return this.renderDeviceApprove();
+      case 'device-done':
+        return this.renderDeviceDone();
       case 'api-key-create':
         return this.renderApiKeyCreate();
       case 'api-key-created':
@@ -2290,6 +2342,94 @@ export class MadauthLogin extends LitElement {
       return;
     }
     this.apiKeyScopes = result.scopes.filter((scope) => scope.allowed);
+  }
+
+  // --- A device's sign-in: the code, who asks, the decision ---
+
+  /** To the code's form after the sign-in; with a code given, straight on to the lookup. */
+  private async startDevice(): Promise<void> {
+    this.goTo('device-code');
+    if (this.deviceCode) await this.lookupDevice(this.deviceCode);
+  }
+
+  private renderDeviceCode() {
+    const v = this.strings.deviceView;
+    return html`
+      <p class="lead">${v.lead}</p>
+      <form part="form" class="device-code" @submit=${this.onDeviceCode}>
+        <div class="field">
+          <label for="device-code">${v.code}</label>
+          <input part="input" id="device-code" name="code" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" required .value=${this.deviceCode} />
+          <p class="hint">${v.codeHint}</p>
+        </div>
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${v.continue}</span>
+        </button>
+      </form>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="cancel" @click=${() => this.dialog.close()}>${this.strings.cancel}</button>
+      </p>
+    `;
+  }
+
+  private async onDeviceCode(e: Event): Promise<void> {
+    const { code = '' } = this.fields(e);
+    await this.lookupDevice(code.trim());
+  }
+
+  /** What the device with this code asks for, then the decision. */
+  private async lookupDevice(code: string): Promise<void> {
+    const result = await this.run(() => Madauth.device.lookup(code));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      return;
+    }
+    this.deviceRequest = result;
+    this.deviceCode = result.code;
+    this.goTo('device-approve');
+  }
+
+  private renderDeviceApprove() {
+    const v = this.strings.deviceView;
+    const request = this.deviceRequest;
+    if (!request) return this.renderDeviceCode();
+    return html`
+      <p class="lead">${v.approveLead(request.client.name)}</p>
+      <p class="device-code-shown">${v.codeShown(request.code)}</p>
+      <p class="hint">${v.warning}</p>
+      <button part="method" class="submit" type="button" data-action="approve" ?disabled=${this.busy} @click=${() => this.decideDevice('approved')}>
+        <span class="label">${v.approve}</span>
+      </button>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="deny" ?disabled=${this.busy} @click=${() => this.decideDevice('denied')}>${v.deny}</button>
+      </p>
+    `;
+  }
+
+  private async decideDevice(decision: 'approved' | 'denied'): Promise<void> {
+    const request = this.deviceRequest;
+    if (!request) return;
+    const result = await this.run(() => (decision === 'approved' ? Madauth.device.approve(request.code) : Madauth.device.deny(request.code)));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      return;
+    }
+    this.deviceDecision = decision;
+    const detail: DeviceDecidedDetail = { approved: decision === 'approved', client: request.client };
+    this.dispatchEvent(new CustomEvent('madauth-device-decided', { detail, bubbles: true, composed: true }));
+    this.goTo('device-done');
+  }
+
+  private renderDeviceDone() {
+    const v = this.strings.deviceView;
+    return html`
+      <p class="lead" role="status">${this.deviceDecision === 'approved' ? v.approved : v.denied}</p>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="done" @click=${() => this.close()}>${v.done}</button>
+      </p>
+    `;
   }
 
   private renderApiKeys() {
@@ -3619,6 +3759,7 @@ declare global {
   interface HTMLElementEventMap {
     'madauth-signed-in': CustomEvent<SignedInDetail>;
     'madauth-cancel': CustomEvent<void>;
+    'madauth-device-decided': CustomEvent<DeviceDecidedDetail>;
     'madauth-error': CustomEvent<ErrorDetail>;
     'madauth-authenticator-enabled': CustomEvent<AuthenticatorEnabledDetail>;
     'madauth-authenticator-failed': CustomEvent<AuthenticatorFailedDetail>;

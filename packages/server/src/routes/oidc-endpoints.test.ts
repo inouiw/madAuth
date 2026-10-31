@@ -51,7 +51,7 @@ async function authorizationRequest(config: oidc.Configuration, extra: Record<st
   const state = oidc.randomState();
   const url = oidc.buildAuthorizationUrl(config, {
     redirect_uri: REDIRECT_URI,
-    scope: 'openid email profile',
+    scope: 'openid email profile offline_access',
     code_challenge: await oidc.calculatePKCECodeChallenge(verifier),
     code_challenge_method: 'S256',
     nonce,
@@ -161,12 +161,12 @@ describe('madAuth as an OpenID Connect provider', () => {
     });
     expect(typeof claims.auth_time).toBe('number');
     expect(tokens.expires_in).toBe(900);
-    expect(tokens.scope).toBe('openid email profile');
+    expect(tokens.scope).toBe('openid email profile offline_access');
 
     // The access token is a JWT for APIs (RFC 9068), meant for the client.
     const [header, payload] = tokens.access_token.split('.').slice(0, 2).map((part) => JSON.parse(Buffer.from(part, 'base64url').toString()));
     expect(header).toMatchObject({ typ: 'at+jwt', alg: 'ES256' });
-    expect(payload).toMatchObject({ sub: claims.sub, aud: client.id, client_id: client.id, scope: 'openid email profile' });
+    expect(payload).toMatchObject({ sub: claims.sub, aud: client.id, client_id: client.id, scope: 'openid email profile offline_access' });
     expect(payload.exp - payload.iat).toBe(900);
 
     expect(await oidc.fetchUserInfo(config, tokens.access_token, claims.sub)).toEqual({
@@ -419,5 +419,146 @@ describe('madAuth as an OpenID Connect provider', () => {
     // A POST without an allowed Origin reaches the endpoint (the rest of /auth refuses it).
     const res = await made.app.request('/auth/oidc/token', { ...form({ grant_type: 'authorization_code' }), headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: 'https://spa.example.org' } });
     expect(await res.json()).toMatchObject({ error: 'invalid_client' });
+  });
+});
+
+describe('the device authorization grant', () => {
+  const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
+  const postForm = (made: Made, path: string, data: Record<string, string>) =>
+    made.app.request(path, { ...form(data), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+  /** A device asks for its codes. */
+  const startDevice = async (made: Made, clientId: string, extra: Record<string, string> = {}) => {
+    const res = await postForm(made, '/auth/oidc/device', { client_id: clientId, scope: 'openid email offline_access', ...extra });
+    expect(res.status).toBe(200);
+    return (await res.json()) as { device_code: string; user_code: string; verification_uri: string; verification_uri_complete: string; expires_in: number; interval: number };
+  };
+  const poll = async (made: Made, clientId: string, deviceCode: string) => {
+    const res = await postForm(made, '/auth/oidc/token', { grant_type: DEVICE_GRANT, client_id: clientId, device_code: deviceCode });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+  const user = (made: Made, path: string, code: string) => post(made.app, `/auth/device/${path}`, { code }, { Cookie: made.cookie });
+  const later = (ms: number) => vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + ms });
+
+  it('DG1: a TV signs its user in: codes, the lookup, the approval, the tokens', async () => {
+    const made = await withAdmin();
+    const { client } = await addClient(made, { name: 'Living room TV', public: true, deviceFlow: true });
+    expect((await (await made.app.request('/.well-known/openid-configuration')).json()).device_authorization_endpoint).toBe(`${ISSUER}/auth/oidc/device`);
+
+    const started = await startDevice(made, client.id);
+    expect(started.user_code).toMatch(/^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/);
+    expect(started.verification_uri).toBe(`${ISSUER}/`);
+    expect(started.verification_uri_complete).toBe(`${ISSUER}/?madauth_device=${started.user_code}`);
+    expect(started).toMatchObject({ expires_in: 600, interval: 5 });
+
+    // Not approved yet; polling faster than the interval is told to slow down.
+    expect((await poll(made, client.id, started.device_code)).body.error).toBe('authorization_pending');
+    expect((await poll(made, client.id, started.device_code)).body.error).toBe('slow_down');
+
+    // The user types the code in any case, with or without the dash, and sees who asks.
+    const typed = started.user_code.toLowerCase().replace('-', ' ');
+    const looked = await user(made, 'lookup', typed);
+    expect(looked.status).toBe(200);
+    expect(await looked.json()).toMatchObject({ code: started.user_code, client: { id: client.id, name: 'Living room TV' }, scope: ['openid', 'email', 'offline_access'] });
+    expect((await user(made, 'approve', typed)).status).toBe(200);
+    // Once: the decision is made.
+    expect((await user(made, 'approve', typed)).status).toBe(404);
+
+    later(6000);
+    const got = await poll(made, client.id, started.device_code);
+    expect(got.status).toBe(200);
+    expect(got.body).toMatchObject({ token_type: 'Bearer', expires_in: 900, scope: 'openid email offline_access' });
+    const idToken = JSON.parse(Buffer.from((got.body.id_token as string).split('.')[1], 'base64url').toString());
+    expect(idToken).toMatchObject({ aud: client.id, email: 'grace@example.com', amr: ['pwd'] });
+    expect(typeof got.body.refresh_token).toBe('string');
+    // The device code is used up.
+    later(6000);
+    expect((await poll(made, client.id, started.device_code)).body.error).toBe('invalid_grant');
+    // The refresh token works like any other.
+    const config = await relyingParty(made.app, client.id);
+    expect((await oidc.refreshTokenGrant(config, got.body.refresh_token as string)).access_token).toBeTruthy();
+  });
+
+  it('DG2: only clients an admin allowed may use it; a confidential one proves its secret', async () => {
+    const made = await withAdmin();
+    const plain = await addClient(made, { public: true });
+    expect(await (await postForm(made, '/auth/oidc/device', { client_id: plain.client.id })).json()).toMatchObject({ error: 'unauthorized_client' });
+    expect((await (await admin(made, 'clients/update', { id: plain.client.id, deviceFlow: true })).json()).client.deviceFlow).toBe(true);
+    expect((await postForm(made, '/auth/oidc/device', { client_id: plain.client.id })).status).toBe(200);
+
+    const confidential = await addClient(made, { deviceFlow: true });
+    expect((await postForm(made, '/auth/oidc/device', { client_id: confidential.client.id })).status).toBe(401);
+    expect((await postForm(made, '/auth/oidc/device', { client_id: confidential.client.id, client_secret: confidential.clientSecret! })).status).toBe(200);
+    expect((await admin(made, 'clients/add', { name: 'x', redirectUris: [REDIRECT_URI], deviceFlow: 'yes' })).status).toBe(400);
+  });
+
+  it('DG3: denied, expired, and without a refresh token when offline_access is not asked for', async () => {
+    const made = await withAdmin();
+    const { client } = await addClient(made, { public: true, deviceFlow: true });
+    const denied = await startDevice(made, client.id);
+    await user(made, 'lookup', denied.user_code);
+    expect((await user(made, 'deny', denied.user_code)).status).toBe(200);
+    expect((await poll(made, client.id, denied.device_code)).body.error).toBe('access_denied');
+    expect((await poll(made, client.id, denied.device_code)).body.error).toBe('invalid_grant');
+
+    const online = await startDevice(made, client.id, { scope: 'openid' });
+    await user(made, 'lookup', online.user_code);
+    await user(made, 'approve', online.user_code);
+    const got = await poll(made, client.id, online.device_code);
+    expect(got.status).toBe(200);
+    expect(got.body.refresh_token).toBeUndefined();
+    expect(got.body.id_token).toBeTruthy();
+
+    const expired = await startDevice(made, client.id);
+    later(601_000);
+    expect((await user(made, 'lookup', expired.user_code)).status).toBe(404);
+    expect((await poll(made, client.id, expired.device_code)).body.error).toBe('expired_token');
+  });
+
+  it('DG4: a code is bound to whoever looked it up; another user, or no session, gets nothing', async () => {
+    const made = await withAdmin();
+    const { client } = await addClient(made, { public: true, deviceFlow: true });
+    const started = await startDevice(made, client.id);
+    expect((await post(made.app, '/auth/device/lookup', { code: started.user_code })).status).toBe(401);
+    expect((await user(made, 'lookup', started.user_code)).status).toBe(200);
+
+    const other = { ...made, cookie: `madauth_session=${await signUpVerified(made.app, made.hook, 'ada@example.com')}` };
+    expect((await user(other, 'lookup', started.user_code)).status).toBe(404);
+    expect((await user(other, 'approve', started.user_code)).status).toBe(404);
+    // Approving takes the lookup first.
+    const fresh = await startDevice(made, client.id);
+    expect((await user(made, 'approve', fresh.user_code)).status).toBe(404);
+    expect((await user(made, 'lookup', fresh.user_code)).status).toBe(200);
+    expect((await user(made, 'approve', fresh.user_code)).status).toBe(200);
+  });
+
+  it('DG5: five wrong codes in ten minutes, then the lookup waits', async () => {
+    const made = await withAdmin();
+    const { client } = await addClient(made, { public: true, deviceFlow: true });
+    const started = await startDevice(made, client.id);
+    for (let i = 0; i < 5; i++) {
+      const res = await user(made, 'lookup', 'BBBB-BBBB');
+      expect(res.status).toBe(404);
+      expect((await res.json()).error).toBe('device_code_invalid');
+    }
+    const blocked = await user(made, 'lookup', started.user_code);
+    expect(blocked.status).toBe(429);
+    expect((await blocked.json()).error).toBe('too_many_attempts');
+    later(601_000);
+    // The device code expired meanwhile with the wait: a new one works.
+    const again = await startDevice(made, client.id);
+    expect((await user(made, 'lookup', again.user_code)).status).toBe(200);
+  });
+
+  it('DG6: a password reset ends what a device was granted, and removes a pending device code', async () => {
+    const made = await withAdmin();
+    const { client } = await addClient(made, { public: true, deviceFlow: true });
+    const started = await startDevice(made, client.id);
+    await user(made, 'lookup', started.user_code);
+    await user(made, 'approve', started.user_code);
+    const userId = (await (await made.app.request('/auth/session', { headers: { Cookie: made.cookie } })).json()).user.id;
+    expect(await made.store.findMany('oidcDeviceCode', { userId })).toHaveLength(1);
+    await new Users(made.store).resetSignIn(userId);
+    expect(await made.store.findMany('oidcDeviceCode', { userId })).toHaveLength(0);
+    expect((await poll(made, client.id, started.device_code)).body.error).toBe('invalid_grant');
   });
 });

@@ -27,6 +27,9 @@ function columnType(dialect: SqlDialect, def: FieldDef): string {
   return dialect === 'mysql' && def.type === 'string' && keyed ? 'VARCHAR(255)' : columnTypes[dialect][def.type];
 }
 
+/** The client model as version 12 created it: without `deviceFlow`, which version 13 adds. */
+const { deviceFlow: _deviceFlow, ...oidcClientFieldsV12 } = madauthSchema.models.oidcClient.fields;
+
 /** What each schema version after the first one added, as SQL for tables created by an older version. */
 const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
   {
@@ -124,8 +127,19 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
     sql: (dialect) =>
       createTablesSql(dialect, {
         version: 12,
-        models: { oidcClient: madauthSchema.models.oidcClient, oidcCode: madauthSchema.models.oidcCode, oidcRefreshToken: madauthSchema.models.oidcRefreshToken },
+        models: { oidcClient: { fields: oidcClientFieldsV12 }, oidcCode: madauthSchema.models.oidcCode, oidcRefreshToken: madauthSchema.models.oidcRefreshToken },
       }),
+  },
+  {
+    // The device authorization grant: which clients may use it, a device's pending sign-ins, and the wrong codes a user typed.
+    version: 13,
+    sql: (dialect) =>
+      [
+        `ALTER TABLE ${tableName('oidcClient')} ADD COLUMN ${columnName('deviceFlow')} ${columnType(dialect, madauthSchema.models.oidcClient.fields.deviceFlow)};`,
+        `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('wrongDeviceCodes')} ${columnType(dialect, madauthSchema.models.user.fields.wrongDeviceCodes)};`,
+        `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('wrongDeviceCodeAt')} ${columnType(dialect, madauthSchema.models.user.fields.wrongDeviceCodeAt)};`,
+        createTablesSql(dialect, { version: 13, models: { oidcDeviceCode: madauthSchema.models.oidcDeviceCode } }),
+      ].join('\n'),
   },
 ];
 

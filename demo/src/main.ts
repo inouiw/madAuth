@@ -84,6 +84,11 @@ Madauth.onAuthStateChanged((user) => {
   if (user) location.assign(oidcReturn);
   else void Madauth.showSignInDialog();
 });
+// It is also where a device's user approves its sign-in (the device authorization grant): a TV or a command-line
+// tool shows a code, and `madauth_device` carries it when the user scanned the QR code. The dialog signs the user
+// in first if needed. Without the parameter, the page's "Sign in a device" button opens it for a code to type.
+const deviceCode = new URLSearchParams(location.search).get('madauth_device');
+if (deviceCode) void Madauth.showDeviceApprovalDialog({ code: deviceCode });
 
 $('#sign-in').addEventListener('click', () => void Madauth.showSignInDialog());
 $('#sign-out').addEventListener('click', () => void Madauth.signOut());
@@ -230,6 +235,8 @@ const accountCalls: Record<string, () => Promise<unknown>> = {
   manageSignInMethods: () => Madauth.showManageSignInMethodsDialog().then(async (result) => (await Promise.all([refreshMethods(), refreshAuthenticator()]), result)),
   // The dialog lists the user's API keys, makes one (shown once, to copy) and revokes one.
   manageApiKeys: () => Madauth.showManageApiKeysDialog(),
+  // The dialog asks for the code a device shows, names the application, and approves or denies its sign-in.
+  approveDevice: () => Madauth.showDeviceApprovalDialog(),
   // The dialog asks for a name, then the browser creates the passkey.
   setUpPasskey: () => Madauth.showSetUpPasskeyDialog().then(async (result) => (await refreshMethods(), result)),
   // The dialog shows the QR code, asks for the first code and shows the recovery codes.

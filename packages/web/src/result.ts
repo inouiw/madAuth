@@ -52,6 +52,7 @@ const errorCodes = [
   'provider_not_found',
   'invalid_client',
   'client_not_found',
+  'device_code_invalid',
   'invalid_setup_token',
   'authenticator_required',
   'authenticator_setup_required',

@@ -16,8 +16,40 @@ export const ID_TOKEN_TTL_S = 60 * 60;
 /** How long a refresh token works after its last use: every use gives a new one, for another 30 days. */
 export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** The scopes madAuth knows; a client asks for `openid` and any of the others, and unknown ones are left out. */
-export const OIDC_SCOPES = ['openid', 'profile', 'email'] as const;
+/**
+ * The scopes madAuth knows; a client asks for `openid` and any of the others, and unknown ones are left out.
+ * `offline_access` gives a refresh token.
+ */
+export const OIDC_SCOPES = ['openid', 'profile', 'email', 'offline_access'] as const;
+
+/** How long a device's user code works (RFC 8628): the user types it on another device meanwhile. */
+export const DEVICE_CODE_TTL_MS = 10 * 60 * 1000;
+
+/** How often a device may poll for its tokens (seconds); faster, it is told to slow down. */
+export const DEVICE_POLL_INTERVAL_S = 5;
+
+/** How many wrong device codes a user may type within {@link WRONG_DEVICE_CODES_WINDOW_MS} before the lookup waits. */
+export const MAX_WRONG_DEVICE_CODES = 5;
+export const WRONG_DEVICE_CODES_WINDOW_MS = 10 * 60 * 1000;
+
+/** The letters of a user code: no vowels (no words), none that look alike (RFC 8628, section 6.1). */
+const USER_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ';
+const USER_CODE_LENGTH = 8;
+
+/** A user code as stored and compared (`BCDFGHJK`), from what the user typed in any case, with dashes or spaces; null if it can't be one. */
+export function normalizeUserCode(typed: unknown): string | null {
+  if (typeof typed !== 'string') return null;
+  const code = typed.replace(/[\s-]/g, '').toUpperCase();
+  return code.length === USER_CODE_LENGTH && [...code].every((char) => USER_CODE_ALPHABET.includes(char)) ? code : null;
+}
+
+/** A user code as shown: `BCDF-GHJK`. */
+export const formatUserCode = (code: string): string => `${code.slice(0, 4)}-${code.slice(4)}`;
+
+const newUserCode = (): string => {
+  const bytes = randomBytes(USER_CODE_LENGTH);
+  return [...bytes].map((byte) => USER_CODE_ALPHABET[byte % USER_CODE_ALPHABET.length]).join('');
+};
 
 /** The most redirect URIs a client can have, of each kind. */
 export const MAX_REDIRECT_URIS = 20;
@@ -41,6 +73,8 @@ export interface StoredClient {
   createdAt: number;
   updatedAt: number;
   updatedBy: string | null;
+  /** Whether it may use the device authorization grant; null in records from before schema version 13: no. */
+  deviceFlow: boolean | null;
 }
 
 /** A client as the admin API answers it: never its secret. */
@@ -51,6 +85,8 @@ export interface ClientInfo {
   public: boolean;
   redirectUris: string[];
   postLogoutRedirectUris: string[];
+  /** Whether it may use the device authorization grant (RFC 8628). */
+  deviceFlow: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -66,6 +102,7 @@ export const clientInfo = (client: StoredClient): ClientInfo => ({
   public: client.secretHash === null,
   redirectUris: urisOf(client.redirectUris),
   postLogoutRedirectUris: urisOf(client.postLogoutRedirectUris),
+  deviceFlow: client.deviceFlow === true,
   createdAt: client.createdAt,
   updatedAt: client.updatedAt,
 });
@@ -109,6 +146,7 @@ export interface ClientFields {
   name?: string;
   redirectUris?: string[];
   postLogoutRedirectUris?: string[];
+  deviceFlow?: boolean;
 }
 
 /** A list of redirect URIs as the admin API takes it, or why it isn't one. */
@@ -143,7 +181,27 @@ export function parseClientFields(data: Record<string, unknown>, isNew: boolean)
     if ('error' in uris) return invalid(uris.error);
     fields.postLogoutRedirectUris = uris;
   }
+  if (data.deviceFlow !== undefined) {
+    if (typeof data.deviceFlow !== 'boolean') return invalid('deviceFlow must be true or false.');
+    fields.deviceFlow = data.deviceFlow;
+  }
   return fields;
+}
+
+/** A device's pending sign-in as stored, see `oidcDeviceCode` in the schema. */
+export interface StoredDeviceCode {
+  id: string;
+  userCode: string;
+  clientId: string;
+  scope: string;
+  status: 'pending' | 'approved' | 'denied';
+  userId: string | null;
+  authTime: number | null;
+  amr: string | null;
+  sessionVersion: number | null;
+  createdAt: number;
+  expiresAt: number;
+  lastPolledAt: number;
 }
 
 /** An authorization code as stored: `id` is the code's SHA-256. */
@@ -226,6 +284,7 @@ export class OidcClients {
       createdAt: now,
       updatedAt: now,
       updatedBy: by,
+      deviceFlow: fields.deviceFlow ?? false,
     };
     await this.store.create('oidcClient', client as unknown as Row);
     return { client, secret };
@@ -243,6 +302,7 @@ export class OidcClients {
       ...(fields.name !== undefined ? { name: fields.name } : {}),
       ...(fields.redirectUris ? { redirectUris: JSON.stringify(fields.redirectUris) } : {}),
       ...(fields.postLogoutRedirectUris ? { postLogoutRedirectUris: JSON.stringify(fields.postLogoutRedirectUris) } : {}),
+      ...(fields.deviceFlow !== undefined ? { deviceFlow: fields.deviceFlow } : {}),
       ...(secret ? { secretHash: sha256(secret) } : {}),
       updatedAt: Date.now(),
       updatedBy: by,
@@ -251,12 +311,94 @@ export class OidcClients {
     return { client: { ...current, ...patch }, secret };
   }
 
-  /** Removes a client and ends its refresh tokens. Resolves to the client, or null if there is no such client (any more). */
+  /**
+   * Removes a client and ends its refresh tokens. Its pending device sign-ins stay until they expire (ten minutes):
+   * the token endpoint no longer knows the client, so nothing comes of them. Resolves to the client, or null if
+   * there is no such client (any more).
+   */
   async remove(id: string): Promise<StoredClient | null> {
     const client = await this.find(id);
     if (!client || (await this.store.delete('oidcClient', { id })) !== 1) return null;
     await this.store.delete('oidcRefreshToken', { clientId: id });
     return client;
+  }
+
+  // --- The device authorization grant (RFC 8628) ---
+
+  /** Starts a device's sign-in: the device code it polls with, and the user code the user types. */
+  async startDevice(clientId: string, scope: string): Promise<{ deviceCode: string; userCode: string; expiresAt: number }> {
+    const deviceCode = randomBytes(32).toString('base64url');
+    const now = Date.now();
+    const record: StoredDeviceCode = {
+      id: sha256(deviceCode),
+      userCode: '',
+      clientId,
+      scope,
+      status: 'pending',
+      userId: null,
+      authTime: null,
+      amr: null,
+      sessionVersion: null,
+      createdAt: now,
+      expiresAt: now + DEVICE_CODE_TTL_MS,
+      lastPolledAt: 0,
+    };
+    // A user code in use (34 bits: next to never) gets another try.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      record.userCode = newUserCode();
+      if (await this.store.create('oidcDeviceCode', record as unknown as Row)) return { deviceCode, userCode: record.userCode, expiresAt: record.expiresAt };
+    }
+    throw new Error('Could not find a free user code.');
+  }
+
+  /**
+   * The pending sign-in with this user code, bound to the user who looked it up: from then on only they can
+   * approve or deny it. Null if there is none that is pending and unexpired, or someone else looked it up.
+   */
+  async lookupDevice(userCode: string, userId: string): Promise<StoredDeviceCode | null> {
+    const record = (await this.store.findOne('oidcDeviceCode', { userCode })) as StoredDeviceCode | null;
+    if (!record || record.status !== 'pending' || record.expiresAt <= Date.now()) return null;
+    if (record.userId === userId) return record;
+    if (record.userId !== null) return null;
+    // Whoever binds it first keeps it.
+    if ((await this.store.update('oidcDeviceCode', { id: record.id, userId: null }, { userId })) !== 1) return null;
+    return { ...record, userId };
+  }
+
+  /**
+   * Approves or denies the pending sign-in with this user code, by the user it is bound to, with how they signed
+   * in. Resolves to false if it isn't theirs, isn't pending (any more) or expired.
+   */
+  async decideDevice(userCode: string, userId: string, decision: 'approved' | 'denied', signIn: { authTime: number; amr: string; sessionVersion: number }): Promise<boolean> {
+    const record = (await this.store.findOne('oidcDeviceCode', { userCode })) as StoredDeviceCode | null;
+    if (!record || record.userId !== userId || record.status !== 'pending' || record.expiresAt <= Date.now()) return false;
+    const patch = decision === 'approved' ? { status: decision, ...signIn } : { status: decision };
+    return (await this.store.update('oidcDeviceCode', { id: record.id, status: 'pending' }, patch)) === 1;
+  }
+
+  /**
+   * A device's poll with its device code: its tokens' grant once the user approved, else why not yet (RFC 8628,
+   * section 3.5). A sign-in that is over (approved and taken, denied, expired) goes with the answer.
+   */
+  async pollDevice(deviceCode: string, clientId: string): Promise<{ grant: Grant } | { error: 'invalid_grant' | 'authorization_pending' | 'slow_down' | 'expired_token' | 'access_denied' }> {
+    const id = sha256(deviceCode);
+    const record = (await this.store.findOne('oidcDeviceCode', { id })) as StoredDeviceCode | null;
+    if (!record || record.clientId !== clientId) return { error: 'invalid_grant' };
+    const now = Date.now();
+    if (record.expiresAt <= now) {
+      await this.store.delete('oidcDeviceCode', { id });
+      return { error: 'expired_token' };
+    }
+    const tooSoon = now - record.lastPolledAt < DEVICE_POLL_INTERVAL_S * 1000;
+    await this.store.update('oidcDeviceCode', { id }, { lastPolledAt: now });
+    if (tooSoon) return { error: 'slow_down' };
+    if (record.status === 'pending') return { error: 'authorization_pending' };
+    // Over either way: only one poll gets the tokens.
+    if ((await this.store.delete('oidcDeviceCode', { id })) !== 1) return { error: 'invalid_grant' };
+    if (record.status !== 'approved' || record.userId === null || record.authTime === null || record.amr === null || record.sessionVersion === null) {
+      return { error: 'access_denied' };
+    }
+    return { grant: { clientId, userId: record.userId, scope: record.scope, authTime: record.authTime, amr: record.amr, sessionVersion: record.sessionVersion } };
   }
 
   /** Whether `secret` is the client's secret. A public client has none, so nothing matches. */

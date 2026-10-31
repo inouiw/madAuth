@@ -6,7 +6,7 @@ A self-hostable alternative to Cognito / Auth0: run the madAuth server in your o
 
 ## Why madAuth
 
-- **Small in the browser.** The sign-in dialog with every sign-in method adds about 51 kB (gzipped) to your app, Lit included. With your own login screen, `@madauth/web/client` is about 18 kB. The password-strength check loads only on a screen that asks for a new password.
+- **Small in the browser.** The sign-in dialog with every sign-in method adds about 53 kB (gzipped) to your app, Lit included. With your own login screen, `@madauth/web/client` is about 18 kB. The password-strength check loads only on a screen that asks for a new password.
 - **Any framework.** The dialog is a standard web component: plain HTML, React, Angular, Vue, Svelte and Capacitor apps.
 - **Your infrastructure.** Node, Docker, AWS Lambda or Azure Functions; SQLite, Postgres, DynamoDB or a store of your own. The AWS Lambda bundle is one file of under 2 MB, without `node_modules`. See [the table below](#runs-on-your-infrastructure).
 - **Keys outside the process.** On AWS, madAuth's signing, hashing and encryption keys can stay in AWS KMS and never leave it: someone who breaks into the server can't take them away. The AWS template creates and rotates them. See [Key service](docs/server.md#key-service).
@@ -32,7 +32,7 @@ A user can have several of these: they sign up with one and add more while signe
 
 Users can also make **API keys** for programs that call your API, or madAuth's admin API, in their name, each limited to scopes; your backend checks them with `createApiKeyVerifier`. See [API keys](docs/api-keys.md).
 
-Other applications (Grafana, Nextcloud, internal tools, native and command-line apps) can sign their users in with madAuth as their **OpenID Connect provider**: the authorization code flow with PKCE, refresh tokens, user info and sign-out, with the sign-in on your app's login page. See [OpenID Connect provider](docs/server.md#openid-connect-provider).
+Other applications (Grafana, Nextcloud, internal tools, native and command-line apps) can sign their users in with madAuth as their **OpenID Connect provider**: the authorization code flow with PKCE, refresh tokens, user info and sign-out, with the sign-in on your app's login page; and the **device authorization grant** for TVs and command-line tools, which show a code the user approves on their phone (`Madauth.showDeviceApprovalDialog()`). See [OpenID Connect provider](docs/server.md#openid-connect-provider).
 
 ## Runs on your infrastructure
 
