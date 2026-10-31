@@ -258,6 +258,8 @@ You can call `renderButton` before `initialize` has finished. The button appears
 
 One Tap (`GoogleFedcm` with its default `autoPrompt: true`) works on custom screens as well.
 
+The browser side of `GoogleFedcm` (the browser's FedCM dialog, One Tap, Google's button) is the package [`@madauth/google-identity`](../packages/google-identity/README.md), which knows nothing of madAuth: an app that wants the Google ID token for a server of its own, or a library that wraps Google sign-in, uses it alone. With a madAuth server, the token then goes to `Madauth.google.signIn`, [below](#an-id-token-the-app-obtained-itself).
+
 With `purpose: 'link'`, the button adds a Google account to the signed-in user's [methods](#a-users-sign-in-methods-madauthmethods) instead of signing in: with `GoogleFedcm`, `onResult` gets the user as they are, or `account_taken` (the Google account signs in another user) or `reauth_required`; with `GoogleRedirect`, the page comes back with `linked: 'google'` in the result of `Madauth.initialize`, or with the error. The button says "Connect Google" for the redirect; Google's own button keeps its text.
 
 ### An ID token the app obtained itself

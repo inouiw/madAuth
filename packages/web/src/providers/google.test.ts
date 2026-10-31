@@ -36,6 +36,21 @@ describe('GoogleFedcm', () => {
     expect(gisScripts()).toHaveLength(0);
   });
 
+  it('G1b: in a browser with FedCM, a blocked script is a warning: One Tap goes through the browser', async () => {
+    const server = fakeServer();
+    // No window.google: the script "loads" but provides nothing.
+    vi.stubGlobal('IdentityCredential', class {});
+    Object.defineProperty(navigator, 'credentials', { value: { get: vi.fn(async () => ({ token: 'fedcm-token' })) }, configurable: true });
+
+    const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+    await settle();
+
+    expect(result).toMatchObject({ isSuccess: true, leftOut: [] });
+    expect(warnLog).toHaveBeenCalledWith('[madauth]', 'gis_load_failed', expect.stringContaining('button will not render'));
+    expect(server.requests.find((r) => r.path === '/auth/providers/google/verify')?.body).toEqual({ credential: 'fedcm-token' });
+    expect(Madauth.currentUser).toEqual(ada);
+  });
+
   it('G2: passes the server’s client ID and a fresh nonce to GIS, with the FedCM button', async () => {
     fakeServer();
     const gis = fakeGis();
@@ -90,6 +105,57 @@ describe('GoogleFedcm', () => {
     expect(server.requests.find((r) => r.path === '/auth/providers/google/verify')?.body).toEqual({ credential: 'one-tap-token' });
     expect(listener).toHaveBeenLastCalledWith(ada);
     expect(Madauth.currentUser).toEqual(ada);
+  });
+
+  it('G4b: in a browser with FedCM, the browser’s own dialog signs the user in, without Google’s script', async () => {
+    const server = fakeServer();
+    const gis = fakeGis();
+    let request: { identity: { providers: { clientId: string; nonce: string }[] }; mediation: string } | undefined;
+    vi.stubGlobal('IdentityCredential', class {});
+    Object.defineProperty(navigator, 'credentials', {
+      value: { get: vi.fn(async (options: unknown) => { request = options as typeof request; return { token: 'fedcm-token', isAutoSelected: false }; }) },
+      configurable: true,
+    });
+    const listener = vi.fn();
+    Madauth.onAuthStateChanged(listener);
+
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+    await settle();
+
+    expect(request?.identity.providers[0]).toMatchObject({ clientId: CLIENT_ID, nonce: 'nonce-1' });
+    expect(request?.mediation).toBe('required');
+    expect(gis.id.prompt).not.toHaveBeenCalled();
+    expect(server.requests.find((r) => r.path === '/auth/providers/google/verify')?.body).toEqual({ credential: 'fedcm-token' });
+    expect(listener).toHaveBeenLastCalledWith(ada);
+  });
+
+  it('G4c: opening the dialog closes the browser’s dialog, and a closed or held-back dialog is not an error', async () => {
+    fakeServer();
+    fakeGis();
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal('IdentityCredential', class {});
+    Object.defineProperty(navigator, 'credentials', {
+      value: {
+        get: vi.fn(
+          (options: CredentialRequestOptions) =>
+            new Promise((_, reject) => {
+              signal = options.signal!;
+              signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+            }),
+        ),
+      },
+      configurable: true,
+    });
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+    await settle();
+    expect(signal?.aborted).toBe(false);
+
+    void Madauth.showSignInDialog();
+    await settle();
+
+    expect(signal?.aborted).toBe(true);
+    expect(errorLog).not.toHaveBeenCalled();
+    expect(Madauth.currentUser).toBeNull();
   });
 
   it('logs a failed One Tap sign-in and opens the dialog with it', async () => {
@@ -181,9 +247,9 @@ describe('GoogleFedcm', () => {
     expect(gis.id.initialize.mock.lastCall![0].nonce).toBe('nonce-2');
   });
 
-  it('W2: loads the GIS script only once', async () => {
+  it('W2: renders Google’s button each time the dialog opens, with the script loaded once', async () => {
     fakeServer();
-    fakeGis();
+    const gis = fakeGis();
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
 
     void Madauth.showSignInDialog();
@@ -192,7 +258,9 @@ describe('GoogleFedcm', () => {
     void Madauth.showSignInDialog();
     await settle();
 
-    expect(gisScripts()).toHaveLength(1);
+    // Google's script, already on the page, is not added again (loading it once is @madauth/google-identity's job).
+    expect(gisScripts()).toHaveLength(0);
+    expect(gis.id.renderButton).toHaveBeenCalledTimes(2);
   });
 
   it('G6: signing out disables Google’s automatic sign-in', async () => {
@@ -201,6 +269,7 @@ describe('GoogleFedcm', () => {
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
 
     await Madauth.signOut();
+    await settle();
 
     expect(gis.id.disableAutoSelect).toHaveBeenCalledOnce();
     expect(gis.id.revoke).not.toHaveBeenCalled();
@@ -213,9 +282,10 @@ describe('GoogleFedcm', () => {
     await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
 
     expect(await Madauth.deleteAccount()).toEqual({ isSuccess: true });
+    await settle();
 
     // By the Google account id, which stays when the user's Google address changes.
-    expect(gis.id.revoke).toHaveBeenCalledExactlyOnceWith('1001');
+    expect(gis.id.revoke).toHaveBeenCalledExactlyOnceWith('1001', expect.any(Function));
     expect(gis.id.disableAutoSelect).toHaveBeenCalledOnce();
   });
 

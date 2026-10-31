@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Releases @madauth/web and @madauth/server: sets both to the version, commits "Release <version>" on main, tags
+# Releases @madauth/google-identity, @madauth/web and @madauth/server: sets all three to the version, commits
+# "Release <version>" on main, tags
 # it v<version> and pushes both. The tag starts the release workflow (npm, the server image, the GitHub release)
 # and the deploy of madauth.com. See docs/releasing.md.
 #
@@ -43,8 +44,12 @@ git fetch --quiet origin main --tags
 ! git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null || fail "The tag $tag exists already."
 
 current=$(node -p "require('./packages/server/package.json').version")
-[ "$(node -p "require('./packages/web/package.json').version")" = "$current" ] ||
-  fail "packages/web and packages/server have different versions: set them to the same one first."
+for pkg in packages/web packages/google-identity; do
+  [ "$(node -p "require('./$pkg/package.json').version")" = "$current" ] ||
+    fail "$pkg and packages/server have different versions: set them to the same one first."
+done
+[ "$(node -p "require('./packages/web/package.json').dependencies['@madauth/google-identity']")" = "$current" ] ||
+  fail "packages/web depends on another version of @madauth/google-identity than $current: set it to the same one first."
 # Semantic versioning's order, prereleases included: 0.6.0-beta.1 < 0.6.0-beta.2 < 0.6.0.
 newer=$(node -e '
   const parse = (v) => { const [core, pre] = v.split(/-(.*)/s); return { core: core.split(".").map(Number), pre: pre ? pre.split(".") : [] }; };
@@ -70,7 +75,7 @@ case "$ci" in
 esac
 
 if [[ "$version" == *-* ]]; then kind="a prerelease: npm's tag next, the image's latest stays"; else kind="a stable release: npm's tag latest"; fi
-echo "Release $version ($kind), from $current, at ${sha:0:7}: sets both packages, commits, tags $tag and pushes main and the tag."
+echo "Release $version ($kind), from $current, at ${sha:0:7}: sets the three packages, commits, tags $tag and pushes main and the tag."
 if $dry_run; then
   echo "Dry run: every check passed, nothing was changed."
   exit 0
@@ -86,11 +91,14 @@ undo() {
   git reset --quiet --hard "$sha"
   fail "$1 The release commit and the tag were undone here; nothing was pushed."
 }
-npm version "$version" -w packages/web -w packages/server --no-git-tag-version --loglevel=error >/dev/null || undo "npm version failed."
+# @madauth/web pins the @madauth/google-identity it was released with.
+npm pkg set "dependencies.@madauth/google-identity=$version" -w packages/web || undo "npm pkg set failed."
+npm version "$version" -w packages/google-identity -w packages/web -w packages/server --no-git-tag-version --loglevel=error >/dev/null || undo "npm version failed."
+npm install --package-lock-only --ignore-scripts --no-audit --no-fund --loglevel=error || undo "Updating package-lock.json failed."
 git commit --quiet --all --message "Release $version" || undo "The commit failed."
 git tag "$tag" || undo "The tag failed."
 # Both or neither: a tag without its commit on main, or the other way round, would be a release half made.
 git push --atomic --quiet origin main "$tag" || undo "The push was refused: run git pull, then try again."
 
 echo "Pushed $tag. The release and the deploy run at $(gh repo view --json url --jq .url)/actions"
-if [[ "$version" == *-* ]]; then echo "Once published: npm install @madauth/web@next @madauth/server@next"; fi
+if [[ "$version" == *-* ]]; then echo "Once published: npm install @madauth/web@next @madauth/server@next (@madauth/web brings @madauth/google-identity@next)"; fi

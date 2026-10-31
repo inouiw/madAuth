@@ -1,5 +1,5 @@
 # Publishes a release when a version tag (v1.2.3, or v1.2.3-beta.1 for a prerelease) is pushed:
-# @madauth/web and @madauth/server to npm, the server image to GHCR, and the server bundles to a GitHub release.
+# @madauth/google-identity, @madauth/web and @madauth/server to npm, the server image to GHCR, and the server bundles to a GitHub release.
 name: Release
 
 on:
@@ -25,7 +25,7 @@ jobs:
         id: version
         run: |
           version="${GITHUB_REF_NAME#v}"
-          for pkg in packages/web packages/server; do
+          for pkg in packages/google-identity packages/web packages/server; do
             actual=$(node -p "require('./$pkg/package.json').version")
             if [ "$actual" != "$version" ]; then
               echo "::error::$pkg is at version $actual, but the tag is $GITHUB_REF_NAME"
@@ -55,14 +55,14 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
       - run: npm ci
-      - run: npm run build -w packages/server -w packages/web
+      - run: npm run build -w packages/google-identity -w packages/server -w packages/web
       # Skips a package whose version is already on npm, e.g. the hand-published first version or a re-run.
       - name: Publish to npm
         env:
           VERSION: ${{ needs.check.outputs.version }}
           DIST_TAG: ${{ needs.check.outputs.prerelease == 'true' && 'next' || 'latest' }}
         run: |
-          for pkg in packages/server packages/web; do
+          for pkg in packages/google-identity packages/server packages/web; do
             name=$(node -p "require('./$pkg/package.json').name")
             if npm view "$name@$VERSION" version >/dev/null 2>&1; then
               echo "$name@$VERSION is already published, skipping"

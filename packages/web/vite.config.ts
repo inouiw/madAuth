@@ -27,9 +27,9 @@ export default defineConfig({
       fileName: (_format, entryName) => `${entryName}.js`,
     },
     rollupOptions: {
-      // Let the consuming app dedupe lit instead of bundling a second copy; uqr and zxcvbn-ts are dependencies
-      // like it. zxcvbn-ts is imported dynamically, so the app's bundler puts it in a chunk of its own.
-      external: [/^lit/, 'uqr', /^@zxcvbn-ts\//],
+      // Let the consuming app dedupe lit instead of bundling a second copy; uqr, zxcvbn-ts and @madauth/google-identity
+      // are dependencies like it. zxcvbn-ts is imported dynamically, so the app's bundler puts it in a chunk of its own.
+      external: [/^lit/, 'uqr', /^@zxcvbn-ts\//, '@madauth/google-identity'],
       output: {
         // What the client entry reaches is `core.js` (`client.js` only re-exports it); what only the dialog
         // reaches stays in `index.js`. Rollup would name the shared chunk after its first module otherwise, with a hash.

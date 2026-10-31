@@ -2,8 +2,14 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src",
-    "declaration": true
+    "declaration": true,
+    "paths": {
+      "@madauth/google-identity": [
+        "../google-identity/src/index.ts"
+      ]
+    }
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

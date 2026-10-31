@@ -1,5 +1,5 @@
 import { vi, type Mocked } from 'vitest';
-import { resetGisForTests, type GoogleAccountsId } from './gis.js';
+import { resetGisForTests, type GoogleAccountsId } from '@madauth/google-identity';
 import { resetMadauthForTests } from './madauth.js';
 import type { SecondFactorPolicy } from './providers/provider.js';
 import type { MadauthUser } from './result.js';
@@ -1024,12 +1024,12 @@ export function fakeGis(): { id: Mocked<GoogleAccountsId>; signIn(credential?: s
     cancel: vi.fn(),
     revoke: vi.fn(),
   };
-  window.google = { accounts: { id } };
+  (window as { google?: unknown }).google = { accounts: { id } };
   return {
     id,
     /** Simulates Google handing a credential to the callback of the latest initialize(). */
     signIn(credential = 'google-id-token') {
-      id.initialize.mock.lastCall![0].callback({ credential });
+      id.initialize.mock.lastCall![0].callback!({ credential });
     },
   };
 }
@@ -1076,7 +1076,7 @@ export function resetAll(): void {
   delete (navigator as { credentials?: unknown }).credentials;
   resetMadauthForTests();
   resetGisForTests();
-  delete window.google;
+  delete (window as { google?: unknown }).google;
   document.body.replaceChildren();
   document.documentElement.removeAttribute('lang');
   setExpiryCookie(null);

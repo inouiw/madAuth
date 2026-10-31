@@ -1,6 +1,9 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // The tests run against the sources of @madauth/google-identity, so they need no build of it (tsconfig.json has the same path).
+  resolve: { alias: { '@madauth/google-identity': fileURLToPath(new URL('../google-identity/src/index.ts', import.meta.url)) } },
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'happy-dom',

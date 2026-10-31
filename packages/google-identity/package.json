@@ -1,0 +1,53 @@
+{
+  "name": "@madauth/google-identity",
+  "version": "0.7.1",
+  "description": "Get a Google ID token in the browser: the browser's FedCM API, Google One Tap and Google's sign-in button, without a backend and without dependencies.",
+  "license": "MIT",
+  "author": "David Neuy",
+  "homepage": "https://github.com/inouiw/madAuth/tree/main/packages/google-identity#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inouiw/madAuth.git",
+    "directory": "packages/google-identity"
+  },
+  "bugs": {
+    "url": "https://github.com/inouiw/madAuth/issues"
+  },
+  "keywords": [
+    "google-sign-in",
+    "google-one-tap",
+    "fedcm",
+    "google-identity-services",
+    "sign-in-with-google",
+    "id-token"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.14.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7",
+    "vitest": "^5.0.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

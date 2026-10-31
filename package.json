@@ -11,11 +11,11 @@
   "scripts": {
     "dev": "npm run dev -w demo",
     "dev:server": "npm run dev -w packages/server",
-    "build": "npm run build -w packages/server && npm run build -w packages/web && npm run build -w demo && npm run build -w site",
+    "build": "npm run build -w packages/google-identity && npm run build -w packages/server && npm run build -w packages/web && npm run build -w demo && npm run build -w site",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
     "release": "bash scripts/release.sh",
-    "size": "npm run build -w packages/web && node scripts/size.mjs"
+    "size": "npm run build -w packages/google-identity -w packages/web && node scripts/size.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

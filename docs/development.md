@@ -6,6 +6,7 @@ How to work on madAuth itself: run the server, the demo and the webhook receiver
 
 ```
 packages/web     @madauth/web – sign-in client and UI as framework-agnostic web components (Lit)
+packages/google-identity  @madauth/google-identity – a Google ID token in the browser (FedCM, One Tap, Google's button), without a backend; GoogleFedcm builds on it
 packages/server  @madauth/server – the madAuth server for Docker, AWS Lambda and Azure Functions (Hono)
 demo             demo page: plain HTML + TypeScript served by Vite, no framework (live at https://madauth.com/demo/)
 deploy/aws       AWS CDK template to host the madAuth server: Lambda, DynamoDB, keys in AWS KMS, secrets in SSM

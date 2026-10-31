@@ -1,6 +1,6 @@
 # @madauth/web
 
-The browser side of [madAuth](https://github.com/inouiw/madAuth), a self-hostable alternative to Cognito / Auth0: a sign-in client and a sign-in dialog as framework-agnostic web components, for Google, GitHub, OpenID Connect providers, e-mail & password, e-mail links, passkeys, the authenticator app and SMS codes. It works in plain HTML, React, Angular, Vue, Svelte and Capacitor apps, and adds about 53 kB (gzipped) to your app with the dialog and every method, Lit included.
+The browser side of [madAuth](https://github.com/inouiw/madAuth), a self-hostable alternative to Cognito / Auth0: a sign-in client and a sign-in dialog as framework-agnostic web components, for Google, GitHub, OpenID Connect providers, e-mail & password, e-mail links, passkeys, the authenticator app and SMS codes. It works in plain HTML, React, Angular, Vue, Svelte and Capacitor apps, and adds about 55 kB (gzipped) to your app with the dialog and every method, Lit included.
 
 It talks to a running madAuth server, see [`@madauth/server`](https://www.npmjs.com/package/@madauth/server).
 
@@ -24,7 +24,7 @@ The server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 
 
 ## Without the dialog
 
-An app with a login screen of its own imports from `@madauth/web/client`: the same `Madauth` and providers, without the dialog. Neither the dialog nor Lit, which only the dialog uses, ends up in your bundle: about 18 kB gzipped instead of about 53 kB with the dialog and every sign-in method.
+An app with a login screen of its own imports from `@madauth/web/client`: the same `Madauth` and providers, without the dialog. Neither the dialog nor Lit, which only the dialog uses, ends up in your bundle: about 20 kB gzipped instead of about 55 kB with the dialog and every sign-in method.
 
 ```ts
 import { Madauth, Password } from '@madauth/web/client';
