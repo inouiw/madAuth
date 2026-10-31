@@ -65,10 +65,16 @@ test('an AWS_IAM receiver: the server signs with its role, may invoke the URL, a
   assert.deepEqual(mailerPermissions, []);
   template.hasResourceProperties('AWS::Lambda::Url', { AuthType: 'AWS_IAM', TargetFunctionArn: mailerArn });
 
-  // The key manager fails the deploy while <secretsPath>/WEBHOOK_SECRET exists; the new property makes it check again.
+  // The key manager fails the deploy while <secretsPath>/WEBHOOK_SECRET or WEBHOOK_PREVIOUS_SECRET exists; the new property makes it check again.
   template.hasResourceProperties('Custom::MadAuthKmsKeys', { Deployment: 'example-com', WebhookAuth: 'aws-iam' });
   template.hasResourceProperties('AWS::Lambda::Function', {
-    Environment: { Variables: { SIGNING_KEY_PARAMETER: '/madauth/MADAUTH_SIGNING_KEY', WEBHOOK_SECRET_PARAMETER: '/madauth/WEBHOOK_SECRET' } },
+    Environment: {
+      Variables: {
+        SIGNING_KEY_PARAMETER: '/madauth/MADAUTH_SIGNING_KEY',
+        WEBHOOK_SECRET_PARAMETER: '/madauth/WEBHOOK_SECRET',
+        WEBHOOK_PREVIOUS_SECRET_PARAMETER: '/madauth/WEBHOOK_PREVIOUS_SECRET',
+      },
+    },
   });
   template.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
@@ -79,6 +85,7 @@ test('an AWS_IAM receiver: the server signs with its role, may invoke the URL, a
           Resource: [
             { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':ssm:eu-central-1:123456789012:parameter/madauth/MADAUTH_SIGNING_KEY']] },
             { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':ssm:eu-central-1:123456789012:parameter/madauth/WEBHOOK_SECRET']] },
+            { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':ssm:eu-central-1:123456789012:parameter/madauth/WEBHOOK_PREVIOUS_SECRET']] },
           ],
         },
       ]),
@@ -113,7 +120,9 @@ test('a receiver with the webhook secret, as before: no AWS IAM and no check for
   );
   template.hasResourceProperties('Custom::MadAuthKmsKeys', { Deployment: 'example-com', WebhookAuth: Match.absent() });
   template.hasResourceProperties('AWS::Lambda::Function', {
-    Environment: { Variables: { SIGNING_KEY_PARAMETER: '/madauth/MADAUTH_SIGNING_KEY', WEBHOOK_SECRET_PARAMETER: Match.absent() } },
+    Environment: {
+      Variables: { SIGNING_KEY_PARAMETER: '/madauth/MADAUTH_SIGNING_KEY', WEBHOOK_SECRET_PARAMETER: Match.absent(), WEBHOOK_PREVIOUS_SECRET_PARAMETER: Match.absent() },
+    },
   });
 });
 

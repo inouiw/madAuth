@@ -36,6 +36,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `INITIAL_ADMIN_EMAIL` | no | Who signs in with this address gets the role `admin`, once the address is proven: confirmed by e-mail, or verified by Google or GitHub. Once per value; see [The first admin](#the-first-admin). |
 | `WEBHOOK_URL` | for the e-mail methods | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
 | `WEBHOOK_SECRET` | with `WEBHOOK_URL`, without `WEBHOOK_AUTH` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
+| `WEBHOOK_PREVIOUS_SECRET` | no | While you change `WEBHOOK_SECRET`: the secret it had before. Every call is then signed with both, so a receiver that still has the old one accepts the calls too. Remove it once the receiver has the new secret. See [Changing the webhook secret](#changing-the-webhook-secret). |
 | `WEBHOOK_AUTH` | no | `aws-iam`: madAuth signs the webhook calls with its AWS role instead of `WEBHOOK_SECRET`, which must not be set then, for a receiver behind a Lambda Function URL with `AWS_IAM` auth. See [AWS IAM](#aws-iam). Not set: `WEBHOOK_SECRET` signs them. |
 | `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.send_verification` and `email.send_password_reset`, the e-mail link when they include `email.send_signin_link`, SMS codes when they include `sms.send_code`, e.g. `email.send_verification,email.send_password_reset,email.send_signin_link,email.send_already_registered,email.send_password_reset_no_password,sms.send_code`. |
 | `AUTHENTICATOR_ISSUER` | no | The name authenticator apps show next to the account, e.g. `My App`; the browser's passkey dialog shows it too (the WebAuthn relying party's name). Default: the host of the app that asked for the setup, e.g. `app.example.com`. See [Authenticator app](#authenticator-app). |
@@ -491,12 +492,22 @@ const { type, data } = JSON.parse(body);
 
 The calls contain e-mail links and codes, so `WEBHOOK_URL` must be https, except for a receiver on the same machine (`localhost`, `127.0.0.1`, or `host.docker.internal` from a Docker container). Calls with the same `webhook-id` are the same call; madAuth does not retry by itself.
 
+### Changing the webhook secret
+
+madAuth and the receiver share `WEBHOOK_SECRET`, so changing it in one place would make the receiver refuse every call until the other has it too: no e-mails, and with `user.signing_up` no sign-ups. To change it without such a gap, e.g. after it may have leaked:
+
+1. Generate a new secret (`npx @madauth/server generate-webhook-secret`). Set it as `WEBHOOK_SECRET`, and the old one as `WEBHOOK_PREVIOUS_SECRET`, and restart madAuth (every instance). Each call now carries two signatures in its `webhook-signature` header, separated by a space, as [Standard Webhooks](https://www.standardwebhooks.com/) allows; a receiver with either secret accepts it. madAuth logs a reminder at start while the previous secret is set.
+2. Give the receiver the new secret.
+3. Remove `WEBHOOK_PREVIOUS_SECRET` and restart madAuth.
+
+This needs a receiver that accepts any one of several signatures, as the specification says: `verifyWebhook` does, and so do the Standard Webhooks libraries and the receivers of [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks). On AWS with the template, see [Changing the webhook secret](../deploy/aws/README.md#changing-the-webhook-secret).
+
 ### AWS IAM
 
 When madAuth runs on AWS and the receiver is a Lambda function with a Function URL, IAM replaces the shared secret. With `WEBHOOK_AUTH=aws-iam`, madAuth signs each call with [Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html) (service `lambda`), with the credentials of its environment: on Lambda its function's role, elsewhere what the AWS SDK's default chain finds, e.g. the role of an ECS task or EC2 instance. The Function URL has `AWS_IAM` auth, so AWS refuses a call that isn't signed by a principal allowed to invoke it before the receiver runs. Nobody has a secret that could make the receiver act as if madAuth called: the role's credentials are temporary, AWS rotates them, and nobody copies them.
 
 - `WEBHOOK_URL` is the Function URL, `https://<id>.lambda-url.<region>.on.aws/`; madAuth signs for its region.
-- `WEBHOOK_SECRET` must not be set: madAuth refuses to start with both. The calls carry `webhook-id` and `webhook-timestamp` as before, and no `webhook-signature`.
+- `WEBHOOK_SECRET` and `WEBHOOK_PREVIOUS_SECRET` must not be set: madAuth refuses to start with a secret and `WEBHOOK_AUTH=aws-iam`. The calls carry `webhook-id` and `webhook-timestamp` as before, and no `webhook-signature`.
 - madAuth's role needs both of these on the receiver's function (Lambda checks both for Function URLs made since October 2025):
 
   ```json

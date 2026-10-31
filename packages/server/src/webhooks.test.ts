@@ -68,6 +68,22 @@ describe('webhook client', () => {
     expect(verifyWebhook(settings.secret, received!.headers, received!.body)).toBe(true);
   });
 
+  it('signs every call with the previous secret too while it is set: a receiver with either one accepts it', async () => {
+    const previousSecret = generateWebhookSecret();
+    let received: { headers: Headers; body: string } | undefined;
+    const client = createWebhookClient({ ...settings, previousSecret }, (async (_url: string, init: RequestInit) => {
+      received = { headers: new Headers(init.headers), body: String(init.body) };
+      return new Response(null, { status: 204 });
+    }) as typeof fetch);
+
+    await client.call('user.signed_in', {}, 1000);
+
+    expect(received!.headers.get('webhook-signature')).toMatch(/^v1,\S+ v1,\S+$/);
+    expect(verifyWebhook(settings.secret, received!.headers, received!.body)).toBe(true);
+    expect(verifyWebhook(previousSecret, received!.headers, received!.body)).toBe(true);
+    expect(verifyWebhook(generateWebhookSecret(), received!.headers, received!.body)).toBe(false);
+  });
+
   it('reports error statuses, network errors and timeouts', async () => {
     const answer = (status: number) => (async () => new Response('', { status })) as typeof fetch;
     expect(await createWebhookClient(settings, answer(500)).call('email.send_verification', {}, 1000)).toEqual({ ok: false, reason: 'HTTP 500' });

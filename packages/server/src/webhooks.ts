@@ -128,9 +128,10 @@ export function verifyWebhook(
 
 /**
  * How the calls are signed: with the secret the receiver checks (WEBHOOK_SECRET), or with AWS IAM (WEBHOOK_AUTH=aws-iam):
- * with madAuth's AWS credentials, which AWS checks before the receiver runs.
+ * with madAuth's AWS credentials, which AWS checks before the receiver runs. While the secret is being changed,
+ * `previousSecret` (WEBHOOK_PREVIOUS_SECRET) signs every call as well, so a receiver that still has it accepts them.
  */
-export type WebhookAuth = { secret: string } | { awsIam: WebhookSigner };
+export type WebhookAuth = { secret: string; previousSecret?: string } | { awsIam: WebhookSigner };
 
 export type WebhookSettings = {
   url: string;
@@ -149,6 +150,10 @@ export interface WebhookClient {
 
 export function createWebhookClient(settings: WebhookSettings, fetchImpl: typeof fetch = fetch): WebhookClient {
   const wants = (type: WebhookType) => settings.events.has(type);
+  // The secrets that sign each call: the current one, and the previous one while it is set.
+  const secrets = 'secret' in settings ? [settings.secret, ...(settings.previousSecret ? [settings.previousSecret] : [])] : [];
+  // Space-separated, as Standard Webhooks allows: a receiver with any one of the secrets accepts the call.
+  const signatureOf = (id: string, timestamp: number, body: string) => secrets.map((secret) => signWebhook(secret, id, timestamp, body)).join(' ');
   return {
     wants,
     async call(type, data, timeoutMs) {
@@ -162,7 +167,7 @@ export function createWebhookClient(settings: WebhookSettings, fetchImpl: typeof
       const headers = { 'Content-Type': 'application/json', 'webhook-id': id, 'webhook-timestamp': String(timestamp) };
       const signed =
         'secret' in settings
-          ? { headers: { ...headers, 'webhook-signature': signWebhook(settings.secret, id, timestamp, body) } }
+          ? { headers: { ...headers, 'webhook-signature': signatureOf(id, timestamp, body) } }
           : await settings.awsIam({ url: settings.url, headers, body });
       if ('problem' in signed) return { ok: false, reason: signed.problem };
       let response: Response;
