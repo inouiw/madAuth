@@ -64,7 +64,7 @@ Google draws the button; `button` takes its [configuration](https://developers.g
 import { cancel, disableAutoSelect, revoke } from '@madauth/google-identity';
 
 cancel();                       // closes the dialog or One Tap: the pending signIn resolves with `cancelled`
-await disableAutoSelect();      // after a sign-out: the next signIn asks again instead of auto-selecting
+disableAutoSelect();            // after a sign-out: the next signIn asks again instead of auto-selecting
 await revoke(idTokenClaims.sub); // the user disconnects the app from their Google account
 ```
 
@@ -74,7 +74,7 @@ await revoke(idTokenClaims.sub); // the user disconnects the app from their Goog
 
 | `reason`              | Meaning                                                                                                                                              |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cancelled`           | `cancel()` was called, the `signal` aborted, or the user closed the browser's dialog.                                                                 |
+| `cancelled`           | `cancel()` was called, the `signal` aborted, the browser aborted the request, or the user closed its dialog.                                           |
 | `skipped`             | The prompt was not shown, or closed without a choice: Chrome's cooldown after dismissals, no Google session in the browser, a user who opted out, …  |
 | `configuration_error` | The client ID is missing, or the page's origin is not among its authorized JavaScript origins.                                                       |
 | `load_failed`         | Google's script could not be loaded (offline, a content blocker).                                                                                    |
@@ -95,9 +95,9 @@ await revoke(idTokenClaims.sub); // the user disconnects the app from their Goog
 | Function                              | What it does                                                                                                                      |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `signIn(options)`                     | The browser's dialog or One Tap. `clientId`, `nonce`; `autoSelect`, `context` (`signin`, `signup`, `use`), `signal`, `fedcm: false` to always use the script, `cancelOnTapOutside`. |
-| `renderButton(container, options)`    | Google's button. `clientId`, `nonce`, `onCredential`; `context`, `button`, `uxMode` and `loginUri` for Google's redirect mode. Resolves with `remove()` or `load_failed`. |
+| `renderButton(container, options)`    | Google's button. `clientId`, `nonce`, `onCredential`; `context`, `button`, `uxMode` and `loginUri` for Google's redirect mode. Resolves with `remove()`, or with `load_failed` or `error`. |
 | `cancel()`                            | Ends the sign-in under way.                                                                                                        |
-| `disableAutoSelect()`                 | The next sign-in asks instead of auto-selecting.                                                                                   |
+| `disableAutoSelect()`                 | The next sign-in asks instead of auto-selecting; it loads nothing, Google's script is told only if it has loaded.                |
 | `revoke(hint)`                        | Revokes the app's grant at Google, by e-mail address or account id.                                                                |
 | `isFedcmSupported()`                  | Whether the browser has the FedCM API.                                                                                             |
 | `loadGis()`                           | Loads Google's script and resolves with `google.accounts.id`; rejects when it can't be loaded, and a later call tries again.       |

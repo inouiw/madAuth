@@ -36,6 +36,21 @@ describe('GoogleFedcm', () => {
     expect(gisScripts()).toHaveLength(0);
   });
 
+  it('G1b: in a browser with FedCM, a blocked script is a warning: One Tap goes through the browser', async () => {
+    const server = fakeServer();
+    // No window.google: the script "loads" but provides nothing.
+    vi.stubGlobal('IdentityCredential', class {});
+    Object.defineProperty(navigator, 'credentials', { value: { get: vi.fn(async () => ({ token: 'fedcm-token' })) }, configurable: true });
+
+    const result = await Madauth.initialize({ serverUrl: SERVER, providers: [new GoogleFedcm()] });
+    await settle();
+
+    expect(result).toMatchObject({ isSuccess: true, leftOut: [] });
+    expect(warnLog).toHaveBeenCalledWith('[madauth]', 'gis_load_failed', expect.stringContaining('button will not render'));
+    expect(server.requests.find((r) => r.path === '/auth/providers/google/verify')?.body).toEqual({ credential: 'fedcm-token' });
+    expect(Madauth.currentUser).toEqual(ada);
+  });
+
   it('G2: passes the server’s client ID and a fresh nonce to GIS, with the FedCM button', async () => {
     fakeServer();
     const gis = fakeGis();

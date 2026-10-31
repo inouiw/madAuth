@@ -1,4 +1,4 @@
-import { cancel, disableAutoSelect, loadGis, renderButton, revoke, signIn, type CredentialResult } from '@madauth/google-identity';
+import { cancel, disableAutoSelect, isFedcmSupported, loadGis, renderButton, revoke, signIn, type CredentialResult } from '@madauth/google-identity';
 import { fail, ok, type MadauthUser, type Result } from '../result.js';
 import type { ButtonOptions, DeletedAccount, ProviderContext, SignInProvider } from './provider.js';
 
@@ -21,7 +21,6 @@ export class GoogleFedcm implements SignInProvider {
   readonly method = 'google' as const;
   readonly #autoPrompt: boolean;
   #ctx?: ProviderContext;
-  #loaded = false;
   /** The rendered button, if any; only the latest one gets results. */
   #button?: ButtonMount;
 
@@ -35,13 +34,16 @@ export class GoogleFedcm implements SignInProvider {
     if (!ctx.config.google) {
       return fail('flow_not_enabled', 'The madAuth server has no Google provider that is on, so Google sign-in is off: an admin adds it (Madauth.admin.addProvider).');
     }
-    // The browser's dialog needs no script, but the button does, and a page that can't load it should hear so now.
+    // The button needs Google's script, so it is loaded now, and a page that can't load it hears so: unless the
+    // browser's own dialog signs in without it, where One Tap still works and only the button reports the failure.
     const loaded = await loadGis().then(
       () => ok(),
       (e: Error) => fail('gis_load_failed', `Google sign-in could not be loaded: ${e.message}`),
     );
-    if (!loaded.isSuccess) return loaded;
-    this.#loaded = true;
+    if (!loaded.isSuccess) {
+      if (!isFedcmSupported()) return loaded;
+      console.warn('[madauth]', loaded.error.code, `${loaded.error.message}; One Tap goes through the browser, Google's button will not render.`);
+    }
     // Not while a sign-in waits for the authenticator app: One Tap on top of the code step would start another.
     if (this.#autoPrompt && !ctx.currentUser && !ctx.signInPending) void this.#prompt();
     return ok();
@@ -51,7 +53,7 @@ export class GoogleFedcm implements SignInProvider {
     const mount = { container, ...options };
     this.#button = mount;
     // One Tap and the button share the server's nonce cookie, so only the button may be active now.
-    if (this.#loaded) cancel();
+    cancel();
     void this.#renderButton(mount);
     return () => {
       if (this.#button === mount) this.#button = undefined;
@@ -61,18 +63,18 @@ export class GoogleFedcm implements SignInProvider {
 
   onSignedIn(): void {
     // E.g. signed in with a password while One Tap was still showing.
-    if (!this.#button && this.#loaded) cancel();
+    if (!this.#button) cancel();
   }
 
   onSignedOut(): void {
-    if (this.#loaded) void disableAutoSelect();
+    disableAutoSelect();
   }
 
   onAccountDeleted({ googleSub }: DeletedAccount): void {
     // Removes the app from the user's connected apps at Google, and the button no longer says "Continue as …".
     // By the account id, not the address: Google's address may have changed since the user signed up, and a
     // user without a Google account is never sent to Google.
-    if (googleSub && this.#loaded) void revoke(googleSub);
+    if (googleSub) void revoke(googleSub);
   }
 
   /** A fresh nonce from the server: each sign-in needs its own. */

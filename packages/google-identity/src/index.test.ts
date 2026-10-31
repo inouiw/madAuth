@@ -16,7 +16,11 @@ import {
 const CLIENT_ID = 'client.apps.googleusercontent.com';
 
 /** Installs a fake `window.google.accounts.id`. */
-function fakeGis(): { id: Mocked<GoogleAccountsId>; credential(token?: string, selectBy?: string): void; moment(n: Partial<PromptMomentNotification>): void } {
+function fakeGis(): {
+  id: Mocked<GoogleAccountsId>;
+  credential(token?: string, selectBy?: string): void;
+  moment(n: Partial<PromptMomentNotification>): void;
+} {
   const id: Mocked<GoogleAccountsId> = {
     initialize: vi.fn(),
     prompt: vi.fn(),
@@ -52,7 +56,10 @@ function fakeGis(): { id: Mocked<GoogleAccountsId>; credential(token?: string, s
 function fakeFedcm(answer: (options: CredentialRequestOptions) => Promise<unknown>) {
   const get = vi.fn(answer);
   vi.stubGlobal('IdentityCredential', class {});
-  Object.defineProperty(navigator, 'credentials', { value: { get, preventSilentAccess: vi.fn(async () => {}) }, configurable: true });
+  Object.defineProperty(navigator, 'credentials', {
+    value: { get, preventSilentAccess: vi.fn(async () => {}) },
+    configurable: true,
+  });
   return { get };
 }
 
@@ -107,10 +114,17 @@ describe('signIn with the browser’s FedCM API', () => {
     const result = await signIn({ clientId: CLIENT_ID, nonce: 'n1', autoSelect: true, context: 'use' });
 
     expect(result).toEqual({ isSuccess: true, idToken: 'tok', isAutoSelected: true });
-    const request = fedcm.get.mock.calls[0][0] as unknown as { identity: { context: string; providers: { clientId: string; nonce: string; params: { nonce: string } }[] }; mediation: string };
+    const request = fedcm.get.mock.calls[0][0] as unknown as {
+      identity: { context: string; providers: { clientId: string; nonce: string; params: { nonce: string } }[] };
+      mediation: string;
+    };
     expect(request.mediation).toBe('optional');
     expect(request.identity.context).toBe('use');
-    expect(request.identity.providers[0]).toMatchObject({ clientId: CLIENT_ID, nonce: 'n1', params: { nonce: 'n1', response_type: 'id_token' } });
+    expect(request.identity.providers[0]).toMatchObject({
+      clientId: CLIENT_ID,
+      nonce: 'n1',
+      params: { nonce: 'n1', response_type: 'id_token' },
+    });
     expect(scripts()).toHaveLength(0); // Google's script is not needed for the browser's dialog.
   });
 
@@ -124,7 +138,12 @@ describe('signIn with the browser’s FedCM API', () => {
   });
 
   it('F3: cancel() aborts the dialog, and the sign-in resolves with cancelled', async () => {
-    fakeFedcm((options) => new Promise((_, reject) => options.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))));
+    fakeFedcm(
+      (options) =>
+        new Promise((_, reject) =>
+          options.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
+        ),
+    );
 
     const pending = signIn({ clientId: CLIENT_ID, nonce: 'n1' });
     cancel();
@@ -133,14 +152,22 @@ describe('signIn with the browser’s FedCM API', () => {
   });
 
   it('F4: the caller’s signal cancels too, also before the call', async () => {
-    const fedcm = fakeFedcm((options) => new Promise((_, reject) => options.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))));
+    const fedcm = fakeFedcm(
+      (options) =>
+        new Promise((_, reject) =>
+          options.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
+        ),
+    );
     const controller = new AbortController();
 
     const pending = signIn({ clientId: CLIENT_ID, nonce: 'n1', signal: controller.signal });
     controller.abort();
     expect(await pending).toEqual({ isSuccess: false, reason: 'cancelled' });
 
-    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1', signal: controller.signal })).toEqual({ isSuccess: false, reason: 'cancelled' });
+    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1', signal: controller.signal })).toEqual({
+      isSuccess: false,
+      reason: 'cancelled',
+    });
     expect(fedcm.get).toHaveBeenCalledTimes(1);
   });
 
@@ -153,12 +180,20 @@ describe('signIn with the browser’s FedCM API', () => {
     fakeFedcm(async () => {
       throw new DOMException('The request is not allowed', 'NotAllowedError');
     });
-    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({ isSuccess: false, reason: 'skipped', detail: /NotAllowedError/ });
+    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({
+      isSuccess: false,
+      reason: 'skipped',
+      detail: /NotAllowedError/,
+    });
 
     fakeFedcm(async () => {
       throw new DOMException('Error retrieving a token.', 'IdentityCredentialError');
     });
-    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({ isSuccess: false, reason: 'error', detail: /IdentityCredentialError/ });
+    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({
+      isSuccess: false,
+      reason: 'error',
+      detail: /IdentityCredentialError/,
+    });
 
     fakeFedcm(async () => null);
     expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({ isSuccess: false, reason: 'skipped' });
@@ -177,6 +212,20 @@ describe('signIn with the browser’s FedCM API', () => {
   });
 });
 
+  it('F7: the browser’s own AbortError is a cancellation, and cancel() ends every dialog under way', async () => {
+    fakeFedcm(async () => {
+      throw new DOMException('aborted by the browser', 'AbortError');
+    });
+    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toEqual({ isSuccess: false, reason: 'cancelled' });
+
+    fakeFedcm((options) => new Promise((_, reject) => options.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))));
+    const first = signIn({ clientId: CLIENT_ID, nonce: 'n2', autoSelect: true });
+    const second = signIn({ clientId: CLIENT_ID, nonce: 'n3' });
+    cancel();
+    expect(await first).toEqual({ isSuccess: false, reason: 'cancelled' });
+    expect(await second).toEqual({ isSuccess: false, reason: 'cancelled' });
+  });
+
 describe('signIn with One Tap through Google’s script', () => {
   it('P1: initializes Google’s script with the client ID, nonce and FedCM on, prompts, and resolves with the credential', async () => {
     expect(isFedcmSupported()).toBe(false);
@@ -185,7 +234,16 @@ describe('signIn with One Tap through Google’s script', () => {
     const pending = signIn({ clientId: CLIENT_ID, nonce: 'n1', autoSelect: true, cancelOnTapOutside: false });
     await vi.waitFor(() => expect(gis.id.prompt).toHaveBeenCalledOnce());
     expect(gis.id.initialize).toHaveBeenCalledWith(
-      expect.objectContaining({ client_id: CLIENT_ID, nonce: 'n1', auto_select: true, cancel_on_tap_outside: false, context: 'signin', use_fedcm_for_prompt: true, use_fedcm_for_button: true, itp_support: true }),
+      expect.objectContaining({
+        client_id: CLIENT_ID,
+        nonce: 'n1',
+        auto_select: true,
+        cancel_on_tap_outside: false,
+        context: 'signin',
+        use_fedcm_for_prompt: true,
+        use_fedcm_for_button: true,
+        itp_support: true,
+      }),
     );
     gis.credential('tok', 'user');
 
@@ -243,7 +301,40 @@ describe('signIn with One Tap through Google’s script', () => {
   });
 
   it('P5: resolves with load_failed when Google’s script cannot be loaded', async () => {
-    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({ isSuccess: false, reason: 'load_failed', detail: /google.accounts.id is missing/ });
+    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({
+      isSuccess: false,
+      reason: 'load_failed',
+      detail: /google.accounts.id is missing/,
+    });
+  });
+  it('P6: a signal aborted after the sign-in ended cancels nothing', async () => {
+    const gis = fakeGis();
+    const controller = new AbortController();
+
+    const pending = signIn({ clientId: CLIENT_ID, nonce: 'n1', signal: controller.signal });
+    await vi.waitFor(() => expect(gis.id.prompt).toHaveBeenCalled());
+    gis.credential('tok');
+    expect(await pending).toMatchObject({ isSuccess: true });
+
+    controller.abort();
+
+    expect(gis.id.cancel).not.toHaveBeenCalled();
+  });
+
+  it('P7: a notification without the display-moment methods (FedCM mode) is no error, and Google’s script throwing is a result', async () => {
+    const gis = fakeGis();
+
+    const pending = signIn({ clientId: CLIENT_ID, nonce: 'n1' });
+    await vi.waitFor(() => expect(gis.id.prompt).toHaveBeenCalled());
+    const bare = { isSkippedMoment: () => false, isDismissedMoment: () => false } as unknown as PromptMomentNotification;
+    expect(() => gis.id.prompt.mock.lastCall![0]!(bare)).not.toThrow();
+    gis.moment({ isSkippedMoment: () => true });
+    expect(await pending).toEqual({ isSuccess: false, reason: 'skipped' });
+
+    gis.id.initialize.mockImplementation(() => {
+      throw new TypeError('bad context');
+    });
+    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n2' })).toEqual({ isSuccess: false, reason: 'error', detail: 'TypeError: bad context' });
   });
 });
 
@@ -253,12 +344,27 @@ describe('renderButton', () => {
     const container = document.createElement('div');
     const onCredential = vi.fn();
 
-    const rendered = await renderButton(container, { clientId: CLIENT_ID, nonce: 'n1', context: 'use', onCredential, button: { theme: 'filled_black', width: 300 }, uxMode: 'popup' });
+    const rendered = await renderButton(container, {
+      clientId: CLIENT_ID,
+      nonce: 'n1',
+      context: 'use',
+      onCredential,
+      button: { theme: 'filled_black', width: 300 },
+      uxMode: 'popup',
+    });
 
     expect(rendered.isSuccess).toBe(true);
     const wrapper = container.firstElementChild as HTMLElement;
     expect(wrapper.style.colorScheme).toBe('light');
-    expect(gis.id.initialize).toHaveBeenCalledWith(expect.objectContaining({ client_id: CLIENT_ID, nonce: 'n1', context: 'use', use_fedcm_for_button: true, ux_mode: 'popup' }));
+    expect(gis.id.initialize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client_id: CLIENT_ID,
+        nonce: 'n1',
+        context: 'use',
+        use_fedcm_for_button: true,
+        ux_mode: 'popup',
+      }),
+    );
     expect(gis.id.initialize.mock.lastCall![0]).not.toHaveProperty('login_uri');
     expect(gis.id.renderButton).toHaveBeenCalledWith(wrapper, { type: 'standard', theme: 'filled_black', width: 300 });
 
@@ -271,28 +377,47 @@ describe('renderButton', () => {
     expect(container.childElementCount).toBe(0);
   });
 
+  it('B3: resolves with error, and leaves the container empty, when Google’s script throws', async () => {
+    const gis = fakeGis();
+    gis.id.renderButton.mockImplementation(() => {
+      throw new Error('width out of range');
+    });
+    const container = document.createElement('div');
+
+    expect(await renderButton(container, { clientId: CLIENT_ID, nonce: 'n1', onCredential: vi.fn() })).toEqual({ isSuccess: false, reason: 'error', detail: 'Error: width out of range' });
+    expect(container.childElementCount).toBe(0);
+  });
+
   it('B2: resolves with load_failed when Google’s script cannot be loaded', async () => {
     const container = document.createElement('div');
 
-    expect(await renderButton(container, { clientId: CLIENT_ID, nonce: 'n1', onCredential: vi.fn() })).toMatchObject({ isSuccess: false, reason: 'load_failed' });
+    expect(await renderButton(container, { clientId: CLIENT_ID, nonce: 'n1', onCredential: vi.fn() })).toMatchObject({
+      isSuccess: false,
+      reason: 'load_failed',
+    });
     expect(container.childElementCount).toBe(0);
   });
 });
 
 describe('disableAutoSelect and revoke', () => {
-  it('D1: disableAutoSelect tells Google’s script and the browser', async () => {
-    const fedcm = fakeFedcm(async () => null);
+  it('D1: disableAutoSelect tells the browser, and Google’s script once it has loaded', () => {
+    fakeFedcm(async () => null);
     const gis = fakeGis();
 
-    await disableAutoSelect();
-
-    expect(gis.id.disableAutoSelect).toHaveBeenCalledOnce();
+    disableAutoSelect();
     expect((navigator.credentials as unknown as { preventSilentAccess: ReturnType<typeof vi.fn> }).preventSilentAccess).toHaveBeenCalledOnce();
-    void fedcm;
+    // The script has not loaded: nothing to disable there, and it is not loaded for this.
+    expect(gis.id.disableAutoSelect).not.toHaveBeenCalled();
+    expect(scripts()).toHaveLength(0);
   });
 
-  it('D2: disableAutoSelect does nothing without the browser API, and does not fail without the script', async () => {
-    await expect(disableAutoSelect()).resolves.toBeUndefined();
+  it('D2: disableAutoSelect reaches Google’s script once loaded, and does nothing without the browser API', async () => {
+    const gis = fakeGis();
+    await loadGis();
+
+    expect(() => disableAutoSelect()).not.toThrow();
+
+    expect(gis.id.disableAutoSelect).toHaveBeenCalledOnce();
   });
 
   it('R1: revoke resolves with Google’s answer', async () => {
