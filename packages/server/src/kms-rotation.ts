@@ -2,7 +2,7 @@
 // kms-setup` and `kms-rotate` do it with an admin's credentials, the AWS template's rotator with a role of its own.
 // Whatever can create a key the server trusts can forge sessions, so the server's role can't. See "AWS KMS" in
 // docs/server.md.
-import { aliasPrefix, deploymentKeys, generationName, type Kms, type KmsKeyKind } from './aws-kms.js';
+import { aliasPrefix, deploymentKeys, generationName, type Kms, type KmsKeyKind, type RotatedKind } from './aws-kms.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -23,16 +23,28 @@ export interface RotationOptions {
 
 const description = (deployment: string, kind: KmsKeyKind) => `madAuth ${kind} key of ${deployment}`;
 
+export interface SetupOptions {
+  /**
+   * Also an RS256 signing key (`signing-rsa`), for the ID tokens of OpenID Connect clients that can't verify
+   * ES256. Default: false; a deployment that has one keeps it either way.
+   */
+  rs256?: boolean;
+}
+
+/** The kinds a deployment rotates: the RS256 keys only once it has them. */
+const rotatedKinds = (keys: Awaited<ReturnType<typeof deploymentKeys>>, rs256 = false): RotatedKind[] =>
+  rs256 || keys['signing-rsa'].current || keys['signing-rsa'].generations.length ? ['signing', 'signing-rsa', 'mac'] : ['signing', 'mac'];
+
 /**
  * Creates the keys a deployment lacks, each under its aliases (aws-kms.ts); does nothing for the ones it has. A key
  * that has its generation alias but not the current one (a setup that stopped half-way) becomes current instead
  * of getting a second key. Resolves to what was done, for people to read.
  */
-export async function setUpKmsKeys(kms: Kms, deployment: string, now = Date.now()): Promise<string[]> {
+export async function setUpKmsKeys(kms: Kms, deployment: string, now = Date.now(), options: SetupOptions = {}): Promise<string[]> {
   const prefix = aliasPrefix(deployment);
   const keys = await deploymentKeys(kms, deployment);
   const done: string[] = [];
-  for (const kind of ['signing', 'mac'] as const) {
+  for (const kind of rotatedKinds(keys, options.rs256)) {
     if (keys[kind].current) continue;
     const newest = keys[kind].generations.at(-1);
     if (newest) {
@@ -71,7 +83,7 @@ export async function rotateKmsKeys(
   const keys = await deploymentKeys(kms, deployment);
   const done: string[] = [];
   const problems: string[] = [];
-  for (const kind of ['signing', 'mac'] as const) {
+  for (const kind of rotatedKinds(keys)) {
     const { current, generations } = keys[kind];
     const newest = generations.at(-1);
     if (!current || !newest) {
@@ -86,7 +98,7 @@ export async function rotateKmsKeys(
       await kms.createAlias(`${prefix}/${kind}/${generationName(now)}`, keyId);
       done.push(`Created the ${kind} key ${keyId}: it is used from a run in ${Math.round(publishMs / 3600_000)} hours.`);
     }
-    if (kind !== 'signing') continue;
+    if (kind === 'mac') continue;
     // A signing key retires once the key after it has signed for `retireAfterMs`: it began no sooner than
     // `publishMs` after it was made.
     for (const [index, generation] of generations.entries()) {
@@ -95,7 +107,7 @@ export async function rotateKmsKeys(
       // Disabled first: if removing the alias fails, the next run removes it.
       if (await kms.enabled(generation.keyId)) await kms.disableKey(generation.keyId);
       await kms.deleteAlias(generation.alias);
-      done.push(`Disabled the signing key ${generation.keyId} and removed ${generation.alias}: the sessions it signed have expired.`);
+      done.push(`Disabled the ${kind} key ${generation.keyId} and removed ${generation.alias}: the ${kind === 'signing' ? 'sessions' : 'tokens'} it signed have expired.`);
     }
   }
   return { done, problems };

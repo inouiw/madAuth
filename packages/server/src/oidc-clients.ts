@@ -1,6 +1,7 @@
 // madAuth as an OpenID Connect provider: the applications (clients) admins register, the authorization codes
 // and the refresh tokens. The endpoints are in routes/oidc-endpoints.ts; see "OpenID Connect provider" in docs/server.md.
 import { createHash, randomBytes } from 'node:crypto';
+import { RSA_SIGNING_ALG, SIGNING_ALG, type SigningAlg } from './keys.js';
 import { safeEqual } from './password.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 
@@ -80,7 +81,12 @@ export interface StoredClient {
   deviceFlow: boolean | null;
   /** Whether it may exchange a Google ID token for tokens; null in records from before schema version 14: no. */
   tokenExchange: boolean | null;
+  /** The algorithm of its ID tokens (`RS256` for a client that can't verify ES256); null in records from before schema version 15, and by default: ES256. */
+  idTokenAlg: string | null;
 }
+
+/** The algorithm a client's ID tokens are signed with: ES256 unless the admin chose RS256. */
+export const idTokenAlgOf = (client: Pick<StoredClient, 'idTokenAlg'>): SigningAlg => (client.idTokenAlg === RSA_SIGNING_ALG ? RSA_SIGNING_ALG : SIGNING_ALG);
 
 /** A client as the admin API answers it: never its secret. */
 export interface ClientInfo {
@@ -94,6 +100,8 @@ export interface ClientInfo {
   deviceFlow: boolean;
   /** Whether it may exchange a Google ID token it obtained itself for tokens (RFC 8693): a native app. */
   tokenExchange: boolean;
+  /** The algorithm its ID tokens are signed with (OpenID Connect's `id_token_signed_response_alg`): `ES256`, or `RS256` for a client that can't verify ES256. */
+  idTokenAlg: SigningAlg;
   createdAt: number;
   updatedAt: number;
 }
@@ -111,6 +119,7 @@ export const clientInfo = (client: StoredClient): ClientInfo => ({
   postLogoutRedirectUris: urisOf(client.postLogoutRedirectUris),
   deviceFlow: client.deviceFlow === true,
   tokenExchange: client.tokenExchange === true,
+  idTokenAlg: idTokenAlgOf(client),
   createdAt: client.createdAt,
   updatedAt: client.updatedAt,
 });
@@ -156,6 +165,7 @@ export interface ClientFields {
   postLogoutRedirectUris?: string[];
   deviceFlow?: boolean;
   tokenExchange?: boolean;
+  idTokenAlg?: SigningAlg;
 }
 
 /** A list of redirect URIs as the admin API takes it, or why it isn't one. */
@@ -194,6 +204,10 @@ export function parseClientFields(data: Record<string, unknown>, isNew: boolean)
     if (data[flag] === undefined) continue;
     if (typeof data[flag] !== 'boolean') return invalid(`${flag} must be true or false.`);
     fields[flag] = data[flag];
+  }
+  if (data.idTokenAlg !== undefined) {
+    if (data.idTokenAlg !== SIGNING_ALG && data.idTokenAlg !== RSA_SIGNING_ALG) return invalid(`idTokenAlg must be ${SIGNING_ALG} or ${RSA_SIGNING_ALG}.`);
+    fields.idTokenAlg = data.idTokenAlg;
   }
   return fields;
 }
@@ -296,6 +310,7 @@ export class OidcClients {
       updatedBy: by,
       deviceFlow: fields.deviceFlow ?? false,
       tokenExchange: fields.tokenExchange ?? false,
+      idTokenAlg: fields.idTokenAlg ?? SIGNING_ALG,
     };
     await this.store.create('oidcClient', client as unknown as Row);
     return { client, secret };
@@ -315,6 +330,7 @@ export class OidcClients {
       ...(fields.postLogoutRedirectUris ? { postLogoutRedirectUris: JSON.stringify(fields.postLogoutRedirectUris) } : {}),
       ...(fields.deviceFlow !== undefined ? { deviceFlow: fields.deviceFlow } : {}),
       ...(fields.tokenExchange !== undefined ? { tokenExchange: fields.tokenExchange } : {}),
+      ...(fields.idTokenAlg !== undefined ? { idTokenAlg: fields.idTokenAlg } : {}),
       ...(secret ? { secretHash: sha256(secret) } : {}),
       updatedAt: Date.now(),
       updatedBy: by,

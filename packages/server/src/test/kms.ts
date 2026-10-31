@@ -31,9 +31,9 @@ export function fakeKms() {
       const key = keys.get(keyId);
       return key?.enabled && key.publicKey ? new Uint8Array(key.publicKey.export({ format: 'der', type: 'spki' })) : null;
     },
-    async sign(keyId, message) {
+    async sign(keyId, message, alg) {
       calls.push(`sign ${keyId}`);
-      return new Uint8Array(sign('sha256', message, usable(keyId, 'signing').privateKey!));
+      return new Uint8Array(sign('sha256', message, usable(keyId, alg === 'RS256' ? 'signing-rsa' : 'signing').privateKey!));
     },
     async mac(keyId, message) {
       calls.push(`mac ${keyId}`);
@@ -66,8 +66,8 @@ export function fakeKms() {
     async createKey(kind) {
       const keyId = `key-${next++}`;
       calls.push(`createKey ${kind} ${keyId}`);
-      const pair = kind === 'signing' ? generateKeyPairSync('ec', { namedCurve: 'P-256' }) : undefined;
-      keys.set(keyId, { kind, enabled: true, privateKey: pair?.privateKey, publicKey: pair?.publicKey, secret: kind === 'signing' ? undefined : randomBytes(32) });
+      const pair = kind === 'signing' ? generateKeyPairSync('ec', { namedCurve: 'P-256' }) : kind === 'signing-rsa' ? generateKeyPairSync('rsa', { modulusLength: 2048 }) : undefined;
+      keys.set(keyId, { kind, enabled: true, privateKey: pair?.privateKey, publicKey: pair?.publicKey, secret: pair ? undefined : randomBytes(32) });
       return keyId;
     },
     async createAlias(name, keyId) {

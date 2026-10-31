@@ -8,7 +8,7 @@ beforeEach(() => {
 });
 afterEach(resetAll);
 
-const app = { id: 'mc_1', name: 'Phone app', public: true, redirectUris: [], postLogoutRedirectUris: [], deviceFlow: false, tokenExchange: true, createdAt: 1, updatedAt: 1 };
+const app = { id: 'mc_1', name: 'Phone app', public: true, redirectUris: [], postLogoutRedirectUris: [], deviceFlow: false, tokenExchange: true, idTokenAlg: 'ES256' as const, createdAt: 1, updatedAt: 1 };
 
 describe('Madauth.tokens', () => {
   it('gets the nonce, exchanges the Google ID token for tokens without cookies, and refreshes them', async () => {

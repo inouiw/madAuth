@@ -136,7 +136,7 @@ export interface FakeServer {
   /** The app's login page an admin set; null: `/`. */
   loginUrl: string | null;
   /** The OpenID Connect clients an admin registered. */
-  clients: { id: string; name: string; public: boolean; redirectUris: string[]; postLogoutRedirectUris: string[]; deviceFlow: boolean; tokenExchange: boolean; createdAt: number; updatedAt: number }[];
+  clients: { id: string; name: string; public: boolean; redirectUris: string[]; postLogoutRedirectUris: string[]; deviceFlow: boolean; tokenExchange: boolean; idTokenAlg: 'ES256' | 'RS256'; createdAt: number; updatedAt: number }[];
   /** The devices waiting for a user's approval, by their user code without the dash. */
   devices: { code: string; client: { id: string; name: string }; scope: string[]; expiresAt: number; boundTo?: string; decided?: 'approved' | 'denied' }[];
   /** Whether the user typed too many wrong device codes. */
@@ -889,10 +889,10 @@ export function fakeServer(): FakeServer {
         const action = url.pathname.split('/').at(-1);
         if (action === 'list') return json({ clients: server.clients });
         if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
-        const data = body as unknown as { id?: string; name?: string; redirectUris?: string[]; postLogoutRedirectUris?: string[]; public?: boolean; newSecret?: boolean; deviceFlow?: boolean; tokenExchange?: boolean };
+        const data = body as unknown as { id?: string; name?: string; redirectUris?: string[]; postLogoutRedirectUris?: string[]; public?: boolean; newSecret?: boolean; deviceFlow?: boolean; tokenExchange?: boolean; idTokenAlg?: 'ES256' | 'RS256' };
         if (action === 'add') {
           if (!data.name || !data.redirectUris?.length) return json({ error: 'invalid_client', message: 'name and redirectUris' }, 400);
-          const client = { id: `mc_${server.clients.length + 1}`, name: data.name, public: !!data.public, redirectUris: data.redirectUris, postLogoutRedirectUris: data.postLogoutRedirectUris ?? [], deviceFlow: !!data.deviceFlow, tokenExchange: !!data.tokenExchange, createdAt: 1, updatedAt: 1 };
+          const client = { id: `mc_${server.clients.length + 1}`, name: data.name, public: !!data.public, redirectUris: data.redirectUris, postLogoutRedirectUris: data.postLogoutRedirectUris ?? [], deviceFlow: !!data.deviceFlow, tokenExchange: !!data.tokenExchange, idTokenAlg: data.idTokenAlg ?? 'ES256', createdAt: 1, updatedAt: 1 };
           server.clients.push(client);
           return json({ client, ...(client.public ? {} : { clientSecret: 'mcs_secret' }) });
         }
@@ -902,7 +902,7 @@ export function fakeServer(): FakeServer {
           server.clients.splice(server.clients.indexOf(client), 1);
           return json({ client });
         }
-        Object.assign(client, { ...(data.name ? { name: data.name } : {}), ...(data.redirectUris ? { redirectUris: data.redirectUris } : {}), ...(data.deviceFlow !== undefined ? { deviceFlow: data.deviceFlow } : {}), ...(data.tokenExchange !== undefined ? { tokenExchange: data.tokenExchange } : {}) });
+        Object.assign(client, { ...(data.name ? { name: data.name } : {}), ...(data.redirectUris ? { redirectUris: data.redirectUris } : {}), ...(data.deviceFlow !== undefined ? { deviceFlow: data.deviceFlow } : {}), ...(data.tokenExchange !== undefined ? { tokenExchange: data.tokenExchange } : {}), ...(data.idTokenAlg !== undefined ? { idTokenAlg: data.idTokenAlg } : {}) });
         return json({ client, ...(data.newSecret && !client.public ? { clientSecret: 'mcs_new' } : {}) });
       }
       // The providers as the admin API answers them: an admin adds, changes and removes Google, GitHub and

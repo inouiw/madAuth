@@ -63,6 +63,35 @@ describe('the local key service', () => {
     expect(hashes[0]).not.toBe(oldHash);
   });
 
+  it('KS10: an RS256 key in the set signs ID tokens in RS256 and is published after the ES256 keys; it hashes and encrypts nothing', async () => {
+    const rsaKey = await generateSigningKey('RS256');
+    expect(rsaKey).toMatchObject({ kty: 'RSA', alg: 'RS256', kid: expect.any(String) });
+    expect(await parseSigningKeys(JSON.stringify({ keys: [newKey, oldKey, rsaKey] }))).toEqual({ keys: [newKey, oldKey, rsaKey] });
+    expect(await parseSigningKeys(JSON.stringify(rsaKey))).toMatchObject({ problem: expect.stringContaining('has no EC P-256 key') });
+    expect(await parseSigningKeys(JSON.stringify({ keys: [newKey, { ...rsaKey, n: 'short' }] }))).toMatchObject({ problem: expect.stringContaining('shorter than 2048 bits') });
+    await expect(createLocalKeyService([rsaKey])).rejects.toThrow('at least one ES256 key');
+
+    const withRsa = await createLocalKeyService([newKey, rsaKey, oldKey]);
+    expect((await withRsa.verificationKeys()).map((key) => [key.kid, key.alg])).toEqual([
+      [newKey.kid, 'ES256'],
+      [oldKey.kid, 'ES256'],
+      [rsaKey.kid, 'RS256'],
+    ]);
+    expect((await withRsa.verificationKeys())[2]).toEqual({ kty: 'RSA', n: rsaKey.n, e: rsaKey.e, alg: 'RS256', use: 'sig', kid: rsaKey.kid });
+    // The ES256 keys derive the hash and encryption keys, as without the RSA key.
+    expect(await codeHashes(withRsa, '123456')).toEqual(await codeHashes(rotated, '123456'));
+
+    const es256 = await signToken(withRsa, ISSUER, 'madauth-test+jwt', { sub: 'usr_1' }, 60);
+    expect(decodeProtectedHeader(es256)).toMatchObject({ alg: 'ES256', kid: newKey.kid });
+    const rs256 = await signToken(withRsa, ISSUER, 'JWT', { sub: 'usr_1' }, 60, 'RS256');
+    expect(decodeProtectedHeader(rs256)).toMatchObject({ alg: 'RS256', kid: rsaKey.kid });
+    expect(await readToken(withRsa, ISSUER, 'JWT', rs256)).toMatchObject({ sub: 'usr_1' });
+    // A relying party verifies it with the published keys, with RS256 alone.
+    const jwks = createLocalJWKSet({ keys: await withRsa.verificationKeys() });
+    expect((await jwtVerify(rs256, jwks, { algorithms: ['RS256'] })).payload.sub).toBe('usr_1');
+    await expect(signToken(rotated, ISSUER, 'JWT', { sub: 'usr_1' }, 60, 'RS256')).rejects.toThrow('no RS256 key');
+  });
+
   it('KS4: a key that is removed verifies, finds and decrypts nothing any more', async () => {
     const oldToken = await signToken(before, ISSUER, 'madauth-test+jwt', { sub: 'usr_1' }, 60);
     expect(await readToken(onlyNew, ISSUER, 'madauth-test+jwt', oldToken)).toBeNull();

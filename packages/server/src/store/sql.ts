@@ -28,7 +28,7 @@ function columnType(dialect: SqlDialect, def: FieldDef): string {
 }
 
 /** The client model as version 12 created it: without `deviceFlow` (version 13) and `tokenExchange` (version 14). */
-const { deviceFlow: _deviceFlow, tokenExchange: _tokenExchange, ...oidcClientFieldsV12 } = madauthSchema.models.oidcClient.fields;
+const { deviceFlow: _deviceFlow, tokenExchange: _tokenExchange, idTokenAlg: _idTokenAlg, ...oidcClientFieldsV12 } = madauthSchema.models.oidcClient.fields;
 
 /** What each schema version after the first one added, as SQL for tables created by an older version. */
 const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
@@ -149,6 +149,11 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
         `ALTER TABLE ${tableName('oidcClient')} ADD COLUMN ${columnName('tokenExchange')} ${columnType(dialect, madauthSchema.models.oidcClient.fields.tokenExchange)};`,
         createTablesSql(dialect, { version: 14, models: { oidcNonce: madauthSchema.models.oidcNonce } }),
       ].join('\n'),
+  },
+  {
+    // RS256 ID tokens: the algorithm each client gets its ID tokens in.
+    version: 15,
+    sql: (dialect) => `ALTER TABLE ${tableName('oidcClient')} ADD COLUMN ${columnName('idTokenAlg')} ${columnType(dialect, madauthSchema.models.oidcClient.fields.idTokenAlg)};`,
   },
 ];
 

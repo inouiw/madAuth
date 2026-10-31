@@ -67,6 +67,17 @@ describe('--env-file', () => {
   });
 });
 
+describe('generate-key', () => {
+  it('prints a private ES256 JWK, or with --rs256 an RS256 one to add to MADAUTH_SIGNING_KEY', async () => {
+    const ec = await runCli(['generate-key']);
+    expect(ec.exitCode).toBe(0);
+    expect(JSON.parse(ec.output)).toMatchObject({ kty: 'EC', crv: 'P-256', alg: 'ES256', d: expect.any(String), kid: expect.any(String) });
+    const rsa = await runCli(['generate-key', '--rs256']);
+    expect(rsa.exitCode).toBe(0);
+    expect(JSON.parse(rsa.output)).toMatchObject({ kty: 'RSA', alg: 'RS256', n: expect.any(String), e: 'AQAB', d: expect.any(String), kid: expect.any(String) });
+  });
+});
+
 describe('init', () => {
   it('--yes writes the defaults with new secrets, a comment above each variable, readable by the owner only', async () => {
     const file = tempFile();
@@ -352,7 +363,7 @@ describe('usage', () => {
     const { output, exitCode } = await runCli([]);
 
     expect(exitCode).toBe(0);
-    for (const text of ['  init  ', '  start  ', '  generate-key  ', '  --env-file <path>  ']) expect(output).toContain(text);
+    for (const text of ['  init  ', '  start  ', '  generate-key [--rs256]  ', '  --env-file <path>  ']) expect(output).toContain(text);
   });
 
   it('names what replaced a command madAuth before 0.6 had', async () => {
@@ -381,10 +392,14 @@ describe('kms-setup and kms-rotate', () => {
     const setUp = await runCli(['kms-setup'], noQuestions, env, kms);
     expect(setUp.exitCode).toBe(0);
     expect(setUp.output).toContain('Created the signing key');
+    expect(setUp.output).not.toContain('signing-rsa');
     expect(setUp.output).toContain('"kms:ResourceAliases": "alias/madauth/auth-example-com/*"');
     expect(setUp.output).toContain('set MADAUTH_KEY_SERVICE=aws-kms and remove MADAUTH_SIGNING_KEY');
     expect(aliases.has('alias/madauth/auth-example-com/encryption')).toBe(true);
     expect((await runCli(['kms-setup'], noQuestions, env, kms)).output).toMatch(/^The keys under alias\/madauth\/auth-example-com exist already\./);
+    // --rs256 adds the RS256 key to a deployment that has the others.
+    expect((await runCli(['kms-setup', '--rs256'], noQuestions, env, kms)).output).toMatch(/^Created the signing-rsa key/);
+    expect(aliases.has('alias/madauth/auth-example-com/signing-rsa')).toBe(true);
 
     expect(await runCli(['kms-rotate'], noQuestions, env, kms)).toEqual({ exitCode: 0, output: 'Nothing to rotate under alias/madauth/auth-example-com.' });
     // Missing keys fail the run, so a scheduled rotator's failure is noticed.

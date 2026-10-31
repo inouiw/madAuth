@@ -2,7 +2,7 @@
 // as a CloudFormation custom resource, and rotates them on a daily schedule. It has a role of its own: the server's
 // role may only use the keys, so whatever takes over the server can't make a key that madAuth trusts.
 import { GetParametersCommand, SSMClient } from '@aws-sdk/client-ssm';
-import { deploymentOf, kmsFromSdk, rotateKmsKeys, setUpKmsKeys } from '@madauth/server/aws-kms';
+import { deploymentOf, kmsFromSdk, rotateKmsKeys, setUpKmsKeys, type Kms } from '@madauth/server/aws-kms';
 
 /** What CloudFormation sends through the custom resource provider; the daily schedule sends no RequestType. */
 interface KeysEvent {
@@ -11,6 +11,12 @@ interface KeysEvent {
 }
 
 const ssm = new SSMClient({});
+
+/**
+ * `setUpKmsKeys` with its options: an RS256 key too (madAuth 0.7.2 or newer; the construct refuses `rs256Signing`
+ * with an older installed server, and this file typechecks against the installed one).
+ */
+const setUp = setUpKmsKeys as (kms: Kms, deployment: string, now?: number, options?: { rs256?: boolean }) => Promise<string[]>;
 
 /** Whether a parameter exists. GetParameters lists a missing one as invalid instead of failing. */
 async function parameterExists(name: string): Promise<boolean> {
@@ -52,6 +58,6 @@ export async function handler(event: KeysEvent): Promise<{ PhysicalResourceId: s
         `aws ssm delete-parameters --names ${present.join(' ')}`,
     );
   }
-  for (const message of await setUpKmsKeys(sdk.kms, deployment)) console.log(message);
+  for (const message of await setUp(sdk.kms, deployment, Date.now(), { rs256: process.env.RS256_SIGNING === 'true' })) console.log(message);
   return { PhysicalResourceId: deployment };
 }

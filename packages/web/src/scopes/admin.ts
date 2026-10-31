@@ -121,6 +121,8 @@ export interface ClientInfo {
   deviceFlow?: boolean;
   /** Whether it may exchange a Google ID token it obtained itself for tokens (a native app). Absent from servers before 0.7.1. */
   tokenExchange?: boolean;
+  /** The algorithm its ID tokens are signed with: `ES256`, or `RS256` for an application that can't verify ES256. Absent from servers before 0.7.2. */
+  idTokenAlg?: 'ES256' | 'RS256';
   /** Milliseconds since 1970. */
   createdAt: number;
   updatedAt: number;
@@ -139,6 +141,11 @@ export interface ClientChanges {
   deviceFlow?: boolean;
   /** Whether it may exchange a Google ID token for madAuth's tokens, as a native app with its own Google sign-in does (default `false`). See `Madauth.tokens`. */
   tokenExchange?: boolean;
+  /**
+   * The algorithm of its ID tokens (OpenID Connect's `id_token_signed_response_alg`): `ES256` (default), or `RS256`
+   * for an application that can't verify ES256. RS256 needs a key for it in the server's key service (`invalid_client` otherwise).
+   */
+  idTokenAlg?: 'ES256' | 'RS256';
 }
 
 /** A new application: its name and at least one redirect URI; `public: true` for one without a secret (default `false`). */

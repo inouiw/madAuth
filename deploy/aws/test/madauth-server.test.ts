@@ -7,18 +7,18 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { MadAuthServer, signsWebhooksWithIam } from '../lib/madauth-server.js';
+import { MadAuthServer, signsRs256, signsWebhooksWithIam } from '../lib/madauth-server.js';
 
 const MAILER_URL = 'https://abcdefghijklmnopqrstuvwxyz012345.lambda-url.eu-central-1.on.aws/';
 // This repository's server, which signs with AWS IAM whatever its version says.
 const SERVER_DIR = fileURLToPath(new URL('../../../packages/server', import.meta.url));
 
-function synth(receiver?: (stack: Stack) => lambda.IFunction, serverPackageDir: string | null = SERVER_DIR) {
+function synth(receiver?: (stack: Stack) => lambda.IFunction, serverPackageDir: string | null = SERVER_DIR, rs256Signing?: boolean) {
   // Not bundled: the functions' code doesn't matter here.
   const app = new App({ context: { 'aws:cdk:bundling-stacks': [] } });
   const stack = new Stack(app, 'Test', { env: { account: '123456789012', region: 'eu-central-1' } });
   const awsIamReceiver = receiver?.(stack);
-  const server = new MadAuthServer(stack, 'MadAuth', { issuer: 'https://example.com', webhook: { url: MAILER_URL, awsIamReceiver }, serverPackageDir: serverPackageDir ?? undefined });
+  const server = new MadAuthServer(stack, 'MadAuth', { issuer: 'https://example.com', webhook: { url: MAILER_URL, awsIamReceiver }, serverPackageDir: serverPackageDir ?? undefined, rs256Signing });
   const template = Template.fromStack(stack);
   const roleId = stack.getLogicalId(server.role.node.defaultChild as iam.CfnRole);
   return { stack, server, template, roleId };
@@ -124,6 +124,30 @@ test('a receiver with the webhook secret, as before: no AWS IAM and no check for
       Variables: { SIGNING_KEY_PARAMETER: '/madauth/MADAUTH_SIGNING_KEY', WEBHOOK_SECRET_PARAMETER: Match.absent(), WEBHOOK_PREVIOUS_SECRET_PARAMETER: Match.absent() },
     },
   });
+});
+
+test('rs256Signing: the key manager creates the RS256 key too, and the deploy that turns it on runs the setup again', () => {
+  const { template } = synth(undefined, SERVER_DIR, true);
+  template.hasResourceProperties('Custom::MadAuthKmsKeys', { Deployment: 'example-com', Rs256Signing: 'true' });
+  template.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: { SIGNING_KEY_PARAMETER: '/madauth/MADAUTH_SIGNING_KEY', RS256_SIGNING: 'true' } } });
+  // Without it, nothing of this is in the template.
+  const { template: without } = synth();
+  without.hasResourceProperties('Custom::MadAuthKmsKeys', { Deployment: 'example-com', Rs256Signing: Match.absent() });
+  without.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: { SIGNING_KEY_PARAMETER: '/madauth/MADAUTH_SIGNING_KEY', RS256_SIGNING: Match.absent() } } });
+
+  // It needs a server with the key; the installed package is checked (synth without serverPackageDir).
+  assert.equal(signsRs256('0.7.1'), false);
+  assert.equal(signsRs256('0.7.2-beta.1'), false);
+  assert.equal(signsRs256('0.7.2'), true);
+  assert.equal(signsRs256('0.8.0-beta.1'), true);
+  assert.equal(signsRs256('1.0.0'), true);
+  const entry = import.meta.resolve('@madauth/server/aws-kms');
+  const installed = (JSON.parse(readFileSync(new URL('../package.json', entry), 'utf8')) as { version: string }).version;
+  if (signsRs256(installed)) {
+    assert.doesNotThrow(() => synth(undefined, null, true));
+  } else {
+    assert.throws(() => synth(undefined, null, true), { message: new RegExp(`rs256Signing needs madAuth 0\\.7\\.2 or newer.*@madauth/server ${installed.replaceAll('.', '\\.')} is installed`) });
+  }
 });
 
 test('an AWS_IAM receiver needs an installed server that knows WEBHOOK_AUTH', () => {

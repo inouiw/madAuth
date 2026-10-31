@@ -1,5 +1,11 @@
 # Upgrading
 
+## To 0.7.2
+
+- **New: RS256 ID tokens** for OpenID Connect clients that can't verify ES256. A deployment adds an RS256 key to its key service (`npx @madauth/server generate-key --rs256` into `MADAUTH_SIGNING_KEY`'s set; `kms-setup --rs256`, or `rs256Signing: true` in the AWS template, for AWS KMS), and an admin sets `idTokenAlg: 'RS256'` on such a client (`addClient` / `updateClient`; the admin API answers `idTokenAlg` for every client). The discovery document lists `RS256` once the key is there, and `/.well-known/jwks.json` publishes the RS256 keys after the ES256 ones: a backend that verifies sessions with a JOSE library and `ES256` alone is not affected. Nothing changes without the key. See [RS256 ID tokens](server.md#rs256-id-tokens).
+- **Schema version 15:** `oidcClient.idTokenAlg`. SQLite and Postgres upgrade themselves, DynamoDB needs nothing; for your own SQL tables run `npx @madauth/server schema --dialect <yours> --from 14` and apply it before you deploy.
+- **A key service of your own** (`createApp`'s `keyService`) may list RS256 keys in `verificationKeys()` after the ES256 ones, each with `alg: 'RS256'`, and `sign()` then signs with RSASSA-PKCS1-v1_5; `signToken` takes the algorithm as its last argument. Without them, nothing changes.
+
 ## To 0.7.1
 
 - **New: the token exchange for native apps.** A Capacitor or other native app whose WebView gets no cookies from the madAuth server signs in as a registered application of the OpenID Connect provider and gets tokens: `Madauth.tokens.nonce({ clientId })` for Google's sign-in, `exchange({ clientId, credential })` with the Google ID token, `refresh({ clientId, refreshToken })`; on the server `POST /auth/oidc/nonce` and `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` at `/auth/oidc/token` (RFC 8693). An admin allows it per application with `tokenExchange: true`. New error codes `invalid_grant`, `interaction_required`, `unauthorized_client` and `invalid_request` in `@madauth/web`. See [Native apps](server.md#native-apps).

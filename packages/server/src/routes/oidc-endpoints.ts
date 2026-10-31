@@ -23,6 +23,7 @@ import {
   WRONG_DEVICE_CODES_WINDOW_MS,
   clientInfo,
   formatUserCode,
+  idTokenAlgOf,
   matchesRedirectUri,
   normalizeUserCode,
   type Grant,
@@ -30,9 +31,9 @@ import {
   type StoredClient,
 } from '../oidc-clients.js';
 import { body, error, noSession, reauthRequired } from './helpers.js';
-import { SIGNING_ALG } from '../keys.js';
+import { RSA_SIGNING_ALG, SIGNING_ALG, type SigningAlg } from '../keys.js';
 import { parseLoginUrl } from '../settings.js';
-import { randomString, readToken, signToken } from '../tokens.js';
+import { canSign, randomString, readToken, signToken } from '../tokens.js';
 import { bearerTokenOf } from '../user.js';
 import type { StoredUser } from '../users.js';
 
@@ -114,7 +115,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
   const { keys } = ctx;
   const endpoint = (name: string) => `${issuer}${OIDC_PATH}${name}`;
 
-  app.get('/.well-known/openid-configuration', (c) => {
+  app.get('/.well-known/openid-configuration', async (c) => {
     c.header('Cache-Control', 'public, max-age=3600');
     // Read by browser apps too.
     c.header('Access-Control-Allow-Origin', '*');
@@ -131,7 +132,8 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       device_authorization_endpoint: endpoint('device'),
       grant_types_supported: ['authorization_code', 'refresh_token', DEVICE_GRANT, TOKEN_EXCHANGE_GRANT],
       subject_types_supported: ['public'],
-      id_token_signing_alg_values_supported: [SIGNING_ALG],
+      // RS256 only when the key service has such a key: see "RS256 ID tokens" in docs/server.md.
+      id_token_signing_alg_values_supported: (await canSign(keys, RSA_SIGNING_ALG)) ? [SIGNING_ALG, RSA_SIGNING_ALG] : [SIGNING_ALG],
       token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
       code_challenge_methods_supported: ['S256'],
       claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'auth_time', 'nonce', 'amr', 'at_hash', 'email', 'email_verified', 'name', 'claims'],
@@ -222,7 +224,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
 
   // --- Tokens ---
 
-  const tokenError = (c: Context, status: 400 | 401, error: string, description: string) => c.json({ error, error_description: description }, status);
+  const tokenError = (c: Context, status: 400 | 401 | 500, error: string, description: string) => c.json({ error, error_description: description }, status);
 
   /** The client the request authenticates, by its secret (HTTP Basic or in the form) or, for a public client, its ID alone. */
   const authenticate = async (c: Context, form: Record<string, string>): Promise<StoredClient | Response> => {
@@ -247,8 +249,15 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     return proven ? client : invalidClient();
   };
 
-  /** The tokens of a grant: an access token, an ID token (with the scope `openid`) and the refresh token given, if any. */
-  const tokens = async (c: Context, user: StoredUser, grant: Grant, scope: string, refreshToken: string | null, nonce: string | null) => {
+  /**
+   * The tokens of a grant: an access token (ES256), an ID token (with the scope `openid`, in the client's algorithm)
+   * and the refresh token given, if any. A client set to RS256 whose key is gone gets `server_error`.
+   */
+  const tokens = async (c: Context, client: StoredClient, user: StoredUser, grant: Grant, scope: string, refreshToken: string | null, nonce: string | null) => {
+    const idTokenAlg: SigningAlg = idTokenAlgOf(client);
+    if (idTokenAlg !== SIGNING_ALG && !(await canSign(keys, idTokenAlg))) {
+      return tokenError(c, 500, 'server_error', `This application's ID tokens are signed with ${idTokenAlg}, but the key service has no such key any more.`);
+    }
     const extra = userClaims(user, scope);
     const amr = grant.amr.split(' ').filter(Boolean);
     const access: AccessTokenClaims = {
@@ -268,6 +277,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       ID_TOKEN_TYP,
       { sub: user.id, aud: grant.clientId, auth_time: grant.authTime, amr, ...(nonce !== null ? { nonce } : {}), at_hash: atHash(accessToken), ...extra },
       ID_TOKEN_TTL_S,
+      idTokenAlg,
     );
     return c.json({
       access_token: accessToken,
@@ -303,7 +313,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       if (!form.code_verifier || !pkceMatches(form.code_verifier, code.codeChallenge)) return tokenError(c, 400, 'invalid_grant', 'code_verifier does not match the code_challenge.');
       const user = await userOf(code);
       if (!user) return tokenError(c, 400, 'invalid_grant', 'The sign-in has ended.');
-      return tokens(c, user, code, code.scope, await refreshTokenFor(code), code.nonce);
+      return tokens(c, client, user, code, code.scope, await refreshTokenFor(code), code.nonce);
     }
 
     if (form.grant_type === DEVICE_GRANT) {
@@ -320,7 +330,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       }
       const user = await userOf(polled.grant);
       if (!user) return tokenError(c, 400, 'invalid_grant', 'The sign-in has ended.');
-      return tokens(c, user, polled.grant, polled.grant.scope, await refreshTokenFor(polled.grant), null);
+      return tokens(c, client, user, polled.grant, polled.grant.scope, await refreshTokenFor(polled.grant), null);
     }
 
     if (form.grant_type === 'refresh_token') {
@@ -335,7 +345,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       const granted = used.chain.scope.split(' ');
       const asked = form.scope === undefined ? granted : form.scope.split(' ').filter(Boolean);
       if (!asked.every((scope) => granted.includes(scope))) return tokenError(c, 400, 'invalid_scope', 'scope asks for more than was granted.');
-      return tokens(c, user, used.chain, asked.join(' '), used.token, null);
+      return tokens(c, client, user, used.chain, asked.join(' '), used.token, null);
     }
 
     if (form.grant_type === TOKEN_EXCHANGE_GRANT) return exchange(c, client, form);
@@ -400,7 +410,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       amr: 'google',
       sessionVersion: step.stored.sessionVersion,
     };
-    return tokens(c, step.stored, grant, grant.scope, await refreshTokenFor(grant), null);
+    return tokens(c, client, step.stored, grant, grant.scope, await refreshTokenFor(grant), null);
   };
 
   // --- The device authorization grant (RFC 8628): the device's side ---
