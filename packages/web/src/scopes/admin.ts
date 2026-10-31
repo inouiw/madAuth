@@ -119,6 +119,8 @@ export interface ClientInfo {
   postLogoutRedirectUris: string[];
   /** Whether it may sign in from a device without a browser (the device authorization grant). Absent from servers before 0.7. */
   deviceFlow?: boolean;
+  /** Whether it may exchange a Google ID token it obtained itself for tokens (a native app). Absent from servers before 0.7.1. */
+  tokenExchange?: boolean;
   /** Milliseconds since 1970. */
   createdAt: number;
   updatedAt: number;
@@ -135,6 +137,8 @@ export interface ClientChanges {
   postLogoutRedirectUris?: string[];
   /** Whether it may use the device authorization grant: a TV or a command-line tool shows a code the user approves (default `false`). */
   deviceFlow?: boolean;
+  /** Whether it may exchange a Google ID token for madAuth's tokens, as a native app with its own Google sign-in does (default `false`). See `Madauth.tokens`. */
+  tokenExchange?: boolean;
 }
 
 /** A new application: its name and at least one redirect URI; `public: true` for one without a secret (default `false`). */

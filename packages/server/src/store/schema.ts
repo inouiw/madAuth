@@ -53,7 +53,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 13,
+  version: 14,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -212,6 +212,8 @@ export const madauthSchema = {
         updatedBy: { type: 'string', nullable: true },
         /** Whether it may use the device authorization grant (RFC 8628). Empty in records from before version 13: no (since version 13). */
         deviceFlow: { type: 'boolean', nullable: true },
+        /** Whether it may exchange a Google ID token for tokens (RFC 8693). Empty in records from before version 14: no (since version 14). */
+        tokenExchange: { type: 'boolean', nullable: true },
       },
     },
     /**

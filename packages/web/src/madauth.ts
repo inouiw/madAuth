@@ -21,6 +21,7 @@ import { fail, isSecondFactor, ok, toErrorCode, type MadauthError, type MadauthU
 import type { Core } from './scopes/core.js';
 import { createAdminApi } from './scopes/admin.js';
 import { createDeviceApi } from './scopes/device.js';
+import { createTokensApi } from './scopes/tokens.js';
 import { createEmailLinkApi } from './scopes/email-link.js';
 import { createGitHubApi } from './scopes/github.js';
 import { createGoogleApi } from './scopes/google.js';
@@ -406,6 +407,7 @@ const core: Core = {
   config: () => state?.config,
   locale: currentLocale,
   request: (path, init) => request(state!.serverUrl, path, init),
+  serverUrl: () => state?.serverUrl,
   signedIn: (signedIn) => {
     pendingError = undefined;
     pendingStep = undefined;
@@ -780,6 +782,8 @@ export const Madauth = {
   admin: createAdminApi(core),
   /** Approving a device's sign-in (a TV, a command-line tool) on a custom screen; the dialog does it with `showDeviceApprovalDialog`. */
   device: createDeviceApi(core),
+  /** Tokens instead of cookies for a native app that signs in with a Google ID token it obtained itself. */
+  tokens: createTokensApi(core),
 
   /**
    * Calls `listener` with the current user once it is known, and again on every sign-in and sign-out.

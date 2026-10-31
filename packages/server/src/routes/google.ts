@@ -29,10 +29,11 @@ const COOKIE_PATH = '/auth/providers/google';
 const GOOGLE_AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
-const GOOGLE: OAuthProvider = { method: 'google', name: 'Google' };
+/** Google as a sign-in provider; also the token exchange of the OpenID Connect provider signs in with it. */
+export const GOOGLE: OAuthProvider = { method: 'google', name: 'Google' };
 
 /** What a verified Google profile proves: a Google account is known by its `sub`, its address may change. */
-const toProfile = (profile: GoogleProfile): ProviderProfile => ({ key: googleAccountKey(profile.sub), email: profile.email, name: profile.name });
+export const toProfile = (profile: GoogleProfile): ProviderProfile => ({ key: googleAccountKey(profile.sub), email: profile.email, name: profile.name });
 
 /**
  * Google sign-in: FedCM / One Tap, and the server-side code flow when the Google provider has a client secret. The

@@ -75,6 +75,8 @@ export interface StoredClient {
   updatedBy: string | null;
   /** Whether it may use the device authorization grant; null in records from before schema version 13: no. */
   deviceFlow: boolean | null;
+  /** Whether it may exchange a Google ID token for tokens; null in records from before schema version 14: no. */
+  tokenExchange: boolean | null;
 }
 
 /** A client as the admin API answers it: never its secret. */
@@ -87,6 +89,8 @@ export interface ClientInfo {
   postLogoutRedirectUris: string[];
   /** Whether it may use the device authorization grant (RFC 8628). */
   deviceFlow: boolean;
+  /** Whether it may exchange a Google ID token it obtained itself for tokens (RFC 8693): a native app. */
+  tokenExchange: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -103,6 +107,7 @@ export const clientInfo = (client: StoredClient): ClientInfo => ({
   redirectUris: urisOf(client.redirectUris),
   postLogoutRedirectUris: urisOf(client.postLogoutRedirectUris),
   deviceFlow: client.deviceFlow === true,
+  tokenExchange: client.tokenExchange === true,
   createdAt: client.createdAt,
   updatedAt: client.updatedAt,
 });
@@ -147,6 +152,7 @@ export interface ClientFields {
   redirectUris?: string[];
   postLogoutRedirectUris?: string[];
   deviceFlow?: boolean;
+  tokenExchange?: boolean;
 }
 
 /** A list of redirect URIs as the admin API takes it, or why it isn't one. */
@@ -181,9 +187,10 @@ export function parseClientFields(data: Record<string, unknown>, isNew: boolean)
     if ('error' in uris) return invalid(uris.error);
     fields.postLogoutRedirectUris = uris;
   }
-  if (data.deviceFlow !== undefined) {
-    if (typeof data.deviceFlow !== 'boolean') return invalid('deviceFlow must be true or false.');
-    fields.deviceFlow = data.deviceFlow;
+  for (const flag of ['deviceFlow', 'tokenExchange'] as const) {
+    if (data[flag] === undefined) continue;
+    if (typeof data[flag] !== 'boolean') return invalid(`${flag} must be true or false.`);
+    fields[flag] = data[flag];
   }
   return fields;
 }
@@ -285,6 +292,7 @@ export class OidcClients {
       updatedAt: now,
       updatedBy: by,
       deviceFlow: fields.deviceFlow ?? false,
+      tokenExchange: fields.tokenExchange ?? false,
     };
     await this.store.create('oidcClient', client as unknown as Row);
     return { client, secret };
@@ -303,6 +311,7 @@ export class OidcClients {
       ...(fields.redirectUris ? { redirectUris: JSON.stringify(fields.redirectUris) } : {}),
       ...(fields.postLogoutRedirectUris ? { postLogoutRedirectUris: JSON.stringify(fields.postLogoutRedirectUris) } : {}),
       ...(fields.deviceFlow !== undefined ? { deviceFlow: fields.deviceFlow } : {}),
+      ...(fields.tokenExchange !== undefined ? { tokenExchange: fields.tokenExchange } : {}),
       ...(secret ? { secretHash: sha256(secret) } : {}),
       updatedAt: Date.now(),
       updatedBy: by,

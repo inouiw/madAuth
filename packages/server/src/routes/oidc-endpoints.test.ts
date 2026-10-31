@@ -3,7 +3,7 @@
 import * as oidc from 'openid-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { REFRESH_TOKEN_TTL_MS } from '../oidc-clients.js';
-import { APP_ORIGIN, ISSUER, cookies, passwordApp, post, setClaims, signUpVerified, linkAndCode } from '../test/helpers.js';
+import { APP_ORIGIN, CLIENT_ID, ISSUER, cookies, googleIdToken, googleJwks, passwordApp, post, setClaims, signUpVerified, linkAndCode } from '../test/helpers.js';
 import { Users } from '../users.js';
 
 type Made = Awaited<ReturnType<typeof withAdmin>>;
@@ -19,7 +19,7 @@ afterEach(() => {
 
 /** A server with Grace, an admin who signed up with a password just now. */
 async function withAdmin() {
-  const made = passwordApp({ allowedOrigins: [APP_ORIGIN, ISSUER] });
+  const made = passwordApp({ allowedOrigins: [APP_ORIGIN, ISSUER], jwksResolver: googleJwks });
   const cookie = `madauth_session=${await signUpVerified(made.app, made.hook)}`;
   await setClaims(made.store, 'grace@example.com', { roles: ['admin'] });
   return { ...made, cookie };
@@ -567,5 +567,76 @@ describe('the device authorization grant', () => {
     await new Users(made.store).resetSignIn(userId);
     expect(await made.store.findMany('oidcDeviceCode', { userId })).toHaveLength(0);
     expect((await poll(made, client.id, started.device_code)).body.error).toBe('invalid_grant');
+  });
+});
+
+describe('the token exchange', () => {
+  const EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange';
+  const ID_TOKEN = 'urn:ietf:params:oauth:token-type:id_token';
+  const postForm = (made: Made, path: string, data: Record<string, string>) =>
+    made.app.request(path, { ...form(data), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+  const nonceFor = async (made: Made, clientId: string) => {
+    const res = await postForm(made, '/auth/oidc/nonce', { client_id: clientId });
+    expect(res.status).toBe(200);
+    return (await res.json()) as { nonce: string; google_client_id: string; expires_in: number };
+  };
+  const exchange = async (made: Made, clientId: string, idToken: string, extra: Record<string, string> = {}) => {
+    const res = await postForm(made, '/auth/oidc/token', { grant_type: EXCHANGE, client_id: clientId, subject_token: idToken, subject_token_type: ID_TOKEN, scope: 'openid email offline_access', ...extra });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+
+  it('TX1: a native app exchanges a Google ID token with madAuth’s nonce for tokens; a new user is signed up', async () => {
+    const made = await withAdmin();
+    const { client } = await addClient(made, { name: 'Phone app', public: true, tokenExchange: true });
+    expect((await (await made.app.request('/.well-known/openid-configuration')).json()).grant_types_supported).toContain(EXCHANGE);
+    const { nonce, google_client_id } = await nonceFor(made, client.id);
+    expect(google_client_id).toBe(CLIENT_ID);
+
+    made.hook.calls.length = 0;
+    const got = await exchange(made, client.id, await googleIdToken({ nonce }));
+    expect(got.status).toBe(200);
+    expect(got.body).toMatchObject({ token_type: 'Bearer', scope: 'openid email offline_access' });
+    const claims = JSON.parse(Buffer.from((got.body.id_token as string).split('.')[1], 'base64url').toString());
+    expect(claims).toMatchObject({ aud: client.id, email: 'ada@example.com', amr: ['google'] });
+    expect(typeof got.body.refresh_token).toBe('string');
+    // Ada is a new user: signed up and signed in, without cookies.
+    expect(made.hook.calls.map((call) => call.type)).toEqual(['user.signing_up', 'user.signed_up', 'user.signed_in']);
+    expect(await made.store.findOne('user', { emailNormalized: 'ada@example.com' })).toMatchObject({ emailVerified: true });
+  });
+
+  it('TX2: the nonce must be madAuth’s, for this client and fresh; the token must be for the server’s Google client', async () => {
+    const made = await withAdmin();
+    const { client } = await addClient(made, { public: true, tokenExchange: true });
+    const other = await addClient(made, { public: true, tokenExchange: true });
+    expect((await exchange(made, client.id, await googleIdToken({ nonce: 'random-nonce' }))).body.error).toBe('invalid_grant');
+    expect((await exchange(made, client.id, await googleIdToken({ nonce: (await nonceFor(made, other.client.id)).nonce }))).body.error).toBe('invalid_grant');
+    const { nonce } = await nonceFor(made, client.id);
+    expect((await exchange(made, client.id, await googleIdToken({ nonce, aud: 'another-client' }))).body.error).toBe('invalid_grant');
+    expect((await exchange(made, client.id, await googleIdToken({ nonce, email_verified: false }))).body.error).toBe('invalid_grant');
+    expect((await exchange(made, client.id, 'not-a-jwt')).body.error).toBe('invalid_grant');
+    expect((await exchange(made, client.id, await googleIdToken({ nonce }), { subject_token_type: 'urn:ietf:params:oauth:token-type:access_token' })).body.error).toBe('invalid_request');
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 6 * 60 * 1000 });
+    expect((await exchange(made, client.id, await googleIdToken({ nonce }))).body.error).toBe('invalid_grant');
+  });
+
+  it('TX3: only clients an admin allowed; a user who signs in another way, or needs a second factor, is refused', async () => {
+    const made = await withAdmin();
+    const plain = await addClient(made, { public: true });
+    expect((await postForm(made, '/auth/oidc/nonce', { client_id: plain.client.id })).status).toBe(400);
+    expect((await (await admin(made, 'clients/update', { id: plain.client.id, tokenExchange: true })).json()).client.tokenExchange).toBe(true);
+    const { nonce } = await nonceFor(made, plain.client.id);
+    // Grace signs in with a password: Google can't take her account over.
+    const taken = await exchange(made, plain.client.id, await googleIdToken({ nonce, email: 'grace@example.com' }));
+    expect(taken.body).toMatchObject({ error: 'invalid_grant' });
+    expect(taken.body.error_description).toContain('password');
+    // A policy that asks for a second factor: the app finishes in a browser.
+    await admin(made, 'settings/method', { method: 'authenticator', setting: { allowAsSignInMethod: false, secondFactor: 'none' } });
+    await admin(made, 'settings/method', { method: 'google', setting: { allowAsSignInMethod: true, secondFactor: 'required' } });
+    made.hook.calls.length = 0;
+    const second = await exchange(made, plain.client.id, await googleIdToken({ nonce: (await nonceFor(made, plain.client.id)).nonce }));
+    expect(second.status).toBe(400);
+    expect(second.body).toMatchObject({ error: 'interaction_required', next: 'second-factor-setup' });
+    // Nothing was signed in: no session cookies, no sign-in event.
+    expect(made.hook.calls.map((call) => call.type)).not.toContain('user.signed_in');
   });
 });

@@ -136,6 +136,18 @@ export interface AppContext {
    * factor only when it answers on the app the sign-in is for (see `appOriginOf`). Emits `user.signed_in`.
    */
   secondStep(c: Context, user: StoredUser, amr: string[], method: string, profile?: { name?: string; picture?: string }): Promise<SignInStep>;
+  /**
+   * {@link secondStep} for a client that gets tokens instead of cookies (the token exchange of the OpenID Connect
+   * provider): the user signed in, as returned and as stored now, or the step the sign-in needs, which only a
+   * browser can take; nothing is set at this browser. Emits `user.signed_in`.
+   */
+  signInForTokens(
+    c: Context,
+    user: StoredUser,
+    amr: string[],
+    method: string,
+    profile?: { name?: string; picture?: string },
+  ): Promise<{ user: MadauthUser; stored: StoredUser } | { next: NextStep; factors: SecondFactor[] } | { disabled: true }>;
   /** The user of the request's session, or null if there is none or it has ended; renews it on the way like GET /auth/session. */
   currentUser(c: Context): Promise<MadauthUser | null>;
   /**
@@ -326,6 +338,59 @@ export function createApp(config: MadauthConfig): Hono {
     return value && user.email && normalizeEmail(user.email) === value ? admins.applyInitial(user.id, value) : null;
   };
 
+  /**
+   * What starting a session does besides the cookies, which `cookies` sets: the role INITIAL_ADMIN_EMAIL gives,
+   * the user's first session (`user.signed_up`, sent once: the write decides), and the events after.
+   */
+  const establish = async (
+    signedIn: MadauthUser,
+    amr: string[],
+    { method, signedUpAt }: { method: string; signedUpAt: number | null },
+    cookies: (user: MadauthUser) => Promise<void>,
+  ): Promise<MadauthUser> => {
+    // The user INITIAL_ADMIN_EMAIL names gets the role before the session, which carries it.
+    const promoted = await promoteInitialAdmin(signedIn);
+    const user = promoted ? { ...signedIn, claims: promoted.claims } : signedIn;
+    // Only a user whose first session this is gets the write, before the cookies: if it fails, nobody is
+    // signed in. The write decides, so two sign-ins at once send it once.
+    const firstSession = signedUpAt === 0 && (await users.markSignedUp(user.id));
+    await cookies(user);
+    const result = { ...user, amr };
+    // A new user is told first, already with the role; the claims change says where it came from.
+    if (firstSession) await ctx.emit('user.signed_up', { user: result, method });
+    if (promoted) await ctx.emit('user.claims_changed', { user: result, claims: promoted.claims, by: INITIAL_ADMIN_EMAIL });
+    // The first admin exists: the setup token stops working.
+    if (promoted) await setup.close();
+    return result;
+  };
+
+  /** The step a primary sign-in with `method` goes on with, as {@link AppContext.secondStep} decides it; `next` null for none. */
+  const nextStepFor = async (c: Context, user: StoredUser, amr: string[], method: string): Promise<{ disabled: true } | { next: NextStep | null; factors: SecondFactor[] }> => {
+    const now = await ctx.methods(c);
+    const methods = now.settings;
+    if (!signsIn(method, now.configured, methods)) return { disabled: true };
+    if (method === 'authenticator') {
+      // The app itself is the method of a sign-up with it: it is set up now, or asked for if it exists already.
+      const app = await users.authenticatorAccount(user.id);
+      return { next: app ? 'authenticator' : 'authenticator-setup', factors: ['authenticator'] };
+    }
+    if (method === 'passkey' && !amr.length) {
+      // A sign-up with a passkey alone, whose address is confirmed: the passkey is created now, and then
+      // the passkey's policy applies (see routes/passkey.ts).
+      return { next: 'passkey-setup', factors: ['passkey'] };
+    }
+    const policy = policyOf(method, methods);
+    if (policy === 'none') return { next: null, factors: [] };
+    // The second factors that are on, but never the method itself: a passkey is no second factor of a
+    // passkey sign-in. They come in the order of SECOND_FACTORS, the user's preferred one first: the client
+    // offers a switch to the others.
+    const on = factorsOn(now.configured, methods, method);
+    // A passkey answers only on the domain it was made for: one of another app's is no factor here. The
+    // factor the user prefers comes first, if they have it here.
+    const has = preferredFirst(factorsAmong(await users.accounts(user.id), on, usableOn(passkeyDomain(config, appOriginOf(c)))), user.preferredSecondFactor);
+    return { next: has[0] ?? (policy === 'required' ? 'second-factor-setup' : null), factors: has.length ? has : on };
+  };
+
   const ctx: AppContext = {
     config,
     keys,
@@ -342,23 +407,12 @@ export function createApp(config: MadauthConfig): Hono {
       url.hash = '';
       return url;
     },
-    async startSession(c, signedIn, amr, { method, signedUpAt }, extra) {
-      // The user INITIAL_ADMIN_EMAIL names gets the role before the session, which carries it.
-      const promoted = await promoteInitialAdmin(signedIn);
-      const user = promoted ? { ...signedIn, claims: promoted.claims } : signedIn;
-      // Only a user whose first session this is gets the write, before the cookies: if it fails, nobody is
-      // signed in. The write decides, so two sign-ins at once send it once.
-      const firstSession = signedUpAt === 0 && (await users.markSignedUp(user.id));
-      // A sign-in that was waiting for the authenticator app is over, whichever way this session came about.
-      clearChallenge(c, secure);
-      await issueSession(c, user, amr, { ...extra, auth_time: Math.floor(Date.now() / 1000) });
-      const result = { ...user, amr };
-      // A new user is told first, already with the role; the claims change says where it came from.
-      if (firstSession) await this.emit('user.signed_up', { user: result, method });
-      if (promoted) await this.emit('user.claims_changed', { user: result, claims: promoted.claims, by: INITIAL_ADMIN_EMAIL });
-      // The first admin exists: the setup token stops working.
-      if (promoted) await setup.close();
-      return result;
+    async startSession(c, signedIn, amr, signIn, extra) {
+      return establish(signedIn, amr, signIn, async (user) => {
+        // A sign-in that was waiting for the authenticator app is over, whichever way this session came about.
+        clearChallenge(c, secure);
+        await issueSession(c, user, amr, { ...extra, auth_time: Math.floor(Date.now() / 1000) });
+      });
     },
     async continueSession(c, { user, amr, signedInAt }, sv) {
       await issueSession(c, user, amr, { sv, ...(signedInAt !== null ? { auth_time: Math.floor(signedInAt / 1000) } : {}) });
@@ -368,49 +422,32 @@ export function createApp(config: MadauthConfig): Hono {
       clearChallenge(c, secure);
     },
     async secondStep(c, user, amr, method, profile) {
-      const now = await this.methods(c);
-      const methods = now.settings;
-      if (!signsIn(method, now.configured, methods)) return { disabled: true };
-      let next: NextStep | null = null;
-      // The factors the user can finish with; for a setup, those the user can set up.
-      let factors: SecondFactor[] = [];
-      if (method === 'authenticator') {
-        // The app itself is the method of a sign-up with it: it is set up now, or asked for if it exists already.
-        const app = await users.authenticatorAccount(user.id);
-        next = app ? 'authenticator' : 'authenticator-setup';
-        factors = ['authenticator'];
-      } else if (method === 'passkey' && !amr.length) {
-        // A sign-up with a passkey alone, whose address is confirmed: the passkey is created now, and then
-        // the passkey's policy applies (see routes/passkey.ts).
-        next = 'passkey-setup';
-        factors = ['passkey'];
-      } else {
-        const policy = policyOf(method, methods);
-        if (policy !== 'none') {
-          // The second factors that are on, but never the method itself: a passkey is no second factor of a
-          // passkey sign-in. They come in the order of SECOND_FACTORS, the user's preferred one first: the client
-          // offers a switch to the others.
-          const on = factorsOn(now.configured, methods, method);
-          // A passkey answers only on the domain it was made for: one of another app's is no factor here. The
-          // factor the user prefers comes first, if they have it here.
-          const has = preferredFirst(factorsAmong(await users.accounts(user.id), on, usableOn(passkeyDomain(config, appOriginOf(c)))), user.preferredSecondFactor);
-          next = has[0] ?? (policy === 'required' ? 'second-factor-setup' : null);
-          factors = has.length ? has : on;
-        }
-      }
+      const step = await nextStepFor(c, user, amr, method);
+      if ('disabled' in step) return step;
+      const { next, factors } = step;
       if (next) {
         // A sign-in that goes on with a second step ends the session there was at this browser, if any:
         // whoever was signed in is signed out until the step is done, so the setup can't be taken for theirs.
         clearSession(c);
         // Only what the session will show; the cookie is signed, not encrypted.
         const known = { ...(profile?.name ? { name: profile.name } : {}), ...(profile?.picture ? { picture: profile.picture } : {}) };
-        const step = isSetupStep(next) ? { factors: [], setup: factors } : { factors };
-        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, ...step, ...(Object.keys(known).length ? { profile: known } : {}) });
+        const stepClaims = isSetupStep(next) ? { factors: [], setup: factors } : { factors };
+        await setChallenge(c, this, { sub: user.id, sv: user.sessionVersion, amr, method, next, ...stepClaims, ...(Object.keys(known).length ? { profile: known } : {}) });
         return { next, method, factors };
       }
       const result = await this.startSession(c, toMadauthUser(user, profile), amr, { method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
       await this.emit('user.signed_in', { user: result, method });
       return { user: result };
+    },
+    async signInForTokens(c, user, amr, method, profile) {
+      const step = await nextStepFor(c, user, amr, method);
+      if ('disabled' in step) return step;
+      if (step.next) return { next: step.next, factors: step.factors };
+      // No cookies: the client gets tokens for this sign-in instead.
+      const result = await establish(toMadauthUser(user, profile), amr, { method, signedUpAt: user.signedUpAt }, async () => {});
+      await this.emit('user.signed_in', { user: result, method });
+      // As stored now: the first admin's role may have come with this sign-in.
+      return { user: result, stored: (await users.findById(user.id)) ?? user };
     },
     currentUser: currentSession,
     currentSignIn,

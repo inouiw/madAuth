@@ -136,7 +136,7 @@ export interface FakeServer {
   /** The app's login page an admin set; null: `/`. */
   loginUrl: string | null;
   /** The OpenID Connect clients an admin registered. */
-  clients: { id: string; name: string; public: boolean; redirectUris: string[]; postLogoutRedirectUris: string[]; deviceFlow: boolean; createdAt: number; updatedAt: number }[];
+  clients: { id: string; name: string; public: boolean; redirectUris: string[]; postLogoutRedirectUris: string[]; deviceFlow: boolean; tokenExchange: boolean; createdAt: number; updatedAt: number }[];
   /** The devices waiting for a user's approval, by their user code without the dash. */
   devices: { code: string; client: { id: string; name: string }; scope: string[]; expiresAt: number; boundTo?: string; decided?: 'approved' | 'denied' }[];
   /** Whether the user typed too many wrong device codes. */
@@ -285,12 +285,12 @@ export function fakeServer(): FakeServer {
       url: url.href,
       method,
       path: url.pathname,
-      body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined,
+      body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body instanceof URLSearchParams ? Object.fromEntries(init.body) : undefined,
       credentials: init.credentials,
     });
     if (server.held) await server.held;
     if (server.down) throw new TypeError('Failed to fetch');
-    const body = (typeof init.body === 'string' ? JSON.parse(init.body) : {}) as Record<string, string>;
+    const body = (typeof init.body === 'string' ? JSON.parse(init.body) : init.body instanceof URLSearchParams ? Object.fromEntries(init.body) : {}) as Record<string, string>;
     const email = body.email?.trim().toLowerCase();
     /** The user a setup belongs to: the signed-in one, or the one whose sign-in waits for it. */
     const whoSetsUp = () => server.user?.email ?? (isSetup(server.challenge?.next) ? server.challenge?.email : undefined);
@@ -845,6 +845,21 @@ export function fakeServer(): FakeServer {
         server.apiKeys.splice(index, 1);
         return json({ email, userId });
       }
+      // The OpenID Connect provider's token exchange for native apps: a nonce, then tokens for a Google ID token.
+      case 'POST /auth/oidc/nonce':
+      case 'POST /auth/oidc/token': {
+        const oauth = (error: string, description: string, status = 400) => json({ error, error_description: description }, status);
+        const client = server.clients.find((c) => c.id === body.client_id);
+        if (!client) return oauth('invalid_client', 'unknown', 401);
+        if (!client.tokenExchange) return oauth('unauthorized_client', 'not allowed');
+        if (url.pathname.endsWith('/nonce')) return json({ nonce: 'nonce-token', google_client_id: 'google-client', expires_in: 300 });
+        const tokens = (scope: string) => json({ access_token: 'at', token_type: 'Bearer', expires_in: 900, ...(scope.includes('openid') ? { id_token: 'idt' } : {}), ...(scope.includes('offline_access') ? { refresh_token: 'rt2' } : {}), scope });
+        if (body.grant_type === 'refresh_token') return body.refresh_token === 'rt1' ? tokens(body.scope ?? 'openid offline_access') : oauth('invalid_grant', 'ended');
+        if (body.grant_type !== 'urn:ietf:params:oauth:grant-type:token-exchange') return oauth('unsupported_grant_type', 'no');
+        if (body.subject_token === 'needs-second-factor') return json({ error: 'interaction_required', error_description: 'a browser step', next: 'authenticator', factors: ['authenticator'] }, 400);
+        if (body.subject_token !== 'google-id-token') return oauth('invalid_grant', 'subject_token: nonce mismatch.');
+        return tokens(body.scope ?? '');
+      }
       // A device's sign-in: the code binds to whoever looks it up first, who then approves or denies it.
       case 'POST /auth/device/lookup':
       case 'POST /auth/device/approve':
@@ -874,10 +889,10 @@ export function fakeServer(): FakeServer {
         const action = url.pathname.split('/').at(-1);
         if (action === 'list') return json({ clients: server.clients });
         if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
-        const data = body as unknown as { id?: string; name?: string; redirectUris?: string[]; postLogoutRedirectUris?: string[]; public?: boolean; newSecret?: boolean; deviceFlow?: boolean };
+        const data = body as unknown as { id?: string; name?: string; redirectUris?: string[]; postLogoutRedirectUris?: string[]; public?: boolean; newSecret?: boolean; deviceFlow?: boolean; tokenExchange?: boolean };
         if (action === 'add') {
           if (!data.name || !data.redirectUris?.length) return json({ error: 'invalid_client', message: 'name and redirectUris' }, 400);
-          const client = { id: `mc_${server.clients.length + 1}`, name: data.name, public: !!data.public, redirectUris: data.redirectUris, postLogoutRedirectUris: data.postLogoutRedirectUris ?? [], deviceFlow: !!data.deviceFlow, createdAt: 1, updatedAt: 1 };
+          const client = { id: `mc_${server.clients.length + 1}`, name: data.name, public: !!data.public, redirectUris: data.redirectUris, postLogoutRedirectUris: data.postLogoutRedirectUris ?? [], deviceFlow: !!data.deviceFlow, tokenExchange: !!data.tokenExchange, createdAt: 1, updatedAt: 1 };
           server.clients.push(client);
           return json({ client, ...(client.public ? {} : { clientSecret: 'mcs_secret' }) });
         }
@@ -887,7 +902,7 @@ export function fakeServer(): FakeServer {
           server.clients.splice(server.clients.indexOf(client), 1);
           return json({ client });
         }
-        Object.assign(client, { ...(data.name ? { name: data.name } : {}), ...(data.redirectUris ? { redirectUris: data.redirectUris } : {}), ...(data.deviceFlow !== undefined ? { deviceFlow: data.deviceFlow } : {}) });
+        Object.assign(client, { ...(data.name ? { name: data.name } : {}), ...(data.redirectUris ? { redirectUris: data.redirectUris } : {}), ...(data.deviceFlow !== undefined ? { deviceFlow: data.deviceFlow } : {}), ...(data.tokenExchange !== undefined ? { tokenExchange: data.tokenExchange } : {}) });
         return json({ client, ...(data.newSecret && !client.public ? { clientSecret: 'mcs_new' } : {}) });
       }
       // The providers as the admin API answers them: an admin adds, changes and removes Google, GitHub and
