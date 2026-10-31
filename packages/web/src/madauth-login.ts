@@ -117,6 +117,7 @@ const changeViews = [
   'authenticator-confirm',
   'api-key-create',
   'device-code',
+  'device-approve',
   'authenticator-setup',
   'sms-setup',
   'sms-code',
@@ -753,6 +754,8 @@ export class MadauthLogin extends LitElement {
     this.dialog.returnValue = '';
     this.notice = undefined;
     this.error = null;
+    // A sign-in the dialog was closed on leads nowhere any more.
+    this.reauthThen = undefined;
     this.view = 'signin';
     this.busy = false;
     this.resetCode = undefined;

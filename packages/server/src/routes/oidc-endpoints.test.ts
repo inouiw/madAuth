@@ -450,9 +450,13 @@ describe('the device authorization grant', () => {
     expect(started.verification_uri_complete).toBe(`${ISSUER}/?madauth_device=${started.user_code}`);
     expect(started).toMatchObject({ expires_in: 600, interval: 5 });
 
-    // Not approved yet; polling faster than the interval is told to slow down.
+    // Not approved yet; polling faster than the interval is told to slow down, and such a poll doesn't delay the next.
     expect((await poll(made, client.id, started.device_code)).body.error).toBe('authorization_pending');
     expect((await poll(made, client.id, started.device_code)).body.error).toBe('slow_down');
+    later(4000);
+    expect((await poll(made, client.id, started.device_code)).body.error).toBe('slow_down');
+    later(1500);
+    expect((await poll(made, client.id, started.device_code)).body.error).toBe('authorization_pending');
 
     // The user types the code in any case, with or without the dash, and sees who asks.
     const typed = started.user_code.toLowerCase().replace('-', ' ');
@@ -544,8 +548,11 @@ describe('the device authorization grant', () => {
     expect(blocked.status).toBe(429);
     expect((await blocked.json()).error).toBe('too_many_attempts');
     later(601_000);
-    // The device code expired meanwhile with the wait: a new one works.
+    // The device code expired meanwhile with the wait: a new one works, and a right code gives the tries back.
     const again = await startDevice(made, client.id);
+    for (let i = 0; i < 4; i++) expect((await user(made, 'lookup', 'BBBB-BBBB')).status).toBe(404);
+    expect((await user(made, 'lookup', again.user_code)).status).toBe(200);
+    for (let i = 0; i < 4; i++) expect((await user(made, 'lookup', 'BBBB-BBBB')).status).toBe(404);
     expect((await user(made, 'lookup', again.user_code)).status).toBe(200);
   });
 

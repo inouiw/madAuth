@@ -365,7 +365,7 @@ Making a key needs a sign-in within the last two minutes, like adding a sign-in 
 A TV or a command-line tool that signs in with madAuth as its [OpenID Connect provider](server.md#devices-without-a-browser) shows a code, which the signed-in user types on your page:
 
 - `Madauth.device.lookup(code)` resolves to what the device asks for, `{ code, client: { id, name }, scope, expiresAt }`, from the code in any case, with or without the dash. From then on only this user can decide it. Fails with `no_session`, `device_code_invalid` (unknown, expired, used, or someone else's) or `too_many_attempts` (five wrong codes within ten minutes; the server's message says so).
-- Show the application's name and the code, and tell the user to approve only a sign-in they started on a device of theirs. `Madauth.device.approve(code)` lets the device sign in as the user; `deny(code)` refuses it. Each works once, after `lookup`.
+- Show the application's name and the code, and tell the user to approve only a sign-in they started on a device of theirs. `Madauth.device.approve(code)` lets the device sign in as the user; `deny(code)` refuses it. Each works once, after `lookup`. `approve` fails with `reauth_required` for a session that has no sign-in time (from before madAuth 0.6): the user signs in again.
 - `verification_uri_complete` brings the user with `?madauth_device=<code>`: read it and look it up without the form.
 
 ## Language

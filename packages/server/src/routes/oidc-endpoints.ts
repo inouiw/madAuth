@@ -23,7 +23,7 @@ import {
   type OidcClients,
   type StoredClient,
 } from '../oidc-clients.js';
-import { body, error, noSession } from './helpers.js';
+import { body, error, noSession, reauthRequired } from './helpers.js';
 import { SIGNING_ALG } from '../keys.js';
 import { parseLoginUrl } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
@@ -359,29 +359,36 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
   const invalidDeviceCode = (c: Context) => error(c, 404, 'device_code_invalid', 'This code is unknown, expired or was used already.');
 
   /**
-   * The user's wrong codes of the last ten minutes, counted: a code of 34 bits is guessable with enough tries. Resolves
-   * to the answer when the user has to wait, else to a function that counts a wrong code.
+   * Takes one of the user's five tries of ten minutes before a code is looked up: a code of 34 bits is guessable
+   * with enough tries, also with many requests at once. The write lands only against the count it read, so
+   * parallel requests count one each. Resolves to the answer when the user has to wait, else to null; a right
+   * code gives the tries back.
    */
-  const guessLimit = async (c: Context, user: StoredUser): Promise<Response | (() => Promise<void>)> => {
-    const now = Date.now();
-    const inWindow = user.wrongDeviceCodeAt !== null && now - user.wrongDeviceCodeAt < WRONG_DEVICE_CODES_WINDOW_MS;
-    const wrong = inWindow ? (user.wrongDeviceCodes ?? 0) : 0;
-    if (wrong >= MAX_WRONG_DEVICE_CODES) return error(c, 429, 'too_many_attempts', 'Too many wrong codes. Try again in a few minutes.');
-    return () => ctx.users.updateUser(user.id, { wrongDeviceCodes: wrong + 1, wrongDeviceCodeAt: inWindow ? user.wrongDeviceCodeAt : now });
+  const takeGuess = async (c: Context, userId: string): Promise<Response | null> => {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const user = await ctx.users.findById(userId);
+      if (!user) return noSession(c);
+      const now = Date.now();
+      const inWindow = user.wrongDeviceCodeAt !== null && now - user.wrongDeviceCodeAt < WRONG_DEVICE_CODES_WINDOW_MS;
+      const wrong = inWindow ? (user.wrongDeviceCodes ?? 0) : 0;
+      if (wrong >= MAX_WRONG_DEVICE_CODES) return error(c, 429, 'too_many_attempts', 'Too many wrong codes. Try again in a few minutes.');
+      const patch = { wrongDeviceCodes: wrong + 1, wrongDeviceCodeAt: inWindow ? user.wrongDeviceCodeAt : now };
+      if (await ctx.users.countDeviceCode(user, patch)) return null;
+    }
+    return error(c, 429, 'too_many_attempts', 'Too many codes at once. Try again in a moment.');
   };
 
   // What the device asks for, bound to this user from now on: only they can approve or deny it.
   app.post('/auth/device/lookup', async (c) => {
     const signIn = await ctx.currentSignIn(c);
     if (!signIn) return noSession(c);
-    const limit = await guessLimit(c, signIn.stored);
-    if (limit instanceof Response) return limit;
+    const wait = await takeGuess(c, signIn.user.id);
+    if (wait) return wait;
     const userCode = normalizeUserCode((await body(c)).code);
     const pending = userCode ? await clients.lookupDevice(userCode, signIn.user.id) : null;
-    if (!pending) {
-      await limit();
-      return invalidDeviceCode(c);
-    }
+    if (!pending) return invalidDeviceCode(c);
+    // A right code: the tries are the user's again.
+    await ctx.users.updateUser(signIn.user.id, { wrongDeviceCodes: 0 });
     // The client exists: it authenticated when it started.
     const client = await clients.find(pending.clientId);
     if (!client) return invalidDeviceCode(c);
@@ -393,6 +400,8 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     const signIn = await ctx.currentSignIn(c);
     if (!signIn) return noSession(c);
     const userCode = normalizeUserCode((await body(c)).code);
+    // The device's tokens say when the user signed in: a session that doesn't know (from before 0.6) signs in again.
+    if (decision === 'approved' && signIn.signedInAt === null) return reauthRequired(c);
     const authTime = Math.floor((signIn.signedInAt ?? Date.now()) / 1000);
     const made = userCode ? await clients.decideDevice(userCode, signIn.user.id, decision, { authTime, amr: signIn.amr.join(' '), sessionVersion: signIn.stored.sessionVersion }) : false;
     return made ? c.json({}) : invalidDeviceCode(c);

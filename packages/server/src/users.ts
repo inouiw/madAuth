@@ -711,6 +711,11 @@ export class Users {
     return true;
   }
 
+  /** Counts a wrong device code, if the user's count is still the one read: false if another request counted meanwhile. */
+  async countDeviceCode(user: StoredUser, patch: Pick<StoredUser, 'wrongDeviceCodes' | 'wrongDeviceCodeAt'>): Promise<boolean> {
+    return (await this.store.update('user', { id: user.id, wrongDeviceCodes: user.wrongDeviceCodes }, patch)) === 1;
+  }
+
   async updateUser(id: string, patch: Partial<Omit<StoredUser, 'id'>>): Promise<void> {
     await this.store.update('user', { id }, patch as Row);
   }

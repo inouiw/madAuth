@@ -325,10 +325,13 @@ export class OidcClients {
 
   // --- The device authorization grant (RFC 8628) ---
 
-  /** Starts a device's sign-in: the device code it polls with, and the user code the user types. */
+  /** Starts a device's sign-in: the device code it polls with, and the user code the user types. Removes the client's sign-ins that expired first. */
   async startDevice(clientId: string, scope: string): Promise<{ deviceCode: string; userCode: string; expiresAt: number }> {
-    const deviceCode = randomBytes(32).toString('base64url');
     const now = Date.now();
+    // Abandoned ones (never polled again, never looked up) would stay forever otherwise.
+    const stale = (await this.store.findMany('oidcDeviceCode', { clientId })) as unknown as StoredDeviceCode[];
+    await Promise.all(stale.filter((d) => d.expiresAt <= now).map((d) => this.store.delete('oidcDeviceCode', { id: d.id })));
+    const deviceCode = randomBytes(32).toString('base64url');
     const record: StoredDeviceCode = {
       id: sha256(deviceCode),
       userCode: '',
@@ -389,9 +392,9 @@ export class OidcClients {
       await this.store.delete('oidcDeviceCode', { id });
       return { error: 'expired_token' };
     }
-    const tooSoon = now - record.lastPolledAt < DEVICE_POLL_INTERVAL_S * 1000;
+    // A poll that comes too soon doesn't count as one: the next one on time is answered.
+    if (now - record.lastPolledAt < DEVICE_POLL_INTERVAL_S * 1000) return { error: 'slow_down' };
     await this.store.update('oidcDeviceCode', { id }, { lastPolledAt: now });
-    if (tooSoon) return { error: 'slow_down' };
     if (record.status === 'pending') return { error: 'authorization_pending' };
     // Over either way: only one poll gets the tokens.
     if ((await this.store.delete('oidcDeviceCode', { id })) !== 1) return { error: 'invalid_grant' };

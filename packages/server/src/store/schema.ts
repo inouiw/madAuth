@@ -248,7 +248,7 @@ export const madauthSchema = {
         id: { type: 'string', primaryKey: true },
         /** The user code without its dash, e.g. `BCDFGHJK`. */
         userCode: { type: 'string', unique: true },
-        clientId: { type: 'string' },
+        clientId: { type: 'string', index: true },
         /** The scopes asked for, separated by spaces. */
         scope: { type: 'string' },
         /** `pending`, `approved` or `denied`. */
