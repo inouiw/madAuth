@@ -210,12 +210,12 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     const secret = fromHeader ? fromHeader.secret : form.client_secret;
     const client = id ? await clients.find(id) : null;
     if (!client) return invalidClient();
-    // A client with a secret proves it; a public one has none to send.
-    const proven = client.secretHash === null ? secret === undefined : typeof secret === 'string' && clients.checkSecret(client, secret);
+    // A client with a secret proves it; a public one has none to send (an empty one in an HTTP Basic header is none).
+    const proven = client.secretHash === null ? !secret : typeof secret === 'string' && clients.checkSecret(client, secret);
     return proven ? client : invalidClient();
   };
 
-  /** The tokens of a grant: an access token, an ID token and the refresh token given. */
+  /** The tokens of a grant: an access token, an ID token (with the scope `openid`) and the refresh token given. */
   const tokens = async (c: Context, user: StoredUser, grant: Grant, scope: string, refreshToken: string, nonce: string | null) => {
     const extra = userClaims(user, scope);
     const amr = grant.amr.split(' ').filter(Boolean);
@@ -230,14 +230,14 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       ...('claims' in extra ? { claims: extra.claims } : {}),
     };
     const accessToken = await signToken(keys, issuer, ACCESS_TOKEN_TYP, access, ACCESS_TOKEN_TTL_S);
-    const idToken = await signToken(
+    const idToken = !scope.split(' ').includes('openid') ? null : await signToken(
       keys,
       issuer,
       ID_TOKEN_TYP,
       { sub: user.id, aud: grant.clientId, auth_time: grant.authTime, amr, ...(nonce !== null ? { nonce } : {}), at_hash: atHash(accessToken), ...extra },
       ID_TOKEN_TTL_S,
     );
-    return c.json({ access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TOKEN_TTL_S, id_token: idToken, refresh_token: refreshToken, scope });
+    return c.json({ access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TOKEN_TTL_S, ...(idToken ? { id_token: idToken } : {}), refresh_token: refreshToken, scope });
   };
 
   /** The user of a grant if their sessions haven't ended since: a password reset or change, or a sign-in reset, ends the grant. */
@@ -254,8 +254,8 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     if (client instanceof Response) return client;
 
     if (form.grant_type === 'authorization_code') {
-      const code = form.code ? await clients.useCode(form.code) : null;
-      if (!code || code.clientId !== client.id) return tokenError(c, 400, 'invalid_grant', 'The code is unknown, expired or used.');
+      const code = form.code ? await clients.useCode(form.code, client.id) : null;
+      if (!code) return tokenError(c, 400, 'invalid_grant', 'The code is unknown, expired or used.');
       if (form.redirect_uri !== code.redirectUri) return tokenError(c, 400, 'invalid_grant', 'redirect_uri is not the one of the authorization request.');
       if (!form.code_verifier || !pkceMatches(form.code_verifier, code.codeChallenge)) return tokenError(c, 400, 'invalid_grant', 'code_verifier does not match the code_challenge.');
       const user = await userOf(code);

@@ -80,7 +80,8 @@ export const LOGIN_URL_SETTING = 'loginUrl';
  */
 export function parseLoginUrl(value: unknown, allowedOrigins: readonly string[]): string | null {
   if (typeof value !== 'string' || value.length > 2048) return null;
-  if (value.startsWith('/')) return value.startsWith('//') || value.includes('#') ? null : value;
+  // A browser reads `\` as `/`, so `/\host` would lead to another host.
+  if (value.startsWith('/')) return value.startsWith('//') || value.includes('\\') || value.includes('#') ? null : value;
   if (!URL.canParse(value) || value.includes('#')) return null;
   return allowedOrigins.includes(new URL(value).origin) ? value : null;
 }

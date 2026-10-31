@@ -180,8 +180,12 @@ describe('madAuth as an OpenID Connect provider', () => {
     const refreshed = await oidc.refreshTokenGrant(config, tokens.refresh_token!);
     expect(refreshed.refresh_token).not.toBe(tokens.refresh_token);
     expect(refreshed.claims()).toMatchObject({ sub: claims.sub, auth_time: claims.auth_time });
-    // Fewer scopes are fine, more are not.
-    expect((await oidc.refreshTokenGrant(config, refreshed.refresh_token!, { scope: 'openid' })).scope).toBe('openid');
+    // Fewer scopes are fine, more are not; without openid, there is no ID token.
+    const narrower = await oidc.refreshTokenGrant(config, refreshed.refresh_token!, { scope: 'openid' });
+    expect(narrower.scope).toBe('openid');
+    const noOpenid = await oidc.refreshTokenGrant(config, narrower.refresh_token!, { scope: 'email' });
+    expect(noOpenid.id_token).toBeUndefined();
+    await expect(oidc.refreshTokenGrant(config, noOpenid.refresh_token!, { scope: 'openid email address' })).rejects.toMatchObject({ error: 'invalid_scope' });
   });
 
   it('OP5: a refresh token works once; using an old one ends the whole chain', async () => {
@@ -215,6 +219,12 @@ describe('madAuth as an OpenID Connect provider', () => {
     const native = await addClient(made, { name: 'Editor', public: true, redirectUris: [REDIRECT_URI] });
     const tokens = await signInAt(made, await relyingParty(made.app, native.client.id));
     expect(tokens.id_token).toBeTruthy();
+    // A public client may send HTTP Basic with an empty password.
+    const basicEmpty = await made.app.request('/auth/oidc/token', {
+      ...form({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token! }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${btoa(`${native.client.id}:`)}` },
+    });
+    expect(basicEmpty.status).toBe(200);
 
     const confidential = await addClient(made);
     const request = await authorizationRequest(await relyingParty(made.app, confidential.client.id, confidential.clientSecret));
@@ -226,6 +236,9 @@ describe('madAuth as an OpenID Connect provider', () => {
     const wrong = await exchange({}, { Authorization: `Basic ${btoa(`${confidential.client.id}:mcs_wrong`)}` });
     expect(wrong.status).toBe(401);
     expect(wrong.headers.get('www-authenticate')).toContain('Basic');
+    // Another client can't use the code up.
+    const other = await addClient(made, { name: 'Other' });
+    expect((await exchange({ client_id: other.client.id, client_secret: other.clientSecret! })).status).toBe(400);
     // In the form (client_secret_post), the secret works.
     const res = await exchange({ client_id: confidential.client.id, client_secret: confidential.clientSecret! });
     expect(res.status).toBe(200);
@@ -284,7 +297,9 @@ describe('madAuth as an OpenID Connect provider', () => {
     expect(new URL(none.headers.get('location')!).searchParams.get('error')).toBe('login_required');
 
     // The admin's login page: a path, or a page of an allowed origin; anything else is refused.
-    expect((await admin(made, 'settings/set', { loginUrl: 'https://evil.example/login' })).status).toBe(400);
+    for (const outside of ['https://evil.example/login', '//evil.example/login', '/\\evil.example/login']) {
+      expect((await admin(made, 'settings/set', { loginUrl: outside })).status).toBe(400);
+    }
     expect((await (await admin(made, 'settings/set', { loginUrl: '/login?x=1' })).json()).loginUrl).toBe('/login?x=1');
     const custom = new URL((await made.app.request(request.url.toString())).headers.get('location')!);
     expect(`${custom.origin}${custom.pathname}`).toBe(`${ISSUER}/login`);
@@ -321,15 +336,25 @@ describe('madAuth as an OpenID Connect provider', () => {
     const { client, clientSecret } = await addClient(made);
     const config = await relyingParty(made.app, client.id, clientSecret);
     const tokens = await signInAt(made, config);
+    // Another sign-in at the client, whose chain is never used again.
+    const unused = await signInAt(made, config);
+    const userId = tokens.claims()!.sub;
 
     // A password reset ends every session of the user (one e-mail a minute: the sign-up's was the last).
     vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 61_000 });
     await post(made.app, '/auth/password/send-reset', { email: 'grace@example.com', redirectTo: `${APP_ORIGIN}/reset` });
     const { token } = linkAndCode(made.hook.lastEmail());
-    expect((await post(made.app, '/auth/password/reset', { token, password: 'a new long passphrase' })).status).toBe(200);
+    const reset = await post(made.app, '/auth/password/reset', { token, password: 'a new long passphrase' });
+    expect(reset.status).toBe(200);
 
     await expect(oidc.refreshTokenGrant(config, tokens.refresh_token!)).rejects.toMatchObject({ error: 'invalid_grant' });
-    await expect(oidc.fetchUserInfo(config, tokens.access_token, tokens.claims()!.sub)).rejects.toThrow();
+    await expect(oidc.fetchUserInfo(config, tokens.access_token, userId)).rejects.toThrow();
+
+    // The next sign-in at a client removes the chains the reset ended, also those never used again.
+    expect(await made.store.findMany('oidcRefreshToken', { userId })).toHaveLength(1);
+    await signInAt({ ...made, cookie: `madauth_session=${cookies(reset).madauth_session.value}` }, config);
+    expect(await made.store.findMany('oidcRefreshToken', { userId })).toHaveLength(1);
+    await expect(oidc.refreshTokenGrant(config, unused.refresh_token!)).rejects.toMatchObject({ error: 'invalid_grant' });
   });
 
   it('OP13: resetting or deleting a user removes their codes and refresh tokens', async () => {

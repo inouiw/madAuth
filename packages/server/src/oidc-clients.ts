@@ -264,26 +264,29 @@ export class OidcClients {
     return client.secretHash !== null && safeEqual(sha256(secret), client.secretHash);
   }
 
-  /** Issues an authorization code for a sign-in. Removes the user's codes that expired unused first. */
+  /** Issues an authorization code for a sign-in. Removes the user's codes that are of no use any more first. */
   async issueCode(grant: Grant, request: { redirectUri: string; nonce: string | null; codeChallenge: string }): Promise<string> {
-    await this.dropExpired('oidcCode', grant.userId);
+    await this.dropUseless('oidcCode', grant);
     const code = randomBytes(32).toString('base64url');
     const stored: StoredCode = { id: sha256(code), ...grantOf(grant), ...request, expiresAt: Date.now() + CODE_TTL_MS };
     await this.store.create('oidcCode', stored as unknown as Row);
     return code;
   }
 
-  /** Uses up a code: resolves to what it grants, or null if it is unknown, expired or used already. Each code works once. */
-  async useCode(code: string): Promise<StoredCode | null> {
+  /**
+   * Uses up a code of `clientId`: resolves to what it grants, or null if it is unknown, another client's, expired or
+   * used already. Each code works once; another client can't use it up.
+   */
+  async useCode(code: string, clientId: string): Promise<StoredCode | null> {
     const id = sha256(code);
     const stored = (await this.store.findOne('oidcCode', { id })) as StoredCode | null;
-    if (!stored || (await this.store.delete('oidcCode', { id })) !== 1) return null;
+    if (!stored || stored.clientId !== clientId || (await this.store.delete('oidcCode', { id })) !== 1) return null;
     return stored.expiresAt > Date.now() ? stored : null;
   }
 
-  /** Starts a chain of refresh tokens for a grant. Removes the user's chains that expired first. Resolves to its first token. */
+  /** Starts a chain of refresh tokens for a grant. Removes the user's chains that are of no use any more first. Resolves to its first token. */
   async startRefreshChain(grant: Grant): Promise<string> {
-    await this.dropExpired('oidcRefreshToken', grant.userId);
+    await this.dropUseless('oidcRefreshToken', grant);
     const secret = randomBytes(32).toString('base64url');
     const now = Date.now();
     const chain: StoredRefreshToken = {
@@ -337,11 +340,15 @@ export class OidcClients {
     await this.store.delete('oidcRefreshToken', { userId, clientId });
   }
 
-  /** Deletes a user's records of one model that expired. */
-  private async dropExpired(model: 'oidcCode' | 'oidcRefreshToken', userId: string): Promise<void> {
+  /**
+   * Deletes the records of one model of the grant's user that are of no use any more: expired, or from before their
+   * sessions ended (a password reset or change), which the session version of `grant`, the user's of now, tells.
+   */
+  private async dropUseless(model: 'oidcCode' | 'oidcRefreshToken', { userId, sessionVersion }: Grant): Promise<void> {
     const now = Date.now();
-    const records = (await this.store.findMany(model, { userId })) as unknown as { id: string; expiresAt: number }[];
-    await Promise.all(records.filter((r) => r.expiresAt <= now).map((r) => this.store.delete(model, { id: r.id })));
+    const records = (await this.store.findMany(model, { userId })) as unknown as { id: string; expiresAt: number; sessionVersion: number }[];
+    const useless = records.filter((r) => r.expiresAt <= now || r.sessionVersion !== sessionVersion);
+    await Promise.all(useless.map((r) => this.store.delete(model, { id: r.id })));
   }
 }
 
