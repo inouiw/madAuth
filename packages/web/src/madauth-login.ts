@@ -56,6 +56,12 @@ export interface PasskeyAddedDetail {
   passkey: PasskeyInfo;
 }
 
+/** What the user does with their app in its view: new recovery codes, a new app in its place, or removing it. */
+type AppAction = 'codes' | 'replace' | 'remove';
+
+/** From this many recovery codes left, the app's view says to get new ones. */
+const FEW_RECOVERY_CODES = 3;
+
 /** The screens of the dialog. */
 type View =
   | 'signin'
@@ -67,6 +73,8 @@ type View =
   | 'authenticator-code'
   | 'authenticator-setup'
   | 'authenticator-codes'
+  | 'authenticator-manage'
+  | 'authenticator-confirm'
   | 'email-link'
   | 'sms-code'
   | 'sms-setup'
@@ -93,6 +101,8 @@ const changeViews = [
   'passkey-setup',
   'methods',
   'add-password',
+  'authenticator-manage',
+  'authenticator-confirm',
   'api-key-create',
   'authenticator-setup',
   'sms-setup',
@@ -314,6 +324,8 @@ export class MadauthLogin extends LitElement {
     factors: { state: true },
     passwordScore: { state: true },
     methodList: { state: true },
+    appStatus: { state: true },
+    appAction: { state: true },
     apiKeyList: { state: true },
     apiKeyScopes: { state: true },
     chosenScopes: { state: true },
@@ -415,6 +427,10 @@ export class MadauthLogin extends LitElement {
   private reauthThen?: ChangeView;
   /** The passkey's setup or the app's was started from the methods view: it goes back there after. */
   private fromMethods = false;
+  /** The signed-in user's app, in its view: how many recovery codes are left; undefined while loading, null if it couldn't be read. */
+  private appStatus?: { recoveryCodesLeft: number } | null;
+  /** What the app's view does once the user gives a code: new recovery codes, a new app, or removing it. */
+  private appAction?: AppAction;
   /** Passkeys offered in the e-mail field's autofill, while the sign-in view is shown: how to stop it, and when it has stopped. */
   private conditional?: { abort: AbortController; done: Promise<void> };
   /** The autofill's sign-in failed: it isn't started again until the view changes, or every render would ask again. */
@@ -718,6 +734,8 @@ export class MadauthLogin extends LitElement {
     this.removal = undefined;
     this.reauthThen = undefined;
     this.fromMethods = false;
+    this.appStatus = undefined;
+    this.appAction = undefined;
     this.conditionalFailed = false;
     this.clearStrength();
   }
@@ -749,6 +767,7 @@ export class MadauthLogin extends LitElement {
     if (!then || !this.dialog.open) return false;
     this.reauthThen = undefined;
     if (then === 'methods') this.backToMethods();
+    else if (then === 'authenticator-manage') this.openAppManage();
     else if (then === 'api-key-create') void this.startApiKeyCreate();
     // The setup starts again: its first step is what needed the sign-in.
     else if (then === 'authenticator-setup') {
@@ -764,11 +783,17 @@ export class MadauthLogin extends LitElement {
     const recoveryCodes = this.recoveryCodes;
     if (!recoveryCodes) return;
     this.recoveryCodes = undefined;
-    if (this.fromMethods && this.dialog.open) {
-      // Set up from the list of methods: back to it.
+    // New codes leave the app as it was: no event says it was set up, also when the dialog was closed on them.
+    const action = this.appAction;
+    const enabled = () => {
+      if (action === 'codes') return;
       const detail: AuthenticatorEnabledDetail = { recoveryCodes };
       this.dispatchEvent(new CustomEvent('madauth-authenticator-enabled', { detail, bubbles: true, composed: true }));
-      this.backToMethods('added');
+    };
+    if (this.fromMethods && this.dialog.open) {
+      // Set up, replaced or given new codes from the list of methods: back to it.
+      enabled();
+      this.backToMethods(action === 'codes' ? 'codesReplaced' : action === 'replace' ? 'appReplaced' : 'added');
       return;
     }
     if (this.setupUser) {
@@ -779,8 +804,7 @@ export class MadauthLogin extends LitElement {
         return;
       }
     } else {
-      const detail: AuthenticatorEnabledDetail = { recoveryCodes };
-      this.dispatchEvent(new CustomEvent('madauth-authenticator-enabled', { detail, bubbles: true, composed: true }));
+      enabled();
     }
     this.dialog.returnValue = 'done';
     if (this.dialog.open) this.dialog.close('done');
@@ -1028,6 +1052,10 @@ export class MadauthLogin extends LitElement {
         return s.authenticatorSetup.heading;
       case 'authenticator-codes':
         return s.authenticatorCodes.heading;
+      case 'authenticator-manage':
+        return s.appManage.heading;
+      case 'authenticator-confirm':
+        return s.appManage.actions[this.appAction ?? 'codes'];
       case 'email-link':
         return s.emailLink.heading;
       case 'sms-code':
@@ -1140,6 +1168,10 @@ export class MadauthLogin extends LitElement {
         return this.renderAuthenticatorSetup();
       case 'authenticator-codes':
         return this.renderAuthenticatorCodes();
+      case 'authenticator-manage':
+        return this.renderAppManage();
+      case 'authenticator-confirm':
+        return this.renderAppConfirm();
       case 'email-link':
         return this.renderEmailLink();
       case 'sms-code':
@@ -1327,6 +1359,18 @@ export class MadauthLogin extends LitElement {
         `;
   }
 
+  /** A form that asks for a code from the app, or a recovery code ({@link codeField}), with its submit button. */
+  private codeForm(name: string, onSubmit: (e: Event) => void, label: string) {
+    return html`
+      <form part="form" class=${name} @submit=${onSubmit}>
+        ${this.codeField()}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${label}</span>
+        </button>
+      </form>
+    `;
+  }
+
   /** The input for the code from the app, in {@link codeField} and in the setup; {@link codeAutocomplete} applies. */
   private appCodeInput() {
     return html`<input part="input" id="code" name="code" type="text" inputmode="numeric" autocomplete=${this.codeAutocomplete || 'off'} maxlength="7" />`;
@@ -1385,12 +1429,7 @@ export class MadauthLogin extends LitElement {
     const s = this.strings;
     return html`
       <p class="lead">${this.setupNeedsCode ? s.authenticatorCode.replaceLead : s.authenticatorCode.lead}</p>
-      <form part="form" class="authenticator-code" @submit=${this.onAuthenticatorVerify}>
-        ${this.codeField()}
-        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
-          <span class="label">${s.continue}</span>
-        </button>
-      </form>
+      ${this.codeForm('authenticator-code', this.onAuthenticatorVerify, s.continue)}
       <p class="links">
         ${this.toggleRecoveryLink()}
         ${this.setupNeedsCode ? null : this.stepAlternatives('authenticator')}
@@ -1860,8 +1899,9 @@ export class MadauthLogin extends LitElement {
   }
 
   /** To the list of methods, loaded anew, with what changed as the notice. */
-  private backToMethods(notice?: 'added' | 'removed' | 'passwordChanged'): void {
+  private backToMethods(notice?: 'added' | 'removed' | 'passwordChanged' | 'codesReplaced' | 'appReplaced'): void {
     this.fromMethods = false;
+    this.appAction = undefined;
     this.goTo('methods');
     if (notice) this.notice = (strings) => strings.methodsView[notice];
     void this.loadMethods();
@@ -1912,6 +1952,10 @@ export class MadauthLogin extends LitElement {
                       <span class="label">${label}</span>
                       ${details.length ? html`<span class="hint">${details.join(' · ')}</span>` : null}
                     </span>
+                    ${m.method === 'authenticator' && Madauth.authenticator.policy
+                      ? html`<button class="link" part="link" type="button" data-action="manage-app" aria-label=${v.manageLabel(label)} ?disabled=${this.busy}
+                          @click=${() => this.openAppManage()}>${v.manage}</button>`
+                      : null}
                     ${m.method === 'password' && providerFor('password') && Madauth.password.policy
                       ? html`<button class="link" part="link" type="button" data-action="change-password" ?disabled=${this.busy}
                           @click=${() => this.goTo('change-password')}>${v.change}</button>`
@@ -2004,6 +2048,111 @@ export class MadauthLogin extends LitElement {
       return;
     }
     this.backToMethods('added');
+  }
+
+  /** The app's view, with how many recovery codes are left, loaded anew. */
+  private openAppManage(): void {
+    this.appStatus = undefined;
+    this.appAction = undefined;
+    this.goTo('authenticator-manage');
+    void this.loadAppStatus();
+  }
+
+  private async loadAppStatus(): Promise<void> {
+    const result = await Madauth.authenticator.status();
+    // The user moved on meanwhile: the answer is for a view that is gone.
+    if (this.view !== 'authenticator-manage') return;
+    if (!result.isSuccess) {
+      this.appStatus = null;
+      this.showError(result.error, 'authenticator');
+      return;
+    }
+    this.appStatus = { recoveryCodesLeft: result.recoveryCodesLeft };
+  }
+
+  /** The signed-in user's app: the recovery codes left, and what they can do with it. Each action asks for a code first. */
+  private renderAppManage() {
+    const s = this.strings;
+    const v = s.appManage;
+    const status = this.appStatus;
+    const left = status?.recoveryCodesLeft;
+    const actions: AppAction[] = ['codes', 'replace', 'remove'];
+    return html`
+      <p class="lead">${v.lead}</p>
+      ${status === undefined
+        ? html`<p class="hint" role="status">${s.methodsView.loading}</p>`
+        : left === undefined
+          ? null
+          : left <= FEW_RECOVERY_CODES
+            ? html`<p class="notice" part="warning" data-codes-left=${left}>${infoIcon}<span>${v.fewCodesLeft(left)}</span></p>`
+            : html`<p class="hint" data-codes-left=${left}>${v.codesLeft(left)}</p>`}
+      <ul class="app-actions">
+        ${actions.map(
+          (action) => html`
+            <li>
+              <button part="method" class="row" type="button" data-action=${`app-${action}`} ?disabled=${this.busy} @click=${() => this.startAppAction(action)}>
+                <span class="label">${v.actions[action]}</span>
+                ${chevronIcon}
+              </button>
+            </li>
+          `,
+        )}
+      </ul>
+      <p class="links">
+        <button class="link" part="link" type="button" data-action="back-to-methods" @click=${() => this.backToMethods()}>${s.back}</button>
+      </p>
+    `;
+  }
+
+  private startAppAction(action: AppAction): void {
+    this.appAction = action;
+    this.useRecovery = false;
+    this.goTo('authenticator-confirm');
+  }
+
+  /** The code that an action on the app takes: from the app, or a recovery code. */
+  private renderAppConfirm() {
+    const s = this.strings;
+    const action = this.appAction ?? 'codes';
+    return html`
+      <p class="lead">${s.appManage.confirmLead[action]}</p>
+      ${this.codeForm('authenticator-confirm', this.onAppAction, s.appManage.actions[action])}
+      <p class="links">
+        ${this.toggleRecoveryLink()}
+        <button class="link" part="link" type="button" data-action="back-to-app" @click=${() => this.openAppManage()}>${s.back}</button>
+      </p>
+    `;
+  }
+
+  private async onAppAction(e: Event): Promise<void> {
+    const options = this.codeOptions(this.fields(e));
+    const action = this.appAction ?? 'codes';
+    if (action === 'replace') {
+      // The setup takes the current app's code and goes on to the new key; its end comes back to the methods.
+      this.fromMethods = true;
+      this.setupForSignIn = false;
+      return this.startSetup(options);
+    }
+    if (action === 'codes') {
+      const result = await this.run(() => Madauth.authenticator.newRecoveryCodes(options));
+      if (!result) return;
+      if (!result.isSuccess) {
+        this.showError(result.error, 'authenticator');
+        return;
+      }
+      this.fromMethods = true;
+      this.setupUser = undefined;
+      this.recoveryCodes = result.recoveryCodes;
+      this.goTo('authenticator-codes');
+      return;
+    }
+    const result = await this.run(() => Madauth.authenticator.remove(options));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error, 'authenticator');
+      return;
+    }
+    this.backToMethods('removed');
   }
 
   /** A password for the signed-in user. */
@@ -3334,7 +3483,8 @@ export class MadauthLogin extends LitElement {
       color: inherit;
     }
 
-    .method-list {
+    .method-list,
+    .app-actions {
       margin: 0 0 16px;
     }
     .method {

@@ -113,6 +113,8 @@ export interface FakeServer {
   confirmation: { email: string; method: string } | undefined;
   /** The user signed in more than ten minutes ago: changing a method answers `reauth_required`. */
   staleSignIn: boolean;
+  /** The app's status can't be read: GET /auth/authenticator/status fails. */
+  statusDown: boolean;
   /** A setup under way (the setup cookie); set to undefined to simulate its expiry. */
   authenticatorSetup: { email: string } | undefined;
   /** The phone numbers of the users who added one, by e-mail address. */
@@ -180,6 +182,7 @@ export function fakeServer(): FakeServer {
     settingsRefused: undefined,
     confirmation: undefined,
     staleSignIn: false,
+    statusDown: false,
     apiScopes: [
       { name: 'madauth:claims:read', description: "Read a user's claims and roles", role: 'admin', endpoints: ['POST /auth/admin/claims/get'] },
       { name: 'orders:read', description: 'Read your orders', role: null, endpoints: ['GET /api/orders'] },
@@ -627,6 +630,7 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/authenticator/remove': {
         if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         if (!server.user?.email) return json({ error: 'no_session' }, 401);
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         if (server.policy.google === 'required' || server.policy.password === 'required') return json({ error: 'required_by_policy', message: 'required' }, 403);
         if (!server.authenticators.has(server.user.email)) return json({});
         // A sign-up with the app has no other way in.
@@ -640,6 +644,7 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/authenticator/recovery-codes': {
         if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
         if (!server.user?.email) return json({ error: 'no_session' }, 401);
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         if (!server.authenticators.has(server.user.email)) return json({ error: 'no_authenticator', message: 'none' }, 400);
         if (!codeOk(server.user.email, body)) return json({ error: 'code_invalid', message: 'wrong' }, 401);
         const fresh = RECOVERY_CODES.map((code) => code.split('').reverse().join(''));
@@ -648,6 +653,7 @@ export function fakeServer(): FakeServer {
       }
       case 'GET /auth/authenticator/status': {
         if (!authenticatorOn()) return json({ error: 'method_disabled', message: 'off' }, 403);
+        if (server.statusDown) return json({ error: 'temporarily_unavailable', message: 'down' }, 503);
         if (!server.user?.email) return json({ error: 'no_session' }, 401);
         const enabled = server.authenticators.has(server.user.email);
         return json({ enabled, recoveryCodesLeft: enabled ? (server.recoveryCodes.get(server.user.email)?.length ?? 0) : 0 });

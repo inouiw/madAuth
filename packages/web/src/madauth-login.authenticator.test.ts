@@ -507,3 +507,137 @@ describe('the setup with a sign-in that is no longer recent', () => {
     expect($('[part="qr"] path')).not.toBeNull();
   });
 });
+
+describe('the app in the methods dialog', () => {
+  /** Grace, signed in with a password and the app, on the methods view; the app's view opened. */
+  async function openApp(codesLeft = RECOVERY_CODES.length) {
+    const server = fakeServer();
+    server.policy.password = 'optional';
+    server.user = grace;
+    server.authenticators.add('grace@example.com');
+    server.recoveryCodes.set('grace@example.com', RECOVERY_CODES.slice(0, codesLeft));
+    await Madauth.initialize({ serverUrl: SERVER, providers: [new Password(), new Authenticator()] });
+    const events: string[] = [];
+    document.addEventListener('madauth-authenticator-enabled', (e) => events.push(e.type));
+    void Madauth.showManageSignInMethodsDialog();
+    await settle();
+    await click('.method[data-method="authenticator"] [data-action="manage-app"]');
+    return { server, events };
+  }
+
+  it('D18: shows the recovery codes left, and makes new ones with a code from the app', async () => {
+    const { server, events } = await openApp();
+
+    expect(text('h2')).toBe('Authenticator app');
+    expect(text('[data-codes-left]')).toBe('10 recovery codes left.');
+    expect($('[part="warning"]')).toBeNull();
+    await click('[data-action="app-codes"]');
+    expect(text('h2')).toBe('New recovery codes');
+    expect(text('.lead')).toBe('Enter a code from your app. Your current recovery codes stop working.');
+    fill({ code: '000000' });
+    await submit('authenticator-confirm');
+    expect($('[part="error"]')!.dataset.code).toBe('code_invalid');
+    fill({ code: CODE });
+    await submit('authenticator-confirm');
+
+    expect(text('h2')).toBe('Save your recovery codes');
+    const fresh = server.recoveryCodes.get('grace@example.com')!;
+    expect($$('[part="codes"] code').map((code) => code.textContent)).toEqual(fresh);
+    await click('[data-action="saved"]');
+    expect(text('h2')).toBe('Sign-in methods');
+    expect(text('.notice')).toBe('New recovery codes are ready. The old ones no longer work.');
+    // The app is the same: no event says it was set up.
+    expect(events).toEqual([]);
+  });
+
+  it('D18: closing the dialog on the new recovery codes says nothing about a new app either', async () => {
+    const { events } = await openApp();
+
+    await click('[data-action="app-codes"]');
+    fill({ code: CODE });
+    await submit('authenticator-confirm');
+    expect(text('h2')).toBe('Save your recovery codes');
+    await click('.close');
+
+    expect(events).toEqual([]);
+  });
+
+  it('D18: a status that can\'t be read shows the error, not a count', async () => {
+    const { server } = await openApp();
+    await click('[data-action="back-to-methods"]');
+    server.statusDown = true;
+    await click('.method[data-method="authenticator"] [data-action="manage-app"]');
+
+    expect($('[part="error"]')).not.toBeNull();
+    expect($('[data-codes-left]')).toBeNull();
+    expect($('.hint[role="status"]')).toBeNull();
+  });
+
+  it('D18: warns when few recovery codes are left', async () => {
+    await openApp(2);
+    expect(text('[part="warning"]')).toBe('Only 2 recovery codes left. Get new ones, so you can still sign in if you lose your app.');
+
+    await click('.close');
+    await openApp(0);
+    expect(text('[part="warning"]')).toBe('No recovery codes left. Get new ones, so you can still sign in if you lose your app.');
+  });
+
+  it('D18: sets up a new app with a code from the current one', async () => {
+    const { events } = await openApp();
+
+    await click('[data-action="app-replace"]');
+    expect(text('.lead')).toBe('Enter a code from your current app. The new one replaces it.');
+    fill({ code: CODE });
+    await submit('authenticator-confirm');
+    expect(text('h2')).toBe('Set up authenticator app');
+    expect($('[part="qr"]')).not.toBeNull();
+    fill({ code: CODE });
+    await submit('authenticator-setup');
+    await click('[data-action="saved"]');
+
+    expect(text('h2')).toBe('Sign-in methods');
+    expect(text('.notice')).toBe('The new authenticator app is set up. The old one no longer works.');
+    expect(events).toEqual(['madauth-authenticator-enabled']);
+  });
+
+  it('D18: removes the app with a recovery code; a policy that requires it keeps it', async () => {
+    const { server } = await openApp();
+
+    server.policy.password = 'required';
+    await click('[data-action="app-remove"]');
+    await click('[data-action="toggle-recovery"]');
+    fill({ recoveryCode: RECOVERY_CODES[0] });
+    await submit('authenticator-confirm');
+    expect(text('[part="error"]')).toBe('Signing in requires a second factor, so it can’t be removed.');
+
+    server.policy.password = 'optional';
+    fill({ recoveryCode: RECOVERY_CODES[0] });
+    await submit('authenticator-confirm');
+    expect(text('h2')).toBe('Sign-in methods');
+    expect(text('.notice')).toBe('Removed.');
+    expect(server.authenticators.has('grace@example.com')).toBe(false);
+    expect($('.method[data-method="authenticator"]')).toBeNull();
+  });
+
+  it('D18: an action more than two minutes after signing in asks to sign in again, then comes back to it', async () => {
+    const { server } = await openApp();
+    server.staleSignIn = true;
+
+    await click('[data-action="app-remove"]');
+    fill({ code: CODE });
+    await submit('authenticator-confirm');
+    expect($('[part="error"]')!.dataset.code).toBe('reauth_required');
+    await click('[data-action="sign-in-again"]');
+    server.staleSignIn = false;
+    fill(credentials);
+    await submit('signin');
+    // The password sign-in asks for the app's code, then goes back to the removal.
+    fill({ code: CODE });
+    await submit('authenticator-code');
+
+    expect(text('h2')).toBe('Remove the app');
+    fill({ code: CODE });
+    await submit('authenticator-confirm');
+    expect(text('.notice')).toBe('Removed.');
+  });
+});

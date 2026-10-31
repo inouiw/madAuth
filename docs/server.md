@@ -704,7 +704,7 @@ A passkey (WebAuthn) signs in with the device's screen lock: a fingerprint, the 
 
 ## A user's sign-in methods
 
-A user signs up with one method and can add more while signed in: a passkey, a password (`Madauth.password.add`), the e-mail link (`Madauth.emailLink.add`), Google or GitHub (their buttons with `purpose: 'link'`), the authenticator app. `Madauth.showManageSignInMethodsDialog()` opens all of this in the dialog: the user's methods, buttons to add another and to remove one. See [Several sign-in methods](sign-in-methods.md) for the rules.
+A user signs up with one method and can add more while signed in: a passkey, a password (`Madauth.password.add`), the e-mail link (`Madauth.emailLink.add`), Google or GitHub (their buttons with `purpose: 'link'`), the authenticator app. `Madauth.showManageSignInMethodsDialog()` opens all of this in the dialog: the user's methods, buttons to add another and to remove one, and for the authenticator app a view with the recovery codes left, new recovery codes, a new app in its place, and removing it. See [Several sign-in methods](sign-in-methods.md) for the rules.
 
 ## Resetting a user's sign-in
 
