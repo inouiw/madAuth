@@ -104,6 +104,11 @@ await revoke(idTokenClaims.sub); // the user disconnects the app from their Goog
 
 Types: `CredentialResult`, `GoogleCredential`, `NoCredential`, `NoCredentialReason`, `SignInOptions`, `ButtonOptions`, `RenderedButton`, `GsiButtonConfiguration`, `GoogleAccountsId`, `IdConfiguration`, `PromptMomentNotification`, `CredentialResponse`.
 
+---
+
+Created by David Neuy and
+[contributors](https://github.com/inouiw/madAuth/graphs/contributors).
+
 ## License
 
 MIT

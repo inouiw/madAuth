@@ -57,6 +57,11 @@ The package also contains self-contained bundles for AWS Lambda (`dist/standalon
 - [Running the madAuth server](https://github.com/inouiw/madAuth/blob/main/docs/server.md): the configuration, Google Cloud Console setup, the sign-in methods and their policies, passkeys, the authenticator app, resetting a user's sign-in, webhooks, hosting and custom store adapters.
 - [Password security](https://github.com/inouiw/madAuth/blob/main/docs/password-security.md), [Passkey security](https://github.com/inouiw/madAuth/blob/main/docs/passkey-security.md), [Authenticator app security](https://github.com/inouiw/madAuth/blob/main/docs/authenticator-security.md) and [Several sign-in methods](https://github.com/inouiw/madAuth/blob/main/docs/sign-in-methods.md): what the server does to protect accounts.
 
+---
+
+Created by David Neuy and
+[contributors](https://github.com/inouiw/madAuth/graphs/contributors).
+
 ## License
 
 MIT

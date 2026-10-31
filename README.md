@@ -138,6 +138,11 @@ The login form can be styled to match your app (colors, corner radius, font, and
 
 Contributions are welcome! Open an issue to discuss an idea or report a bug, or send a pull request. [Developing madAuth](docs/development.md) describes the repository, how to run the demo from it, the tests, and how to add a sign-in method. Please make sure `npm run typecheck` and `npm test` pass.
 
+---
+
+Created by David Neuy and
+[contributors](https://github.com/inouiw/madAuth/graphs/contributors).
+
 ## License
 
 madAuth is released under the [MIT License](LICENSE).
