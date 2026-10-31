@@ -1,9 +1,12 @@
 // madAuth as an OpenID Connect provider, driven by a standard relying party (openid-client) where it can be.
 // Behaviour described in "OpenID Connect provider" in docs/server.md; update the doc when changing it.
+import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import * as oidc from 'openid-client';
+import { createLocalKeyService } from '../key-service.js';
+import { generateSigningKey } from '../keys.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { REFRESH_TOKEN_TTL_MS } from '../oidc-clients.js';
-import { APP_ORIGIN, CLIENT_ID, ISSUER, cookies, googleIdToken, googleJwks, passwordApp, post, setClaims, signUpVerified, linkAndCode } from '../test/helpers.js';
+import { APP_ORIGIN, CLIENT_ID, ISSUER, cookies, googleIdToken, googleJwks, passwordApp, post, setClaims, signUpVerified, linkAndCode, signingKey } from '../test/helpers.js';
 import { Users } from '../users.js';
 
 type Made = Awaited<ReturnType<typeof withAdmin>>;
@@ -18,8 +21,8 @@ afterEach(() => {
 });
 
 /** A server with Grace, an admin who signed up with a password just now. */
-async function withAdmin() {
-  const made = passwordApp({ allowedOrigins: [APP_ORIGIN, ISSUER], jwksResolver: googleJwks });
+async function withAdmin(overrides: Parameters<typeof passwordApp>[0] = {}) {
+  const made = passwordApp({ allowedOrigins: [APP_ORIGIN, ISSUER], jwksResolver: googleJwks, ...overrides });
   const cookie = `madauth_session=${await signUpVerified(made.app, made.hook)}`;
   await setClaims(made.store, 'grace@example.com', { roles: ['admin'] });
   return { ...made, cookie };
@@ -406,6 +409,59 @@ describe('madAuth as an OpenID Connect provider', () => {
     await expect(oidc.refreshTokenGrant(config, tokens.refresh_token!)).rejects.toMatchObject({ name: 'WWWAuthenticateChallengeError' });
     expect((await made.app.request((await authorizationRequest(config)).url.toString(), { headers: { Cookie: made.cookie } })).status).toBe(400);
     expect((await admin(made, 'clients/remove', { id: client.id })).status).toBe(404);
+  });
+
+  it('OP17: a client set to RS256 gets its ID tokens in RS256, from a key the key service has for it; discovery and the admin API say so', async () => {
+    // Without an RS256 key: discovery lists ES256 alone, and no client can be set to RS256.
+    const without = await withAdmin();
+    expect((await (await without.app.request('/.well-known/openid-configuration')).json()).id_token_signing_alg_values_supported).toEqual(['ES256']);
+    const refused = await admin(without, 'clients/add', { name: 'Legacy', redirectUris: [REDIRECT_URI], idTokenAlg: 'RS256' });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: 'invalid_client', message: expect.stringContaining('needs an RS256 key') });
+    expect((await addClient(without)).client).toMatchObject({ idTokenAlg: 'ES256' });
+
+    // With one, in MADAUTH_SIGNING_KEY next to the ES256 key.
+    const rsaKey = await generateSigningKey('RS256');
+    const made = await withAdmin({ keyService: await createLocalKeyService([signingKey, rsaKey]) });
+    expect((await (await made.app.request('/.well-known/openid-configuration')).json()).id_token_signing_alg_values_supported).toEqual(['ES256', 'RS256']);
+    const jwks = (await (await made.app.request('/.well-known/jwks.json')).json()) as { keys: { kid: string; alg: string }[] };
+    expect(jwks.keys.map((key) => key.alg)).toEqual(['ES256', 'RS256']);
+    expect((await admin(made, 'clients/add', { name: 'Bad', redirectUris: [REDIRECT_URI], idTokenAlg: 'HS256' })).status).toBe(400);
+    const { client, clientSecret } = await addClient(made, { name: 'Legacy', idTokenAlg: 'RS256' });
+    expect(client).toMatchObject({ idTokenAlg: 'RS256' });
+    const config = await relyingParty(made.app, client.id, clientSecret);
+
+    const tokens = await signInAt(made, config);
+    expect(decodeProtectedHeader(tokens.id_token!)).toMatchObject({ alg: 'RS256', kid: rsaKey.kid, typ: 'JWT' });
+    expect(tokens.claims()).toMatchObject({ iss: ISSUER, aud: client.id, email: 'grace@example.com' });
+    // A relying party that knows RS256 alone verifies it with the published keys; the access token stays ES256.
+    expect((await jwtVerify(tokens.id_token!, createLocalJWKSet(jwks), { issuer: ISSUER, audience: client.id, algorithms: ['RS256'] })).payload.sub).toBe(tokens.claims()!.sub);
+    expect(decodeProtectedHeader(tokens.access_token)).toMatchObject({ alg: 'ES256', typ: 'at+jwt' });
+    // The refreshed ID token too, and the sign-out takes it as id_token_hint.
+    const refreshed = await oidc.refreshTokenGrant(config, tokens.refresh_token!);
+    expect(decodeProtectedHeader(refreshed.id_token!)).toMatchObject({ alg: 'RS256' });
+    const logout = await made.app.request(`/auth/oidc/logout?id_token_hint=${refreshed.id_token}&post_logout_redirect_uri=${encodeURIComponent(LOGOUT_URI)}`);
+    expect(logout.status).toBe(302);
+    expect(logout.headers.get('location')).toBe(LOGOUT_URI);
+
+    // The key gone meanwhile (the store is shared): the token endpoint answers server_error before it uses the code up.
+    const without2 = passwordApp({ allowedOrigins: [APP_ORIGIN, ISSUER], store: made.store });
+    const request = await authorizationRequest(await relyingParty(made.app, client.id, clientSecret));
+    const sent = new URL((await made.app.request(request.url.toString(), { headers: { Cookie: made.cookie } })).headers.get('location')!);
+    const tokenForm = { grant_type: 'authorization_code', code: sent.searchParams.get('code')!, redirect_uri: REDIRECT_URI, code_verifier: request.verifier, client_id: client.id, client_secret: clientSecret! };
+    const failed = await without2.app.request('/auth/oidc/token', form(tokenForm));
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toMatchObject({ error: 'server_error', error_description: expect.stringContaining('RS256') });
+    const kept = await made.app.request('/auth/oidc/token', form(tokenForm));
+    expect(kept.status).toBe(200);
+    expect(decodeProtectedHeader((await kept.json()).id_token)).toMatchObject({ alg: 'RS256' });
+
+    // Back to ES256 for the client; the list shows the algorithm.
+    const back = await (await admin(made, 'clients/update', { id: client.id, idTokenAlg: 'ES256' })).json();
+    expect(back.client.idTokenAlg).toBe('ES256');
+    expect(decodeProtectedHeader((await signInAt(made, await relyingParty(made.app, client.id, clientSecret))).id_token!)).toMatchObject({ alg: 'ES256' });
+    const listed = await (await admin(made, 'clients/list', {})).json();
+    expect(listed.clients.map((c: { idTokenAlg: string }) => c.idTokenAlg)).toEqual(['ES256']);
   });
 
   it('OP16: the token and user info endpoints take calls from any origin, without cookies', async () => {

@@ -20,7 +20,7 @@ export interface MadauthConfig {
   issuer: string;
   /**
    * Signs the tokens, hashes the codes and encrypts the secrets (see key-service.ts). `loadConfig` makes the
-   * local one from MADAUTH_SIGNING_KEY: one private ES256 JWK, or a set of them, the newest first.
+   * local one from MADAUTH_SIGNING_KEY: one private ES256 JWK, or a set of them, the newest first (and RS256 keys, if any).
    */
   keyService: KeyService;
   /** App origins allowed to call the server (ALLOWED_ORIGINS). */

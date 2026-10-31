@@ -1,8 +1,11 @@
 // The AWS KMS key service (MADAUTH_KEY_SERVICE=aws-kms): madAuth signs, hashes and encrypts with keys that never
 // leave KMS. It finds its keys by itself, under aliases named after the deployment (its MADAUTH_ISSUER):
 //
-//   alias/madauth/<deployment>/signing              the key that signs now
+//   alias/madauth/<deployment>/signing              the ES256 key that signs now
 //   alias/madauth/<deployment>/signing/<time>       every signing key, by when it was made: all of them verify
+//   alias/madauth/<deployment>/signing-rsa (and /signing-rsa/<time>)
+//                                                   the same for the RS256 keys, if the deployment has them: they
+//                                                   sign the ID tokens of the clients that ask for RS256
 //   alias/madauth/<deployment>/mac (and /mac/<time>) the same for the keys that hash the codes
 //   alias/madauth/<deployment>/encryption           the key that encrypts the secrets; KMS rotates it in place
 //
@@ -12,7 +15,7 @@
 import { createHash, createPublicKey } from 'node:crypto';
 import { calculateJwkThumbprint, type JWK } from 'jose';
 import type { EncryptionPurpose, KeyService } from './key-service.js';
-import { SIGNING_ALG } from './keys.js';
+import { RSA_SIGNING_ALG, SIGNING_ALG, publicSigningJwk, thumbprintMembers, type SigningAlg } from './keys.js';
 
 /** The KMS operations madAuth uses; {@link kmsFromSdk} makes them from the AWS SDK, tests from a stand-in. */
 export interface Kms {
@@ -20,8 +23,8 @@ export interface Kms {
   aliases(): Promise<{ name: string; keyId: string }[]>;
   /** The public key (DER, SubjectPublicKeyInfo) of an asymmetric key; null if the key is disabled or going. */
   publicKey(keyId: string): Promise<Uint8Array | null>;
-  /** ECDSA with SHA-256 of `message`, of any length; the signature in DER. */
-  sign(keyId: string, message: Uint8Array): Promise<Uint8Array>;
+  /** The signature of `message`, of any length, as KMS makes it: ECDSA with SHA-256 in DER for ES256, RSASSA-PKCS1-v1_5 with SHA-256 for RS256. */
+  sign(keyId: string, message: Uint8Array, alg: SigningAlg): Promise<Uint8Array>;
   /** HMAC-SHA256 of `message`. */
   mac(keyId: string, message: Uint8Array): Promise<Uint8Array>;
   encrypt(keyId: string, plaintext: Uint8Array, context: Record<string, string>): Promise<Uint8Array>;
@@ -37,8 +40,11 @@ export interface Kms {
   disableKey(keyId: string): Promise<void>;
 }
 
-/** The three kinds of keys: ES256 signing, HMAC, and symmetric encryption that KMS rotates by itself. */
-export type KmsKeyKind = 'signing' | 'mac' | 'encryption';
+/** The kinds of keys: ES256 signing, RS256 signing (optional), HMAC, and symmetric encryption that KMS rotates by itself. */
+export type KmsKeyKind = 'signing' | 'signing-rsa' | 'mac' | 'encryption';
+
+/** The kinds that get a successor at a rotation: all but the encryption key, which KMS rotates in place. */
+export type RotatedKind = Exclude<KmsKeyKind, 'encryption'>;
 
 /** The name of a deployment in the aliases: its MADAUTH_ISSUER's host, in the characters an alias allows. */
 export function deploymentOf(issuer: string): string {
@@ -65,6 +71,8 @@ const generationTime = (name: string): number | null => {
 /** The deployment's keys as its aliases say: per purpose the current key and every generation, oldest first. */
 export interface KmsKeys {
   signing: { current: string | undefined; generations: Generation[] };
+  /** The RS256 keys: none unless the deployment was set up with them. */
+  'signing-rsa': { current: string | undefined; generations: Generation[] };
   mac: { current: string | undefined; generations: Generation[] };
   encryption: string | undefined;
 }
@@ -72,7 +80,7 @@ export interface KmsKeys {
 export async function deploymentKeys(kms: Kms, deployment: string): Promise<KmsKeys> {
   const prefix = aliasPrefix(deployment);
   const aliases = (await kms.aliases()).filter((alias) => alias.name.startsWith(`${prefix}/`));
-  const of = (purpose: 'signing' | 'mac') => ({
+  const of = (purpose: RotatedKind) => ({
     current: aliases.find((alias) => alias.name === `${prefix}/${purpose}`)?.keyId,
     generations: aliases
       .flatMap((alias) => {
@@ -81,7 +89,7 @@ export async function deploymentKeys(kms: Kms, deployment: string): Promise<KmsK
       })
       .sort((a, b) => a.madeAt - b.madeAt),
   });
-  return { signing: of('signing'), mac: of('mac'), encryption: aliases.find((alias) => alias.name === `${prefix}/encryption`)?.keyId };
+  return { signing: of('signing'), 'signing-rsa': of('signing-rsa'), mac: of('mac'), encryption: aliases.find((alias) => alias.name === `${prefix}/encryption`)?.keyId };
 }
 
 /** An ECDSA signature in DER (SEQUENCE of the INTEGERs r and s) as JWS has it: r and s, 32 bytes each. */
@@ -108,9 +116,8 @@ export function derToJose(der: Uint8Array): Uint8Array {
 
 /** A public key from KMS (DER, SubjectPublicKeyInfo) as a JWK, with its thumbprint as `kid`. */
 async function publicJwk(spki: Uint8Array): Promise<JWK> {
-  const { kty, crv, x, y } = createPublicKey({ key: Buffer.from(spki), format: 'der', type: 'spki' }).export({ format: 'jwk' }) as JWK;
-  const jwk = { kty, crv, x, y };
-  return { ...jwk, alg: SIGNING_ALG, use: 'sig', kid: await calculateJwkThumbprint(jwk) };
+  const jwk = thumbprintMembers(createPublicKey({ key: Buffer.from(spki), format: 'der', type: 'spki' }).export({ format: 'jwk' }) as JWK);
+  return publicSigningJwk(jwk, await calculateJwkThumbprint(jwk));
 }
 
 /** The longest message KMS signs as it is; a longer one is hashed here and sent as its digest. */
@@ -124,8 +131,8 @@ const REFRESH_MS = 5 * 60 * 1000;
 
 interface State {
   verificationKeys: JWK[];
-  /** By kid: the KMS key that signs with it. */
-  signers: Map<string, string>;
+  /** By kid: the KMS key that signs with it, and how. */
+  signers: Map<string, { keyId: string; alg: SigningAlg }>;
   macKeys: string[];
   encryptionKey: string;
 }
@@ -139,19 +146,30 @@ export async function createAwsKmsKeyService(kms: Kms, deployment: string): Prom
   const load = async (): Promise<State | string> => {
     const keys = await deploymentKeys(kms, deployment);
     const { signing, mac, encryption } = keys;
+    const rsaKeys = keys['signing-rsa'];
     if (!signing.current || !mac.current || !encryption) {
       return `the KMS keys of ${aliasPrefix(deployment)} are missing: create them with the AWS template (deploy/aws) or with npx @madauth/server kms-setup`;
     }
-    // The signing key of now first, then the others, newest first; a disabled one verifies nothing any more.
-    const order = [signing.current, ...signing.generations.map((g) => g.keyId).reverse().filter((id) => id !== signing.current)];
-    const published = await Promise.all(order.map(async (keyId) => ({ keyId, spki: await kms.publicKey(keyId) })));
-    const usable = published.filter((key): key is { keyId: string; spki: Uint8Array } => key.spki !== null);
-    if (usable[0]?.keyId !== signing.current) return `the signing key behind ${aliasPrefix(deployment)}/signing is disabled`;
-    const jwks = await Promise.all(usable.map(async (key) => ({ keyId: key.keyId, jwk: await publicJwk(key.spki) })));
+    /** The public keys of one signing kind: the key of now first, then the others, newest first; a disabled one verifies nothing any more. */
+    const publish = async (kind: 'signing' | 'signing-rsa', alg: SigningAlg) => {
+      const { current, generations } = keys[kind];
+      if (!current) return [];
+      const order = [current, ...generations.map((g) => g.keyId).reverse().filter((id) => id !== current)];
+      const published = await Promise.all(order.map(async (keyId) => ({ keyId, spki: await kms.publicKey(keyId) })));
+      const usable = published.filter((key): key is { keyId: string; spki: Uint8Array } => key.spki !== null);
+      if (usable[0]?.keyId !== current) return `the ${kind === 'signing' ? 'signing' : 'RS256 signing'} key behind ${aliasPrefix(deployment)}/${kind} is disabled`;
+      return Promise.all(usable.map(async (key) => ({ keyId: key.keyId, alg, jwk: await publicJwk(key.spki) })));
+    };
+    const ec = await publish('signing', SIGNING_ALG);
+    if (typeof ec === 'string') return ec;
+    const rsa = rsaKeys.current ? await publish('signing-rsa', RSA_SIGNING_ALG) : [];
+    // RS256 is optional: without its key the server runs on, and the clients set to RS256 get server_error.
+    if (typeof rsa === 'string') console.error(`[madauth] ${rsa}: no RS256 ID tokens until it is enabled again or the alias removed.`);
+    const jwks = [...ec, ...(typeof rsa === 'string' ? [] : rsa)];
     const macKeys = [mac.current, ...mac.generations.map((g) => g.keyId).reverse().filter((id) => id !== mac.current)];
     return {
       verificationKeys: jwks.map((key) => key.jwk),
-      signers: new Map(jwks.map((key) => [key.jwk.kid!, key.keyId])),
+      signers: new Map(jwks.map((key) => [key.jwk.kid!, { keyId: key.keyId, alg: key.alg }])),
       macKeys,
       encryptionKey: encryption,
     };
@@ -188,9 +206,11 @@ export async function createAwsKmsKeyService(kms: Kms, deployment: string): Prom
   const keyService: KeyService = {
     verificationKeys: async () => (await current()).verificationKeys,
     async sign(kid, data) {
-      const keyId = (await current()).signers.get(kid);
-      if (!keyId) throw new Error(`No KMS signing key has the kid ${kid}.`);
-      return derToJose(await kms.sign(keyId, data));
+      const signer = (await current()).signers.get(kid);
+      if (!signer) throw new Error(`No KMS signing key has the kid ${kid}.`);
+      const signature = await kms.sign(signer.keyId, data, signer.alg);
+      // An RSA signature is as JWS wants it; ECDSA's comes in DER.
+      return signer.alg === RSA_SIGNING_ALG ? signature : derToJose(signature);
     },
     mac: async (data) => kms.mac((await current()).macKeys[0]!, data),
     macs: async (data) => Promise.all((await current()).macKeys.map((keyId) => kms.mac(keyId, data))),
@@ -207,9 +227,10 @@ export async function createAwsKmsKeyService(kms: Kms, deployment: string): Prom
   return { keyService };
 }
 
-/** The key specs and usages of the three kinds, as KMS names them. */
-const KEY_SPECS: Record<KmsKeyKind, { KeySpec: 'ECC_NIST_P256' | 'HMAC_256' | 'SYMMETRIC_DEFAULT'; KeyUsage: 'SIGN_VERIFY' | 'GENERATE_VERIFY_MAC' | 'ENCRYPT_DECRYPT' }> = {
+/** The key specs and usages of the kinds, as KMS names them. */
+const KEY_SPECS: Record<KmsKeyKind, { KeySpec: 'ECC_NIST_P256' | 'RSA_2048' | 'HMAC_256' | 'SYMMETRIC_DEFAULT'; KeyUsage: 'SIGN_VERIFY' | 'GENERATE_VERIFY_MAC' | 'ENCRYPT_DECRYPT' }> = {
   signing: { KeySpec: 'ECC_NIST_P256', KeyUsage: 'SIGN_VERIFY' },
+  'signing-rsa': { KeySpec: 'RSA_2048', KeyUsage: 'SIGN_VERIFY' },
   mac: { KeySpec: 'HMAC_256', KeyUsage: 'GENERATE_VERIFY_MAC' },
   encryption: { KeySpec: 'SYMMETRIC_DEFAULT', KeyUsage: 'ENCRYPT_DECRYPT' },
 };
@@ -245,14 +266,14 @@ export async function kmsFromSdk(): Promise<{ kms: Kms } | { problem: string }> 
       return all;
     },
     publicKey: async (keyId) => (await unless(client.send(new sdk.GetPublicKeyCommand({ KeyId: keyId })), NOT_USABLE))?.PublicKey ?? null,
-    async sign(keyId, message) {
+    async sign(keyId, message, alg) {
       const raw = message.length <= MAX_RAW_MESSAGE;
       const answer = await client.send(
         new sdk.SignCommand({
           KeyId: keyId,
           Message: raw ? message : createHash('sha256').update(message).digest(),
           MessageType: raw ? 'RAW' : 'DIGEST',
-          SigningAlgorithm: 'ECDSA_SHA_256',
+          SigningAlgorithm: alg === RSA_SIGNING_ALG ? 'RSASSA_PKCS1_V1_5_SHA_256' : 'ECDSA_SHA_256',
         }),
       );
       return answer.Signature!;

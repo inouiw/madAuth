@@ -64,6 +64,13 @@ export interface MadAuthServerProps {
   };
   /** More environment variables, e.g. `INITIAL_ADMIN_EMAIL`, `SESSION_TTL` or `AUTHENTICATOR_ISSUER` (see docs/server.md). */
   readonly environment?: Record<string, string>;
+  /**
+   * Also an RS256 signing key in KMS (`RSA_2048`, one more key and its rotations to pay for), for the ID tokens
+   * of OpenID Connect clients that can't verify ES256; an admin then sets `idTokenAlg: 'RS256'` on such a client
+   * (see "RS256 ID tokens" in docs/server.md). Default: false. Once created, the key stays and is rotated either way.
+   * Needs madAuth 0.7.2 or newer: an older installed `@madauth/server` is refused at synth.
+   */
+  readonly rs256Signing?: boolean;
   /** Default: 512. madAuth needs at least 256 MB for password hashing; more memory is also more CPU. */
   readonly memorySize?: number;
   /** Caps the concurrent executions, e.g. to limit the cost of abuse on a public site. Default: no cap. */
@@ -105,11 +112,14 @@ export class MadAuthServer extends Construct {
     const awsIamReceiver = props.webhook?.awsIamReceiver;
     // A server that doesn't know WEBHOOK_AUTH would ignore it and refuse to start without WEBHOOK_SECRET. A checkout
     // (serverPackageDir) may be ahead of its version, so only the installed package is checked.
-    const installed = awsIamReceiver && !props.serverPackageDir ? installedServerVersion() : undefined;
-    if (installed && !signsWebhooksWithIam(installed)) {
+    const installed = (awsIamReceiver || props.rs256Signing) && !props.serverPackageDir ? installedServerVersion() : undefined;
+    if (installed && awsIamReceiver && !signsWebhooksWithIam(installed)) {
       throw new Error(
         `MadAuthServer: webhook.awsIamReceiver needs a madAuth server newer than 0.6.0, which signs its webhook calls with its role (WEBHOOK_AUTH=aws-iam), but @madauth/server ${installed} is installed. Update it.`,
       );
+    }
+    if (installed && props.rs256Signing && !signsRs256(installed)) {
+      throw new Error(`MadAuthServer: rs256Signing needs madAuth ${RS256_FROM} or newer, which has an RS256 signing key, but @madauth/server ${installed} is installed. Update it.`);
     }
 
     // One table with the string keys pk and sk; every read is strongly consistent, so no index is needed.
@@ -216,6 +226,7 @@ export class MadAuthServer extends Construct {
         MADAUTH_ISSUER: issuer,
         SIGNING_KEY_PARAMETER: signingKeyParameter,
         ...webhookSecretParameters,
+        ...(props.rs256Signing ? { RS256_SIGNING: 'true' } : {}),
       },
       // What was rotated when, for a year.
       logGroup: new logs.LogGroup(this, 'KeysLogs', {
@@ -259,8 +270,9 @@ export class MadAuthServer extends Construct {
     const keys = new CustomResource(this, 'KmsKeys', {
       serviceToken: provider.serviceToken,
       resourceType: 'Custom::MadAuthKmsKeys',
-      // A new property makes CloudFormation run the check again on the deploy that switches to AWS IAM.
-      properties: { Deployment: deployment, ...(awsIamReceiver ? { WebhookAuth: 'aws-iam' } : {}) },
+      // A new property makes CloudFormation run the check again on the deploy that switches to AWS IAM, and the
+      // setup again on the one that adds the RS256 key.
+      properties: { Deployment: deployment, ...(awsIamReceiver ? { WebhookAuth: 'aws-iam' } : {}), ...(props.rs256Signing ? { Rs256Signing: 'true' } : {}) },
     });
     // The server's new configuration only once its keys exist.
     this.function.node.addDependency(keys);
@@ -284,6 +296,20 @@ export class MadAuthServer extends Construct {
 /** Whether a version of @madauth/server knows WEBHOOK_AUTH=aws-iam: every one the dependency allows but the three before it. */
 export function signsWebhooksWithIam(version: string): boolean {
   return !['0.6.0-beta.1', '0.6.0-beta.2', '0.6.0'].includes(version);
+}
+
+/** The first version of @madauth/server with an RS256 signing key (`kms-setup --rs256`). */
+const RS256_FROM = '0.7.2';
+
+/** Whether a version of @madauth/server (`major.minor.patch`, maybe `-beta.n`) is {@link RS256_FROM} or newer. */
+export function signsRs256(version: string): boolean {
+  const numbers = (v: string) => v.split('-')[0]!.split('.').map(Number);
+  const [a, b] = [numbers(version), numbers(RS256_FROM)];
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  // 0.7.2-beta.1 is before 0.7.2.
+  return !version.includes('-');
 }
 
 /** The version of the installed @madauth/server, from the package.json above its `dist/aws-kms.js`. */

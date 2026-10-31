@@ -26,12 +26,15 @@ Commands:
                                writes another file, --force overwrites. Google and GitHub are added later,
                                as providers in the store (see the next steps it prints).
   start                        Start the server on PORT (default ${PORT})
-  generate-key                 Print a new private ES256 key to use as MADAUTH_SIGNING_KEY
+  generate-key [--rs256]       Print a new private ES256 key to use as MADAUTH_SIGNING_KEY; with --rs256 an
+                               RS256 key to add to it, for the ID tokens of OpenID Connect clients that
+                               can't verify ES256 (see "RS256 ID tokens" in docs/server.md)
   generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
-  kms-setup                    For MADAUTH_KEY_SERVICE=aws-kms without the AWS template (which does it itself):
+  kms-setup [--rs256]          For MADAUTH_KEY_SERVICE=aws-kms without the AWS template (which does it itself):
                                create this deployment's keys in AWS KMS with your own AWS credentials, under
                                alias/madauth/<the host of MADAUTH_ISSUER>/, and print the IAM policy the
-                               server's role needs. Keys that exist already are kept.
+                               server's role needs. Keys that exist already are kept. --rs256 also creates
+                               an RS256 signing key (signing-rsa), for ID tokens in RS256.
   kms-rotate                   Rotate those keys, with your AWS credentials; run it every day (the AWS
                                template's rotator does). A key gets a successor once a year.
   schema [--dialect <name>] [--from <version>]
@@ -163,7 +166,7 @@ const terminalIo: CliIo = {
  * kms-setup and kms-rotate, with the AWS credentials of whoever runs them: the server's role may only use the
  * keys, never create them (see kms-rotation.ts).
  */
-async function kmsCommand(command: 'kms-setup' | 'kms-rotate', env: Env, given?: Kms): Promise<CliResult> {
+async function kmsCommand(command: 'kms-setup' | 'kms-rotate', env: Env, rs256: boolean, given?: Kms): Promise<CliResult> {
   const issuer = unquote(env.MADAUTH_ISSUER);
   if (!issuer || !URL.canParse(issuer)) {
     return { output: `${command} needs MADAUTH_ISSUER, the server's public address: the keys are named after its host. Use --env-file .env or set it.`, exitCode: 1 };
@@ -178,7 +181,7 @@ async function kmsCommand(command: 'kms-setup' | 'kms-rotate', env: Env, given?:
     const output = [...done, ...problems];
     return { output: output.length ? output.join('\n') : `Nothing to rotate under ${aliasPrefix(deployment)}.`, exitCode: problems.length ? 1 : 0 };
   }
-  const done = await setUpKmsKeys(kms, deployment);
+  const done = await setUpKmsKeys(kms, deployment, Date.now(), { rs256 });
   const policy = JSON.stringify({ Version: '2012-10-17', Statement: serverKmsPolicy(deployment) }, null, 2);
   return {
     output: [
@@ -200,6 +203,8 @@ function parseCliArgs(args: string[]) {
     args,
     options: {
       'env-file': { type: 'string' },
+      // generate-key and kms-setup: an RS256 key (too).
+      rs256: { type: 'boolean' },
       dialect: { type: 'string' },
       // schema: print only the changes since this schema version.
       from: { type: 'string' },
@@ -258,13 +263,13 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
       return { output: '', exitCode: 0 };
     }
     if (command === 'generate-key') {
-      return { output: JSON.stringify(await generateSigningKey()), exitCode: 0 };
+      return { output: JSON.stringify(await generateSigningKey(options.rs256 ? 'RS256' : 'ES256')), exitCode: 0 };
     }
     if (command === 'generate-webhook-secret') {
       return { output: generateWebhookSecret(), exitCode: 0 };
     }
     if (command === 'kms-setup' || command === 'kms-rotate') {
-      return await kmsCommand(command, env, kms);
+      return await kmsCommand(command, env, options.rs256 === true, kms);
     }
     if (command === 'schema') {
       const dialect = (options.dialect ?? 'postgres') as SqlDialect;

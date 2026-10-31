@@ -130,7 +130,8 @@ describe('createTablesSql', () => {
   });
 
   it('upgradeTablesSql lists what newer schema versions added, per dialect', () => {
-    const V14 = 'ALTER TABLE madauth_oidc_client ADD COLUMN token_exchange BOOLEAN;\nCREATE TABLE madauth_oidc_nonce (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_oidc_nonce_client_id ON madauth_oidc_nonce (client_id);';
+    const V15 = 'ALTER TABLE madauth_oidc_client ADD COLUMN id_token_alg TEXT;';
+    const V14 = 'ALTER TABLE madauth_oidc_client ADD COLUMN token_exchange BOOLEAN;\nCREATE TABLE madauth_oidc_nonce (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_oidc_nonce_client_id ON madauth_oidc_nonce (client_id);\n' + V15;
     const V13 = "ALTER TABLE madauth_oidc_client ADD COLUMN device_flow BOOLEAN;\nALTER TABLE madauth_user ADD COLUMN wrong_device_codes DOUBLE PRECISION;\nALTER TABLE madauth_user ADD COLUMN wrong_device_code_at DOUBLE PRECISION;\nCREATE TABLE madauth_oidc_device_code (\n  id TEXT PRIMARY KEY,\n  user_code TEXT NOT NULL UNIQUE,\n  client_id TEXT NOT NULL,\n  scope TEXT NOT NULL,\n  status TEXT NOT NULL,\n  user_id TEXT,\n  auth_time DOUBLE PRECISION,\n  amr TEXT,\n  session_version DOUBLE PRECISION,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL,\n  last_polled_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_oidc_device_code_client_id ON madauth_oidc_device_code (client_id);\nCREATE INDEX madauth_oidc_device_code_user_id ON madauth_oidc_device_code (user_id);\n" + V14;
     const V12 = "CREATE TABLE madauth_oidc_client (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  secret_hash TEXT,\n  redirect_uris TEXT NOT NULL,\n  post_logout_redirect_uris TEXT NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  updated_at DOUBLE PRECISION NOT NULL,\n  updated_by TEXT\n);\nCREATE TABLE madauth_oidc_code (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL,\n  user_id TEXT NOT NULL,\n  redirect_uri TEXT NOT NULL,\n  scope TEXT NOT NULL,\n  nonce TEXT,\n  code_challenge TEXT NOT NULL,\n  auth_time DOUBLE PRECISION NOT NULL,\n  amr TEXT NOT NULL,\n  session_version DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_oidc_code_user_id ON madauth_oidc_code (user_id);\nCREATE TABLE madauth_oidc_refresh_token (\n  id TEXT PRIMARY KEY,\n  hash TEXT NOT NULL,\n  client_id TEXT NOT NULL,\n  user_id TEXT NOT NULL,\n  scope TEXT NOT NULL,\n  auth_time DOUBLE PRECISION NOT NULL,\n  amr TEXT NOT NULL,\n  session_version DOUBLE PRECISION NOT NULL,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL,\n  last_used_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_oidc_refresh_token_client_id ON madauth_oidc_refresh_token (client_id);\nCREATE INDEX madauth_oidc_refresh_token_user_id ON madauth_oidc_refresh_token (user_id);\n" + V13;
     const V11 = 'ALTER TABLE madauth_user ADD COLUMN preferred_second_factor TEXT;\n' + V12;
@@ -193,6 +194,7 @@ describe('createTablesSql', () => {
     expect(upgradeTablesSql('postgres', 12)).toBe(V13);
     // Version 14 added which clients may exchange tokens.
     expect(upgradeTablesSql('postgres', 13)).toBe(V14);
+    expect(upgradeTablesSql('postgres', 14)).toBe(V15);
     expect(upgradeTablesSql('sqlite', madauthSchema.version)).toBe('');
   });
 

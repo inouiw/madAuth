@@ -1,6 +1,6 @@
 import { base64url, createLocalJWKSet, jwtVerify, type JWK, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import type { KeyService } from './key-service.js';
-import { SIGNING_ALG } from './keys.js';
+import { SIGNING_ALG, SIGNING_ALGS, type SigningAlg } from './keys.js';
 import { RENEWAL_TYP, SESSION_TYP, type MadauthUser } from './user.js';
 
 /** A random URL-safe string (32 bytes by default). */
@@ -10,15 +10,25 @@ export function randomString(bytes = 32): string {
 
 const encodeJson = (value: object) => base64url.encode(JSON.stringify(value));
 
+/** The algorithm of a published key: a key without `alg` (a key service from before RS256) is an ES256 key. */
+const algOfKey = (key: JWK): string => key.alg ?? SIGNING_ALG;
+
+/** Whether the key service has a key that signs with `alg` right now. */
+export async function canSign(keys: KeyService, alg: SigningAlg): Promise<boolean> {
+  return (await keys.verificationKeys()).some((key) => algOfKey(key) === alg);
+}
+
 /**
- * Signs a short-lived madAuth token with the key service's signing key of now. `typ` keeps the token kinds
- * (session, nonce, OAuth state) apart, so one can never be accepted as another.
+ * Signs a short-lived madAuth token with the key service's signing key of now, of the algorithm `alg` (ES256
+ * unless an OpenID Connect client asked for RS256). `typ` keeps the token kinds (session, nonce, OAuth state)
+ * apart, so one can never be accepted as another. Throws when the key service has no key of that algorithm.
  */
-export async function signToken(keys: KeyService, issuer: string, typ: string, claims: JWTPayload, ttlSeconds: number): Promise<string> {
-  const [signing] = await keys.verificationKeys();
-  const kid = signing!.kid!;
+export async function signToken(keys: KeyService, issuer: string, typ: string, claims: JWTPayload, ttlSeconds: number, alg: SigningAlg = SIGNING_ALG): Promise<string> {
+  const signing = (await keys.verificationKeys()).find((key) => algOfKey(key) === alg);
+  if (!signing?.kid) throw new Error(`The key service has no ${alg} key.`);
+  const kid = signing.kid;
   const now = Math.floor(Date.now() / 1000);
-  const input = `${encodeJson({ alg: SIGNING_ALG, kid, typ })}.${encodeJson({ ...claims, iss: issuer, iat: now, exp: now + ttlSeconds })}`;
+  const input = `${encodeJson({ alg, kid, typ })}.${encodeJson({ ...claims, iss: issuer, iat: now, exp: now + ttlSeconds })}`;
   const signature = await keys.sign(kid, new TextEncoder().encode(input));
   return `${input}.${base64url.encode(signature)}`;
 }
@@ -50,7 +60,7 @@ export async function readToken<T extends JWTPayload>(
   // Checked as of 1970, no token has expired yet.
   const asOf = allowExpired ? { currentDate: new Date(0) } : {};
   // jose answers every invalid token with an exception: they all mean "no token".
-  const verified = await jwtVerify<T>(token, keySet, { issuer, typ, algorithms: [SIGNING_ALG], ...asOf }).catch(() => null);
+  const verified = await jwtVerify<T>(token, keySet, { issuer, typ, algorithms: [...SIGNING_ALGS], ...asOf }).catch(() => null);
   return verified ? (verified.payload as T & { iat: number; exp: number }) : null;
 }
 

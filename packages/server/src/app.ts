@@ -51,7 +51,8 @@ import { apiKeyNotFound, apiKeyRoutes, invalidApiKey, keyCaller } from './routes
 import { passkeyDomain, passkeyRoutes, usableOn } from './routes/passkey.js';
 import { OIDC_PATH, oidcEndpoints } from './routes/oidc-endpoints.js';
 import { OidcClients, clientInfo, parseClientFields } from './oidc-clients.js';
-import { readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
+import { RSA_SIGNING_ALG } from './keys.js';
+import { canSign, readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { parseUserSearch, searchUsers } from './user-search.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, bearerTokenOf, type MadauthUser } from './user.js';
 import { Users, factorsAmong, methodOf, preferredFirst, toMadauthUser, type StoredUser } from './users.js';
@@ -985,6 +986,7 @@ export function createApp(config: MadauthConfig): Hono {
   const clientsByKey = "An API key can't change the applications that sign in with madAuth: an admin signs in to do it.";
   const clientNotFound = (c: Context) => c.json({ error: 'client_not_found', message: 'There is no application with this client ID.' }, 404);
   const invalidClient = (c: Context, message: string) => c.json({ error: 'invalid_client', message }, 400);
+  const noRsaKey = 'idTokenAlg RS256 needs an RS256 key in the key service: add one to MADAUTH_SIGNING_KEY, or run kms-setup --rs256 (see "RS256 ID tokens" in docs/server.md).';
 
   app.post('/auth/admin/clients/list', async (c) => {
     const caller = await admin(c, 'madauth:clients:read');
@@ -1000,6 +1002,7 @@ export function createApp(config: MadauthConfig): Hono {
     if (data.public !== undefined && typeof data.public !== 'boolean') return invalidClient(c, 'public must be true or false.');
     const fields = parseClientFields(data, true);
     if ('error' in fields) return c.json(fields, 400);
+    if (fields.idTokenAlg === RSA_SIGNING_ALG && !(await canSign(keys, RSA_SIGNING_ALG))) return invalidClient(c, noRsaKey);
     // A new client's fields always have a name and redirect URIs.
     const added = await oidcClients.add({ ...fields, name: fields.name!, redirectUris: fields.redirectUris! }, data.public === true, caller.email);
     return c.json({ client: clientInfo(added.client), ...(added.secret ? { clientSecret: added.secret } : {}) });
@@ -1014,6 +1017,7 @@ export function createApp(config: MadauthConfig): Hono {
     if (data.public !== undefined) return invalidClient(c, 'Whether a client is public can\'t change: add a new one.');
     const fields = parseClientFields(data, false);
     if ('error' in fields) return c.json(fields, 400);
+    if (fields.idTokenAlg === RSA_SIGNING_ALG && !(await canSign(keys, RSA_SIGNING_ALG))) return invalidClient(c, noRsaKey);
     const updated = typeof id === 'string' ? await oidcClients.update(id, fields, newSecret === true, caller.email) : null;
     if (!updated) return clientNotFound(c);
     return c.json({ client: clientInfo(updated.client), ...(updated.secret ? { clientSecret: updated.secret } : {}) });

@@ -45,4 +45,6 @@ new MadAuthServer(stack, 'MadAuth', {
   secretsPath: context('secretsPath') || undefined,
   webhook: context('webhookUrl') ? { url: context('webhookUrl'), events: list('webhookEvents'), awsIamReceiver } : undefined,
   environment: map('environment'),
+  // An RS256 signing key too, for OpenID Connect clients that can't verify ES256 (docs/server.md, "RS256 ID tokens").
+  rs256Signing: context('rs256Signing') === 'true',
 });
