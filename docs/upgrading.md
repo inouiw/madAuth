@@ -3,7 +3,7 @@
 ## To 0.7.1
 
 - **New: the token exchange for native apps.** A Capacitor or other native app whose WebView gets no cookies from the madAuth server signs in as a registered application of the OpenID Connect provider and gets tokens: `Madauth.tokens.nonce({ clientId })` for Google's sign-in, `exchange({ clientId, credential })` with the Google ID token, `refresh({ clientId, refreshToken })`; on the server `POST /auth/oidc/nonce` and `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` at `/auth/oidc/token` (RFC 8693). An admin allows it per application with `tokenExchange: true`. New error codes `invalid_grant`, `interaction_required`, `unauthorized_client` and `invalid_request` in `@madauth/web`. See [Native apps](server.md#native-apps).
-- **Schema version 14:** `oidcClient.tokenExchange`. SQLite and Postgres upgrade themselves, DynamoDB needs nothing; for your own SQL tables run `npx @madauth/server schema --dialect <yours> --from 13` and apply it before you deploy.
+- **Schema version 14:** `oidcClient.tokenExchange` and the new model `oidcNonce`. SQLite and Postgres upgrade themselves, DynamoDB needs nothing; for your own SQL tables run `npx @madauth/server schema --dialect <yours> --from 13` and apply it before you deploy.
 
 ## To 0.7
 

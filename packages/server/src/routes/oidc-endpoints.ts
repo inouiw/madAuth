@@ -15,6 +15,7 @@ import { claimsFromJson } from '../claims.js';
 import {
   ACCESS_TOKEN_TTL_S,
   DEVICE_CODE_TTL_MS,
+  EXCHANGE_NONCE_TTL_MS,
   DEVICE_POLL_INTERVAL_S,
   ID_TOKEN_TTL_S,
   MAX_WRONG_DEVICE_CODES,
@@ -62,10 +63,6 @@ const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 /** The grant type of the token exchange (RFC 8693): a native app's Google ID token for madAuth's tokens. */
 const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ID_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id_token';
-
-/** `typ` of the nonce a client puts into Google's sign-in for the token exchange: signed, bound to the client, short-lived. */
-const EXCHANGE_NONCE_TYP = 'madauth-exchange-nonce+jwt';
-const EXCHANGE_NONCE_TTL_S = 5 * 60;
 
 /** The scopes madAuth knows among those asked for, as a grant stores them. */
 const knownScopes = (scope: string | undefined): string[] => (scope ?? '').split(' ').filter((s) => (OIDC_SCOPES as readonly string[]).includes(s));
@@ -351,8 +348,8 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
   /** The Google provider, if it signs in now. */
   const googleSignIn = async (c: Context) => ((await ctx.enabled(c, 'google')) ? providerOf(await ctx.methods(c), 'google') : null);
 
-  // The nonce for Google's sign-in: madAuth's signature and the client's ID in it, so the ID token that comes back
-  // was asked for by this client, just now. A WebView gets no cookie for it (see "Native apps" in docs/server.md).
+  // The nonce for Google's sign-in, kept for the client for five minutes and used once, so the ID token that comes
+  // back was asked for by this client, just now. A WebView gets no cookie for it (see "Native apps" in docs/server.md).
   app.post(`${OIDC_PATH}nonce`, async (c) => {
     c.header('Cache-Control', 'no-store');
     const form = await paramsOf(c);
@@ -361,8 +358,8 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     if (!client.tokenExchange) return tokenError(c, 400, 'unauthorized_client', 'This application may not exchange tokens: an admin allows it with tokenExchange.');
     const google = await googleSignIn(c);
     if (!google) return tokenError(c, 400, 'invalid_request', 'Google sign-in is off on this server.');
-    const nonce = await signToken(keys, issuer, EXCHANGE_NONCE_TYP, { aud: client.id, jti: randomString(16) }, EXCHANGE_NONCE_TTL_S);
-    return c.json({ nonce, google_client_id: google.clientId, expires_in: EXCHANGE_NONCE_TTL_S });
+    const nonce = await clients.issueNonce(client.id);
+    return c.json({ nonce, google_client_id: google.clientId, expires_in: Math.floor(EXCHANGE_NONCE_TTL_MS / 1000) });
   });
 
   /** The exchange: the Google ID token's user, signed in as with `google/verify`, gets this client's tokens. */
@@ -373,15 +370,17 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     if (!subject) return tokenError(c, 400, 'invalid_request', 'subject_token is missing.');
     const google = await googleSignIn(c);
     if (!google) return tokenError(c, 400, 'invalid_grant', 'Google sign-in is off on this server.');
-    // The nonce in the token must be one this client got from madAuth, still fresh: checked before Google's signature.
+    // The nonce in the token must be one this client got from madAuth, fresh and unused: used up before Google's
+    // signature is checked, so a token that fails there takes a new nonce too.
     let nonce: unknown;
     try {
       nonce = decodeJwt(subject).nonce;
     } catch {
       return tokenError(c, 400, 'invalid_grant', 'subject_token is not a JWT.');
     }
-    const ours = typeof nonce === 'string' ? await readToken<JWTPayload>(keys, issuer, EXCHANGE_NONCE_TYP, nonce) : null;
-    if (!ours || ours.aud !== client.id) return tokenError(c, 400, 'invalid_grant', 'The nonce in subject_token is not one this application got from madAuth, or it expired.');
+    if (typeof nonce !== 'string' || !(await clients.useNonce(nonce, client.id))) {
+      return tokenError(c, 400, 'invalid_grant', 'The nonce in subject_token is not one this application got from madAuth, or it expired or was used already.');
+    }
     const verified = await verifyGoogleIdToken(subject, { clientId: google.clientId, nonce: nonce as string, keys: ctx.config.jwksResolver });
     if (!verified.ok) return tokenError(c, 400, 'invalid_grant', `subject_token: ${verified.reason}.`);
     const resolved = await resolveProviderUser(ctx, GOOGLE, toProfile(verified.profile), localeOf(form.locale));

@@ -268,6 +268,17 @@ export const madauthSchema = {
       },
     },
     /**
+     * A nonce for the token exchange of a native app (since version 14): `id` is the SHA-256 of the nonce the app
+     * gives to Google's sign-in. The record goes when the nonce is used, so it works once.
+     */
+    oidcNonce: {
+      fields: {
+        id: { type: 'string', primaryKey: true },
+        clientId: { type: 'string', index: true },
+        expiresAt: { type: 'number' },
+      },
+    },
+    /**
      * A chain of refresh tokens of a client for a user (since version 12). Each use replaces its token: `hash`
      * is the SHA-256 of the one that works now. A token used twice ends the chain.
      */

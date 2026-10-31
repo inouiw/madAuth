@@ -142,9 +142,13 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
       ].join('\n'),
   },
   {
-    // The token exchange: which clients may use it.
+    // The token exchange: which clients may use it, and its nonces.
     version: 14,
-    sql: (dialect) => `ALTER TABLE ${tableName('oidcClient')} ADD COLUMN ${columnName('tokenExchange')} ${columnType(dialect, madauthSchema.models.oidcClient.fields.tokenExchange)};`,
+    sql: (dialect) =>
+      [
+        `ALTER TABLE ${tableName('oidcClient')} ADD COLUMN ${columnName('tokenExchange')} ${columnType(dialect, madauthSchema.models.oidcClient.fields.tokenExchange)};`,
+        createTablesSql(dialect, { version: 14, models: { oidcNonce: madauthSchema.models.oidcNonce } }),
+      ].join('\n'),
   },
 ];
 

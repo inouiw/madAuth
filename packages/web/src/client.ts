@@ -41,7 +41,7 @@ export type { MethodsApi, SignInMethodInfo, SignInMethods } from './scopes/metho
 export type { SecondFactorApi } from './scopes/second-factor.js';
 export type { ApiKeyInfo, ApiKeyScope, ApiKeysApi, CreateApiKeyOptions } from './scopes/api-keys.js';
 export type { DeviceApi, DeviceRequest } from './scopes/device.js';
-export type { TokenSet, TokensApi } from './scopes/tokens.js';
+export type { ClientOptions as TokenClientOptions, TokenSet, TokensApi } from './scopes/tokens.js';
 export type { ButtonRenderOptions } from './scopes/button.js';
 export type { ProviderApi } from './scopes/provider.js';
 export type { AdminApi, Claims, ClientChanges, ClientInfo, FoundUser, NewClient, MethodId, MethodSetting, MethodToSet, MethodsToSet, PasswordRules, NewProvider, ProviderChanges, ProviderInfo, ProviderKind, Settings, UserSearch } from './scopes/admin.js';

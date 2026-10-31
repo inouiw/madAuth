@@ -22,6 +22,9 @@ export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
  */
 export const OIDC_SCOPES = ['openid', 'profile', 'email', 'offline_access'] as const;
 
+/** How long a native app's nonce for the token exchange works: Google's sign-in happens meanwhile. */
+export const EXCHANGE_NONCE_TTL_MS = 5 * 60 * 1000;
+
 /** How long a device's user code works (RFC 8628): the user types it on another device meanwhile. */
 export const DEVICE_CODE_TTL_MS = 10 * 60 * 1000;
 
@@ -330,6 +333,26 @@ export class OidcClients {
     if (!client || (await this.store.delete('oidcClient', { id })) !== 1) return null;
     await this.store.delete('oidcRefreshToken', { clientId: id });
     return client;
+  }
+
+  // --- The token exchange (RFC 8693): the nonce a native app puts into Google's sign-in ---
+
+  /** A nonce for the client, which works once within {@link EXCHANGE_NONCE_TTL_MS}. Removes the client's expired ones first. */
+  async issueNonce(clientId: string): Promise<string> {
+    const now = Date.now();
+    const stale = (await this.store.findMany('oidcNonce', { clientId })) as unknown as { id: string; expiresAt: number }[];
+    await Promise.all(stale.filter((n) => n.expiresAt <= now).map((n) => this.store.delete('oidcNonce', { id: n.id })));
+    const nonce = randomBytes(32).toString('base64url');
+    await this.store.create('oidcNonce', { id: sha256(nonce), clientId, expiresAt: now + EXCHANGE_NONCE_TTL_MS });
+    return nonce;
+  }
+
+  /** Uses up a nonce of `clientId`: true if it was theirs, unexpired and unused. Each nonce works once. */
+  async useNonce(nonce: string, clientId: string): Promise<boolean> {
+    const id = sha256(nonce);
+    const record = (await this.store.findOne('oidcNonce', { id })) as { clientId: string; expiresAt: number } | null;
+    if (!record || record.clientId !== clientId || (await this.store.delete('oidcNonce', { id })) !== 1) return false;
+    return record.expiresAt > Date.now();
   }
 
   // --- The device authorization grant (RFC 8628) ---

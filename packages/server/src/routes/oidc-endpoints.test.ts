@@ -615,8 +615,15 @@ describe('the token exchange', () => {
     expect((await exchange(made, client.id, await googleIdToken({ nonce, email_verified: false }))).body.error).toBe('invalid_grant');
     expect((await exchange(made, client.id, 'not-a-jwt')).body.error).toBe('invalid_grant');
     expect((await exchange(made, client.id, await googleIdToken({ nonce }), { subject_token_type: 'urn:ietf:params:oauth:token-type:access_token' })).body.error).toBe('invalid_request');
-    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 6 * 60 * 1000 });
+    // A nonce works once, also when the exchange with it failed.
     expect((await exchange(made, client.id, await googleIdToken({ nonce }))).body.error).toBe('invalid_grant');
+    const fresh = (await nonceFor(made, client.id)).nonce;
+    const token = await googleIdToken({ nonce: fresh });
+    expect((await exchange(made, client.id, token)).status).toBe(200);
+    expect((await exchange(made, client.id, token)).body.error).toBe('invalid_grant');
+    const expired = (await nonceFor(made, client.id)).nonce;
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 6 * 60 * 1000 });
+    expect((await exchange(made, client.id, await googleIdToken({ nonce: expired }))).body.error).toBe('invalid_grant');
   });
 
   it('TX3: only clients an admin allowed; a user who signs in another way, or needs a second factor, is refused', async () => {

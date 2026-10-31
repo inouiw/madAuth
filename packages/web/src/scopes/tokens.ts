@@ -26,7 +26,7 @@ export interface TokensApi {
    * be issued for. A nonce works five minutes. Fails with `unauthorized_client` (the application may not exchange
    * tokens) or `invalid_request` (Google sign-in is off).
    */
-  nonce(options: { clientId: string }): Promise<Result<{ nonce: string; googleClientId: string; expiresIn: number }>>;
+  nonce(options: ClientOptions): Promise<Result<{ nonce: string; googleClientId: string; expiresIn: number }>>;
   /**
    * Signs the user in with the Google ID token (`credential`) and resolves with the application's tokens: an ID
    * token with the scope `openid`, a refresh token with `offline_access` (default scope: `openid email profile
@@ -35,9 +35,15 @@ export interface TokensApi {
    * app finishes through the authorization endpoint in the system browser), `unauthorized_client` or
    * `temporarily_unavailable`.
    */
-  exchange(options: { clientId: string; credential: string; scope?: string; locale?: string }): Promise<Result<TokenSet>>;
+  exchange(options: ClientOptions & { credential: string; scope?: string; locale?: string }): Promise<Result<TokenSet>>;
   /** New tokens for a refresh token, which stops working: keep the new one. Fails with `invalid_grant` when it ended. */
-  refresh(options: { clientId: string; refreshToken: string; scope?: string }): Promise<Result<TokenSet>>;
+  refresh(options: ClientOptions & { refreshToken: string; scope?: string }): Promise<Result<TokenSet>>;
+}
+
+/** Which application calls: a public one (a native app, the usual case) by its ID alone, a confidential one with its secret too. */
+export interface ClientOptions {
+  clientId: string;
+  clientSecret?: string;
 }
 
 const DEFAULT_SCOPE = 'openid email profile offline_access';
@@ -71,14 +77,15 @@ export function createTokensApi(core: Core): TokensApi {
   type Raw = Parameters<typeof tokenSet>[0];
 
   return {
-    async nonce({ clientId }) {
-      const result = await call<{ nonce: string; google_client_id: string; expires_in: number }>('/auth/oidc/nonce', { client_id: clientId });
+    async nonce({ clientId, clientSecret }) {
+      const result = await call<{ nonce: string; google_client_id: string; expires_in: number }>('/auth/oidc/nonce', { client_id: clientId, client_secret: clientSecret });
       return result.isSuccess ? { isSuccess: true, nonce: result.nonce, googleClientId: result.google_client_id, expiresIn: result.expires_in } : result;
     },
-    async exchange({ clientId, credential, scope = DEFAULT_SCOPE, locale }) {
+    async exchange({ clientId, clientSecret, credential, scope = DEFAULT_SCOPE, locale }) {
       const result = await call<Raw>('/auth/oidc/token', {
         grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
         client_id: clientId,
+        client_secret: clientSecret,
         subject_token: credential,
         subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
         scope,
@@ -86,8 +93,8 @@ export function createTokensApi(core: Core): TokensApi {
       });
       return result.isSuccess ? { isSuccess: true, ...tokenSet(result) } : result;
     },
-    async refresh({ clientId, refreshToken, scope }) {
-      const result = await call<Raw>('/auth/oidc/token', { grant_type: 'refresh_token', client_id: clientId, refresh_token: refreshToken, scope });
+    async refresh({ clientId, clientSecret, refreshToken, scope }) {
+      const result = await call<Raw>('/auth/oidc/token', { grant_type: 'refresh_token', client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, scope });
       return result.isSuccess ? { isSuccess: true, ...tokenSet(result) } : result;
     },
   };
