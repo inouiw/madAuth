@@ -37,6 +37,7 @@ The webhook receivers (the dev receiver that prints e-mails and SMS codes, and t
 
 ## Workflow
 
+- **When starting work on an issue, print its full URL** (e.g. `https://github.com/inouiw/madAuth/issues/<number>`) in your first reply, so the user can click through to it — not just `#<number>`.
 - **When asked to implement a GitHub issue, always create a separate branch first** (e.g. `issue-<number>-short-description`) and do the work there — never commit the implementation directly to `main`.
 - **Avoid stacking when possible — base every PR on `main`. Only genuinely dependent changes need stacking.** (Stacked PRs combined with squash merges force rebases and force-pushes of the child branches; for a dependent sequence, prefer merging each PR before starting the next one on fresh `main`.)
 - **Every completed change — not just GitHub issues — ends with a pull request that is then reviewed.** However small the change, once it is done: publish the branch and open a PR (`git push -u` the branch, then `gh pr create`), then run the code review as described below. Reference the issue it implements in the PR description, if any.
