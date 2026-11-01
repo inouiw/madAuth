@@ -22,6 +22,8 @@ export interface GsiButtonConfiguration {
 export interface CredentialResponse {
   credential: string;
   select_by?: string;
+  /** The `state` of the button the user signed in with, if it had one. */
+  state?: string;
 }
 
 /** What `google.accounts.id.initialize` takes, see https://developers.google.com/identity/gsi/web/reference/js-reference#IdConfiguration. */
