@@ -975,6 +975,18 @@ export function fakeServer(): FakeServer {
           .map((address) => ({ id: userFor(address).id, email: address, name: server.accounts.get(address)!.name ?? null, emailVerified: server.accounts.get(address)!.verified, claims: server.claims.get(address) ?? {}, methods: ['password'], signedUpAt: 1, pending: false }));
         return json({ users, ...(from + limit < all.length ? { cursor: page.at(-1) } : {}) });
       }
+      case 'POST /auth/admin/users/delete': {
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
+        if (!server.accounts.has(email)) return json({ error: 'user_not_found', message: 'no user' }, 404);
+        if (server.user.email === email) return json({ error: 'own_admin_role', message: 'not yourself' }, 403);
+        if ((server.claims.get(email)?.roles as string[] | undefined)?.includes('admin')) return json({ error: 'forbidden', message: 'an admin' }, 403);
+        const userId = userFor(email).id;
+        server.accounts.delete(email);
+        server.claims.delete(email);
+        return json({ email, userId });
+      }
       case 'POST /auth/admin/sign-in/reset': {
         if (!server.user) return json({ error: 'no_session' }, 401);
         if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);

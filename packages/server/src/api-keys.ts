@@ -35,6 +35,7 @@ export const MADAUTH_SCOPES = [
   { name: 'madauth:settings:write', description: 'Change the sign-in settings', role: ADMIN_ROLE, endpoints: ['POST /auth/admin/settings/set'] },
   { name: 'madauth:sign-in:reset', description: "Reset a user's sign-in, for a user who lost every way in", role: ADMIN_ROLE, endpoints: ['POST /auth/admin/sign-in/reset'] },
   { name: 'madauth:users:read', description: 'Find users by role, address or sign-up date', role: ADMIN_ROLE, endpoints: ['POST /auth/admin/users/search'] },
+  { name: 'madauth:users:delete', description: 'Delete a user with all their sign-in methods', role: ADMIN_ROLE, endpoints: ['POST /auth/admin/users/delete'] },
   { name: 'madauth:providers:read', description: 'List the sign-in providers, without their secrets', role: ADMIN_ROLE, endpoints: ['POST /auth/admin/providers/list'] },
   { name: 'madauth:clients:read', description: 'List the applications that sign in with madAuth (OpenID Connect clients)', role: ADMIN_ROLE, endpoints: ['POST /auth/admin/clients/list'] },
 ] as const satisfies readonly Scope[];

@@ -228,6 +228,14 @@ export interface AdminApi {
    */
   resetSignIn(email: string): Promise<Result<{ userId: string }>>;
   /**
+   * Deletes the user with this e-mail address for good, as if they never signed up: with all their sign-in methods,
+   * claims, API keys and pending links. Their sessions end at the next session check, and the address can sign up
+   * again as a new user (a new id). Your app's data under their id is your app's to delete, e.g. on `user.deleted`.
+   * Not for a user with the role `admin`: another admin takes it first. Needs a recent sign-in. Fails with
+   * `forbidden`, `reauth_required`, `invalid_email`, `user_not_found` or `own_admin_role`.
+   */
+  deleteUser(email: string): Promise<Result<{ userId: string }>>;
+  /**
    * The API keys of the user with this e-mail address, e.g. to find one that leaked. Only with a session: an
    * API key never manages keys. Fails with `forbidden`, `invalid_email` or `user_not_found`.
    */
@@ -303,6 +311,7 @@ export function createAdminApi(core: Core): AdminApi {
     setSettings: (value) => call('settings/set', { methods: value.methods, password: value.password, loginUrl: value.loginUrl }, settings),
     setMethod: (method, setting) => call('settings/method', { method, setting }, settings),
     resetSignIn: (email) => call('sign-in/reset', { email }, (data: { userId: string }) => ({ userId: data.userId })),
+    deleteUser: (email) => call('users/delete', { email }, (data: { userId: string }) => ({ userId: data.userId })),
     listApiKeys: (email) => call('api-keys/list', { email }, (data: { userId: string; apiKeys: ApiKeyInfo[] }) => ({ userId: data.userId, apiKeys: data.apiKeys })),
     revokeApiKey: (email, id) => call('api-keys/revoke', { email, id }, (data: { userId: string }) => ({ userId: data.userId })),
     searchUsers: (search = {}) =>

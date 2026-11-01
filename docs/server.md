@@ -467,7 +467,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `user.password_reset` | A password was reset (older sessions end) | `user` | the same | the same |
 | `user.password_changed` | A signed-in user changed their password (their other sessions end) | `user` | the same | the same |
 | `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `github`, `authenticator`, `email-link` or `passkey`), `secondFactor` (`passkey`, `authenticator`, `recovery_code` or `sms`, when there was a second step) | the same | the same |
-| `user.deleted` | A user deleted their account | `user` | the same | the same |
+| `user.deleted` | A user deleted their account, or an admin [deleted the user](#deleting-a-user) | `user`; when an admin deleted them, also `by` (the admin's address) and `byApiKey { id, name }` (when the admin used an API key) | the same | the same |
 | `user.claims_changed` | An admin set the claims of a user, or [`INITIAL_ADMIN_EMAIL`](#the-first-admin) gave a user the role `admin` | `user` (with the new claims), `claims`, `by` (the admin's address, or `INITIAL_ADMIN_EMAIL`), `byApiKey { id, name }` (when the admin used an [API key](api-keys.md)) | the same | the same |
 | `user.second_factor_enabled` | A user set up or replaced a second factor: the authenticator app as the second step of their sign-in method, or a phone number for SMS codes | `user`, `method` (`authenticator` or `sms`), `phone` (for `sms`) | the same | the same |
 | `user.second_factor_disabled` | A user removed a second factor | `user`, `method` (`authenticator` or `sms`) | the same | the same |
@@ -760,6 +760,21 @@ Code: [`user-search.ts`](../packages/server/src/user-search.ts).
 - A user with the role `admin` can't delete their account (`403 own_admin_role`): another admin takes the role from them first, see [The first admin](#the-first-admin).
 
 Delete the user's data in your own backend first, while the user is still signed in. Sessions on other devices end when the app next checks them; your own backends accept them until they expire (see [Password security](password-security.md#sessions)).
+
+## Deleting a user
+
+`Madauth.admin.deleteUser(email)` in the web library (`POST /auth/admin/users/delete`) lets an admin delete a user for good, as if they never signed up, e.g. a test account, or a user who asks for it and can't sign in:
+
+- The user is deleted as when they [delete their account](#deleting-an-account): with all their sign-in methods, their claims, their API keys and their pending confirmation, reset and sign-in links and SMS codes. GitHub's authorization is taken back at GitHub (best effort, as there). Google's access is not: that takes the user's browser (`google.accounts.id.revoke`), so the app stays in their connected apps at Google until they remove it.
+- Their sessions end when their app next checks them; your own backends accept them until they expire, as after a deletion by the user.
+- The address can sign up again, as a new user: a new id (`usr_…`), no claims, and `user.signed_up` again.
+- `user.deleted` tells your webhook, with the admin's address as `by` (and `byApiKey` when a key made the call): that is where your app deletes its own data of the user, which madAuth doesn't know. Or delete it first and then call madAuth, as a script that cleans up both does.
+- Not for a user with the role `admin` (`403 forbidden`), nor for the admin who calls it (`403 own_admin_role`): another admin takes the role first, see [The first admin](#the-first-admin).
+- Like every admin change, it needs a sign-in within the last two minutes (`401 reauth_required`). Programs call it with an admin's [API key](api-keys.md) with the scope `madauth:users:delete`, which needs none.
+
+It can't be undone. Check the address first, e.g. with [Searching users](#searching-users).
+
+Code: `/auth/admin/users/delete` in [`app.ts`](../packages/server/src/app.ts), `deleteById` in [`users.ts`](../packages/server/src/users.ts).
 
 ## Custom store adapter
 
@@ -1065,6 +1080,7 @@ What ends the tokens is what ends the code flow's. The same exchange can later t
 | `POST /auth/admin/providers/update` | `{ id, name?, clientId?, clientSecret?, scopes?, trustEmail? }` (`clientSecret: null` removes Google's; `scopes` and `trustEmail` for `oidc`) → `{ provider }`; like `add`, and 404 `provider_not_found` |
 | `POST /auth/admin/providers/remove` | `{ id }` → `{ provider, usersWithoutSignIn }`: removes a provider, its users' accounts stay; like `update`. With `dryRun: true` → `{ provider, usersWithoutSignIn, dryRun: true }`: only counts, like `list` (no recent sign-in needed); 400 `invalid_options` for a `dryRun` that is no boolean |
 | `POST /auth/admin/sign-in/reset` | `{ email }` → `{ email, userId }` (a session within two minutes of its sign-in, else 401 `reauth_required`): removes all of the user's sign-in methods and second factors, ends their sessions and marks the address unconfirmed, for admins; they sign up again. See [Resetting a user's sign-in](#resetting-a-users-sign-in). |
+| `POST /auth/admin/users/delete` | `{ email }` → `{ email, userId }` (a session within two minutes of its sign-in, else 401 `reauth_required`; an API key with the scope `madauth:users:delete` needs none): deletes the user with all their sign-in methods, claims, API keys and pending links, for admins; the address can sign up again as a new user. 400 `invalid_email`, 404 `user_not_found`, 403 `forbidden` (the user has the role `admin`), `own_admin_role` (the caller). See [Deleting a user](#deleting-a-user). |
 | `POST /auth/admin/api-keys/list` | `{ email }` → `{ email, userId, apiKeys }`: the user's [API keys](api-keys.md), for admins with a session (an API key gets 403 `forbidden`) |
 | `POST /auth/admin/api-keys/revoke` | `{ email, id }` → `{ email, userId }`; 404 `api_key_not_found` |
 | `POST /auth/account/delete` | Deletes the account of the user signed in within two minutes (else 401 `reauth_required`) and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`, 403 `own_admin_role` (the user has the role `admin`). See [Deleting an account](#deleting-an-account). |
