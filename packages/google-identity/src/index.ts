@@ -183,8 +183,9 @@ async function fedcmSignIn({ clientId, nonce, autoSelect, context, signal }: Sig
  * `{` (it is base64url), so any other token is taken as the ID token itself. Undefined for JSON without an ID token.
  */
 function idTokenOf(token: string): string | undefined {
-  if (!token.startsWith('{')) return token;
-  const idToken = parseJson(token)?.id_token;
+  const trimmed = token.trim();
+  if (!trimmed.startsWith('{')) return token;
+  const idToken = parseJson(trimmed)?.id_token;
   return typeof idToken === 'string' && idToken ? idToken : undefined;
 }
 

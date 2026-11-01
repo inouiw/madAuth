@@ -132,6 +132,9 @@ describe('signIn with the browser’s FedCM API', () => {
     fakeFedcm(async () => ({ token: JSON.stringify({ iss: 'https://accounts.google.com', id_token: 'eyJ.jwt.sig', authuser: '0', prompt: 'none' }), isAutoSelected: true }));
     expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toEqual({ isSuccess: true, idToken: 'eyJ.jwt.sig', isAutoSelected: true });
 
+    fakeFedcm(async () => ({ token: `\n  ${JSON.stringify({ id_token: 'eyJ.jwt.sig' }, null, 2)}` }));
+    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({ isSuccess: true, idToken: 'eyJ.jwt.sig' });
+
     fakeFedcm(async () => ({ token: JSON.stringify({ iss: 'https://accounts.google.com' }) }));
     expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({ isSuccess: false, reason: 'error' });
 
