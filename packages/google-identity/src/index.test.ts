@@ -128,6 +128,17 @@ describe('signIn with the browser’s FedCM API', () => {
     expect(scripts()).toHaveLength(0); // Google's script is not needed for the browser's dialog.
   });
 
+  it('F1b: unwraps the ID token from the JSON token Google answers FedCM with, and refuses JSON without one', async () => {
+    fakeFedcm(async () => ({ token: JSON.stringify({ iss: 'https://accounts.google.com', id_token: 'eyJ.jwt.sig', authuser: '0', prompt: 'none' }), isAutoSelected: true }));
+    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toEqual({ isSuccess: true, idToken: 'eyJ.jwt.sig', isAutoSelected: true });
+
+    fakeFedcm(async () => ({ token: JSON.stringify({ iss: 'https://accounts.google.com' }) }));
+    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({ isSuccess: false, reason: 'error' });
+
+    fakeFedcm(async () => ({ token: '{not json' }));
+    expect(await signIn({ clientId: CLIENT_ID, nonce: 'n1' })).toMatchObject({ isSuccess: false, reason: 'error' });
+  });
+
   it('F2: without autoSelect the user must pick (mediation required), and a token without the flag is not auto-selected', async () => {
     const fedcm = fakeFedcm(async () => ({ token: 'tok' }));
 
