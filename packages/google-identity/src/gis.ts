@@ -13,6 +13,8 @@ export interface GsiButtonConfiguration {
   width?: number | string;
   /** A BCP 47 tag; Google's default is the browser's language. */
   locale?: string;
+  /** Google returns it with the ID token, to tell several buttons on a page apart; `onCredential` doesn't pass it on. */
+  state?: string;
   click_listener?: () => void;
 }
 
