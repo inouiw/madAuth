@@ -346,6 +346,17 @@ describe('signing in with an OpenID Connect provider', () => {
     expect(made.hook.emails().filter((e) => e.data.to === 'someone@elsewhere.example.com')).toEqual([]);
   });
 
+  it('OP18: a provider that tells no address hands over to the page, which asks for one; its e-mail proves it', async () => {
+    const made = await withGitLab();
+    const { location, callback } = await signIn(made, { idToken: { sub: 'gl-30', preferred_username: 'linus@gitlab.example.com' }, userinfo: { sub: 'gl-30' } });
+    expect(location).toBe(`${APP}/page#madauth_next=email-address&madauth_method=gitlab`);
+    const pending = callback.headers.getSetCookie().find((cookie) => cookie.startsWith('madauth_pending_account='))!.split(';')[0]!;
+    expect(await (await made.app.request('/auth/providers/gitlab/address', { headers: { Cookie: pending } })).json()).toEqual({ suggestion: 'linus@gitlab.example.com' });
+    expect((await post(made.app, '/auth/providers/gitlab/address', { email: 'linus@example.com', redirectTo: `${APP}/page` }, { Cookie: pending })).status).toBe(202);
+    const confirmed = await post(made.app, '/auth/email/verify', { email: 'linus@example.com', code: linkAndCodeOf(made.hook.lastEmail()).code });
+    expect(((await confirmed.json()) as { user: Record<string, unknown> }).user).toMatchObject({ email: 'linus@example.com', amr: ['gitlab'] });
+  });
+
   it('OP10: a signed-in user adds the provider to their methods, sees its address there, and removes it', async () => {
     const made = await withGitLab();
     const { location } = await signIn(made, { idToken: { sub: 'gl-ada', email: 'ada@gitlab.example.com', email_verified: true } }, '&link=1');

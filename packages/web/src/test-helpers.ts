@@ -101,7 +101,19 @@ export interface FakeServer {
    * The OpenID Connect providers, with their names and policies; on unless `on` is false. The rest is what the
    * admin API answers about them.
    */
-  oidc: { id: string; name: string; secondFactor: SecondFactorPolicy; on?: boolean; issuer?: string; clientId?: string; scopes?: string[]; trustEmail?: boolean }[];
+  oidc: {
+    id: string;
+    name: string;
+    secondFactor: SecondFactorPolicy;
+    on?: boolean;
+    /** `microsoft` for Microsoft's provider (its id is `microsoft`), with its tenant; default `oidc`. */
+    kind?: 'oidc' | 'microsoft';
+    tenant?: string;
+    issuer?: string;
+    clientId?: string;
+    scopes?: string[];
+    trustEmail?: boolean;
+  }[];
   /** How many users sign in with a provider alone, by its id, as a removal counts them. */
   usersAlone: Record<string, number>;
   /** The settings refuse to be set, with this message (`invalid_settings`). */
@@ -111,6 +123,8 @@ export interface FakeServer {
    * browser's confirmation cookie names it, so the code comes without an address.
    */
   confirmation: { email: string; method: string } | undefined;
+  /** A sign-in through a provider that told no address: the user types one (GET and POST /auth/providers/<id>/address). */
+  addressPending: { method: string; suggestion: string | null } | undefined;
   /** The user signed in more than ten minutes ago: changing a method answers `reauth_required`. */
   staleSignIn: boolean;
   /** The app's status can't be read: GET /auth/authenticator/status fails. */
@@ -191,6 +205,7 @@ export function fakeServer(): FakeServer {
     usersAlone: {},
     settingsRefused: undefined,
     confirmation: undefined,
+    addressPending: undefined,
     staleSignIn: false,
     statusDown: false,
     preferredFactors: new Map(),
@@ -294,6 +309,8 @@ export function fakeServer(): FakeServer {
     const email = body.email?.trim().toLowerCase();
     /** The user a setup belongs to: the signed-in one, or the one whose sign-in waits for it. */
     const whoSetsUp = () => server.user?.email ?? (isSetup(server.challenge?.next) ? server.challenge?.email : undefined);
+    // The provider whose address step a request is for, if it is one.
+    const addressOf = url.pathname.match(/^\/auth\/providers\/([a-z][a-z0-9-]+)\/address$/)?.[1];
     switch (`${method} ${url.pathname}`) {
       case 'GET /auth/config':
         return json({
@@ -307,7 +324,7 @@ export function fakeServer(): FakeServer {
           passkey: server.passkey ? { signUp: false, ...server.passkey } : null,
           providers: [
             ...(['google', 'github'] as const).filter((kind) => server[kind] && server.methods[kind]).map((kind) => ({ id: kind, kind, name: server.providerNames[kind], secondFactor: server.policy[kind] })),
-            ...server.oidc.filter((provider) => provider.on !== false).map(({ id, name, secondFactor }) => ({ id, name, secondFactor, kind: 'oidc' })),
+            ...server.oidc.filter((provider) => provider.on !== false).map(({ id, name, secondFactor, kind }) => ({ id, name, secondFactor, kind: kind ?? 'oidc' })),
           ],
         });
       // --- Passkeys ---
@@ -548,8 +565,8 @@ export function fakeServer(): FakeServer {
         server.mails.push({ purpose: 'reset', to: email, redirectTo: body.redirectTo });
         return json({}, 202);
       case 'POST /auth/email/verify': {
-        // The code without an address: the provider's sign-up the confirmation cookie names.
-        if (body.email === undefined && body.token === undefined && server.confirmation) {
+        // The code without an address: the provider's sign-up the confirmation cookie names; or with the address the user typed for it.
+        if (body.token === undefined && server.confirmation && (body.email === undefined || body.email === server.confirmation.email)) {
           if (body.code !== CODE) return json({ error: 'code_invalid', message: 'bad code' }, 400);
           const { email: confirmed, method } = server.confirmation;
           server.confirmation = undefined;
@@ -593,6 +610,16 @@ export function fakeServer(): FakeServer {
         }
         issued();
         return json({ user: server.user });
+      case `GET /auth/providers/${addressOf}/address`:
+        return server.addressPending ? json({ suggestion: server.addressPending.suggestion }) : json({ error: 'challenge_expired', message: 'expired' }, 400);
+      case `POST /auth/providers/${addressOf}/address`: {
+        if (!server.addressPending) return json({ error: 'challenge_expired', message: 'expired' }, 400);
+        if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'not an address' }, 400);
+        server.confirmation = { email, method: server.addressPending.method };
+        server.addressPending = undefined;
+        server.mails.push({ purpose: 'verify', to: email, redirectTo: body.redirectTo });
+        return json({}, 202);
+      }
       case 'POST /auth/providers/google/nonce':
         return json({ nonce: `nonce-${++server.nonces}` });
       case 'POST /auth/providers/google/verify':
@@ -913,13 +940,13 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/admin/providers/remove': {
         if (!server.user) return json({ error: 'no_session' }, 401);
         if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
-        const data = body as unknown as { id?: string; kind?: string; name?: string; clientId?: string; clientSecret?: string | null; issuer?: string; scopes?: string; trustEmail?: boolean; dryRun?: boolean };
+        const data = body as unknown as { id?: string; kind?: string; name?: string; clientId?: string; clientSecret?: string | null; issuer?: string; scopes?: string; trustEmail?: boolean; tenant?: string; dryRun?: boolean };
         const action = url.pathname.split('/').at(-1);
         const callbackUrl = (id: string) => `${SERVER}/auth/providers/${id}/callback`;
         const builtIn = (kind: 'google' | 'github') => ({ id: kind, kind, name: server.providerNames[kind], clientId: `${kind}-client`, hasClientSecret: true, callbackUrl: callbackUrl(kind), createdAt: 1, updatedAt: 1 });
         const oidcInfo = (p: FakeServer['oidc'][number]) => ({
-          id: p.id, kind: 'oidc', name: p.name, clientId: p.clientId ?? `${p.id}-client`, hasClientSecret: true, callbackUrl: callbackUrl(p.id), createdAt: 1, updatedAt: 1,
-          issuer: p.issuer ?? `https://${p.id}.example.com`, scopes: p.scopes ?? [], trustEmail: p.trustEmail ?? false,
+          id: p.id, kind: p.kind ?? 'oidc', name: p.name, clientId: p.clientId ?? `${p.id}-client`, hasClientSecret: true, callbackUrl: callbackUrl(p.id), createdAt: 1, updatedAt: 1,
+          ...(p.kind === 'microsoft' ? { tenant: p.tenant } : { issuer: p.issuer ?? `https://${p.id}.example.com`, scopes: p.scopes ?? [], trustEmail: p.trustEmail ?? false }),
         });
         if (action === 'list') {
           const providers = [...(['google', 'github'] as const).filter((kind) => server[kind]).map(builtIn), ...server.oidc.map(oidcInfo)];
@@ -929,6 +956,13 @@ export function fakeServer(): FakeServer {
         if (server.staleSignIn && !dryRun) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         const id = action === 'add' ? (data.kind === 'oidc' ? data.id : data.kind) : data.id;
         const oidc = server.oidc.find((p) => p.id === id);
+        if (action === 'add' && data.kind === 'microsoft') {
+          if (!data.tenant) return json({ error: 'invalid_provider', message: 'tenant must be given.' }, 400);
+          if (oidc) return json({ error: 'provider_exists', message: 'exists' }, 409);
+          const added = { id: 'microsoft', kind: 'microsoft' as const, name: data.name ?? 'Microsoft', secondFactor: 'none' as const, on: false, tenant: data.tenant, clientId: data.clientId };
+          server.oidc.push(added);
+          return json({ provider: oidcInfo(added) });
+        }
         if (action === 'add' && data.kind === 'oidc') {
           if (!id || !data.issuer?.startsWith('https://')) return json({ error: 'invalid_provider', message: 'The issuer must be an https URL.' }, 400);
           if (oidc) return json({ error: 'provider_exists', message: 'exists' }, 409);
@@ -943,6 +977,7 @@ export function fakeServer(): FakeServer {
               ...(data.clientId ? { clientId: data.clientId } : {}),
               ...(data.scopes !== undefined ? { scopes: data.scopes.split(' ').filter(Boolean) } : {}),
               ...(data.trustEmail !== undefined ? { trustEmail: data.trustEmail } : {}),
+              ...(data.tenant !== undefined ? { tenant: data.tenant } : {}),
             });
             return json({ provider: oidcInfo(oidc) });
           }

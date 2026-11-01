@@ -1,7 +1,7 @@
 // Settings that admins change while the server runs, kept in the store: which sign-in methods are on, which
 // of them sign in on their own, which ask for a second factor, and the rules for new passwords. See "Sign-in
 // methods" and "Password rules" in docs/server.md.
-import { isProviderId } from './providers.js';
+import { isProviderMethod } from './providers.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 
 /**
@@ -28,10 +28,10 @@ export type SecondFactor = (typeof SECOND_FACTORS)[number];
 
 /**
  * The methods that always sign in when they are on: they are nothing else, and a sign-up makes their account. So
- * do the OpenID Connect providers, whose ids are methods too (see `isProviderId`).
+ * do the OpenID Connect providers and Microsoft, whose ids are methods too (see `isProviderMethod`).
  */
 export const ALWAYS_SIGN_IN = ['google', 'github', 'password', 'email-link'] as const;
-const isAlwaysSignIn = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method) || isProviderId(method);
+const isAlwaysSignIn = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method) || isProviderMethod(method);
 
 /**
  * The methods that can ask for a second factor after they succeeded: those that always sign in, and passkeys.
@@ -122,9 +122,9 @@ export function parsePasswordRules(input: unknown): PasswordRules | null {
 
 export const isMethodId = (value: string): value is MethodId => (METHODS as readonly string[]).includes(value);
 /** Whether a method takes a `secondFactor` policy other than `none`: those that always sign in, passkeys, and the providers'. */
-const hasSecondFactor = (method: string): boolean => (METHODS_WITH_SECOND_FACTOR as readonly string[]).includes(method) || isProviderId(method);
+const hasSecondFactor = (method: string): boolean => (METHODS_WITH_SECOND_FACTOR as readonly string[]).includes(method) || isProviderMethod(method);
 /** Whether `method` signs people in: one of madAuth's own, or an OpenID Connect provider's id. */
-const isSignInMethodId = (method: string): boolean => (SIGN_IN_METHODS as readonly string[]).includes(method) || isProviderId(method);
+const isSignInMethodId = (method: string): boolean => (SIGN_IN_METHODS as readonly string[]).includes(method) || isProviderMethod(method);
 const isPolicy = (value: unknown): value is SecondFactorPolicy => (SECOND_FACTOR_POLICIES as readonly unknown[]).includes(value);
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
@@ -137,7 +137,7 @@ export function parseMethodSettings(input: unknown): MethodSettings | null {
   if (!isObject(input)) return null;
   const settings: MethodSettings = {};
   for (const [method, value] of Object.entries(input)) {
-    if ((!isMethodId(method) && !isProviderId(method)) || !isObject(value)) return null;
+    if ((!isMethodId(method) && !isProviderMethod(method)) || !isObject(value)) return null;
     const { allowAsSignInMethod, secondFactor, ...rest } = value;
     if (Object.keys(rest).length || typeof allowAsSignInMethod !== 'boolean' || !isPolicy(secondFactor)) return null;
     settings[method] = { allowAsSignInMethod, secondFactor };
@@ -219,7 +219,7 @@ export function legacyAppProblem(value: unknown): string | null {
 export interface MethodConfig {
   google?: object;
   github?: object;
-  /** The ids of the OpenID Connect providers in the store. */
+  /** The ids of the OpenID Connect providers and Microsoft's, when they are in the store. */
   oidc?: ReadonlySet<string>;
   password?: object;
   /** The webhook sends the e-mails that confirm an address, so people can sign up. */
@@ -406,7 +406,7 @@ export function signsIn(method: string, configured: (method: string) => boolean,
 export const signInPredicate =
   (configured: (method: string) => boolean, methods: MethodSettings) =>
   (method: string): boolean =>
-    (isMethodId(method) || isProviderId(method)) && signsIn(method, configured, methods);
+    (isMethodId(method) || isProviderMethod(method)) && signsIn(method, configured, methods);
 
 /** The second-factor policy of a method, `none` unless set. */
 export function policyOf(method: string, methods: MethodSettings): SecondFactorPolicy {
@@ -420,7 +420,7 @@ export function factorsOn(configured: (method: string) => boolean, methods: Meth
 
 /** The methods that sign in and require a second factor, so a user's last one can't go; providers' by their ids. */
 export function requiringSecondFactor(configured: (method: string) => boolean, methods: MethodSettings): string[] {
-  const candidates = [...METHODS_WITH_SECOND_FACTOR, ...Object.keys(methods).filter(isProviderId)];
+  const candidates = [...METHODS_WITH_SECOND_FACTOR, ...Object.keys(methods).filter(isProviderMethod)];
   return candidates.filter((method) => signsIn(method, configured, methods) && policyOf(method, methods) === 'required');
 }
 
@@ -442,7 +442,7 @@ export function checkMethodSettings(
   methods: MethodSettings,
   server: { configured: (method: string) => boolean; signsUp: (method: string) => boolean; providers?: { id: string; kind: string }[] },
 ): string | null {
-  const providerIds = (server.providers ?? []).filter((provider) => provider.kind === 'oidc').map((provider) => provider.id);
+  const providerIds = (server.providers ?? []).filter((provider) => provider.kind === 'oidc' || provider.kind === 'microsoft').map((provider) => provider.id);
   for (const [method, setting] of Object.entries(methods)) {
     if (!setting) continue;
     if (!isMethodId(method) && !providerIds.includes(method)) return `"${method}" is no sign-in method of this server: add the provider first.`;

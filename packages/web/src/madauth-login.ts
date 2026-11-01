@@ -76,6 +76,7 @@ type View =
   | 'signin'
   | 'signup'
   | 'check-inbox'
+  | 'email-address'
   | 'forgot'
   | 'reset'
   | 'authenticator'
@@ -137,12 +138,34 @@ interface ProviderDraft {
   removeSecret: boolean;
   scopes: string;
   trustEmail: boolean;
+  /** Microsoft: `common`, `organizations`, `consumers`, or `single` with `tenantId`; empty until chosen. */
+  tenantChoice: '' | 'common' | 'organizations' | 'consumers' | 'single';
+  tenantId: string;
   /** On as a sign-in method, with this policy for a second factor. */
   on: boolean;
   secondFactor: SecondFactorPolicy;
 }
 
-const EMPTY_DRAFT: ProviderDraft = { id: '', name: '', issuer: '', clientId: '', clientSecret: '', removeSecret: false, scopes: '', trustEmail: false, on: false, secondFactor: 'none' };
+const EMPTY_DRAFT: ProviderDraft = {
+  id: '',
+  name: '',
+  issuer: '',
+  clientId: '',
+  clientSecret: '',
+  removeSecret: false,
+  scopes: '',
+  trustEmail: false,
+  tenantChoice: '',
+  tenantId: '',
+  on: false,
+  secondFactor: 'none',
+};
+
+/** The Microsoft tenant the form says: one of the audiences, or the tenant id typed for `single`. */
+const tenantOf = (d: ProviderDraft): string => (d.tenantChoice === 'single' ? d.tenantId.trim() : d.tenantChoice);
+/** How the form shows a stored tenant. */
+const tenantChoiceOf = (tenant: string | undefined): Pick<ProviderDraft, 'tenantChoice' | 'tenantId'> =>
+  !tenant ? { tenantChoice: '', tenantId: '' } : tenant === 'common' || tenant === 'organizations' || tenant === 'consumers' ? { tenantChoice: tenant, tenantId: '' } : { tenantChoice: 'single', tenantId: tenant };
 
 /** The provider form: a new provider of `kind`, or `provider` being changed, with what is typed. */
 interface ProviderForm {
@@ -155,6 +178,7 @@ interface ProviderForm {
 function newProviderOf(kind: ProviderKind, d: ProviderDraft): NewProvider {
   const name = d.name.trim();
   const shared = { clientId: d.clientId.trim(), ...(d.clientSecret ? { clientSecret: d.clientSecret } : {}) };
+  if (kind === 'microsoft') return { kind, clientId: shared.clientId, clientSecret: d.clientSecret, tenant: tenantOf(d), ...(name ? { name } : {}) };
   if (kind !== 'oidc') return { kind, ...shared, ...(name ? { name } : {}) };
   const scopes = d.scopes.trim();
   return { kind, id: d.id.trim(), name, issuer: d.issuer.trim(), clientId: shared.clientId, clientSecret: d.clientSecret, trustEmail: d.trustEmail, ...(scopes ? { scopes } : {}) };
@@ -171,6 +195,7 @@ function changesOf(provider: ProviderInfo, d: ProviderDraft): ProviderChanges {
     ...(d.clientSecret ? { clientSecret: d.clientSecret } : d.removeSecret ? { clientSecret: null } : {}),
     ...(provider.kind === 'oidc' && scopes !== (provider.scopes ?? []).join(' ') ? { scopes } : {}),
     ...(provider.kind === 'oidc' && d.trustEmail !== !!provider.trustEmail ? { trustEmail: d.trustEmail } : {}),
+    ...(provider.kind === 'microsoft' && tenantOf(d) !== provider.tenant ? { tenant: tenantOf(d) } : {}),
   };
 }
 type ChangeView = (typeof changeViews)[number];
@@ -383,7 +408,8 @@ export class MadauthLogin extends LitElement {
 
   /** What the e-mail in the check-inbox view is for: confirming the address, a password reset, or a sign-in link. */
   /** What the inbox view's code is for; `confirm`: the address of a sign-up through a provider that doesn't vouch for it. */
-  private inboxPurpose: 'verify' | 'reset' | 'signin' | 'confirm' = 'verify';
+  /** `confirm`: a provider's address, the cookie says whose; `address`: one the user typed for a provider that told none. */
+  private inboxPurpose: 'verify' | 'reset' | 'signin' | 'confirm' | 'address' = 'verify';
 
   /** The reset code entered in the check-inbox view, used with the new password. */
   private resetCode?: string;
@@ -539,6 +565,12 @@ export class MadauthLogin extends LitElement {
       this.email = pending.email ?? '';
       this.inboxPurpose = 'confirm';
       this.view = 'check-inbox';
+      return;
+    }
+    if (pending.step === 'email-address') {
+      this.email = '';
+      this.view = 'email-address';
+      void this.suggestAddress(pending.method);
       return;
     }
     if (pending.step === 'setup') {
@@ -1017,8 +1049,9 @@ export class MadauthLogin extends LitElement {
       if (result) this.finish('email-link', result);
       return;
     }
-    if (this.inboxPurpose === 'confirm') {
-      const result = await this.run(() => Madauth.provider(this.primary).verifyEmail({ code }));
+    if (this.inboxPurpose === 'confirm' || this.inboxPurpose === 'address') {
+      const email = this.inboxPurpose === 'address' ? this.email : undefined;
+      const result = await this.run(() => Madauth.provider(this.primary).verifyEmail({ code, email }));
       if (result) this.finish(this.primary, result);
       return;
     }
@@ -1041,20 +1074,20 @@ export class MadauthLogin extends LitElement {
     this.finish('password', result);
   }
 
-  private async resend(purpose: 'verify' | 'reset' | 'signin' | 'confirm'): Promise<void> {
+  private async resend(purpose: 'verify' | 'reset' | 'signin' | 'confirm' | 'address'): Promise<void> {
     const email = this.email;
     const result = await this.run(() =>
       purpose === 'verify'
         ? this.signUpScope.sendVerificationEmail({ email })
-        : purpose === 'confirm'
-          ? Madauth.provider(this.primary).sendVerificationEmail()
+        : purpose === 'confirm' || purpose === 'address'
+          ? Madauth.provider(this.primary).sendVerificationEmail(purpose === 'address' ? { email } : {})
           : purpose === 'reset'
             ? Madauth.password.sendResetEmail({ email })
             : Madauth.emailLink.send({ email }),
     );
     if (!result) return;
     if (!result.isSuccess) {
-      this.showError(result.error, purpose === 'verify' || purpose === 'confirm' ? this.primary : purpose === 'reset' ? 'password' : 'email-link');
+      this.showError(result.error, purpose === 'verify' || purpose === 'confirm' || purpose === 'address' ? this.primary : purpose === 'reset' ? 'password' : 'email-link');
       return;
     }
     this.inboxPurpose = purpose;
@@ -1097,6 +1130,8 @@ export class MadauthLogin extends LitElement {
         return s.createAccount;
       case 'check-inbox':
         return s.checkInbox;
+      case 'email-address':
+        return s.addressStep.heading;
       case 'forgot':
         return s.resetPassword;
       case 'reset':
@@ -1213,6 +1248,8 @@ export class MadauthLogin extends LitElement {
         return this.renderSignUp();
       case 'check-inbox':
         return this.renderCheckInbox();
+      case 'email-address':
+        return this.renderEmailAddress();
       case 'forgot':
         return this.renderForgot();
       case 'reset':
@@ -2673,7 +2710,7 @@ export class MadauthLogin extends LitElement {
     const s = this.strings;
     const v = s.adminView;
     const has = (kind: ProviderKind) => !!this.adminProviders?.some((provider) => provider.id === kind);
-    const kinds = (['google', 'github', 'oidc'] as const).filter((kind) => kind === 'oidc' || !has(kind));
+    const kinds = (['google', 'github', 'microsoft', 'oidc'] as const).filter((kind) => kind === 'oidc' || !has(kind));
     return html`
       <p class="lead">${v.chooseKind}</p>
       <ul>
@@ -2716,6 +2753,7 @@ export class MadauthLogin extends LitElement {
         clientId: provider.clientId,
         scopes: (provider.scopes ?? []).join(' '),
         trustEmail: !!provider.trustEmail,
+        ...tenantChoiceOf(provider.tenant),
         on,
         secondFactor: on ? setting!.secondFactor : 'none',
       },
@@ -2790,6 +2828,7 @@ export class MadauthLogin extends LitElement {
             ?required=${secretRequired} .value=${d.clientSecret} />
           ${secretHint ? html`<p class="hint">${secretHint}</p>` : null}
         </div>
+        ${form.kind === 'microsoft' ? this.renderTenantFields(d) : null}
         ${editing && form.kind === 'google' && form.provider!.hasClientSecret
           ? html`<label class="scope"><input type="checkbox" name="removeSecret" .checked=${d.removeSecret} /><span>${v.removeSecret}</span></label>`
           : null}
@@ -2827,6 +2866,32 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
+  /** Microsoft's tenant: whose accounts sign in, and for one organization its tenant id. */
+  private renderTenantFields(d: ProviderDraft) {
+    const v = this.strings.adminView;
+    // The options are part of this template, not mapped into it: options added to a select later can take its selection.
+    return html`
+      <div class="field">
+        <label for="provider-tenant">${v.tenant}</label>
+        <select part="input" id="provider-tenant" name="tenantChoice" required>
+          <option value="" .selected=${!d.tenantChoice} disabled>${v.choose}</option>
+          <option value="common" .selected=${d.tenantChoice === 'common'}>${v.tenants.common}</option>
+          <option value="organizations" .selected=${d.tenantChoice === 'organizations'}>${v.tenants.organizations}</option>
+          <option value="consumers" .selected=${d.tenantChoice === 'consumers'}>${v.tenants.consumers}</option>
+          <option value="single" .selected=${d.tenantChoice === 'single'}>${v.tenants.single}</option>
+        </select>
+      </div>
+      ${d.tenantChoice === 'single'
+        ? html`<div class="field">
+            <label for="provider-tenant-id">${v.tenantId}</label>
+            <input part="input" id="provider-tenant-id" name="tenantId" type="text" autocomplete="off" spellcheck="false" required
+              pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" .value=${d.tenantId} />
+            <p class="hint">${v.tenantIdHint}</p>
+          </div>`
+        : null}
+    `;
+  }
+
   /** Keeps what is typed into the provider form, so the callback URL follows the id, and a sign-in again doesn't lose it. */
   private onProviderInput(e: Event): void {
     const form = this.providerForm;
@@ -2844,6 +2909,8 @@ export class MadauthLogin extends LitElement {
         removeSecret: data.has('removeSecret'),
         scopes: text('scopes'),
         trustEmail: data.has('trustEmail'),
+        tenantChoice: text('tenantChoice') as ProviderDraft['tenantChoice'],
+        tenantId: text('tenantId'),
         on: data.has('on'),
         secondFactor: text('secondFactor') as SecondFactorPolicy,
       },
@@ -2980,12 +3047,50 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
+  /** Prefills the address field with what the provider hinted at, unless the user has typed meanwhile. */
+  private async suggestAddress(method: string): Promise<void> {
+    const result = await Madauth.provider(method).addressSuggestion();
+    if (!result.isSuccess) {
+      this.showError(result.error, method);
+      return;
+    }
+    if (result.suggestion && !this.email && this.view === 'email-address') this.email = result.suggestion;
+  }
+
+  /** The address step: a provider told no address, so the user types one, which its confirmation e-mail proves. */
+  private renderEmailAddress() {
+    const s = this.strings;
+    return html`
+      <p class="lead">${s.addressStep.lead(nameOfMethod(this.primary, s))}</p>
+      <form part="form" class="email-address" @submit=${this.onAddress}>
+        ${this.emailField()}
+        <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
+          <span class="label">${s.sendEmail}</span>
+        </button>
+      </form>
+      ${this.backLink()}
+    `;
+  }
+
+  private async onAddress(e: Event): Promise<void> {
+    const { email = '' } = this.fields(e);
+    this.email = email.trim();
+    const result = await this.run(() => Madauth.provider(this.primary).submitAddress({ email: this.email }));
+    if (!result) return;
+    if (!result.isSuccess || result.user) {
+      this.finish(this.primary, result.isSuccess ? { isSuccess: true, user: result.user! } : result);
+      return;
+    }
+    this.inboxPurpose = 'address';
+    this.view = 'check-inbox';
+  }
+
   private renderCheckInbox() {
     const s = this.strings;
     const lead = this.inboxPurpose === 'signin' ? s.signInInboxLead : s.inboxLead;
     return html`
       <p class="lead">${lead.before}<strong>${this.email}</strong>${lead.after}</p>
-      ${this.inboxPurpose === 'confirm' ? html`<p class="hint">${s.confirmProviderAddress(nameOfMethod(this.primary, s))}</p>` : null}
+      ${this.inboxPurpose === 'confirm' || this.inboxPurpose === 'address' ? html`<p class="hint">${s.confirmProviderAddress(nameOfMethod(this.primary, s))}</p>` : null}
       <form part="form" class="code" @submit=${this.onCode}>
         <div class="field">
           <label for="code">${s.code}</label>

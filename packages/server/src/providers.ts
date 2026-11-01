@@ -1,8 +1,9 @@
-// Sign-in providers, which admins configure while the server runs: Google, GitHub and generic OpenID Connect
-// providers (the kind `oidc`, e.g. GitLab, Okta, Keycloak; see oidc.ts). They are kept in the store
+// Sign-in providers, which admins configure while the server runs: Google, GitHub, Microsoft (see microsoft.ts) and
+// generic OpenID Connect providers (the kind `oidc`, e.g. GitLab, Okta, Keycloak; see oidc.ts). They are kept in the store
 // as one setting, `providers`, like the sign-in methods; each client secret is encrypted by the key service, so the
 // store alone doesn't reveal it. See "Providers" in docs/server.md.
 import type { KeyService } from './key-service.js';
+import { isTenant } from './microsoft.js';
 import { isIssuer } from './oidc.js';
 import type { Settings } from './settings.js';
 
@@ -15,17 +16,17 @@ export const PROVIDERS_SETTING = 'providers';
 export const PROVIDER_ISSUERS_SETTING = 'provider-issuers';
 
 /** The kinds of providers madAuth has. */
-export const PROVIDER_KINDS = ['google', 'github', 'oidc'] as const;
+export const PROVIDER_KINDS = ['google', 'github', 'microsoft', 'oidc'] as const;
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 /** The kinds that exist once, with the kind as their id. */
-export const BUILT_IN_KINDS = ['google', 'github'] as const;
+export const BUILT_IN_KINDS = ['google', 'github', 'microsoft'] as const;
 export type BuiltInKind = (typeof BUILT_IN_KINDS)[number];
 
 const isProviderKind = (value: unknown): value is ProviderKind => (PROVIDER_KINDS as readonly unknown[]).includes(value);
 const isBuiltInKind = (value: unknown): value is BuiltInKind => (BUILT_IN_KINDS as readonly unknown[]).includes(value);
 
 /** What a built-in provider's button says when the admin gives it no name. */
-const DEFAULT_NAMES: Record<BuiltInKind, string> = { google: 'Google', github: 'GitHub' };
+const DEFAULT_NAMES: Record<BuiltInKind, string> = { google: 'Google', github: 'GitHub', microsoft: 'Microsoft' };
 
 /** What an OpenID Connect provider's id looks like: it names its method, routes and accounts. */
 const PROVIDER_ID = /^[a-z][a-z0-9-]{1,31}$/;
@@ -34,6 +35,15 @@ export const RESERVED_IDS = ['password', 'authenticator', 'email-link', 'passkey
 
 /** Whether `value` can be an OpenID Connect provider's id, and so its method's id in the settings. */
 export const isProviderId = (value: unknown): value is string => typeof value === 'string' && PROVIDER_ID.test(value) && !RESERVED_IDS.includes(value);
+
+/**
+ * The kinds whose sign-in is the OpenID Connect providers' (routes/oidc.ts): their methods exist only while an
+ * admin has added the provider, by its id. Microsoft's id is its kind.
+ */
+export const isProviderMethodKind = (kind: ProviderKind): boolean => kind === 'oidc' || kind === 'microsoft';
+
+/** Whether `value` is the method of such a provider: an OpenID Connect provider's id, or `microsoft`. */
+export const isProviderMethod = (value: unknown): value is string => isProviderId(value) || value === 'microsoft';
 
 /** The scopes every OpenID Connect sign-in asks for; an admin may add more. */
 export const OIDC_SCOPES = ['openid', 'email', 'profile'];
@@ -58,6 +68,8 @@ export interface StoredProvider {
   scopes?: string[];
   /** OpenID Connect: whether its addresses count as verified without `email_verified` (the operator's own provider). */
   trustEmail?: boolean;
+  /** Microsoft: whose accounts sign in, `common`, `organizations`, `consumers` or a tenant id (see microsoft.ts). */
+  tenant?: string;
 }
 
 /**
@@ -74,17 +86,21 @@ export interface ProviderFields {
   scopes?: string[];
   /** OpenID Connect only. */
   trustEmail?: boolean;
+  /** Microsoft only. */
+  tenant?: string;
 }
 
 export type ProviderProblem = { error: 'invalid_provider'; message: string };
 
 const MAX_NAME = 64;
 const MAX_SECRET = 512;
-const FIELDS = ['kind', 'id', 'name', 'clientId', 'clientSecret', 'issuer', 'scopes', 'trustEmail'];
+const FIELDS = ['kind', 'id', 'name', 'clientId', 'clientSecret', 'issuer', 'scopes', 'trustEmail', 'tenant'];
 const OIDC_FIELDS = ['issuer', 'scopes', 'trustEmail'];
 const CLIENT_ID_PATTERNS: Record<ProviderKind, RegExp> = {
   google: /^[\w.-]+\.apps\.googleusercontent\.com$/,
   github: /^[A-Za-z0-9._-]{1,100}$/,
+  // The application (client) ID of the app registration: a GUID.
+  microsoft: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   oidc: /^[\x21-\x7E]{1,255}$/,
 };
 
@@ -114,18 +130,22 @@ function parseScopes(value: unknown): string[] | null {
   return scopes.length <= MAX_SCOPES && scopes.every((scope) => SCOPE.test(scope)) ? scopes : null;
 }
 
+/** What a provider of `kind` is called in the messages about its fields. */
+const KIND_NAMES: Record<ProviderKind, string> = { google: 'Google', github: 'GitHub', microsoft: 'Microsoft', oidc: 'OpenID Connect' };
+
 /**
  * The fields an admin sends for a provider of `kind`, checked. `adding` asks for what a new provider needs:
- * a client ID, and GitHub's secret, without which its sign-in can't work.
+ * a client ID, the secret of the kinds that exchange the code on the server, and Microsoft's tenant.
  */
 export function parseProviderFields(kind: ProviderKind, data: Record<string, unknown>, adding: boolean): ProviderFields | ProviderProblem {
   // A field madAuth doesn't have would otherwise be dropped without a word.
   const unknown = Object.keys(data).find((key) => !FIELDS.includes(key));
   if (unknown) return problem(`"${unknown}" is not a field of a provider: it has ${FIELDS.join(', ')}.`);
-  const { name, clientId, clientSecret, issuer, scopes, trustEmail } = data;
+  const { name, clientId, clientSecret, issuer, scopes, trustEmail, tenant } = data;
   const oidc = kind === 'oidc';
   const notHere = OIDC_FIELDS.find((field) => !oidc && data[field] !== undefined);
   if (notHere) return problem(`"${notHere}" is a field of OpenID Connect providers only.`);
+  if (kind !== 'microsoft' && tenant !== undefined) return problem('"tenant" is a field of the Microsoft provider only.');
   if (name === undefined ? adding && oidc : typeof name !== 'string' || !name.trim() || name.trim().length > MAX_NAME) {
     return problem(`name must be text of 1 to ${MAX_NAME} characters: the sign-in button says "Continue with <name>".`);
   }
@@ -135,7 +155,9 @@ export function parseProviderFields(kind: ProviderKind, data: Record<string, unk
         ? 'clientId must be the client ID of a Google OAuth client, ending with ".apps.googleusercontent.com".'
         : kind === 'github'
           ? 'clientId must be the client ID of a GitHub OAuth App.'
-          : 'clientId must be the client ID the provider gave madAuth: up to 255 characters, no spaces.',
+          : kind === 'microsoft'
+            ? 'clientId must be the application (client) ID of an app registration in Microsoft Entra, a GUID.'
+            : 'clientId must be the client ID the provider gave madAuth: up to 255 characters, no spaces.',
     );
   }
   const secretGiven = clientSecret !== undefined && clientSecret !== null;
@@ -143,8 +165,12 @@ export function parseProviderFields(kind: ProviderKind, data: Record<string, unk
     return problem(`clientSecret must be text of 1 to ${MAX_SECRET} characters${kind === 'google' ? ', or null to remove it' : ''}.`);
   }
   // GitHub only has the redirect flow, in which the server exchanges the code with the secret; madAuth is a
-  // confidential client of every OpenID Connect provider.
-  if (kind !== 'google' && (clientSecret === null || (adding && !secretGiven))) return problem(`A ${kind === 'github' ? 'GitHub' : 'OpenID Connect'} provider needs its clientSecret.`);
+  // confidential client of Microsoft and of every OpenID Connect provider.
+  if (kind !== 'google' && (clientSecret === null || (adding && !secretGiven))) return problem(`A ${KIND_NAMES[kind]} provider needs its clientSecret.`);
+  // No default: which accounts sign in is the operator's choice. It can change, since accounts are `<tid>:<oid>`.
+  if (kind === 'microsoft' && (tenant === undefined ? adding : !isTenant(tenant))) {
+    return problem('tenant must be "common" (work, school and personal accounts), "organizations", "consumers" or the id of one tenant (a GUID).');
+  }
   if (oidc && (issuer === undefined ? adding : !adding)) {
     return problem(adding ? 'An OpenID Connect provider needs its issuer, e.g. "https://gitlab.com".' : "An OpenID Connect provider's issuer can't change: its accounts belong to it. Add a new provider instead.");
   }
@@ -159,6 +185,7 @@ export function parseProviderFields(kind: ProviderKind, data: Record<string, unk
     ...(typeof issuer === 'string' ? { issuer } : {}),
     ...(extraScopes === undefined ? {} : { scopes: extraScopes }),
     ...(trustEmail === undefined ? {} : { trustEmail }),
+    ...(typeof tenant === 'string' ? { tenant: tenant.toLowerCase() } : {}),
   };
 }
 
@@ -187,7 +214,8 @@ function isStoredProvider(value: unknown): value is StoredProvider {
     typeof p.createdAt === 'number' &&
     typeof p.updatedAt === 'number' &&
     (p.kind !== 'oidc' ||
-      (isIssuer(p.issuer) && Array.isArray(p.scopes) && p.scopes.every((scope) => typeof scope === 'string') && typeof p.trustEmail === 'boolean'))
+      (isIssuer(p.issuer) && Array.isArray(p.scopes) && p.scopes.every((scope) => typeof scope === 'string') && typeof p.trustEmail === 'boolean')) &&
+    (p.kind !== 'microsoft' || isTenant(p.tenant))
   );
 }
 
@@ -239,6 +267,7 @@ export class Providers {
       createdAt: now,
       updatedAt: now,
       ...(kind === 'oidc' ? { issuer: fields.issuer!, scopes: fields.scopes ?? [], trustEmail: fields.trustEmail ?? false } : {}),
+      ...(kind === 'microsoft' ? { tenant: fields.tenant! } : {}),
     };
     const added = await this.settings.change<unknown>(
       PROVIDERS_SETTING,
@@ -270,6 +299,7 @@ export class Providers {
           ...(secret === undefined ? {} : { secret }),
           ...(fields.scopes === undefined ? {} : { scopes: fields.scopes }),
           ...(fields.trustEmail === undefined ? {} : { trustEmail: fields.trustEmail }),
+          ...(fields.tenant === undefined ? {} : { tenant: fields.tenant }),
           updatedAt: Date.now(),
         };
         return providers.map((p) => (p.id === id ? updated! : p));
@@ -352,8 +382,11 @@ export class Providers {
   }
 }
 
+/** The kinds madAuth before 0.7 had, from environment variables. */
+const IMPORTED_KINDS = ['google', 'github'] as const;
+
 /** Where a provider of madAuth before 0.7 came from: its environment variables. */
-const VARIABLES: Record<BuiltInKind, string> = {
+const VARIABLES: Record<(typeof IMPORTED_KINDS)[number], string> = {
   google: 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET',
   github: 'GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET',
 };
@@ -368,7 +401,7 @@ export async function importProviders(
   configured: { google?: { clientId: string; clientSecret?: string }; github?: { clientId: string; clientSecret: string } },
 ): Promise<void> {
   const stored = await providers.list();
-  for (const kind of BUILT_IN_KINDS) {
+  for (const kind of IMPORTED_KINDS) {
     const from = configured[kind];
     if (!from) continue;
     const name = DEFAULT_NAMES[kind];

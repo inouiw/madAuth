@@ -313,14 +313,15 @@ Next steps:
      Madauth.onAuthStateChanged((user) => console.log(user)); // the user, or null
      signInButton.onclick = () => Madauth.showSignInDialog();
 
-5. Google and GitHub sign-in are providers in the store; the sign-in dialog shows a button for each one that is on.
+5. Google, GitHub and Microsoft sign-in are providers in the store; the sign-in dialog shows a button for each one that is on.
    Until the first admin exists, the server prints a setup token when it starts. Add a provider with it, e.g.:
 
      curl -X POST http://localhost:8787/auth/admin/providers/add -H 'Authorization: Bearer <setup token>' \\
        -H 'Content-Type: application/json' -d '{"kind":"google","clientId":"<client ID>","clientSecret":"<client secret>"}'
 
    Register what it answers as callbackUrl in your Google OAuth client (Authorized redirect URIs; JavaScript origins: http://localhost:5173 and http://localhost)
-   or GitHub OAuth App (Authorization callback URL), and switch the provider on with /auth/admin/settings/set.
+   GitHub OAuth App (Authorization callback URL) or Microsoft Entra app registration (Web redirect URI), and switch the
+   provider on with /auth/admin/settings/set.
    Later an admin does this with Madauth.admin.addProvider. See "Providers" in docs/server.md.
 
 6. Never commit ${file}: it holds the signing key and your secrets. Production needs an https app URL

@@ -5,7 +5,7 @@ import { Admins } from './admins.js';
 import { ApiKeys, MADAUTH_SCOPES, ScopeCatalog, apiKeyInfo, grantedScopes, type MadauthScope } from './api-keys.js';
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
-import { Providers, importProviders, parseProviderFields, parseProviderKind, providerOf, type StoredProvider } from './providers.js';
+import { Providers, importProviders, isProviderMethodKind, parseProviderFields, parseProviderKind, providerOf, type StoredProvider } from './providers.js';
 import { SETUP_TOKEN_PREFIX, Setup } from './setup.js';
 import { discover } from './oidc.js';
 import type { KeyService } from './key-service.js';
@@ -222,7 +222,7 @@ export function createApp(config: MadauthConfig): Hono {
       ...fixedMethods,
       google: providerOf({ providers: stored }, 'google'),
       github: providerOf({ providers: stored }, 'github'),
-      oidc: new Set(stored.filter((provider) => provider.kind === 'oidc').map((provider) => provider.id)),
+      oidc: new Set(stored.filter((provider) => isProviderMethodKind(provider.kind)).map((provider) => provider.id)),
     };
     return {
       settings: settings.methodsFrom(methodsValue, initialMethods(has)),
@@ -790,8 +790,8 @@ export function createApp(config: MadauthConfig): Hono {
     password,
     loginUrl,
     methods: Object.fromEntries(
-      // madAuth's own methods, then the OpenID Connect providers' by their ids.
-      [...METHODS, ...now.providers.filter((provider) => provider.kind === 'oidc').map((provider) => provider.id)].map((method) => [
+      // madAuth's own methods, then the OpenID Connect providers' and Microsoft's by their ids.
+      [...METHODS, ...now.providers.filter((provider) => isProviderMethodKind(provider.kind)).map((provider) => provider.id)].map((method) => [
         method,
         {
           configured: now.configured(method),
@@ -902,6 +902,7 @@ export function createApp(config: MadauthConfig): Hono {
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
     ...(provider.kind === 'oidc' ? { issuer: provider.issuer, scopes: provider.scopes, trustEmail: provider.trustEmail } : {}),
+    ...(provider.kind === 'microsoft' ? { tenant: provider.tenant } : {}),
   });
   /** Who made a change, as a `provider.*` event tells it. */
   const changedBy = (caller: { by: string | null; setup: boolean }) => ({ by: caller.by, ...(caller.setup ? { bySetupToken: true } : {}) });

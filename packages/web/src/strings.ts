@@ -71,6 +71,11 @@ export const en = {
   emailSentAgain: 'We sent the email again.',
   /** Under the inbox's lead after a sign-in through a provider that doesn't vouch for the address. */
   confirmProviderAddress: (name: string) => `${name} doesn’t confirm this address, so we confirm it once before you sign in with ${name}.`,
+  /** After a sign-in through a provider (Microsoft, an OpenID Connect provider) that told no address: the user types one. */
+  addressStep: {
+    heading: 'Your email address',
+    lead: (name: string) => `${name} didn’t tell us your email address. Enter it, and we’ll send you a link and a code to confirm it.`,
+  },
   chooseNewPassword: 'Choose a new password',
 
   // The e-mail link
@@ -320,9 +325,14 @@ export const en = {
     on: (policy: string) => `On, ${policy}`,
     off: 'Off',
     policies: { none: 'no second factor', optional: 'second factor optional', required: 'second factor required' },
-    kinds: { google: 'Google', github: 'GitHub', oidc: 'OpenID Connect' },
+    kinds: { google: 'Google', github: 'GitHub', microsoft: 'Microsoft', oidc: 'OpenID Connect' },
     chooseKind: 'Which kind of provider?',
-    kindHints: { google: 'One Tap, and with a client secret the redirect sign-in', github: 'Through an OAuth App', oidc: 'GitLab, Keycloak, Okta, Auth0, your company’s own…' },
+    kindHints: {
+      google: 'One Tap, and with a client secret the redirect sign-in',
+      github: 'Through an OAuth App',
+      microsoft: 'Personal accounts and Microsoft Entra ID work accounts',
+      oidc: 'GitLab, Keycloak, Okta, Auth0, your company’s own…',
+    },
     addHeading: (kind: string) => `Add ${kind}`,
     id: 'Id',
     idHint: 'Lowercase letters, digits and dashes, e.g. “gitlab”. It can’t change later.',
@@ -339,6 +349,16 @@ export const en = {
     scopesHint: 'Separated by spaces; openid, email and profile are always asked for.',
     trustEmail: 'Its addresses are verified',
     trustEmailHint: 'Signs in with addresses it doesn’t mark as verified. Only for a provider whose addresses its operator checks, e.g. your company’s own.',
+    tenant: 'Accounts',
+    tenants: {
+      common: 'Work, school and personal accounts',
+      organizations: 'Work and school accounts',
+      consumers: 'Personal accounts only',
+      single: 'One organization’s accounts',
+    },
+    choose: 'Choose…',
+    tenantId: 'Tenant ID',
+    tenantIdHint: 'The directory (tenant) ID of the organization, a GUID from the app registration’s overview.',
     callbackUrl: 'Callback URL',
     callbackHint: 'Register it at the provider as the redirect URI.',
     copy: 'Copy',
@@ -483,6 +503,10 @@ export const de: Strings = {
   },
   emailSentAgain: 'Wir haben die E-Mail erneut gesendet.',
   confirmProviderAddress: (name) => `${name} bestätigt diese Adresse nicht, deshalb bestätigen wir sie einmal, bevor Sie sich mit ${name} anmelden.`,
+  addressStep: {
+    heading: 'Ihre E-Mail-Adresse',
+    lead: (name) => `${name} hat uns Ihre E-Mail-Adresse nicht mitgeteilt. Geben Sie sie ein, und wir senden Ihnen einen Link und einen Code, um sie zu bestätigen.`,
+  },
   chooseNewPassword: 'Neues Passwort wählen',
 
   emailLink: {
@@ -689,9 +713,14 @@ export const de: Strings = {
     on: (policy) => `An, ${policy}`,
     off: 'Aus',
     policies: { none: 'kein zweiter Faktor', optional: 'zweiter Faktor optional', required: 'zweiter Faktor erforderlich' },
-    kinds: { google: 'Google', github: 'GitHub', oidc: 'OpenID Connect' },
+    kinds: { google: 'Google', github: 'GitHub', microsoft: 'Microsoft', oidc: 'OpenID Connect' },
     chooseKind: 'Welche Art von Anbieter?',
-    kindHints: { google: 'One Tap, und mit Client-Secret die Anmeldung per Weiterleitung', github: 'Über eine OAuth App', oidc: 'GitLab, Keycloak, Okta, Auth0, der Ihres Unternehmens…' },
+    kindHints: {
+      google: 'One Tap, und mit Client-Secret die Anmeldung per Weiterleitung',
+      github: 'Über eine OAuth App',
+      microsoft: 'Private Konten und Geschäftskonten von Microsoft Entra ID',
+      oidc: 'GitLab, Keycloak, Okta, Auth0, der Ihres Unternehmens…',
+    },
     addHeading: (kind) => `${kind} hinzufügen`,
     id: 'ID',
     idHint: 'Kleinbuchstaben, Ziffern und Bindestriche, z. B. „gitlab“. Sie lässt sich später nicht ändern.',
@@ -708,6 +737,16 @@ export const de: Strings = {
     scopesHint: 'Durch Leerzeichen getrennt; openid, email und profile werden immer angefragt.',
     trustEmail: 'Seine Adressen sind bestätigt',
     trustEmailHint: 'Meldet auch mit Adressen an, die er nicht als bestätigt kennzeichnet. Nur für einen Anbieter, dessen Betreiber die Adressen prüft, z. B. den Ihres Unternehmens.',
+    tenant: 'Konten',
+    tenants: {
+      common: 'Geschäfts-, Schul- und private Konten',
+      organizations: 'Geschäfts- und Schulkonten',
+      consumers: 'Nur private Konten',
+      single: 'Die Konten einer Organisation',
+    },
+    choose: 'Bitte wählen…',
+    tenantId: 'Mandanten-ID',
+    tenantIdHint: 'Die Verzeichnis-ID (Mandanten-ID) der Organisation, eine GUID aus der Übersicht der App-Registrierung.',
     callbackUrl: 'Callback-URL',
     callbackHint: 'Tragen Sie sie beim Anbieter als Weiterleitungs-URI ein.',
     copy: 'Kopieren',

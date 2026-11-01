@@ -147,6 +147,17 @@ export async function verifyIdToken(
   return payload;
 }
 
+/** An address as `preferred_username` may hold one; at many providers it is a login name or a phone number instead. */
+const LOOKS_LIKE_ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * What the dialog suggests when the provider tells no address and the user types one: the ID token's
+ * `preferred_username`, when it looks like an address. Only a suggestion: the confirmation e-mail proves it.
+ */
+export function suggestedAddress(claims: JWTPayload): string | undefined {
+  return typeof claims.preferred_username === 'string' && LOOKS_LIKE_ADDRESS.test(claims.preferred_username) ? claims.preferred_username : undefined;
+}
+
 /** Whether a claims set says its address is verified: `true`, and `"true"`, which some providers send. */
 const isVerified = (value: unknown) => value === true || value === 'true';
 
