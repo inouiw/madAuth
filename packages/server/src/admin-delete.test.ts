@@ -13,6 +13,7 @@ import {
   signUpVerified,
   stubGitHub,
 } from './test/helpers.js';
+import { Users } from './users.js';
 
 type App = ReturnType<typeof passwordApp>['app'];
 
@@ -120,5 +121,17 @@ describe('deleting a user as an admin', () => {
 
     expect((await deleteUser(app, 'ada@example.com', admin)).status).toBe(200);
     expect(revoked.revocations()).toHaveLength(1);
+  });
+
+  it('D5: a user whose claims changed after the check stays: one who just got the role admin is not deleted', async () => {
+    const { store, userId } = await withAdminAndGrace();
+    const users = new Users(store);
+    // The route checked Grace without claims; meanwhile another admin gave her the role.
+    await setClaims(store, grace.email, { roles: ['admin'] });
+
+    expect(await users.deleteById(userId, null)).toBe(false);
+    expect(await store.findMany('user', { id: userId })).toHaveLength(1);
+    await setClaims(store, grace.email, null);
+    expect(await users.deleteById(userId, null)).toBe(true);
   });
 });

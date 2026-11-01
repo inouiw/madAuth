@@ -5,7 +5,7 @@ import type { KeyService } from './key-service.js';
 import { isProviderId } from './providers.js';
 import { codeHash, codeHashes, generateCode, generateLinkToken, hashLinkToken, safeEqual } from './password.js';
 import { ALWAYS_SIGN_IN, FORMER_AUTHENTICATOR_ID, SIGN_IN_METHODS, type SecondFactor } from './settings.js';
-import type { Row, StoreAdapter } from './store/schema.js';
+import type { Row, StoreAdapter, Where } from './store/schema.js';
 import type { MadauthUser } from './user.js';
 
 export interface StoredUser {
@@ -687,13 +687,16 @@ export class Users {
   }
 
   /**
-   * Deletes the user and everything stored for them. Resolves to false if there is no such user (any more).
+   * Deletes the user and everything stored for them. Resolves to false if there is no such user (any more), or
+   * with `ifClaims` (the stored claims as JSON, null for none) if their claims are no longer these.
    */
-  async deleteById(id: string): Promise<boolean> {
+  async deleteById(id: string, ifClaims?: string | null): Promise<boolean> {
     const user = await this.findById(id);
     if (!user) return false;
     // The user record goes first: from then on nobody can sign in, and a sign-up with the address starts afresh.
-    if ((await this.store.delete('user', { id: user.id })) !== 1) return false;
+    // With `ifClaims`, only while the claims are still the ones the caller checked.
+    const where: Where = ifClaims === undefined ? { id: user.id } : { id: user.id, claims: ifClaims };
+    if ((await this.store.delete('user', where)) !== 1) return false;
     // The user is gone now, so the deletion has to finish: a retry would find no session and send no event.
     // Records left behind belong to a user ID that no longer exists; a Google sign-in that meets such an
     // account removes it.

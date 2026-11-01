@@ -603,6 +603,19 @@ export function createApp(config: MadauthConfig): Hono {
 
   // --- Account ---
 
+  /**
+   * Deletes the user with all their sign-in methods, then takes back GitHub's authorization with the token kept from
+   * their last sign-in (best effort). With `ifClaims`, only while their claims are still these. False when nothing
+   * was deleted: the user is gone, or their claims changed.
+   */
+  const deleteUser = async (userId: string, ifClaims?: string | null): Promise<boolean> => {
+    const githubAccount = await users.githubAccount(userId);
+    const github = githubAccount ? await githubApp() : null;
+    const deleted = await users.deleteById(userId, ifClaims);
+    if (deleted && github) await revokeGrant(github, keys, githubAccount);
+    return deleted;
+  };
+
   app.post('/auth/account/delete', async (c) => {
     const user = await currentSession(c);
     if (!user) return c.json({ error: 'no_session' }, 401);
@@ -630,12 +643,8 @@ export function createApp(config: MadauthConfig): Hono {
     }
     // Read before the deletion: the web library revokes the app's access to this Google account with it.
     const googleSub = await users.googleSub(user.id);
-    // GitHub's authorization goes once the user is gone, with the token kept from the last sign-in.
-    const githubAccount = await users.githubAccount(user.id);
-    const github = githubAccount ? await githubApp() : null;
     // The user with all their sign-in methods: the session proves who they are, whichever way they signed in.
-    const deleted = await users.deleteById(user.id);
-    if (deleted && github) await revokeGrant(github, keys, githubAccount);
+    await deleteUser(user.id);
     clearSession(c);
     await ctx.emit('user.deleted', { user });
     return googleSub ? c.json({ googleSub }) : c.body(null, 204);
@@ -1068,12 +1077,12 @@ export function createApp(config: MadauthConfig): Hono {
     if (isAdmin({ claims: claimsFromJson(user.claims) })) {
       return c.json({ error: 'forbidden', message: `The user has the role "${ADMIN_ROLE}": take it from them first.` }, 403);
     }
-    // GitHub's authorization goes with the user, as when they delete their account.
-    const githubAccount = await users.githubAccount(user.id);
-    const github = githubAccount ? await githubApp() : null;
-    // Another request deleted the user meanwhile: it sent the event.
-    if (!(await users.deleteById(user.id))) return noUser(c);
-    if (github) await revokeGrant(github, keys, githubAccount);
+    // Only with the claims just checked: a user who got the role meanwhile stays.
+    if (!(await deleteUser(user.id, user.claims ?? null))) {
+      // Gone: another request deleted the user and sent the event.
+      if (!(await users.findById(user.id))) return noUser(c);
+      return c.json({ error: 'forbidden', message: "The user's claims changed meanwhile: check them and try again." }, 403);
+    }
     await ctx.emit('user.deleted', { user: toMadauthUser(user), by: caller.email, ...byApiKey(caller) });
     return c.json({ email: user.emailNormalized, userId: user.id });
   });

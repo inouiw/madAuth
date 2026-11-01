@@ -981,6 +981,7 @@ export function fakeServer(): FakeServer {
         if (!email?.includes('@')) return json({ error: 'invalid_email', message: 'invalid' }, 400);
         if (!server.accounts.has(email)) return json({ error: 'user_not_found', message: 'no user' }, 404);
         if (server.user.email === email) return json({ error: 'own_admin_role', message: 'not yourself' }, 403);
+        if ((server.claims.get(email)?.roles as string[] | undefined)?.includes('admin')) return json({ error: 'forbidden', message: 'an admin' }, 403);
         const userId = userFor(email).id;
         server.accounts.delete(email);
         server.claims.delete(email);
