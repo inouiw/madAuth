@@ -363,7 +363,7 @@ describe('renderButton', () => {
       nonce: 'n1',
       context: 'use',
       onCredential,
-      button: { theme: 'filled_black', width: 300 },
+      button: { theme: 'filled_black', width: 300, state: 'b1' },
       uxMode: 'popup',
     });
 
@@ -380,7 +380,7 @@ describe('renderButton', () => {
       }),
     );
     expect(gis.id.initialize.mock.lastCall![0]).not.toHaveProperty('login_uri');
-    expect(gis.id.renderButton).toHaveBeenCalledWith(wrapper, { type: 'standard', theme: 'filled_black', width: 300 });
+    expect(gis.id.renderButton).toHaveBeenCalledWith(wrapper, { type: 'standard', theme: 'filled_black', width: 300, state: 'b1' });
 
     gis.credential('tok', 'auto');
     gis.credential('tok2', 'btn');

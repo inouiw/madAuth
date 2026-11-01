@@ -13,6 +13,8 @@ export interface GsiButtonConfiguration {
   width?: number | string;
   /** A BCP 47 tag; Google's default is the browser's language. */
   locale?: string;
+  /** Google returns it with the ID token, to tell several buttons on a page apart; `onCredential` doesn't pass it on. */
+  state?: string;
   click_listener?: () => void;
 }
 
@@ -20,6 +22,8 @@ export interface GsiButtonConfiguration {
 export interface CredentialResponse {
   credential: string;
   select_by?: string;
+  /** The `state` of the button the user signed in with, if it had one. */
+  state?: string;
 }
 
 /** What `google.accounts.id.initialize` takes, see https://developers.google.com/identity/gsi/web/reference/js-reference#IdConfiguration. */
