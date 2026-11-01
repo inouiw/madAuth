@@ -160,15 +160,13 @@ async function fedcmSignIn({ clientId, nonce, autoSelect, context, signal }: Sig
     signal: controller.signal,
   } as CredentialRequestOptions;
   const result = await navigator.credentials.get(request).then(
-    (credential) => {
+    (credential): CredentialResult => {
       const identity = credential as (Credential & { token?: string; isAutoSelected?: boolean }) | null;
-      return identity?.token
-        ? ({
-            isSuccess: true,
-            idToken: identity.token,
-            isAutoSelected: identity.isAutoSelected ?? false,
-          } as CredentialResult)
-        : fail('skipped', 'the browser answered without a token');
+      if (!identity?.token) return fail('skipped', 'the browser answered without a token');
+      const idToken = idTokenOf(identity.token);
+      return idToken
+        ? { isSuccess: true, idToken, isAutoSelected: identity.isAutoSelected ?? false }
+        : fail('error', 'the browser answered with a token that holds no id_token');
     },
     (e: unknown) => fedcmFailure(e, controller.signal.aborted),
   );
@@ -176,6 +174,29 @@ async function fedcmSignIn({ clientId, nonce, autoSelect, context, signal }: Sig
   // The listener on the caller's signal goes with the controller.
   controller.abort();
   return result;
+}
+
+/**
+ * The ID token in the token the browser's FedCM API answers with. With the `params` this package sends (as Google's
+ * own script does), Google's token is JSON with the ID token in `id_token`, e.g.
+ * `{"iss":"https://accounts.google.com","id_token":"eyJ…","authuser":"0","prompt":"none"}`. A JWT never starts with
+ * `{` (it is base64url), so any other token is taken as the ID token itself. Undefined for JSON without an ID token.
+ */
+function idTokenOf(token: string): string | undefined {
+  const trimmed = token.trim();
+  if (!trimmed.startsWith('{')) return token;
+  const idToken = parseJson(trimmed)?.id_token;
+  return typeof idToken === 'string' && idToken ? idToken : undefined;
+}
+
+/** `JSON.parse` for an object, or undefined: the browser's answer is not ours to trust to be well-formed. */
+function parseJson(text: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function fedcmFailure(e: unknown, aborted: boolean): CredentialResult {

@@ -113,7 +113,8 @@ describe('GoogleFedcm', () => {
     let request: { identity: { providers: { clientId: string; nonce: string }[] }; mediation: string } | undefined;
     vi.stubGlobal('IdentityCredential', class {});
     Object.defineProperty(navigator, 'credentials', {
-      value: { get: vi.fn(async (options: unknown) => { request = options as typeof request; return { token: 'fedcm-token', isAutoSelected: false }; }) },
+      // Google answers FedCM with JSON around the ID token: the server gets the ID token alone.
+      value: { get: vi.fn(async (options: unknown) => { request = options as typeof request; return { token: JSON.stringify({ iss: 'https://accounts.google.com', id_token: 'fedcm-token', authuser: '0' }), isAutoSelected: false }; }) },
       configurable: true,
     });
     const listener = vi.fn();
