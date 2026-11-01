@@ -20,7 +20,7 @@ Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/age
 - When a change can reasonably be implemented in more than one way, ask the user which approach they prefer before writing code.
 - Ask clarifying questions whenever requirements, scope, or expected behavior are ambiguous — don't guess silently.
 - **A question about a design or approach decision spells out the consequences of each answer**: what changes for madAuth's users and operators, what it costs, and what it rules out later — enough for the developer to decide without reading the code. Give your recommendation and its reason.
-- **Offer "Explain in more depth" as one of the answers** (an option in `AskUserQuestion`; leave it out only when the real choices need all four slots), so the developer can ask for more before committing to a choice. That answer, like any question back, decides nothing: explain, then ask the same question again.
+- **Offer "Explain in more depth" as one of the answers** (an option in `AskUserQuestion`; leave it out only when the real choices need all four slots, and then say in the question text that answering "explain" gets a deeper explanation), so the developer can ask for more before committing to a choice. That answer, like any question back, decides nothing: explain, then ask the same question again.
 - **Where it informs the decision, research how similar products and libraries solve it before asking** (e.g. Auth0, Clerk, Keycloak, Better Auth, Firebase Auth, Supabase Auth) and say what they chose, with links to their docs.
 
 ## Repository structure
