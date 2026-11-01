@@ -28,6 +28,7 @@ madAuth's scopes, one per admin task, need the role `admin`:
 | `madauth:settings:write` | `POST /auth/admin/settings/set` |
 | `madauth:sign-in:reset` | `POST /auth/admin/sign-in/reset` |
 | `madauth:users:read` | `POST /auth/admin/users/search` |
+| `madauth:users:delete` | `POST /auth/admin/users/delete` |
 | `madauth:providers:read` | `POST /auth/admin/providers/list` |
 | `madauth:clients:read` | `POST /auth/admin/clients/list` |
 

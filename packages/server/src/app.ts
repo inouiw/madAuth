@@ -1051,6 +1051,33 @@ export function createApp(config: MadauthConfig): Hono {
     return c.json({ email: user.emailNormalized, userId: user.id });
   });
 
+  // Deleting a user for good, as if they never signed up, e.g. a test account or on request.
+  // See "Deleting a user" in docs/server.md.
+  app.post('/auth/admin/users/delete', async (c) => {
+    const caller = await adminChange(c, 'madauth:users:delete');
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    if (!isValidEmail(data.email)) return invalidEmail(c);
+    const user = await users.findByEmail(normalizeEmail(data.email));
+    if (!user) return noUser(c);
+    // No admin is deleted through the admin API: an admin never removes themselves, and a key with the scope
+    // can't remove the admins. Another admin takes the role first (claims/set).
+    if (user.id === caller.id) {
+      return ownAdminRole(c, `You have the role "${ADMIN_ROLE}", so you can't delete yourself: another admin takes the role from you first.`);
+    }
+    if (isAdmin({ claims: claimsFromJson(user.claims) })) {
+      return c.json({ error: 'forbidden', message: `The user has the role "${ADMIN_ROLE}": take it from them first.` }, 403);
+    }
+    // GitHub's authorization goes with the user, as when they delete their account.
+    const githubAccount = await users.githubAccount(user.id);
+    const github = githubAccount ? await githubApp() : null;
+    // Another request deleted the user meanwhile: it sent the event.
+    if (!(await users.deleteById(user.id))) return noUser(c);
+    if (github) await revokeGrant(github, keys, githubAccount);
+    await ctx.emit('user.deleted', { user: toMadauthUser(user), by: caller.email, ...byApiKey(caller) });
+    return c.json({ email: user.emailNormalized, userId: user.id });
+  });
+
   // A user's API keys, e.g. to revoke one that leaked. Only with a session: a key never manages keys.
   app.post('/auth/admin/api-keys/list', async (c) => {
     const caller = await admin(c);

@@ -117,6 +117,20 @@ describe('Madauth.admin', () => {
     expect(await Madauth.admin.resetSignIn('grace@example.com')).toMatchObject({ isSuccess: false, error: { code: 'forbidden' } });
   });
 
+  it('an admin deletes a user by address', async () => {
+    const server = fakeServer();
+    server.user = admin;
+    await Madauth.initialize({ serverUrl: SERVER, providers: [] });
+
+    expect(await Madauth.admin.deleteUser('grace@example.com')).toEqual({ isSuccess: true, userId: 'usr_grace' });
+
+    expect(server.requests.at(-1)).toMatchObject({ method: 'POST', url: `${SERVER}/auth/admin/users/delete`, body: { email: 'grace@example.com' } });
+    expect(server.accounts.has('grace@example.com')).toBe(false);
+    expect(await Madauth.admin.deleteUser('grace@example.com')).toMatchObject({ isSuccess: false, error: { code: 'user_not_found' } });
+    server.user = ada;
+    expect(await Madauth.admin.deleteUser('ada@example.com')).toMatchObject({ isSuccess: false, error: { code: 'forbidden' } });
+  });
+
   it('an admin searches users page by page, with the filters in the body', async () => {
     const server = fakeServer();
     server.user = admin;
