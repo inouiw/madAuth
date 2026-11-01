@@ -1,6 +1,6 @@
 {
   "name": "@madauth/google-identity",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Get a Google ID token in the browser: the browser's FedCM API, Google One Tap and Google's sign-in button, without a backend and without dependencies.",
   "license": "MIT",
   "author": "David Neuy",
