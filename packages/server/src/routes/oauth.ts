@@ -31,6 +31,8 @@ export const REDIRECT_LINKED_PARAM = 'madauth_linked';
 export const NEXT_EMAIL_CONFIRMATION = 'email-confirmation';
 /** Hash parameter next to it: the address the e-mail went to, masked (`l•••@example.com`), for the page to show. */
 export const REDIRECT_EMAIL_PARAM = 'madauth_email';
+/** The next step after a provider that told no address: the user types one, which its confirmation e-mail proves. */
+export const NEXT_EMAIL_ADDRESS = 'email-address';
 
 const OAUTH_COOKIE = 'madauth_oauth';
 const OAUTH_TYP = 'madauth-oauth-state+jwt';
@@ -151,6 +153,13 @@ export function redirectToConfirmation(c: Context, returnTo: string, method: str
   return c.redirect(url.href, 302);
 }
 
+/** The way back to the app after a sign-in whose provider told no address: the step and the method (the pending account's cookie is set). */
+export function redirectToAddress(c: Context, returnTo: string, method: string): Response {
+  const url = new URL(returnTo);
+  url.hash = `${REDIRECT_NEXT_PARAM}=${NEXT_EMAIL_ADDRESS}&${REDIRECT_METHOD_PARAM}=${method}`;
+  return c.redirect(url.href, 302);
+}
+
 /** A sign-in provider whose profiles {@link resolveProviderUser} resolves: its method id, and its name for messages. */
 export interface OAuthProvider {
   /** Its method: madAuth's own id, or an OpenID Connect provider's id. */
@@ -160,7 +169,7 @@ export interface OAuthProvider {
 
 /** What the provider proved about the account that signed in. */
 export interface ProviderProfile {
-  /** The account's key, by which a returning account is known: `google:<sub>` or `github:<id>`. */
+  /** The account's key, by which a returning account is known: `google:<sub>`, `github:<id>`, `microsoft:<tid>:<oid>`. */
   key: string;
   /** The address, verified by the provider. */
   email: string;
@@ -347,17 +356,20 @@ export async function resolveUnconfirmedProviderUser(
 
 export type LinkResult = { ok: true } | { ok: false; error: 'account_taken'; message: string };
 
+/** A profile to link: the signed-in user is the proof, so the account may come without an address (some at Microsoft and OpenID Connect providers do). */
+export type LinkedProfile = Omit<ProviderProfile, 'email'> & { email?: string };
+
 /**
  * Adds a verified provider account to the methods of `user`, who signed in recently: from then on it signs
  * them in too, whatever address it has. An account that belongs to another user stays theirs. Emits
  * `user.method_added`.
  */
-export async function linkProviderAccount(ctx: AppContext, provider: OAuthProvider, user: StoredUser, profile: ProviderProfile): Promise<LinkResult> {
+export async function linkProviderAccount(ctx: AppContext, provider: OAuthProvider, user: StoredUser, profile: LinkedProfile): Promise<LinkResult> {
   const { users } = ctx;
   const taken: LinkResult = { ok: false, error: 'account_taken', message: `This ${provider.name} account signs in another user. Use another one.` };
   const existing = await users.findAccountByKey(profile.key);
   if (existing?.userId === user.id) {
-    await users.updateAccount(existing.id, { email: profile.email, ...(profile.secret ? { secret: profile.secret } : {}) });
+    await users.updateAccount(existing.id, { email: profile.email ?? null, ...(profile.secret ? { secret: profile.secret } : {}) });
     return { ok: true };
   }
   if (existing) {
@@ -375,7 +387,7 @@ export async function linkProviderAccount(ctx: AppContext, provider: OAuthProvid
  * started it, if they are still signed in at this browser (the session cookie comes along on the redirect),
  * and sends the browser back with `madauth_linked` or the error. Null for a flow that signs in.
  */
-export async function finishLink(c: Context, ctx: AppContext, provider: OAuthProvider, oauth: OAuthState, profile: ProviderProfile): Promise<Response | null> {
+export async function finishLink(c: Context, ctx: AppContext, provider: OAuthProvider, oauth: OAuthState, profile: LinkedProfile): Promise<Response | null> {
   if (!oauth.link) return null;
   const back = redirectBack(c, oauth.returnTo, provider.method);
   const session = await ctx.currentUser(c);

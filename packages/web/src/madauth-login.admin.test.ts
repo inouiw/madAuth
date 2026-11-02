@@ -70,7 +70,7 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     await click('[data-action="add-provider"]');
     expect(text('h2')).toBe('Add a provider');
     // Google is there already: GitHub and OpenID Connect are left.
-    expect($$('[data-kind]').map((row) => row.dataset.kind)).toEqual(['github', 'oidc']);
+    expect($$('[data-kind]').map((row) => row.dataset.kind)).toEqual(['github', 'microsoft', 'oidc']);
     await click('[data-kind="oidc"]');
     expect(text('h2')).toBe('Add OpenID Connect');
 
@@ -115,6 +115,46 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
 
     await click('[data-action="done"]');
     expect(await result).toEqual({ isSuccess: true });
+  });
+
+  it('DA8: adds Microsoft with whose accounts sign in, one organization’s by its tenant id, and changes it later', async () => {
+    const { server } = await openAdmin();
+    await click('[data-action="add-provider"]');
+    await click('[data-kind="microsoft"]');
+    expect(text('h2')).toBe('Add Microsoft');
+    expect(text('.callback-url')).toBe(`${SERVER}/auth/providers/microsoft/callback`);
+    expect($$('select[name="tenantChoice"] option').map((option) => option.textContent)).toEqual([
+      'Choose…',
+      'Work, school and personal accounts',
+      'Work and school accounts',
+      'Personal accounts only',
+      'One organization’s accounts',
+    ]);
+    expect($('input[name="tenantId"]')).toBeNull();
+    const tenant = $<HTMLSelectElement>('select[name="tenantChoice"]')!;
+    tenant.value = 'single';
+    tenant.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    await type('tenantId', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    await type('clientId', '11111111-2222-3333-4444-555555555555');
+    await type('clientSecret', 'ms-secret');
+    await save();
+
+    expect(rows()).toContain('Microsoft Microsoft · Off');
+    expect(sent(server, '/auth/admin/providers/add')).toEqual([
+      { kind: 'microsoft', clientId: '11111111-2222-3333-4444-555555555555', clientSecret: 'ms-secret', tenant: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' },
+    ]);
+
+    // The form shows the tenant again, and sends only a change.
+    await click('[data-provider="microsoft"]');
+    expect($<HTMLSelectElement>('select[name="tenantChoice"]')!.value).toBe('single');
+    expect($<HTMLInputElement>('input[name="tenantId"]')!.value).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    const change = $<HTMLSelectElement>('select[name="tenantChoice"]')!;
+    change.value = 'organizations';
+    change.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    await save();
+    expect(sent(server, '/auth/admin/providers/update')).toEqual([{ id: 'microsoft', tenant: 'organizations' }]);
   });
 
   it('DA2: changes only what changed, keeps the secret when it is left empty, and switches the provider off', async () => {

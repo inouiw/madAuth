@@ -1,5 +1,11 @@
 # Upgrading
 
+## To 0.7.4
+
+- **New: Microsoft sign-in**, for personal Microsoft accounts and Entra ID work or school accounts. An admin adds it with an Entra app registration: `addProvider({ kind: 'microsoft', clientId, clientSecret, tenant })`, where `tenant` is `common`, `organizations`, `consumers` or one tenant's id, and switches on the method `microsoft`; the dialog then shows "Continue with Microsoft" by itself. An address counts as verified only with the optional claim `xms_edov`; others are confirmed by e-mail once. Nothing changes until an admin adds it. See [Microsoft setup](server.md#microsoft-setup) and [Microsoft security](microsoft-security.md).
+- **A provider that tells no address** (Microsoft, or an OpenID Connect provider) no longer ends the sign-in with `email_unverified`: the user types an address, which its confirmation e-mail proves (the new pending step `email-address`; `Madauth.provider(id).addressSuggestion()`, `submitAddress({ email })`, and `verifyEmail` / `sendVerificationEmail` with the `email`), and a returning account signs in without one. A custom login screen that handles the pending steps itself adds this step; madAuth's dialog has it. A server without e-mails still refuses such a new account. See [OpenID Connect provider setup](server.md#openid-connect-provider-setup).
+- **The admin API** answers a Microsoft provider's `tenant`, and `ProviderKind` in `@madauth/web` includes `'microsoft'`: code that switches over it handles the new kind.
+
 ## To 0.7.3
 
 - **New: admins delete users.** `Madauth.admin.deleteUser(email)` (`POST /auth/admin/users/delete`) deletes a user with all their sign-in methods, claims, API keys and pending links, as if they never signed up: the address can sign up again as a new user. Not for users with the role `admin`. Programs call it with an admin's API key with the new scope `madauth:users:delete`. `user.deleted` then carries `by` (and `byApiKey`): a receiver that deletes the app's data on `user.deleted` needs no change. Nothing changes until an admin calls it. See [Deleting a user](server.md#deleting-a-user).

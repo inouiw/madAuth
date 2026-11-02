@@ -63,7 +63,7 @@ export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
  * The kinds of sign-in providers. Google and GitHub exist once each, with the kind as the id; `oidc`, an
  * OpenID Connect provider (e.g. GitLab, Keycloak, Okta), as often as needed, each with an id of its own.
  */
-export type ProviderKind = 'google' | 'github' | 'oidc';
+export type ProviderKind = 'google' | 'github' | 'microsoft' | 'oidc';
 
 /** A sign-in provider as the admin API answers it: never its secret, only whether it has one. */
 export interface ProviderInfo {
@@ -84,6 +84,8 @@ export interface ProviderInfo {
   scopes?: string[];
   /** OpenID Connect: whether its addresses count as verified without `email_verified`. */
   trustEmail?: boolean;
+  /** Microsoft: whose accounts sign in, `common`, `organizations`, `consumers` or one tenant's id. */
+  tenant?: string;
 }
 
 /** What an admin sets of a provider: `clientSecret` in plain text, `null` to remove it (Google only), left out to keep it. */
@@ -98,10 +100,20 @@ export interface ProviderChanges {
    * `false`). Only for a provider whose addresses its operator verifies, e.g. the company's own.
    */
   trustEmail?: boolean;
+  /**
+   * Microsoft: whose accounts sign in: `common` (work, school and personal accounts), `organizations` (work and
+   * school accounts), `consumers` (personal accounts) or one tenant's id. Its users' accounts stay when it changes.
+   */
+  tenant?: string;
 }
 
-/** A new provider: Google or GitHub by its kind, an OpenID Connect provider with its id, name and issuer. */
-export type NewProvider = ({ kind: 'google' | 'github' } | { kind: 'oidc'; id: string; name: string; issuer: string; clientId: string; clientSecret: string }) & ProviderChanges;
+/** A new provider: Google or GitHub by its kind, Microsoft with its tenant, an OpenID Connect provider with its id, name and issuer. */
+export type NewProvider = (
+  | { kind: 'google' | 'github' }
+  | { kind: 'microsoft'; clientId: string; clientSecret: string; tenant: string }
+  | { kind: 'oidc'; id: string; name: string; issuer: string; clientId: string; clientSecret: string }
+) &
+  ProviderChanges;
 
 /**
  * An application that signs its users in with madAuth as its OpenID Connect provider, as the admin API answers it:

@@ -38,7 +38,7 @@ export interface ServerConfig {
    * `oidc`: an OpenID Connect provider, whose id is its method's. Absent from servers before madAuth 0.7, and
    * `secondFactor` from 0.7.0-beta.1.
    */
-  providers?: { id: string; kind: 'google' | 'github' | 'oidc'; name: string; secondFactor?: SecondFactorPolicy }[];
+  providers?: { id: string; kind: 'google' | 'github' | 'microsoft' | 'oidc'; name: string; secondFactor?: SecondFactorPolicy }[];
 }
 
 /** What a sign-in still needs after its first step, and which sign-in it is. */
@@ -46,9 +46,11 @@ export interface PendingStep {
   /**
    * `passkey`: a passkey of the user; `code`: a code from the authenticator app; `sms`: a code sent to the
    * user's phone; `setup`: a second factor has to be set up first; `email`: an OpenID Connect provider doesn't
-   * vouch for the address, so the confirmation e-mail went to it (`Madauth.provider(method).verifyEmail`).
+   * vouch for the address, so the confirmation e-mail went to it (`Madauth.provider(method).verifyEmail`);
+   * `email-address`: the provider (Microsoft, an OpenID Connect provider) told no address, so the user types one
+   * (`Madauth.provider(method).submitAddress`), which its confirmation e-mail then proves.
    */
-  step: 'passkey' | 'code' | 'setup' | 'sms' | 'email';
+  step: 'passkey' | 'code' | 'setup' | 'sms' | 'email' | 'email-address';
   method: LoginMethodId;
   /**
    * With `passkey`, `code` and `sms`: the second factors the user can finish with, so a screen can offer the

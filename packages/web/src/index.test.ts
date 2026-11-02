@@ -58,7 +58,7 @@ describe('@madauth/web', () => {
     );
     expect(Object.keys(madauth.Madauth.google).sort()).toEqual(['nonce', 'renderButton', 'signIn']);
     expect(Object.keys(madauth.Madauth.github)).toEqual(['renderButton']);
-    expect(Object.keys(madauth.Madauth.provider('gitlab')).sort()).toEqual(['renderButton', 'sendVerificationEmail', 'signIn', 'verifyEmail']);
+    expect(Object.keys(madauth.Madauth.provider('gitlab')).sort()).toEqual(['addressSuggestion', 'renderButton', 'sendVerificationEmail', 'signIn', 'submitAddress', 'verifyEmail']);
     expectTypeOf(madauth.Madauth.provider('gitlab')).toEqualTypeOf<madauth.ProviderApi>();
     expect(Object.keys(madauth.Madauth.authenticator).sort()).toEqual(
       ['confirmSetup', 'newRecoveryCodes', 'pendingStep', 'policy', 'remove', 'sendVerificationEmail', 'signIn', 'signUp', 'startSetup', 'status', 'verify', 'verifyEmail'].sort(),

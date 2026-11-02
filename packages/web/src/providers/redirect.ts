@@ -1,4 +1,4 @@
-// What the providers with a redirect sign-in share (`GoogleRedirect`, `GitHub`, `OpenIdConnect`): the
+// What the providers with a redirect sign-in share (`GoogleRedirect`, `GitHub`, `Microsoft`, `OpenIdConnect`): the
 // "Continue with …" button that starts it, and the start itself. The server does the rest and sends the user back.
 import type { LoginMethodId } from '../methods.js';
 import { coreStringsFor, type CoreStrings } from '../strings-core.js';

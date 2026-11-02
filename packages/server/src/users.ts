@@ -2,7 +2,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { claimsFromJson, type Claims } from './claims.js';
 import type { KeyService } from './key-service.js';
-import { isProviderId } from './providers.js';
+import { isProviderMethod } from './providers.js';
 import { codeHash, codeHashes, generateCode, generateLinkToken, hashLinkToken, safeEqual } from './password.js';
 import { ALWAYS_SIGN_IN, FORMER_AUTHENTICATOR_ID, SIGN_IN_METHODS, type SecondFactor } from './settings.js';
 import type { Row, StoreAdapter, Where } from './store/schema.js';
@@ -194,8 +194,16 @@ export const methodOf = (account: Pick<StoredAccount, 'key'>): string => {
 
 const OIDC_KEY_PREFIX = 'oidc';
 
-/** Whether an account is at a sign-in provider (Google, GitHub, an OpenID Connect provider), which tells its address. */
-export const isProviderAccount = (account: Pick<StoredAccount, 'key'>): boolean => ['google', 'github', OIDC_KEY_PREFIX].includes(String(account.key).split(':')[0]!);
+/** Whether an account is at a sign-in provider (Google, GitHub, Microsoft, an OpenID Connect provider), which tells its address. */
+export const isProviderAccount = (account: Pick<StoredAccount, 'key'>): boolean => ['google', 'github', 'microsoft', OIDC_KEY_PREFIX].includes(String(account.key).split(':')[0]!);
+
+/**
+ * The key of a Microsoft account: its tenant (`tid`) and its object id there (`oid`), which stay when the app is
+ * registered anew or the provider's tenant changes; `sub` would not, it differs per app registration.
+ */
+export function microsoftAccountKey(tid: string, oid: string): string {
+  return `microsoft:${tid}:${oid}`;
+}
 
 /** The key of an account at an OpenID Connect provider: its id and the account's `sub` there. */
 export function oidcAccountKey(providerId: string, sub: string): string {
@@ -206,7 +214,7 @@ export function oidcAccountKey(providerId: string, sub: string): string {
  * The methods whose accounts a sign-up makes, an OpenID Connect provider's among them; the authenticator app
  * makes one only for a sign-up with it.
  */
-const isAlwaysPrimary = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method) || isProviderId(method);
+const isAlwaysPrimary = (method: string) => (ALWAYS_SIGN_IN as readonly string[]).includes(method) || isProviderMethod(method);
 
 /**
  * Whether an account is the one its user signed up with; `accounts` are all of the user's. Records since

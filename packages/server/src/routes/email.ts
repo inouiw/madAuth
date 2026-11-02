@@ -5,7 +5,7 @@ import type { Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
-import { isProviderId } from '../providers.js';
+import { isProviderMethod } from '../providers.js';
 import { FORMER_AUTHENTICATOR_ID } from '../settings.js';
 import { readToken, signToken } from '../tokens.js';
 import { isSignUpMethod, toMadauthUser, type SignUpMethod, type StoredUser, type Users } from '../users.js';
@@ -22,7 +22,7 @@ import { accepted, body, error, nameOf, redirectTarget, signInAnswer, unavailabl
  */
 export async function signUpMethodOf(users: Users, user: StoredUser): Promise<string> {
   const stored = user.signUpMethod === FORMER_AUTHENTICATOR_ID ? 'authenticator' : user.signUpMethod;
-  if (isProviderId(stored)) return stored;
+  if (isProviderMethod(stored)) return stored;
   const recorded = isSignUpMethod(stored) ? stored : null;
   if (recorded && recorded !== 'password') return recorded;
   return (await users.passwordAccount(user.id)) ? 'password' : 'authenticator';
@@ -159,7 +159,7 @@ export function emailRoutes(app: Hono, ctx: AppContext, users: Users, webhook: W
     await ctx.emit('user.email_verified', { user: toMadauthUser(verified), method, via });
     // A password user is signed in (or asked for their code), as is one of a provider, by its id; a sign-up
     // with the app or a passkey sets it up now.
-    const amr = method === 'password' ? ['pwd'] : isProviderId(method) ? [method] : [];
+    const amr = method === 'password' ? ['pwd'] : isProviderMethod(method) ? [method] : [];
     return signInAnswer(c, await ctx.secondStep(c, verified, amr, method));
   });
 }

@@ -14,6 +14,7 @@ import { request, type HttpResult, type RequestInit } from './http.js';
 import { isBuiltInMethodId, type LoginMethodId } from './methods.js';
 import { GitHub } from './providers/github.js';
 import { GoogleRedirect } from './providers/google-redirect.js';
+import { Microsoft } from './providers/microsoft.js';
 import { OpenIdConnect } from './providers/oidc.js';
 import { methodName } from './providers/redirect.js';
 import { FACTOR_STEPS, pendingStepOf, type DeletedAccount, type PendingStep, type ProviderContext, type ServerConfig, type SignInProvider } from './providers/provider.js';
@@ -293,18 +294,21 @@ function handleRedirectReturn(ctx: ProviderContext): LoginMethodId | undefined {
   else if (next === 'passkey-setup') ctx.signInContinues({ step: 'setup', method, factors: ['passkey'] });
   // A provider that doesn't vouch for the address: its confirmation e-mail went out, the code finishes the sign-up.
   else if (next === 'email-confirmation') ctx.signInContinues({ step: 'email', method, email: email ?? '' });
+  // A provider that told no address: the user types one, its confirmation e-mail proves it.
+  else if (next === 'email-address') ctx.signInContinues({ step: 'email-address', method });
   return undefined;
 }
 
 /**
- * The providers for the sign-in providers the server offers that the app didn't pass: GitHub's redirect, the
- * OpenID Connect providers', and Google's when the server has its code flow (a client secret). Google's One
+ * The providers for the sign-in providers the server offers that the app didn't pass: GitHub's redirect,
+ * Microsoft's, the OpenID Connect providers', and Google's when the server has its code flow (a client secret). Google's One
  * Tap the app passes itself (`new GoogleFedcm()`), since it loads Google's script and prompts on page load.
  */
 function automaticProviders(config: ServerConfig, passed: Map<LoginMethodId, SignInProvider>): SignInProvider[] {
   return (config.providers ?? []).flatMap((offered): SignInProvider[] => {
     if (passed.has(offered.id)) return [];
     if (offered.kind === 'oidc') return [new OpenIdConnect(offered.id)];
+    if (offered.kind === 'microsoft') return [new Microsoft()];
     if (offered.kind === 'github') return [new GitHub()];
     return offered.kind === 'google' && config.google?.codeFlow ? [new GoogleRedirect()] : [];
   });
