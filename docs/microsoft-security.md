@@ -47,7 +47,7 @@ Microsoft's token can come without an address: a personal account made with a ph
 
 - The callback signs in a returning account at once: its user is known. Otherwise it keeps the account in a cookie signed with the server's key (`madauth_pending_account`, HttpOnly, `SameSite=Strict`, sent only to `/auth/providers/<id>`, ten minutes) and sends the browser back with `#madauth_next=email-address&madauth_method=microsoft`. The URL carries no address.
 - `GET /auth/providers/microsoft/address` answers what the dialog offers in the field: the token's `preferred_username` when it looks like an address, else nothing. It is only a suggestion.
-- `POST /auth/providers/microsoft/address` with the address answers the same for every address (202), as a password sign-up does: a new or unfinished sign-up gets the account and the confirmation e-mail; the owner of an address that signs in another way gets `email.send_already_registered`, and nothing is linked to them. The code then goes to `/auth/email/verify` with the address.
+- `POST /auth/providers/microsoft/address` with the address answers the same for every address (202), as a password sign-up does: a new or unfinished sign-up gets the account and the confirmation e-mail; the owner of an address that signs in another way gets `email.send_already_registered`, and nothing is linked to them. The code then goes to `/auth/email/verify` with the address. Until it is used, the account signs nobody in; signing in again and typing another address (after a typo, say) moves the account to that one.
 - A server whose webhook sends no e-mails refuses such an account (`email_unverified`), unless it is a returning one.
 
 Code: the `/callback` and `/address` routes in [`routes/oidc.ts`](../packages/server/src/routes/oidc.ts).

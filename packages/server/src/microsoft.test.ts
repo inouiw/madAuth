@@ -155,6 +155,22 @@ describe('signing in with Microsoft', () => {
     expect(made.hook.emails()).toEqual([]);
   });
 
+  it('MS5b: an address typed again replaces one whose confirmation never came, e.g. with a typo', async () => {
+    const made = await withMicrosoft();
+    const phoneOnly = { idToken: { oid: 'oid-typo' } };
+    const first = await signIn(made, phoneOnly);
+    expect((await post(made.app, '/auth/providers/microsoft/address', { email: 'linus@exmaple.com', redirectTo: `${APP}/page` }, { Cookie: first.pending! })).status).toBe(202);
+    // Signing in again, the account still waits for its address; the corrected one gets the e-mail.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 61_000 });
+    const again = await signIn(made, phoneOnly);
+    expect(again.location).toBe(`${APP}/page#madauth_next=email-address&madauth_method=microsoft`);
+    made.hook.calls.length = 0;
+    expect((await post(made.app, '/auth/providers/microsoft/address', { email: 'linus@example.com', redirectTo: `${APP}/page` }, { Cookie: again.pending! })).status).toBe(202);
+    expect(made.hook.emails().map((e) => e.data.to)).toEqual(['linus@example.com']);
+    const confirmed = await post(made.app, '/auth/email/verify', { email: 'linus@example.com', code: codeOf(made.hook.lastEmail()) });
+    expect(((await confirmed.json()) as { user: Record<string, unknown> }).user).toMatchObject({ email: 'linus@example.com', amr: ['microsoft'] });
+  });
+
   it('MS6: the answer is the same for an address that signs in another way: its owner is told, and nothing is linked', async () => {
     const made = await withMicrosoft();
     const { pending } = await signIn(made, { idToken: { oid: 'oid-mallory', preferred_username: '+15551234567' } });

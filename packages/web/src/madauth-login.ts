@@ -3062,7 +3062,8 @@ export class MadauthLogin extends LitElement {
     const s = this.strings;
     return html`
       <p class="lead">${s.addressStep.lead(nameOfMethod(this.primary, s))}</p>
-      <form part="form" class="email-address" @submit=${this.onAddress}>
+      <form part="form" class="email-address" @submit=${this.onAddress}
+        @input=${(e: Event) => (this.email = (e.target as HTMLInputElement).value)}>
         ${this.emailField()}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
           <span class="label">${s.sendEmail}</span>

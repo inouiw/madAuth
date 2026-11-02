@@ -167,13 +167,12 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
       const known = await ctx.users.findAccountByKey(account.key);
       const user = known && (await ctx.users.findById(known.userId));
       if (user?.emailVerified) return signIn({ ok: true, user });
-    }
-    if (!emails) return back('email_unverified');
-    if (!account.email) {
+      if (!emails) return back('email_unverified');
       const pending: PendingAccount = { key: account.key, ...(account.name ? { name: account.name } : {}), ...(account.suggestion ? { suggestion: account.suggestion } : {}), ...(oauth.locale ? { locale: oauth.locale } : {}) };
       setCookie(c, PENDING_COOKIE, await signToken(ctx.keys, ctx.config.issuer, PENDING_TYP, { ...pending }, PENDING_TTL), { ...pendingCookie(provider.id, ctx.secure), maxAge: PENDING_TTL });
       return redirectToAddress(c, oauth.returnTo, provider.id);
     }
+    if (!emails) return back('email_unverified');
     const unconfirmed = await resolveUnconfirmedProviderUser(ctx, asOAuthProvider(provider), profileWith(account.email), oauth.locale);
     if (unconfirmed.ok !== 'confirm') return signIn(unconfirmed);
     // The address is proven by the e-mail's link or code before the account signs anyone in.
@@ -221,6 +220,11 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     if (!isValidEmail(data.email)) return error(c, 400, 'invalid_email', 'This is not a valid e-mail address.');
     const email = data.email.trim();
     const locale = localeOf(data.locale) ?? pending.locale;
+    // The account waits for another address the user typed before (a typo, say): this one replaces it. The
+    // unconfirmed sign-up stays behind without the account, as an abandoned one does.
+    const known = await ctx.users.findAccountByKey(pending.key);
+    const waiting = known && (await ctx.users.findById(known.userId));
+    if (known && waiting && !waiting.emailVerified && waiting.emailNormalized !== normalizeEmail(email)) await ctx.users.deleteAccount(known.id);
     const resolved = await resolveUnconfirmedProviderUser(ctx, asOAuthProvider(provider), { key: pending.key, email, ...(pending.name ? { name: pending.name } : {}) }, locale);
     const done = (answer: Response) => {
       deleteCookie(c, PENDING_COOKIE, pendingCookie(provider.id, ctx.secure));
