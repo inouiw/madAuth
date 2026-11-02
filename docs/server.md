@@ -216,13 +216,13 @@ Microsoft sign-in takes personal Microsoft accounts and work or school accounts 
 
    | Supported account types | `tenant` |
    | --- | --- |
-   | Accounts in any organizational directory and personal Microsoft accounts | `common` |
-   | Accounts in any organizational directory | `organizations` |
-   | Personal Microsoft accounts only | `consumers` |
-   | Accounts in this organizational directory only | the **Directory (tenant) ID** from the app's overview |
+   | Any Entra ID Tenant + Personal Microsoft accounts | `common` |
+   | Multiple Entra ID tenants | `organizations` |
+   | Personal accounts only | `consumers` |
+   | Single tenant only | the **Directory (tenant) ID** from the app's overview |
 
 3. Under **Redirect URI**, choose the platform **Web** and enter `<MADAUTH_ISSUER>/auth/providers/microsoft/callback`, e.g. `https://app.example.com/auth/providers/microsoft/callback` (add `http://localhost:8787/auth/providers/microsoft/callback` under **Authentication** for development).
-4. Under **Token configuration → Add optional claim**, choose the token type **ID** and the claims `email` and `xms_edov` (and allow the Microsoft Graph permission `email` it asks for). With `xms_edov`, an address whose domain's owner Microsoft verified signs in at once; without it, every user confirms their address by e-mail once.
+4. Under **Token configuration → Add optional claim**, choose the token type **ID** and the claims `email` and `xms_edov` (and allow the Microsoft Graph permission `email` it asks for). With `xms_edov`, an Entra account's address whose domain's owner the organization verified signs in at once; others, and every personal account's (Microsoft sends `xms_edov` for Entra accounts only), are confirmed by e-mail once.
 5. Under **Certificates & secrets**, make a **New client secret** and copy its **Value** (not its Secret ID). Entra lets it live two years at most: set a new one with `updateProvider('microsoft', { clientSecret })` before it expires.
 6. Add the provider with the **Application (client) ID** from the overview, the secret and the tenant (see [Providers](#providers)), and switch it on with the id `microsoft`:
 
