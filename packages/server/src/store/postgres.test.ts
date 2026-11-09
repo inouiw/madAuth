@@ -175,7 +175,7 @@ describe.skipIf(!url)('Postgres adapter with a database', () => {
 
   it('logs a connection the database ended at its idle limit as information, and replaces it', async () => {
     const schema = await freshSchema();
-    const store = await open(schema, { pool: { options: `-c search_path=${schema} -c idle_session_timeout=200` } });
+    const store = await open(schema, { pool: { options: `-c search_path=${schema} -c idle_session_timeout=500` } });
     const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const logged = vi.spyOn(console, 'info').mockImplementation(() => {});
     await store.create('user', user);
