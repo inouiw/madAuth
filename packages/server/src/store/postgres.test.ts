@@ -163,12 +163,27 @@ describe.skipIf(!url)('Postgres adapter with a database', () => {
     const applicationName = `madauth_failover_${schema}`;
     const store = await open(schema, { pool: { application_name: applicationName } });
     await store.create('user', user);
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const logged = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const killed = await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = $1', [applicationName]);
     expect(killed.rowCount).toBeGreaterThan(0);
     await vi.waitFor(() => expect(logged).toHaveBeenCalledWith(expect.stringContaining('the next query opens a new one')));
     logged.mockRestore();
+
+    expect(await store.findOne('user', { id: 'usr_1' })).toEqual(user);
+  });
+
+  it('logs a connection the database ended at its idle limit as information, and replaces it', async () => {
+    const schema = await freshSchema();
+    const store = await open(schema, { pool: { options: `-c search_path=${schema} -c idle_session_timeout=500` } });
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const logged = vi.spyOn(console, 'info').mockImplementation(() => {});
+    await store.create('user', user);
+
+    await vi.waitFor(() => expect(logged).toHaveBeenCalledWith(expect.stringContaining('idle-session timeout')), { timeout: 5000 });
+    expect(warned).not.toHaveBeenCalled();
+    logged.mockRestore();
+    warned.mockRestore();
 
     expect(await store.findOne('user', { id: 'usr_1' })).toEqual(user);
   });

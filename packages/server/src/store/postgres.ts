@@ -21,6 +21,15 @@ export interface PostgresAdapterOptions {
 /** A Postgres store adapter; `close` ends its connections. */
 export type PostgresAdapter = StoreAdapter & { close(): Promise<void> };
 
+/**
+ * The level at which a connection that failed while idle is logged. The database ending a session at its own
+ * idle limit (`idle_session_timeout`, SQLSTATE 57P05) is expected, e.g. after an AWS Lambda instance was frozen,
+ * and needs no attention. Every other cause, e.g. a failover or a network failure, is a warning.
+ */
+function idleConnectionLogLevel(error: unknown): 'info' | 'warn' {
+  return (error as { code?: unknown } | null)?.code === '57P05' ? 'info' : 'warn';
+}
+
 /** The table that holds the schema version of madAuth's tables, in one row. */
 const VERSION_TABLE = 'madauth_schema';
 /** The key of the advisory lock held while the tables are created or upgraded ("mada" in ASCII). */
@@ -37,7 +46,7 @@ export async function openPostgresAdapter(url: string, options: PostgresAdapterO
   const pool: Pool = new Pool({ connectionString: url, keepAlive: true, connectionTimeoutMillis: 10_000, ...options.pool });
   // A connection that fails while idle, e.g. when the primary fails over, is dropped by the pool, which opens a
   // new one for the next query. Without a listener its error would end the process.
-  pool.on('error', (e) => console.error(`[madauth] Postgres: an idle connection failed, the next query opens a new one: ${e.message}`));
+  pool.on('error', (e) => console[idleConnectionLogLevel(e)](`[madauth] Postgres: an idle connection failed, the next query opens a new one: ${e.message}`));
   await migrate(pool, options.migrate ?? true).catch(async (e: unknown) => {
     await pool.end();
     throw e;
