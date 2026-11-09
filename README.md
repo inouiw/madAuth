@@ -6,7 +6,7 @@ A self-hostable alternative to Cognito / Auth0: run the madAuth server in your o
 
 ## Why madAuth
 
-- **Small in the browser.** The sign-in dialog with every sign-in method adds about 58 kB (gzipped) to your app, Lit included. With your own login screen, `@madauth/web/client` is about 20 kB. The password-strength check loads only on a screen that asks for a new password.
+- **Small in the browser.** The sign-in dialog with every sign-in method adds about 58 kB (gzipped) to your app, Lit included. With your own login screen, `@madauth/web/client` is about 21 kB. The password-strength check loads only on a screen that asks for a new password.
 - **Any framework.** The dialog is a standard web component: plain HTML, React, Angular, Vue, Svelte and Capacitor apps.
 - **Your infrastructure.** Node, Docker, AWS Lambda or Azure Functions; SQLite, Postgres, DynamoDB or a store of your own. The AWS Lambda bundle is one file of under 2 MB, without `node_modules`. See [the table below](#runs-on-your-infrastructure).
 - **Keys outside the process.** On AWS, madAuth's signing, hashing and encryption keys can stay in AWS KMS and never leave it: someone who breaks into the server can't take them away. The AWS template creates and rotates them. See [Key service](docs/server.md#key-service).

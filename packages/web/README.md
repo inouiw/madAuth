@@ -24,7 +24,7 @@ The server is expected on the page's own origin (`/auth/...`). Pass `serverUrl: 
 
 ## Without the dialog
 
-An app with a login screen of its own imports from `@madauth/web/client`: the same `Madauth` and providers, without the dialog. Neither the dialog nor Lit, which only the dialog uses, ends up in your bundle: about 20 kB gzipped instead of about 58 kB with the dialog and every sign-in method.
+An app with a login screen of its own imports from `@madauth/web/client`: the same `Madauth` and providers, without the dialog. Neither the dialog nor Lit, which only the dialog uses, ends up in your bundle: about 21 kB gzipped instead of about 58 kB with the dialog and every sign-in method.
 
 ```ts
 import { Madauth, Password } from '@madauth/web/client';
