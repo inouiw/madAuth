@@ -8,7 +8,8 @@ import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './con
 import { importAppleKey } from './apple.js';
 import { Providers, importProviders, isProviderMethodKind, parseProviderFields, parseProviderKind, providerOf, type ProviderKind, type StoredProvider } from './providers.js';
 import { SETUP_TOKEN_PREFIX, Setup } from './setup.js';
-import { discover } from './oidc.js';
+import { discover, keysCache } from './oidc.js';
+import type { JWTVerifyGetKey } from 'jose';
 import type { KeyService } from './key-service.js';
 import { isValidEmail, normalizeEmail } from './password.js';
 import { emailRoutes } from './routes/email.js';
@@ -172,6 +173,8 @@ export interface AppContext {
   methods(c?: Context): Promise<MethodsNow>;
   /** A provider's client secret in plain text; null without one. Decrypted by the key service, so only read where it is used. */
   clientSecret(provider: StoredProvider): Promise<string | null>;
+  /** A provider's published signing keys by its `jwks_uri`, fetched through `oidcFetch` and cached once for the server, for every route that checks its tokens. */
+  providerKeys(jwksUri: string): JWTVerifyGetKey;
   /** Whether a method signs in: configured, listed by an admin, and allowed as a sign-in method. */
   enabled(c: Context, method: string): Promise<boolean>;
   /** Asks the webhook whether someone may sign up (`user.signing_up`). Fails closed: without an answer, nobody signs up. */
@@ -468,6 +471,7 @@ export function createApp(config: MadauthConfig): Hono {
       return reading;
     },
     clientSecret: (provider) => providers.clientSecret(provider),
+    providerKeys: keysCache(config.oidcFetch ?? fetch),
     async enabled(c, method) {
       // Not a method that is on only as a second factor: a sign-up with the app, e.g., can't go on then.
       const now = await this.methods(c);
@@ -622,8 +626,8 @@ export function createApp(config: MadauthConfig): Hono {
    * False when nothing was deleted: the user is gone, or their claims changed.
    */
   const deleteUser = async (userId: string, ifClaims?: string | null): Promise<boolean> => {
-    // Read before the deletion, which takes the accounts with it.
-    const granted = (await Promise.all([users.githubAccount(userId), users.providerAccount(userId, 'apple')])).filter((account) => account !== null);
+    // Read before the deletion, which takes the accounts with it: those that hold a grant to give back.
+    const granted = (await users.accounts(userId)).filter((account) => account.key.startsWith('github:') || account.key.startsWith('apple:'));
     const deleted = await users.deleteById(userId, ifClaims);
     if (deleted) await Promise.all(granted.map(revokeProviderGrant));
     return deleted;

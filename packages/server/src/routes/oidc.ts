@@ -7,7 +7,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppContext } from '../app.js';
 import { APPLE_CANCELLED, APPLE_ENDPOINTS, APPLE_SCOPES, appleProfile, appleUserName, exchangeAppleCode, verifyAppleIdToken } from '../apple.js';
 import { microsoftEndpoints, microsoftProfile, verifyMicrosoftIdToken } from '../microsoft.js';
-import { addressOf, discoveryCache, exchangeCode, keysCache, suggestedAddress, verifyIdToken, type OidcEndpoints, type OidcTokens } from '../oidc.js';
+import { addressOf, discoveryCache, exchangeCode, suggestedAddress, verifyIdToken, type OidcEndpoints, type OidcTokens } from '../oidc.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
 import { OIDC_SCOPES, isProviderMethodKind, providerOf, type StoredProvider } from '../providers.js';
 import { readToken, signToken } from '../tokens.js';
@@ -70,7 +70,6 @@ const nameCookie = (id: string, secure: boolean) => ({ path: pathOf(id), httpOnl
 export function oidcRoutes(app: Hono, ctx: AppContext): void {
   const fetchFn = ctx.config.oidcFetch ?? fetch;
   const endpointsOf = discoveryCache(fetchFn);
-  const keysOf = keysCache(fetchFn);
   const callbackUrl = (id: string) => `${ctx.config.issuer}${pathOf(id)}/callback`;
   // The confirmation e-mail for an address the provider doesn't vouch for; without it, such an address is refused.
   const emails = ctx.webhook && ctx.emailVerification ? createEmails(ctx, ctx.users, ctx.webhook) : null;
@@ -100,16 +99,23 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     return clientSecret ? exchangeCode(endpoints, { clientId: provider.clientId, clientSecret }, { code, redirectUri: callbackUrl(provider.id), verifier }, fetchFn) : null;
   };
 
-  /** The account behind the tokens of a code exchange, checked as the provider's kind needs; null if the ID token doesn't hold. */
-  const accountOf = async (c: Context, provider: StoredProvider, endpoints: OidcEndpoints, tokens: OidcTokens & { refreshToken?: string }, nonce: string): Promise<ProviderAccount | { error: string }> => {
-    const keys = keysOf(endpoints.jwksUri);
+  /**
+   * The name Apple's POST left for this sign-in (see {@link NAME_COOKIE}), or undefined. The cookie is used up
+   * whatever happens next, and counts only when it was set for this very sign-in (its `state`): one planted by
+   * another POST, or left by a sign-in that failed, names nobody.
+   */
+  const takeProviderName = async (c: Context, provider: StoredProvider, state: string): Promise<string | undefined> => {
+    const named = await readToken<{ name?: unknown; state?: unknown }>(ctx.keys, ctx.config.issuer, NAME_TYP, getCookie(c, NAME_COOKIE));
+    deleteCookie(c, NAME_COOKIE, nameCookie(provider.id, ctx.secure));
+    return named?.state === state && typeof named.name === 'string' && named.name ? named.name : undefined;
+  };
+
+  /** The account behind the tokens of a code exchange, checked as the provider's kind needs; null if the ID token doesn't hold. `name` is what Apple's POST told. */
+  const accountOf = async (provider: StoredProvider, endpoints: OidcEndpoints, tokens: OidcTokens & { refreshToken?: string }, nonce: string, name?: string): Promise<ProviderAccount | { error: string }> => {
+    const keys = ctx.providerKeys(endpoints.jwksUri);
     if (provider.kind === 'apple') {
       const claims = await verifyAppleIdToken(tokens.idToken, { audiences: [provider.clientId], nonce, keys });
       if (!claims) return { error: 'verification_failed' };
-      // The name came with the POST, once; the token never has it.
-      const named = await readToken<{ name?: unknown }>(ctx.keys, ctx.config.issuer, NAME_TYP, getCookie(c, NAME_COOKIE));
-      deleteCookie(c, NAME_COOKIE, nameCookie(provider.id, ctx.secure));
-      const name = typeof named?.name === 'string' && named.name ? named.name : undefined;
       const secret = tokens.refreshToken ? await encryptAppleGrant(ctx.keys, { clientId: provider.clientId, refreshToken: tokens.refreshToken }) : undefined;
       const { email, verified } = appleProfile(claims);
       return { key: appleAccountKey(claims.sub), ...(email ? { email } : {}), verified, ...(name ? { name } : {}), ...(secret ? { secret } : {}) };
@@ -172,15 +178,16 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
    * Apple's answer: a POST from Apple's site with the code, the state and, the first time, the user's name. A
    * cross-site POST brings no `SameSite=Lax` cookie, so the state cookie isn't here: the POST only keeps the name
    * in a cookie of its own and sends the browser on to the GET callback with the code and the state, where the
-   * state cookie arrives as it does from every other provider. Nothing is checked or stored here.
+   * state cookie arrives as it does from every other provider. Nothing is checked or stored here; the name's
+   * cookie carries the `state`, so the GET takes the name only for the sign-in it came with.
    */
   app.post('/auth/providers/:id/callback', async (c) => {
     const provider = await providerOfRoute(c);
     if (provider?.kind !== 'apple') return c.notFound();
     const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
     const name = appleUserName(form.user);
-    if (name) {
-      setCookie(c, NAME_COOKIE, await signToken(ctx.keys, ctx.config.issuer, NAME_TYP, { name }, NAME_TTL), { ...nameCookie(provider.id, ctx.secure), maxAge: NAME_TTL });
+    if (name && typeof form.state === 'string') {
+      setCookie(c, NAME_COOKIE, await signToken(ctx.keys, ctx.config.issuer, NAME_TYP, { name, state: form.state }, NAME_TTL), { ...nameCookie(provider.id, ctx.secure), maxAge: NAME_TTL });
     }
     const url = new URL(callbackUrl(provider.id));
     for (const key of ['code', 'state', 'error']) {
@@ -195,6 +202,8 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     const oauth = await takeOAuthState(c, ctx, pathOf(provider.id));
     if (!oauth) return c.text('Sign-in expired or was started in another browser. Please try again.', 400);
     const back = redirectBack(c, oauth.returnTo, provider.id);
+    // Used up whatever follows, so it never names the next sign-in's user.
+    const name = provider.kind === 'apple' ? await takeProviderName(c, provider, oauth.state) : undefined;
     if (!(await ctx.enabled(c, provider.id))) return back('method_disabled');
 
     const refused = c.req.query('error');
@@ -206,7 +215,7 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
 
     const tokens = await tokensFor(provider, found.endpoints, code, oauth.verifier);
     if (!tokens) return back('verification_failed');
-    const account = await accountOf(c, provider, found.endpoints, tokens, oauth.nonce);
+    const account = await accountOf(provider, found.endpoints, tokens, oauth.nonce, name);
     if ('error' in account) return back(account.error);
 
     // Linking takes the account by its id, whatever its address, or without one: the signed-in user is the proof.

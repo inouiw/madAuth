@@ -26,12 +26,10 @@ export const APPLE_SCOPES = ['name', 'email'];
 /** What Apple's `error` says when the user closes its page. */
 export const APPLE_CANCELLED = 'user_cancelled_authorize';
 
-/** The domain of the addresses Apple makes for users who hide theirs (Hide My Email). */
-const RELAY_DOMAIN = '@privaterelay.appleid.com';
-
 /** How long a client secret madAuth signs lives: a few minutes, as each call signs a new one (Apple allows up to six months). */
 const CLIENT_SECRET_TTL = 5 * 60;
-const REVOKE_TIMEOUT_MS = 10_000;
+/** How long a call to Apple's token or revoke endpoint may take. */
+const APPLE_TIMEOUT_MS = 10_000;
 
 /** A Team ID and a Key ID of an Apple developer account: ten letters and digits. */
 const APPLE_ID = /^[A-Z0-9]{10}$/;
@@ -124,17 +122,13 @@ export async function verifyAppleIdToken(
 const isTrue = (value: unknown) => value === true || value === 'true';
 
 /**
- * What Apple's token says about the user: the address, verified when Apple says so (`email_verified`; the relay
- * addresses of Hide My Email are Apple's own and count as verified too), and whether it is such a relay address.
- * The name isn't in the token: see {@link appleUserName}.
+ * What Apple's token says about the user: the address, verified when Apple says so (`email_verified`; a relay
+ * address of Hide My Email, `…@privaterelay.appleid.com`, is Apple's own and comes verified too, and is taken as
+ * the user's address like any other). The name isn't in the token: see {@link appleUserName}.
  */
-export function appleProfile(claims: JWTPayload): { email?: string; verified: boolean; privateEmail: boolean } {
+export function appleProfile(claims: JWTPayload): { email?: string; verified: boolean } {
   const email = typeof claims.email === 'string' && claims.email ? claims.email : undefined;
-  return {
-    ...(email ? { email } : {}),
-    verified: !!email && isTrue(claims.email_verified),
-    privateEmail: !!email && (isTrue(claims.is_private_email) || email.toLowerCase().endsWith(RELAY_DOMAIN)),
-  };
+  return { ...(email ? { email } : {}), verified: !!email && isTrue(claims.email_verified) };
 }
 
 /**
@@ -188,7 +182,7 @@ export async function exchangeAppleCode(
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: form.toString(),
-    signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(APPLE_TIMEOUT_MS),
   }).catch(() => null);
   if (!res?.ok) return null;
   const answer = (await res.json().catch(() => null)) as { id_token?: unknown; refresh_token?: unknown } | null;
@@ -214,7 +208,7 @@ export async function revokeAppleToken(
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
-    signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(APPLE_TIMEOUT_MS),
   }).catch(() => null);
   if (!res) return null;
   await res.body?.cancel();

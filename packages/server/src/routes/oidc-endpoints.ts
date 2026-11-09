@@ -7,7 +7,6 @@ import type { Context, Hono } from 'hono';
 import { decodeJwt, type JWTPayload } from 'jose';
 import { APPLE_ENDPOINTS, appleProfile, appleUserName, exchangeAppleCode, isAppleToken, verifyAppleIdToken } from '../apple.js';
 import { verifyGoogleIdToken } from '../google.js';
-import { keysCache } from '../oidc.js';
 import { providerOf, type StoredProvider } from '../providers.js';
 import { appleAccountKey } from '../users.js';
 import { localeOf } from '../webhooks.js';
@@ -68,10 +67,6 @@ const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 /** The grant type of the token exchange (RFC 8693): a native app's Google ID token for madAuth's tokens. */
 const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ID_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id_token';
-
-/** Apple's published keys, as jose caches them; one set for the server. */
-let appleKeySets: ReturnType<typeof keysCache> | undefined;
-const appleKeys = (fetchFn: typeof fetch) => (appleKeySets ??= keysCache(fetchFn));
 
 /** The form's `name` for Apple: Apple's `fullName` as JSON (`{ "firstName", "lastName" }`), or a name as text. */
 function parseName(value: string): unknown {
@@ -449,7 +444,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
 
   const verifyAppleSubject = async (apple: StoredProvider, subject: string, nonce: string, form: Record<string, string>): Promise<Subject> => {
     const fetchFn = ctx.config.oidcFetch ?? fetch;
-    const claims = await verifyAppleIdToken(subject, { audiences: [apple.clientId, ...(apple.bundleIds ?? [])], nonce, keys: appleKeys(fetchFn)(APPLE_ENDPOINTS.jwksUri) });
+    const claims = await verifyAppleIdToken(subject, { audiences: [apple.clientId, ...(apple.bundleIds ?? [])], nonce, keys: ctx.providerKeys(APPLE_ENDPOINTS.jwksUri) });
     if (!claims) return { reason: "not an identity token Apple issued for this server's Services ID or App IDs with this nonce" };
     const { email, verified } = appleProfile(claims);
     if (!email || !verified) return { reason: 'Apple sent no verified e-mail address' };

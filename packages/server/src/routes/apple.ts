@@ -7,7 +7,6 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppContext } from '../app.js';
 import { APPLE_ENDPOINTS, appleProfile, appleUserName, exchangeAppleCode, revokeAppleToken, verifyAppleIdToken, type AppleCredentials } from '../apple.js';
 import type { KeyService } from '../key-service.js';
-import { keysCache } from '../oidc.js';
 import { providerOf, type StoredProvider } from '../providers.js';
 import { randomString, readToken, signToken } from '../tokens.js';
 import { appleAccountKey, type StoredAccount } from '../users.js';
@@ -79,7 +78,6 @@ export function appleRoutes(app: Hono, ctx: AppContext): void {
   const { config, keys, secure } = ctx;
   const { issuer } = config;
   const fetchFn = config.oidcFetch ?? fetch;
-  const keysOf = keysCache(fetchFn);
   const appleOf = async (c: Context) => providerOf(await ctx.methods(c), 'apple');
 
   const disabled = (c: Context) => error(c, 403, 'method_disabled', 'Sign in with Apple is switched off.');
@@ -105,7 +103,7 @@ export function appleRoutes(app: Hono, ctx: AppContext): void {
     if (typeof data.credential !== 'string' || !data.credential) return error(c, 400, 'verification_failed', 'credential is missing');
     const nonceClaims = await readToken<{ nonce: string }>(keys, issuer, NONCE_TYP, getCookie(c, NONCE_COOKIE));
     if (!nonceClaims) return error(c, 401, 'verification_failed', 'nonce cookie missing or expired');
-    const claims = await verifyAppleIdToken(data.credential, { audiences: [provider.clientId, ...(provider.bundleIds ?? [])], nonce: nonceClaims.nonce, keys: keysOf(APPLE_ENDPOINTS.jwksUri) });
+    const claims = await verifyAppleIdToken(data.credential, { audiences: [provider.clientId, ...(provider.bundleIds ?? [])], nonce: nonceClaims.nonce, keys: ctx.providerKeys(APPLE_ENDPOINTS.jwksUri) });
     if (!claims) return error(c, 401, 'verification_failed', "The identity token is not one Apple issued for this server's Services ID or App IDs with this nonce.");
     deleteCookie(c, NONCE_COOKIE, { path: COOKIE_PATH, secure });
     const profile = appleProfile(claims);

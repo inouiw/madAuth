@@ -73,7 +73,7 @@ describe('signing in with Apple', () => {
   type Made = Pick<Awaited<ReturnType<typeof withApple>>, 'app' | 'store' | 'cookie' | 'hook'> & { apple: FakeApple };
 
   /** The sign-in as a browser makes it: start, Apple's page, its POST to the callback, and the GET it sends the browser on to; `link` adds it to Ada's methods. */
-  async function signIn(made: Made, signedIn: FakeAppleSignIn | 'cancel', link = false) {
+  async function signIn(made: Made, signedIn: FakeAppleSignIn | 'cancel', link = false, extraCookie?: string) {
     const start = await made.app.request(`/auth/providers/apple/start?return_to=${encodeURIComponent(`${APP}/page`)}${link ? '&link=1' : ''}`, { headers: link ? { Cookie: made.cookie } : {} });
     expect(start.status).toBe(302);
     const authorize = start.headers.get('location')!;
@@ -85,7 +85,7 @@ describe('signing in with Apple', () => {
     const nameCookie = posted.headers.getSetCookie().find((cookie) => cookie.startsWith('madauth_provider_name='))?.split(';')[0];
     const next = new URL(posted.headers.get('location')!);
     expect(next.origin + next.pathname).toBe(CALLBACK);
-    const cookiesSent = [state, nameCookie, link ? made.cookie : undefined].filter(Boolean).join('; ');
+    const cookiesSent = [state, nameCookie, link ? made.cookie : undefined, extraCookie].filter(Boolean).join('; ');
     const callback = await made.app.request(next.pathname + next.search, { headers: { Cookie: cookiesSent } });
     const cookieOf = (name: string) => callback.headers.getSetCookie().find((cookie) => cookie.startsWith(`${name}=`))?.split(';')[0];
     return { authorize: new URL(authorize), posted, nameCookie, callback, location: callback.headers.get('location'), session: cookieOf('madauth_session'), pending: cookieOf('madauth_pending_account') };
@@ -155,6 +155,20 @@ describe('signing in with Apple', () => {
     expect(bare.status).toBe(400);
     // The POST route is Apple's: another provider's callback takes no POST.
     expect((await made.app.request('/auth/providers/gitlab/callback', { method: 'POST' })).status).toBe(404);
+
+    // A name cookie another POST planted (a cross-site form, or a sign-in that failed) names nobody: it belongs
+    // to its own state, and the next callback uses it up.
+    expect(await userOf(made, (await signIn(made, grace)).session)).toMatchObject({ name: 'Grace Hopper' });
+    const planted = await made.app.request('/auth/providers/apple/callback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ code: 'x', state: 'planted', user: JSON.stringify({ name: { firstName: 'Mallory' } }) }).toString(),
+    });
+    const plantedCookie = planted.headers.getSetCookie().find((c) => c.startsWith('madauth_provider_name='))!.split(';')[0]!;
+    const again = await signIn(made, { idToken: grace.idToken }, false, plantedCookie);
+    expect(again.location).toBe(`${APP}/page`);
+    expect(await userOf(made, again.session)).toMatchObject({ name: 'Grace Hopper' });
+    expect(again.callback.headers.getSetCookie().find((c) => c.startsWith('madauth_provider_name='))).toMatch(/Max-Age=0/);
   });
 
   it('AP4: a relay address of Hide My Email is the user’s address; an address Apple doesn’t mark verified is confirmed by e-mail; none at all is typed', async () => {

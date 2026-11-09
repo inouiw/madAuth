@@ -462,16 +462,8 @@ export class Users {
 
   /** The user's GitHub account, if linked: its key holds GitHub's user id, its secret the encrypted access token of the last sign-in. */
   async githubAccount(userId: string): Promise<StoredAccount | null> {
-    return this.providerAccount(userId, 'github');
-  }
-
-  /**
-   * The user's account at the provider `method` (`github`, `apple`), if linked: its secret holds what takes the
-   * authorization back at the provider (GitHub's access token, Apple's refresh token), encrypted.
-   */
-  async providerAccount(userId: string, method: 'github' | 'apple'): Promise<StoredAccount | null> {
     const accounts = await this.accounts(userId);
-    return accounts.find((account) => account.key.startsWith(`${method}:`)) ?? null;
+    return accounts.find((account) => account.key.startsWith('github:')) ?? null;
   }
 
   async findAccountByKey(key: string): Promise<StoredAccount | null> {
