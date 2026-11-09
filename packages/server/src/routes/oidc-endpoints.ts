@@ -5,11 +5,15 @@
 import { createHash } from 'node:crypto';
 import type { Context, Hono } from 'hono';
 import { decodeJwt, type JWTPayload } from 'jose';
+import { APPLE_ENDPOINTS, appleProfile, appleUserName, exchangeAppleCode, isAppleToken, verifyAppleIdToken } from '../apple.js';
 import { verifyGoogleIdToken } from '../google.js';
-import { providerOf } from '../providers.js';
+import { keysCache } from '../oidc.js';
+import { providerOf, type StoredProvider } from '../providers.js';
+import { appleAccountKey } from '../users.js';
 import { localeOf } from '../webhooks.js';
+import { appleCredentialsOf, asAppleProvider, encryptAppleGrant } from './apple.js';
 import { GOOGLE, toProfile } from './google.js';
-import { resolveProviderUser } from './oauth.js';
+import { resolveProviderUser, type ProviderProfile } from './oauth.js';
 import type { AppContext } from '../app.js';
 import { claimsFromJson } from '../claims.js';
 import {
@@ -64,6 +68,19 @@ const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 /** The grant type of the token exchange (RFC 8693): a native app's Google ID token for madAuth's tokens. */
 const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ID_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id_token';
+
+/** Apple's published keys, as jose caches them; one set for the server. */
+let appleKeySets: ReturnType<typeof keysCache> | undefined;
+const appleKeys = (fetchFn: typeof fetch) => (appleKeySets ??= keysCache(fetchFn));
+
+/** The form's `name` for Apple: Apple's `fullName` as JSON (`{ "firstName", "lastName" }`), or a name as text. */
+function parseName(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
 
 /** The scopes madAuth knows among those asked for, as a grant stores them. */
 const knownScopes = (scope: string | undefined): string[] => (scope ?? '').split(' ').filter((s) => (OIDC_SCOPES as readonly string[]).includes(s));
@@ -355,35 +372,42 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     return tokenError(c, 400, 'unsupported_grant_type', `grant_type must be authorization_code, refresh_token, ${DEVICE_GRANT} or ${TOKEN_EXCHANGE_GRANT}.`);
   });
 
-  // --- The token exchange (RFC 8693): a native app signs in with a Google ID token it obtained itself ---
+  // --- The token exchange (RFC 8693): a native app signs in with a Google ID token or an Apple identity token it obtained itself ---
 
-  /** The Google provider, if it signs in now. */
-  const googleSignIn = async (c: Context) => ((await ctx.enabled(c, 'google')) ? providerOf(await ctx.methods(c), 'google') : null);
+  /** The provider `id` (`google`, `apple`), if it signs in now. */
+  const providerSignIn = async (c: Context, id: 'google' | 'apple') => ((await ctx.enabled(c, id)) ? providerOf(await ctx.methods(c), id) : null);
 
-  // The nonce for Google's sign-in, kept for the client for five minutes and used once, so the ID token that comes
-  // back was asked for by this client, just now. A WebView gets no cookie for it (see "Native apps" in docs/server.md).
+  // The nonce for Google's or Apple's sign-in, kept for the client for five minutes and used once, so the token that
+  // comes back was asked for by this client, just now. A WebView gets no cookie for it (see "Native apps" in docs/server.md).
   app.post(`${OIDC_PATH}nonce`, async (c) => {
     c.header('Cache-Control', 'no-store');
     const form = await paramsOf(c);
     const client = await authenticate(c, form);
     if (client instanceof Response) return client;
     if (!client.tokenExchange) return tokenError(c, 400, 'unauthorized_client', 'This application may not exchange tokens: an admin allows it with tokenExchange.');
-    const google = await googleSignIn(c);
-    if (!google) return tokenError(c, 400, 'invalid_request', 'Google sign-in is off on this server.');
+    const [google, apple] = await Promise.all([providerSignIn(c, 'google'), providerSignIn(c, 'apple')]);
+    if (!google && !apple) return tokenError(c, 400, 'invalid_request', 'Google and Apple sign-in are off on this server.');
     const nonce = await clients.issueNonce(client.id);
-    return c.json({ nonce, google_client_id: google.clientId, expires_in: Math.floor(EXCHANGE_NONCE_TTL_MS / 1000) });
+    return c.json({ nonce, ...(google ? { google_client_id: google.clientId } : {}), ...(apple ? { apple: true } : {}), expires_in: Math.floor(EXCHANGE_NONCE_TTL_MS / 1000) });
   });
 
-  /** The exchange: the Google ID token's user, signed in as with `google/verify`, gets this client's tokens. */
+  /**
+   * The exchange: the user of the Google ID token or the Apple identity token (told apart by its issuer), signed
+   * in as with `google/verify` or `apple/verify`, gets this client's tokens. Apple's `user` (its `fullName`, the
+   * first time) comes as the form's `name`; its `authorization_code`, when the app passes one, is exchanged for the
+   * refresh token that gives the authorization back when the user is deleted.
+   */
   const exchange = async (c: Context, client: StoredClient, form: Record<string, string>) => {
     if (!client.tokenExchange) return tokenError(c, 400, 'unauthorized_client', 'This application may not exchange tokens: an admin allows it with tokenExchange.');
-    if (form.subject_token_type !== ID_TOKEN_TYPE) return tokenError(c, 400, 'invalid_request', `subject_token_type must be ${ID_TOKEN_TYPE}: a Google ID token.`);
+    if (form.subject_token_type !== ID_TOKEN_TYPE) return tokenError(c, 400, 'invalid_request', `subject_token_type must be ${ID_TOKEN_TYPE}: a Google ID token or an Apple identity token.`);
     const subject = form.subject_token;
     if (!subject) return tokenError(c, 400, 'invalid_request', 'subject_token is missing.');
-    const google = await googleSignIn(c);
-    if (!google) return tokenError(c, 400, 'invalid_grant', 'Google sign-in is off on this server.');
-    // The nonce in the token must be one this client got from madAuth, fresh and unused: used up before Google's
-    // signature is checked, so a token that fails there takes a new nonce too.
+    const method = isAppleToken(subject) ? 'apple' : 'google';
+    const provider = await providerSignIn(c, method);
+    const offLine = `${method === 'apple' ? 'Apple' : 'Google'} sign-in is off on this server.`;
+    if (!provider) return tokenError(c, 400, 'invalid_grant', offLine);
+    // The nonce in the token must be one this client got from madAuth, fresh and unused: used up before the
+    // provider's signature is checked, so a token that fails there takes a new nonce too.
     let nonce: unknown;
     try {
       nonce = decodeJwt(subject).nonce;
@@ -393,15 +417,15 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     if (typeof nonce !== 'string' || !(await clients.useNonce(nonce, client.id))) {
       return tokenError(c, 400, 'invalid_grant', 'The nonce in subject_token is not one this application got from madAuth, or it expired or was used already.');
     }
-    const verified = await verifyGoogleIdToken(subject, { clientId: google.clientId, nonce: nonce as string, keys: ctx.config.jwksResolver });
-    if (!verified.ok) return tokenError(c, 400, 'invalid_grant', `subject_token: ${verified.reason}.`);
-    const resolved = await resolveProviderUser(ctx, GOOGLE, toProfile(verified.profile), localeOf(form.locale));
+    const verified = method === 'apple' ? await verifyAppleSubject(provider, subject, nonce, form) : await verifyGoogleSubject(provider, subject, nonce);
+    if ('reason' in verified) return tokenError(c, 400, 'invalid_grant', `subject_token: ${verified.reason}.`);
+    const resolved = await resolveProviderUser(ctx, method === 'apple' ? asAppleProvider(provider) : GOOGLE, verified.profile, localeOf(form.locale));
     if (!resolved.ok) {
       if (resolved.error === 'temporarily_unavailable') return c.json({ error: 'temporarily_unavailable', error_description: resolved.message }, 503);
       return tokenError(c, 400, 'invalid_grant', resolved.message);
     }
-    const step = await ctx.signInForTokens(c, resolved.user, ['google'], 'google', verified.profile);
-    if ('disabled' in step) return tokenError(c, 400, 'invalid_grant', 'Google sign-in is off on this server.');
+    const step = await ctx.signInForTokens(c, resolved.user, [method], method, verified.known);
+    if ('disabled' in step) return tokenError(c, 400, 'invalid_grant', offLine);
     // A second factor, or a setup: only a browser can take that step, through the authorization code flow.
     if ('next' in step) return c.json({ error: 'interaction_required', error_description: 'The sign-in needs a step a browser takes: sign in through the authorization endpoint.', next: step.next, factors: step.factors }, 400);
     const grant: Grant = {
@@ -409,10 +433,35 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       userId: step.stored.id,
       scope: knownScopes(form.scope).join(' '),
       authTime: Math.floor(Date.now() / 1000),
-      amr: 'google',
+      amr: method,
       sessionVersion: step.stored.sessionVersion,
     };
     return tokens(c, client, step.stored, grant, grant.scope, await refreshTokenFor(grant), null);
+  };
+
+  /** What a subject token proved: the profile to resolve the user with, and what the sign-in knows beyond the record (Google's picture, Apple's name). */
+  type Subject = { profile: ProviderProfile; known?: { name?: string; picture?: string } } | { reason: string };
+
+  const verifyGoogleSubject = async (google: StoredProvider, subject: string, nonce: string): Promise<Subject> => {
+    const verified = await verifyGoogleIdToken(subject, { clientId: google.clientId, nonce, keys: ctx.config.jwksResolver });
+    return verified.ok ? { profile: toProfile(verified.profile), known: verified.profile } : { reason: verified.reason };
+  };
+
+  const verifyAppleSubject = async (apple: StoredProvider, subject: string, nonce: string, form: Record<string, string>): Promise<Subject> => {
+    const fetchFn = ctx.config.oidcFetch ?? fetch;
+    const claims = await verifyAppleIdToken(subject, { audiences: [apple.clientId, ...(apple.bundleIds ?? [])], nonce, keys: appleKeys(fetchFn)(APPLE_ENDPOINTS.jwksUri) });
+    if (!claims) return { reason: "not an identity token Apple issued for this server's Services ID or App IDs with this nonce" };
+    const { email, verified } = appleProfile(claims);
+    if (!email || !verified) return { reason: 'Apple sent no verified e-mail address' };
+    const name = appleUserName(form.name === undefined ? undefined : { name: parseName(form.name) });
+    let secret: string | undefined;
+    if (form.authorization_code) {
+      const credentials = await appleCredentialsOf(ctx, apple);
+      const exchanged = credentials && (await exchangeAppleCode(credentials, { clientId: claims.aud, code: form.authorization_code }, fetchFn));
+      if (!exchanged) return { reason: "Apple did not accept authorization_code for the token's App ID" };
+      if (exchanged.refreshToken) secret = await encryptAppleGrant(ctx.keys, { clientId: claims.aud, refreshToken: exchanged.refreshToken });
+    }
+    return { profile: { key: appleAccountKey(claims.sub), email, ...(name ? { name } : {}), ...(secret ? { secret } : {}) }, known: name ? { name } : undefined };
   };
 
   // --- The device authorization grant (RFC 8628): the device's side ---

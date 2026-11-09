@@ -89,7 +89,7 @@ export interface FakeServer {
   recoveryCodes: Map<string, string[]>;
   /** A sign-in whose first step is done, waiting for a second factor or a setup (the challenge cookie), with the factors that can finish it. */
   challenge:
-    | { email: string; next: 'passkey' | 'authenticator' | 'sms' | 'second-factor-setup' | 'authenticator-setup' | 'passkey-setup'; method: 'google' | 'github' | 'password' | 'authenticator' | 'email-link' | 'passkey'; factors: ('passkey' | 'authenticator' | 'sms')[] }
+    | { email: string; next: 'passkey' | 'authenticator' | 'sms' | 'second-factor-setup' | 'authenticator-setup' | 'passkey-setup'; method: 'google' | 'github' | 'apple' | 'password' | 'authenticator' | 'email-link' | 'passkey'; factors: ('passkey' | 'authenticator' | 'sms')[] }
     | undefined;
   /** Passkeys, when the server has them on: whether they sign in on their own (and sign people up), and that sign-in's policy. */
   passkey: { signIn: boolean; signUp?: boolean; secondFactor: SecondFactorPolicy } | null;
@@ -106,9 +106,12 @@ export interface FakeServer {
     name: string;
     secondFactor: SecondFactorPolicy;
     on?: boolean;
-    /** `microsoft` for Microsoft's provider (its id is `microsoft`), with its tenant; default `oidc`. */
-    kind?: 'oidc' | 'microsoft';
+    /** `microsoft` for Microsoft's provider (its id is `microsoft`), with its tenant; `apple` for Apple's, with its ids; default `oidc`. */
+    kind?: 'oidc' | 'microsoft' | 'apple';
     tenant?: string;
+    teamId?: string;
+    keyId?: string;
+    bundleIds?: string[];
     issuer?: string;
     clientId?: string;
     scopes?: string[];
@@ -250,8 +253,8 @@ export function fakeServer(): FakeServer {
     ...(server.authenticators.has(email) ? ['authenticator'] : []),
     ...(server.phones.has(email) ? ['sms'] : []),
   ];
-  const afterPrimary = (email: string, method: 'google' | 'github' | 'password' | 'email-link' | 'passkey') => {
-    const policy = method === 'passkey' ? (server.passkey?.secondFactor ?? 'none') : server.policy[method];
+  const afterPrimary = (email: string, method: 'google' | 'github' | 'apple' | 'password' | 'email-link' | 'passkey') => {
+    const policy = method === 'passkey' ? (server.passkey?.secondFactor ?? 'none') : method === 'apple' ? (server.oidc.find((p) => p.id === 'apple')?.secondFactor ?? 'none') : server.policy[method];
     const app = server.authenticators.has(email);
     const phone = server.methods.sms && server.phones.has(email);
     const passkey = !!server.passkey && method !== 'passkey' && passkeysOf(email).length > 0;
@@ -621,16 +624,19 @@ export function fakeServer(): FakeServer {
         return json({}, 202);
       }
       case 'POST /auth/providers/google/nonce':
+      case 'POST /auth/providers/apple/nonce':
         return json({ nonce: `nonce-${++server.nonces}` });
       case 'POST /auth/providers/google/verify':
+      case 'POST /auth/providers/apple/verify':
         if (server.verifyError) return json({ error: server.verifyError, message: 'rejected in test' }, 401);
-        return afterPrimary(ada.email!, 'google');
-      case 'POST /auth/providers/google/link': {
+        return afterPrimary(ada.email!, url.pathname.includes('/apple/') ? 'apple' : 'google');
+      case 'POST /auth/providers/google/link':
+      case 'POST /auth/providers/apple/link': {
         const user = server.user?.email;
         if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
         if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
         if (server.verifyError) return json({ error: server.verifyError, message: 'rejected in test' }, server.verifyError === 'account_taken' ? 409 : 401);
-        server.linked.set(user, (server.linked.get(user) ?? new Set()).add('google'));
+        server.linked.set(user, (server.linked.get(user) ?? new Set()).add(url.pathname.includes('/apple/') ? 'apple' : 'google'));
         return json({});
       }
       case 'POST /auth/logout':
@@ -879,12 +885,12 @@ export function fakeServer(): FakeServer {
         const client = server.clients.find((c) => c.id === body.client_id);
         if (!client) return oauth('invalid_client', 'unknown', 401);
         if (!client.tokenExchange) return oauth('unauthorized_client', 'not allowed');
-        if (url.pathname.endsWith('/nonce')) return json({ nonce: 'nonce-token', google_client_id: 'google-client', expires_in: 300 });
+        if (url.pathname.endsWith('/nonce')) return json({ nonce: 'nonce-token', google_client_id: 'google-client', ...(server.oidc.some((p) => p.id === 'apple') ? { apple: true } : {}), expires_in: 300 });
         const tokens = (scope: string) => json({ access_token: 'at', token_type: 'Bearer', expires_in: 900, ...(scope.includes('openid') ? { id_token: 'idt' } : {}), ...(scope.includes('offline_access') ? { refresh_token: 'rt2' } : {}), scope });
         if (body.grant_type === 'refresh_token') return body.refresh_token === 'rt1' ? tokens(body.scope ?? 'openid offline_access') : oauth('invalid_grant', 'ended');
         if (body.grant_type !== 'urn:ietf:params:oauth:grant-type:token-exchange') return oauth('unsupported_grant_type', 'no');
         if (body.subject_token === 'needs-second-factor') return json({ error: 'interaction_required', error_description: 'a browser step', next: 'authenticator', factors: ['authenticator'] }, 400);
-        if (body.subject_token !== 'google-id-token') return oauth('invalid_grant', 'subject_token: nonce mismatch.');
+        if (body.subject_token !== 'google-id-token' && body.subject_token !== 'apple-id-token') return oauth('invalid_grant', 'subject_token: nonce mismatch.');
         return tokens(body.scope ?? '');
       }
       // A device's sign-in: the code binds to whoever looks it up first, who then approves or denies it.
@@ -940,14 +946,19 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/admin/providers/remove': {
         if (!server.user) return json({ error: 'no_session' }, 401);
         if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
-        const data = body as unknown as { id?: string; kind?: string; name?: string; clientId?: string; clientSecret?: string | null; issuer?: string; scopes?: string; trustEmail?: boolean; tenant?: string; dryRun?: boolean };
+        const data = body as unknown as { id?: string; kind?: string; name?: string; clientId?: string; clientSecret?: string | null; issuer?: string; scopes?: string; trustEmail?: boolean; tenant?: string; teamId?: string; keyId?: string; bundleIds?: string; dryRun?: boolean };
         const action = url.pathname.split('/').at(-1);
         const callbackUrl = (id: string) => `${SERVER}/auth/providers/${id}/callback`;
         const builtIn = (kind: 'google' | 'github') => ({ id: kind, kind, name: server.providerNames[kind], clientId: `${kind}-client`, hasClientSecret: true, callbackUrl: callbackUrl(kind), createdAt: 1, updatedAt: 1 });
         const oidcInfo = (p: FakeServer['oidc'][number]) => ({
           id: p.id, kind: p.kind ?? 'oidc', name: p.name, clientId: p.clientId ?? `${p.id}-client`, hasClientSecret: true, callbackUrl: callbackUrl(p.id), createdAt: 1, updatedAt: 1,
-          ...(p.kind === 'microsoft' ? { tenant: p.tenant } : { issuer: p.issuer ?? `https://${p.id}.example.com`, scopes: p.scopes ?? [], trustEmail: p.trustEmail ?? false }),
+          ...(p.kind === 'microsoft'
+            ? { tenant: p.tenant }
+            : p.kind === 'apple'
+              ? { teamId: p.teamId, keyId: p.keyId, bundleIds: p.bundleIds ?? [] }
+              : { issuer: p.issuer ?? `https://${p.id}.example.com`, scopes: p.scopes ?? [], trustEmail: p.trustEmail ?? false }),
         });
+        const bundleIdsOf = (value: string) => value.split(/[\s,]+/).filter(Boolean);
         if (action === 'list') {
           const providers = [...(['google', 'github'] as const).filter((kind) => server[kind]).map(builtIn), ...server.oidc.map(oidcInfo)];
           return json({ providers, callbackBase: `${SERVER}/auth/providers/` });
@@ -960,6 +971,14 @@ export function fakeServer(): FakeServer {
           if (!data.tenant) return json({ error: 'invalid_provider', message: 'tenant must be given.' }, 400);
           if (oidc) return json({ error: 'provider_exists', message: 'exists' }, 409);
           const added = { id: 'microsoft', kind: 'microsoft' as const, name: data.name ?? 'Microsoft', secondFactor: 'none' as const, on: false, tenant: data.tenant, clientId: data.clientId };
+          server.oidc.push(added);
+          return json({ provider: oidcInfo(added) });
+        }
+        if (action === 'add' && data.kind === 'apple') {
+          if (!data.teamId || !data.keyId) return json({ error: 'invalid_provider', message: 'teamId and keyId must be given.' }, 400);
+          if (!data.clientSecret?.includes('PRIVATE KEY')) return json({ error: 'invalid_provider', message: 'clientSecret must be the .p8 key.' }, 400);
+          if (oidc) return json({ error: 'provider_exists', message: 'exists' }, 409);
+          const added = { id: 'apple', kind: 'apple' as const, name: data.name ?? 'Apple', secondFactor: 'none' as const, on: false, teamId: data.teamId, keyId: data.keyId, bundleIds: bundleIdsOf(data.bundleIds ?? ''), clientId: data.clientId };
           server.oidc.push(added);
           return json({ provider: oidcInfo(added) });
         }
@@ -978,6 +997,9 @@ export function fakeServer(): FakeServer {
               ...(data.scopes !== undefined ? { scopes: data.scopes.split(' ').filter(Boolean) } : {}),
               ...(data.trustEmail !== undefined ? { trustEmail: data.trustEmail } : {}),
               ...(data.tenant !== undefined ? { tenant: data.tenant } : {}),
+              ...(data.teamId !== undefined ? { teamId: data.teamId } : {}),
+              ...(data.keyId !== undefined ? { keyId: data.keyId } : {}),
+              ...(data.bundleIds !== undefined ? { bundleIds: bundleIdsOf(data.bundleIds) } : {}),
             });
             return json({ provider: oidcInfo(oidc) });
           }

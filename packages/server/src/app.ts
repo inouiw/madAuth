@@ -5,13 +5,15 @@ import { Admins } from './admins.js';
 import { ApiKeys, MADAUTH_SCOPES, ScopeCatalog, apiKeyInfo, grantedScopes, type MadauthScope } from './api-keys.js';
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
-import { Providers, importProviders, isProviderMethodKind, parseProviderFields, parseProviderKind, providerOf, type StoredProvider } from './providers.js';
+import { importAppleKey } from './apple.js';
+import { Providers, importProviders, isProviderMethodKind, parseProviderFields, parseProviderKind, providerOf, type ProviderKind, type StoredProvider } from './providers.js';
 import { SETUP_TOKEN_PREFIX, Setup } from './setup.js';
 import { discover } from './oidc.js';
 import type { KeyService } from './key-service.js';
 import { isValidEmail, normalizeEmail } from './password.js';
 import { emailRoutes } from './routes/email.js';
 import { emailLinkRoutes } from './routes/email-link.js';
+import { appleRoutes, revokeAppleGrant } from './routes/apple.js';
 import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
 import { oidcRoutes } from './routes/oidc.js';
@@ -55,7 +57,7 @@ import { RSA_SIGNING_ALG } from './keys.js';
 import { canSign, readToken, signRenewal, signSession, userFromClaims, type SessionClaims, type SessionExtra } from './tokens.js';
 import { parseUserSearch, searchUsers } from './user-search.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, bearerTokenOf, type MadauthUser } from './user.js';
-import { Users, factorsAmong, methodOf, preferredFirst, toMadauthUser, type StoredUser } from './users.js';
+import { Users, factorsAmong, preferredFirst, toMadauthUser, type StoredAccount, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 
 /** How long madAuth waits for an event call; events never make a request fail. */
@@ -510,11 +512,14 @@ export function createApp(config: MadauthConfig): Hono {
   const oidcCors = cors({ origin: '*', allowMethods: ['GET', 'POST'], allowHeaders: ['Authorization', 'Content-Type'], maxAge: 600 });
   app.use('/auth/*', (c, next) => (isOidcEndpoint(c) ? oidcCors(c, next) : appCors(c, next)));
 
+  // A provider's POST to its callback (Apple's form_post) comes from the provider's site: it checks and stores
+  // nothing itself, see routes/oidc.ts.
+  const isProviderCallback = (c: Context) => /^\/auth\/providers\/[^/]+\/callback$/.test(c.req.path);
   // Only the configured apps may start sign-ins or change the session. A request with an API key (any
   // `Authorization` header) comes from a program: no page makes a browser send that header to madAuth, since
   // it isn't one CORS allows, and a program has no user's cookies.
   app.use('/auth/*', async (c, next) => {
-    if (c.req.method === 'POST' && !isOidcEndpoint(c) && c.req.header('authorization') === undefined && !isAllowedOrigin(c.req.header('origin'))) {
+    if (c.req.method === 'POST' && !isOidcEndpoint(c) && !isProviderCallback(c) && c.req.header('authorization') === undefined && !isAllowedOrigin(c.req.header('origin'))) {
       return c.json({ error: 'forbidden_origin' }, 403);
     }
     await next();
@@ -564,6 +569,7 @@ export function createApp(config: MadauthConfig): Hono {
   // Always there: whether the store has the provider is a question of each request.
   googleRoutes(app, ctx);
   githubRoutes(app, ctx);
+  appleRoutes(app, ctx);
   // After Google's and GitHub's, whose own routes answer for their ids.
   oidcRoutes(app, ctx);
   if (config.password && ctx.webhook) passwordRoutes(app, ctx, users, ctx.webhook);
@@ -580,11 +586,18 @@ export function createApp(config: MadauthConfig): Hono {
     const clientSecret = github && (await ctx.clientSecret(github));
     return github && clientSecret ? { clientId: github.clientId, clientSecret } : null;
   };
-  // GitHub's authorization goes with the account, with the token kept from its last sign-in.
-  methodRoutes(app, ctx, async (account) => {
+  /**
+   * Takes a provider's authorization back for an account that is removed, with the token kept from its last
+   * sign-in: GitHub's grant, Apple's refresh token. Nothing for the other providers' accounts.
+   */
+  const revokeProviderGrant = async (account: StoredAccount | null): Promise<void> => {
+    if (!account) return;
+    if (account.key.startsWith('apple:')) return revokeAppleGrant(ctx, account, config.oidcFetch);
     const github = account.key.startsWith('github:') ? await githubApp() : null;
     if (github) await revokeGrant(github, keys, account);
-  });
+  };
+  // GitHub's and Apple's authorizations go with the account.
+  methodRoutes(app, ctx, revokeProviderGrant);
 
   app.get('/auth/session', async (c) => {
     const user = await currentSession(c);
@@ -604,15 +617,15 @@ export function createApp(config: MadauthConfig): Hono {
   // --- Account ---
 
   /**
-   * Deletes the user with all their sign-in methods, then takes back GitHub's authorization with the token kept from
-   * their last sign-in (best effort). With `ifClaims`, only while their claims are still these. False when nothing
-   * was deleted: the user is gone, or their claims changed.
+   * Deletes the user with all their sign-in methods, then takes back GitHub's and Apple's authorizations with the
+   * tokens kept from their last sign-ins (best effort). With `ifClaims`, only while their claims are still these.
+   * False when nothing was deleted: the user is gone, or their claims changed.
    */
   const deleteUser = async (userId: string, ifClaims?: string | null): Promise<boolean> => {
-    const githubAccount = await users.githubAccount(userId);
-    const github = githubAccount ? await githubApp() : null;
+    // Read before the deletion, which takes the accounts with it.
+    const granted = (await Promise.all([users.githubAccount(userId), users.providerAccount(userId, 'apple')])).filter((account) => account !== null);
     const deleted = await users.deleteById(userId, ifClaims);
-    if (deleted && github) await revokeGrant(github, keys, githubAccount);
+    if (deleted) await Promise.all(granted.map(revokeProviderGrant));
     return deleted;
   };
 
@@ -903,7 +916,13 @@ export function createApp(config: MadauthConfig): Hono {
     updatedAt: provider.updatedAt,
     ...(provider.kind === 'oidc' ? { issuer: provider.issuer, scopes: provider.scopes, trustEmail: provider.trustEmail } : {}),
     ...(provider.kind === 'microsoft' ? { tenant: provider.tenant } : {}),
+    ...(provider.kind === 'apple' ? { teamId: provider.teamId, keyId: provider.keyId, bundleIds: provider.bundleIds ?? [] } : {}),
   });
+  /** Apple's secret is a key file: one that isn't the ES256 key Apple gives would only fail at the first sign-in. */
+  const checkAppleKey = async (c: Context, kind: ProviderKind, fields: { clientSecret?: string | null }): Promise<Response | null> => {
+    if (kind !== 'apple' || !fields.clientSecret || (await importAppleKey(fields.clientSecret))) return null;
+    return c.json({ error: 'invalid_provider', message: 'clientSecret is not the private key Apple gives for Sign in with Apple (an EC P-256 key in a .p8 file): paste the whole file.' }, 400);
+  };
   /** Who made a change, as a `provider.*` event tells it. */
   const changedBy = (caller: { by: string | null; setup: boolean }) => ({ by: caller.by, ...(caller.setup ? { bySetupToken: true } : {}) });
   const providerNotFound = (c: Context) => c.json({ error: 'provider_not_found', message: 'There is no provider with this id.' }, 404);
@@ -925,6 +944,8 @@ export function createApp(config: MadauthConfig): Hono {
     const { kind, id } = named;
     const fields = parseProviderFields(kind, data, true);
     if ('error' in fields) return c.json(fields, 400);
+    const wrongKey = await checkAppleKey(c, kind, fields);
+    if (wrongKey) return wrongKey;
     // An issuer that doesn't answer as an OpenID Connect provider would only fail at the first sign-in.
     const found = fields.issuer ? await discover(fields.issuer, config.oidcFetch) : null;
     if (found && 'problem' in found) return c.json({ error: 'invalid_provider', message: `The issuer is no OpenID Connect provider madAuth can use: ${found.problem}.` }, 400);
@@ -949,6 +970,8 @@ export function createApp(config: MadauthConfig): Hono {
     if (data.kind !== undefined && data.kind !== current.kind) return c.json({ error: 'invalid_provider', message: "A provider's kind can't change: add a new one." }, 400);
     const fields = parseProviderFields(current.kind, data, false);
     if ('error' in fields) return c.json(fields, 400);
+    const wrongKey = await checkAppleKey(c, current.kind, fields);
+    if (wrongKey) return wrongKey;
     const updated = await providers.update(current.id, fields, caller.by);
     if ('error' in updated) return providerNotFound(c);
     await ctx.emit('provider.changed', { provider: providerInfo(updated.provider), ...changedBy(caller) });
@@ -1053,10 +1076,8 @@ export function createApp(config: MadauthConfig): Hono {
     const user = await users.findByEmail(normalizeEmail(data.email));
     if (!user) return noUser(c);
     const removed = await users.resetSignIn(user.id);
-    // GitHub's authorization goes with its account, as when the user removes GitHub or deletes the account.
-    const githubAccounts = removed.filter((account) => methodOf(account) === 'github');
-    const github = githubAccounts.length ? await githubApp() : null;
-    if (github) await Promise.all(githubAccounts.map((account) => revokeGrant(github, keys, account)));
+    // GitHub's and Apple's authorizations go with their accounts, as when the user removes them or deletes the account.
+    await Promise.all(removed.map(revokeProviderGrant));
     await ctx.emit('user.sign_in_reset', { user: toMadauthUser(user), by: caller.email, ...byApiKey(caller) });
     return c.json({ email: user.emailNormalized, userId: user.id });
   });

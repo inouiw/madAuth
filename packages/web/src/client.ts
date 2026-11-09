@@ -25,6 +25,7 @@ export type {
   SignUpOptions,
 } from './scopes/password.js';
 export type { GoogleApi, GoogleButtonOptions, GoogleSignInOptions } from './scopes/google.js';
+export type { AppleApi, AppleButtonOptions, AppleName, AppleSignInOptions } from './scopes/apple.js';
 export type { GitHubApi, GitHubButtonOptions } from './scopes/github.js';
 export type {
   AuthenticatorApi,

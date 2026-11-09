@@ -14,6 +14,7 @@ import { request, type HttpResult, type RequestInit } from './http.js';
 import { isBuiltInMethodId, type LoginMethodId } from './methods.js';
 import { GitHub } from './providers/github.js';
 import { GoogleRedirect } from './providers/google-redirect.js';
+import { Apple } from './providers/apple.js';
 import { Microsoft } from './providers/microsoft.js';
 import { OpenIdConnect } from './providers/oidc.js';
 import { methodName } from './providers/redirect.js';
@@ -25,6 +26,7 @@ import { createDeviceApi } from './scopes/device.js';
 import { createTokensApi } from './scopes/tokens.js';
 import { createEmailLinkApi } from './scopes/email-link.js';
 import { createGitHubApi } from './scopes/github.js';
+import { createAppleApi } from './scopes/apple.js';
 import { createGoogleApi } from './scopes/google.js';
 import { createMethodsApi } from './scopes/methods.js';
 import { createSecondFactorApi } from './scopes/second-factor.js';
@@ -301,7 +303,7 @@ function handleRedirectReturn(ctx: ProviderContext): LoginMethodId | undefined {
 
 /**
  * The providers for the sign-in providers the server offers that the app didn't pass: GitHub's redirect,
- * Microsoft's, the OpenID Connect providers', and Google's when the server has its code flow (a client secret). Google's One
+ * Microsoft's, Apple's, the OpenID Connect providers', and Google's when the server has its code flow (a client secret). Google's One
  * Tap the app passes itself (`new GoogleFedcm()`), since it loads Google's script and prompts on page load.
  */
 function automaticProviders(config: ServerConfig, passed: Map<LoginMethodId, SignInProvider>): SignInProvider[] {
@@ -309,6 +311,7 @@ function automaticProviders(config: ServerConfig, passed: Map<LoginMethodId, Sig
     if (passed.has(offered.id)) return [];
     if (offered.kind === 'oidc') return [new OpenIdConnect(offered.id)];
     if (offered.kind === 'microsoft') return [new Microsoft()];
+    if (offered.kind === 'apple') return [new Apple()];
     if (offered.kind === 'github') return [new GitHub()];
     return offered.kind === 'google' && config.google?.codeFlow ? [new GoogleRedirect()] : [];
   });
@@ -753,6 +756,12 @@ export const Madauth = {
   github: createGitHubApi(core),
 
   /**
+   * Sign in with Apple for custom login screens: its button, or an identity token the app obtained itself with
+   * Apple's own sheet in a native app (`nonce` and `signIn`). The server offers it once an admin added Apple.
+   */
+  apple: createAppleApi(core),
+
+  /**
    * A sign-in provider the server offers, by its id, for custom login screens: its button, or its redirect
    * without one. For the OpenID Connect providers an admin added (e.g. `Madauth.provider('gitlab')`), and for
    * Google and GitHub too.
@@ -786,7 +795,7 @@ export const Madauth = {
   admin: createAdminApi(core),
   /** Approving a device's sign-in (a TV, a command-line tool) on a custom screen; the dialog does it with `showDeviceApprovalDialog`. */
   device: createDeviceApi(core),
-  /** Tokens instead of cookies for a native app that signs in with a Google ID token it obtained itself. */
+  /** Tokens instead of cookies for a native app that signs in with a Google ID token or an Apple identity token it obtained itself. */
   tokens: createTokensApi(core),
 
   /**

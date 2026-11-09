@@ -19,6 +19,7 @@ describe('@madauth/web', () => {
       [
         'admin',
         'apiKeys',
+        'apple',
         'currentUser',
         'deleteAccount',
         'device',
@@ -57,6 +58,8 @@ describe('@madauth/web', () => {
       ['add', 'change', 'confirmReset', 'loadRating', 'pendingReset', 'policy', 'sendResetEmail', 'sendVerificationEmail', 'signIn', 'signUp', 'verifyEmail'].sort(),
     );
     expect(Object.keys(madauth.Madauth.google).sort()).toEqual(['nonce', 'renderButton', 'signIn']);
+    expect(Object.keys(madauth.Madauth.apple).sort()).toEqual(['nonce', 'renderButton', 'signIn']);
+    expectTypeOf(madauth.Madauth.apple).toEqualTypeOf<madauth.AppleApi>();
     expect(Object.keys(madauth.Madauth.github)).toEqual(['renderButton']);
     expect(Object.keys(madauth.Madauth.provider('gitlab')).sort()).toEqual(['addressSuggestion', 'renderButton', 'sendVerificationEmail', 'signIn', 'submitAddress', 'verifyEmail']);
     expectTypeOf(madauth.Madauth.provider('gitlab')).toEqualTypeOf<madauth.ProviderApi>();

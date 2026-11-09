@@ -1,7 +1,7 @@
 // Settings that admins change while the server runs, kept in the store: which sign-in methods are on, which
 // of them sign in on their own, which ask for a second factor, and the rules for new passwords. See "Sign-in
 // methods" and "Password rules" in docs/server.md.
-import { isProviderMethod } from './providers.js';
+import { isProviderMethod, isProviderMethodKind, type ProviderKind } from './providers.js';
 import type { Row, StoreAdapter } from './store/schema.js';
 
 /**
@@ -440,9 +440,9 @@ export function anyOn(signsUp: (method: string) => boolean, methods: MethodSetti
  */
 export function checkMethodSettings(
   methods: MethodSettings,
-  server: { configured: (method: string) => boolean; signsUp: (method: string) => boolean; providers?: { id: string; kind: string }[] },
+  server: { configured: (method: string) => boolean; signsUp: (method: string) => boolean; providers?: { id: string; kind: ProviderKind }[] },
 ): string | null {
-  const providerIds = (server.providers ?? []).filter((provider) => provider.kind === 'oidc' || provider.kind === 'microsoft').map((provider) => provider.id);
+  const providerIds = (server.providers ?? []).filter((provider) => isProviderMethodKind(provider.kind)).map((provider) => provider.id);
   for (const [method, setting] of Object.entries(methods)) {
     if (!setting) continue;
     if (!isMethodId(method) && !providerIds.includes(method)) return `"${method}" is no sign-in method of this server: add the provider first.`;
