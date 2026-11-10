@@ -225,6 +225,8 @@ describe('asymmetric signatures (v1a, Ed25519)', () => {
     expect(await verifyWebhook({ keys }, headers, body, { now: Date.now() + 301_000 })).toBe(false);
     // The string form checks v1 only: no secret matches a v1a signature.
     expect(verifyWebhook(generateWebhookSecret(), headers, body)).toBe(false);
+    // An unset secret (process.env.WEBHOOK_SECRET!) is false at once, not a promise that a sync check would take as true.
+    expect(verifyWebhook(undefined as unknown as string, headers, body)).toBe(false);
   });
 
   it('V2: with WEBHOOK_SECRET too, both signatures in one header, v1a first; a receiver of either kind accepts it', async () => {
@@ -313,6 +315,17 @@ describe('asymmetric signatures (v1a, Ed25519)', () => {
     up = false;
     expect(await keys.refresh()).toHaveLength(1);
     expect(errors).toEqual([`[madauth] Could not fetch the webhook keys from ${KEYS_URL}: HTTP 503. The keys fetched before stay.`]);
+
+    // Whatever goes wrong while fetching, verifyWebhook resolves false and never rejects.
+    const broken = webhookKeys(KEYS_URL, {
+      fetch: (() => {
+        throw new Error('boom');
+      }) as typeof fetch,
+      onError: (message) => errors.push(message),
+    });
+    const signed = await sent({ ...base, ed25519: signer(key.privateKey) });
+    await expect(verifyWebhook({ keys: broken }, signed.headers, signed.body)).resolves.toBe(false);
+    expect(errors.at(-1)).toContain('boom');
 
     expect(() => webhookKeys('http://auth.example.com/.well-known/webhook-keys.json')).toThrow(/must be https/);
     expect(() => webhookKeys('not a url')).toThrow(/must be https/);

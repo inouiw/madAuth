@@ -168,6 +168,9 @@ export function verifyWebhook(by: { keys?: WebhookKeys; secret?: string }, heade
 export function verifyWebhook(by: string | { keys?: WebhookKeys; secret?: string }, headers: HeaderSource, body: string, options: VerifyOptions = {}): boolean | Promise<boolean> {
   const call = signedCall(headers, body, options);
   if (typeof by === 'string') return !!call && hasV1(by, call.signatures, call.content);
+  // Not a string and no object, e.g. an unset WEBHOOK_SECRET: false at once. A promise here would be truthy, and the
+  // sync form `if (!verifyWebhook(secret, …))` would accept every call.
+  if (!by || typeof by !== 'object') return false;
   const check = async (): Promise<boolean> => {
     if (!call) return false;
     if (by.secret !== undefined && hasV1(by.secret, call.signatures, call.content)) return true;
@@ -190,8 +193,8 @@ export interface WebhookKeys {
   refresh(): Promise<KeyObject[]>;
 }
 
-/** Hosts that may serve the keys over plain http: madAuth on the receiver's own machine. */
-const KEYS_LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'];
+/** Hosts that may be called over plain http, e.g. a receiver, or madAuth's keys, on the same machine. */
+export const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'];
 
 /** An Ed25519 public key from a JWK (`kty` OKP, `crv` Ed25519, `x` 32 bytes in base64url); null for anything else. */
 function ed25519Key(jwk: unknown): KeyObject | null {
@@ -213,7 +216,7 @@ export function webhookKeys(
   options: { maxAgeSeconds?: number; cooldownSeconds?: number; fetch?: typeof fetch; onError?: (message: string) => void } = {},
 ): WebhookKeys {
   const parsed = URL.canParse(url) ? new URL(url) : null;
-  if (!parsed || !(parsed.protocol === 'https:' || (parsed.protocol === 'http:' && KEYS_LOCAL_HOSTS.includes(parsed.hostname)))) {
+  if (!parsed || !(parsed.protocol === 'https:' || (parsed.protocol === 'http:' && LOCAL_HOSTS.includes(parsed.hostname)))) {
     throw new Error(`webhookKeys: the URL must be https (http only for localhost), e.g. https://app.example.com${WEBHOOK_KEYS_PATH}, but is "${url}".`);
   }
   const { maxAgeSeconds = 600, cooldownSeconds = 30, fetch: fetchImpl = fetch, onError = (message: string) => console.error(message) } = options;
@@ -233,7 +236,9 @@ export function webhookKeys(
     return list.map(ed25519Key).filter((key): key is KeyObject => key !== null);
   };
   const fetchKeys = (): Promise<KeyObject[]> => {
+    // A key that can't be imported counts as a failed fetch too: verifyWebhook resolves false and never rejects.
     fetching ??= load()
+      .catch((e: unknown) => (e instanceof Error ? e.message : String(e)))
       .then((loaded) => {
         if (typeof loaded !== 'string') return (cached = loaded);
         onError(`[madauth] Could not fetch the webhook keys from ${parsed.href}: ${loaded}. ${cached.length ? 'The keys fetched before stay.' : 'No v1a signature can be checked until it works.'}`);

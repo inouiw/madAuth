@@ -7,6 +7,7 @@ import { isValidEmail, normalizeEmail } from './password.js';
 import type { MethodConfig } from './settings.js';
 import type { StoreAdapter } from './store/schema.js';
 import {
+  LOCAL_HOSTS,
   REQUIRED_EMAIL_TYPES,
   WEBHOOK_TYPES,
   checkWebhookSecret,
@@ -456,8 +457,6 @@ async function keyServiceFromEnv(read: (name: keyof typeof envVars) => string | 
   return createLocalKeyService(signingKeys.keys);
 }
 
-/** Hosts that may be called over plain http, e.g. a receiver on the developer's machine. */
-const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'];
 
 /** Whether madAuth may call a URL: https, or http on this machine. */
 function isServiceUrl(value: string): boolean {

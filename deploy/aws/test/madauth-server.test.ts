@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { MadAuthServer, signsRs256, signsWebhooksWithIam } from '../lib/madauth-server.js';
+import { MadAuthServer, signsRs256, signsWebhooksWithIam, signsWebhooksWithKey } from '../lib/madauth-server.js';
 
 const MAILER_URL = 'https://abcdefghijklmnopqrstuvwxyz012345.lambda-url.eu-central-1.on.aws/';
 // This repository's server, which signs with AWS IAM whatever its version says.
@@ -148,6 +148,15 @@ test('a receiver of Standard Webhooks signatures: the key manager creates the Ed
   const stack = new Stack(app, 'NoWebhook', { env: { account: '123456789012', region: 'eu-central-1' } });
   new MadAuthServer(stack, 'MadAuth', { issuer: 'https://example.com', serverPackageDir: SERVER_DIR });
   Template.fromStack(stack).hasResourceProperties('Custom::MadAuthKmsKeys', { WebhookKey: Match.absent() });
+
+  // An installed server that can't sign with it gets none (it signs with WEBHOOK_SECRET alone), and the synth goes on.
+  assert.equal(signsWebhooksWithKey('0.7.4'), false);
+  assert.equal(signsWebhooksWithKey('0.7.5-beta.1'), false);
+  assert.equal(signsWebhooksWithKey('0.7.5'), true);
+  assert.equal(signsWebhooksWithKey('0.8.0'), true);
+  const entry = import.meta.resolve('@madauth/server/aws-kms');
+  const installed = (JSON.parse(readFileSync(new URL('../package.json', entry), 'utf8')) as { version: string }).version;
+  synth(undefined, null).template.hasResourceProperties('Custom::MadAuthKmsKeys', { WebhookKey: signsWebhooksWithKey(installed) ? 'ed25519' : Match.absent() });
 });
 
 test('rs256Signing: the key manager creates the RS256 key too, and the deploy that turns it on runs the setup again', () => {

@@ -118,7 +118,7 @@ export class MadAuthServer extends Construct {
     const awsIamReceiver = props.webhook?.awsIamReceiver;
     // A server that doesn't know WEBHOOK_AUTH would ignore it and refuse to start without WEBHOOK_SECRET. A checkout
     // (serverPackageDir) may be ahead of its version, so only the installed package is checked.
-    const installed = (awsIamReceiver || props.rs256Signing) && !props.serverPackageDir ? installedServerVersion() : undefined;
+    const installed = (props.webhook || props.rs256Signing) && !props.serverPackageDir ? installedServerVersion() : undefined;
     if (installed && awsIamReceiver && !signsWebhooksWithIam(installed)) {
       throw new Error(
         `MadAuthServer: webhook.awsIamReceiver needs a madAuth server newer than 0.6.0, which signs its webhook calls with its role (WEBHOOK_AUTH=aws-iam), but @madauth/server ${installed} is installed. Update it.`,
@@ -222,8 +222,9 @@ export class MadAuthServer extends Construct {
     // the deploy checks.
     const webhookSecretParameters: Record<string, string> = awsIamReceiver ? { WEBHOOK_SECRET_PARAMETER: `${secretsPath}/WEBHOOK_SECRET`, WEBHOOK_PREVIOUS_SECRET_PARAMETER: `${secretsPath}/WEBHOOK_PREVIOUS_SECRET` } : {};
     // A receiver that checks Standard Webhooks signatures gets the v1a ones: an Ed25519 key in KMS signs every call, and the
-    // receiver checks it with the public key from /.well-known/webhook-keys.json alone. An AWS_IAM receiver needs none.
-    const webhookKey = !!props.webhook && !awsIamReceiver;
+    // receiver checks it with the public key from /.well-known/webhook-keys.json alone. An AWS_IAM receiver needs none, and
+    // an installed server older than WEBHOOK_KEY_FROM can't use it (it signs with <secretsPath>/WEBHOOK_SECRET alone).
+    const webhookKey = !!props.webhook && !awsIamReceiver && (!installed || signsWebhooksWithKey(installed));
     this.keyManager = new nodejs.NodejsFunction(this, 'Keys', {
       entry: fileURLToPath(new URL('../lambda/keys.ts', import.meta.url)),
       handler: 'handler',
@@ -319,8 +320,21 @@ const RS256_FROM = '0.7.2';
 
 /** Whether a version of @madauth/server (`major.minor.patch`, maybe `-beta.n`) is {@link RS256_FROM} or newer. */
 export function signsRs256(version: string): boolean {
+  return atLeast(version, RS256_FROM);
+}
+
+/** The first version of @madauth/server that signs its webhook calls with a webhook key in KMS (v1a). */
+const WEBHOOK_KEY_FROM = '0.7.5';
+
+/** Whether a version of @madauth/server is {@link WEBHOOK_KEY_FROM} or newer: one that signs with the webhook key. */
+export function signsWebhooksWithKey(version: string): boolean {
+  return atLeast(version, WEBHOOK_KEY_FROM);
+}
+
+/** Whether `version` (`major.minor.patch`, maybe `-beta.n`) is `from` (a release) or newer. */
+function atLeast(version: string, from: string): boolean {
   const numbers = (v: string) => v.split('-')[0]!.split('.').map(Number);
-  const [a, b] = [numbers(version), numbers(RS256_FROM)];
+  const [a, b] = [numbers(version), numbers(from)];
   for (let i = 0; i < 3; i++) {
     if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
   }
