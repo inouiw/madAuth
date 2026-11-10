@@ -562,8 +562,10 @@ export function createApp(config: MadauthConfig): Hono {
       // On, they are a second factor of the methods that ask for one.
       passkey: on('passkey') ? { signIn: signIn('passkey'), signUp: signIn('passkey') && emailVerification, secondFactor: policyOf('passkey', current) } : null,
       // The sign-in providers that are on, with the names admins gave them: the web library shows a button for
-      // each, and names those whose sign-in can ask for a second factor.
-      providers: now.providers.filter((provider) => signsIn(provider.id, now.configured, current)).map(({ id, kind, name }) => ({ id, kind, name, secondFactor: policyOf(id, current) })),
+      // each (with the logo of its `preset`: GitLab, LinkedIn, Slack), and names those whose sign-in can ask for a second factor.
+      providers: now.providers
+        .filter((provider) => signsIn(provider.id, now.configured, current))
+        .map(({ id, kind, name, preset }) => ({ id, kind, name, ...(preset ? { preset } : {}), secondFactor: policyOf(id, current) })),
     });
   });
 
@@ -918,7 +920,7 @@ export function createApp(config: MadauthConfig): Hono {
     callbackUrl: `${issuer}/auth/providers/${provider.id}/callback`,
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
-    ...(provider.kind === 'oidc' ? { issuer: provider.issuer, scopes: provider.scopes, trustEmail: provider.trustEmail } : {}),
+    ...(provider.kind === 'oidc' ? { issuer: provider.issuer, scopes: provider.scopes, trustEmail: provider.trustEmail, ...(provider.preset ? { preset: provider.preset } : {}) } : {}),
     ...(provider.kind === 'microsoft' ? { tenant: provider.tenant } : {}),
     ...(provider.kind === 'apple' ? { teamId: provider.teamId, keyId: provider.keyId, bundleIds: provider.bundleIds ?? [] } : {}),
   });

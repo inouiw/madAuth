@@ -1,18 +1,23 @@
-// Sign-in with a generic OpenID Connect provider (the kind `oidc`, see providers.ts and oidc.ts), Microsoft (the
-// kind `microsoft`, see microsoft.ts) or Apple (the kind `apple`, see apple.ts): the authorization-code flow with
-// PKCE, a nonce and a state, at /auth/providers/<id>/start and /callback. A provider that tells no address hands
-// over to /address, where the user types one. See "Providers" in docs/server.md.
+// Sign-in with a generic OpenID Connect provider (the kind `oidc`, see providers.ts and oidc.ts, with its presets in
+// oidc-presets.ts), Microsoft (the kind `microsoft`, see microsoft.ts) or Apple (the kind `apple`, see apple.ts): the
+// authorization-code flow with PKCE, a nonce and a state, at /auth/providers/<id>/start and /callback. Facebook
+// (facebook.ts) and X (x.ts) are OAuth 2.0 without OpenID Connect: the same routes, with the account from their
+// APIs. A provider that tells no address hands over to /address, where the user types one. See "Providers" in
+// docs/server.md.
 import type { Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppContext } from '../app.js';
 import { APPLE_CANCELLED, APPLE_ENDPOINTS, APPLE_SCOPES, appleProfile, appleUserName, exchangeAppleCode, verifyAppleIdToken } from '../apple.js';
+import { exchangeFacebookCode, facebookAuthorizeUrl, fetchFacebookProfile, type SocialProfileResult } from '../facebook.js';
 import { microsoftEndpoints, microsoftProfile, verifyMicrosoftIdToken } from '../microsoft.js';
 import { addressOf, discoveryCache, exchangeCode, suggestedAddress, verifyIdToken, type OidcEndpoints, type OidcTokens } from '../oidc.js';
+import { rulesOf } from '../oidc-presets.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
 import { OIDC_SCOPES, isProviderMethodKind, providerOf, type StoredProvider } from '../providers.js';
 import { readToken, signToken } from '../tokens.js';
-import { appleAccountKey, microsoftAccountKey, oidcAccountKey } from '../users.js';
+import { appleAccountKey, facebookAccountKey, microsoftAccountKey, oidcAccountKey, xAccountKey } from '../users.js';
 import { localeOf } from '../webhooks.js';
+import { exchangeXCode, fetchXProfile, xAuthorizeUrl } from '../x.js';
 import { appleCredentialsOf, encryptAppleGrant } from './apple.js';
 import { createEmails } from './emails.js';
 import { setConfirmation } from './email.js';
@@ -41,6 +46,8 @@ interface ProviderAccount {
   /** Whether the provider vouches for `email`; an address it doesn't is confirmed by e-mail first. */
   verified: boolean;
   name?: string;
+  /** Facebook, X: the profile picture, for the session. */
+  picture?: string;
   /** Without an address: what the user is offered to type, see `suggestedAddress`. */
   suggestion?: string;
   /** Apple: the refresh token, encrypted, kept on the account for giving the authorization back (see routes/apple.ts). */
@@ -74,7 +81,7 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
   // The confirmation e-mail for an address the provider doesn't vouch for; without it, such an address is refused.
   const emails = ctx.webhook && ctx.emailVerification ? createEmails(ctx, ctx.users, ctx.webhook) : null;
 
-  /** The OpenID Connect or Microsoft provider the route names, or null: Google's and GitHub's routes are their own. */
+  /** The provider the route names (OpenID Connect, Microsoft, Apple, Facebook, X), or null: Google's and GitHub's routes are their own. */
   const providerOfRoute = async (c: Context): Promise<StoredProvider | null> => {
     const provider = providerOf(await ctx.methods(c), c.req.param('id') ?? '');
     return provider && isProviderMethodKind(provider.kind) ? provider : null;
@@ -96,7 +103,33 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
       return credentials && exchangeAppleCode(credentials, { clientId: provider.clientId, code, redirectUri: callbackUrl(provider.id) }, fetchFn);
     }
     const clientSecret = await ctx.clientSecret(provider);
-    return clientSecret ? exchangeCode(endpoints, { clientId: provider.clientId, clientSecret }, { code, redirectUri: callbackUrl(provider.id), verifier }, fetchFn) : null;
+    const rules = rulesOf(provider.preset);
+    // A preset may say how the provider takes the secret when its discovery document doesn't (LinkedIn), and that it has no PKCE.
+    const endpointsWithAuth = rules.clientAuth ? { ...endpoints, clientAuth: rules.clientAuth } : endpoints;
+    const exchange = { code, redirectUri: callbackUrl(provider.id), ...(rules.pkce ? { verifier } : {}) };
+    return clientSecret ? exchangeCode(endpointsWithAuth, { clientId: provider.clientId, clientSecret }, exchange, fetchFn) : null;
+  };
+
+  /**
+   * Facebook's or X's account for the callback's code: their code exchange (X's with the PKCE verifier) and their
+   * API's profile, since neither gives an ID token. An address they don't confirm (Facebook's, always) is confirmed
+   * by e-mail; none at all (an X account made with a phone number) is typed by the user.
+   */
+  const socialAccountOf = async (provider: StoredProvider, code: string, verifier: string): Promise<ProviderAccount | { error: string }> => {
+    const clientSecret = await ctx.clientSecret(provider);
+    if (!clientSecret) return { error: 'verification_failed' };
+    const app = { clientId: provider.clientId, clientSecret };
+    const redirectUri = callbackUrl(provider.id);
+    const token = provider.kind === 'facebook' ? await exchangeFacebookCode(app, { code, redirectUri }, fetchFn) : await exchangeXCode(app, { code, redirectUri, verifier }, fetchFn);
+    if (!token) return { error: 'verification_failed' };
+    const result: SocialProfileResult = provider.kind === 'facebook' ? await fetchFacebookProfile(token, clientSecret, fetchFn) : await fetchXProfile(token, fetchFn);
+    if (!result.ok) {
+      console.error(`[madauth] The ${provider.name} account could not be read: ${result.reason}`);
+      return { error: 'verification_failed' };
+    }
+    const { id, email, verified, name, picture } = result.profile;
+    const key = provider.kind === 'facebook' ? facebookAccountKey(id) : xAccountKey(id);
+    return { key, ...(email ? { email } : {}), verified: !!email && verified, ...(name ? { name } : {}), ...(picture ? { picture } : {}) };
   };
 
   /**
@@ -125,7 +158,7 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
       if (!claims) return { error: 'verification_failed' };
       return { key: microsoftAccountKey(claims.tid, claims.oid), ...microsoftProfile(claims) };
     }
-    const claims = await verifyIdToken(tokens.idToken, { issuer: provider.issuer!, clientId: provider.clientId, nonce, keys });
+    const claims = await verifyIdToken(tokens.idToken, { issuer: provider.issuer!, clientId: provider.clientId, nonce, keys, nonceRequired: rulesOf(provider.preset).nonceRequired });
     if (!claims) return { error: 'verification_failed' };
     const key = oidcAccountKey(provider.id, claims.sub!);
     const address = await addressOf(claims, { endpoints, accessToken: tokens.accessToken, trustEmail: !!provider.trustEmail }, fetchFn);
@@ -139,6 +172,16 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     return { key, ...address };
   };
 
+  /** The account behind the callback's code, by the provider's kind: Facebook's and X's from their APIs, the others' from the ID token. */
+  const callbackAccount = async (provider: StoredProvider, code: string, verifier: string, nonce: string, name?: string): Promise<ProviderAccount | { error: string }> => {
+    if (provider.kind === 'facebook' || provider.kind === 'x') return socialAccountOf(provider, code, verifier);
+    const found = await endpointsFor(provider);
+    if ('problem' in found) return { error: 'temporarily_unavailable' };
+    const tokens = await tokensFor(provider, found.endpoints, code, verifier);
+    if (!tokens) return { error: 'verification_failed' };
+    return accountOf(provider, found.endpoints, tokens, nonce, name);
+  };
+
   app.get('/auth/providers/:id/start', async (c) => {
     const provider = await providerOfRoute(c);
     if (!provider) return c.notFound();
@@ -147,6 +190,12 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     const back = redirectBack(c, returnUrl.href, provider.id);
     // The browser is on its way from the app: a method that is off sends it back there, with the error.
     if (!(await ctx.enabled(c, provider.id))) return back('method_disabled');
+    if (provider.kind === 'facebook' || provider.kind === 'x') {
+      const oauth = await startOAuth(c, ctx, pathOf(provider.id), returnUrl);
+      if ('error' in oauth) return back(oauth.error);
+      const request = { clientId: provider.clientId, redirectUri: callbackUrl(provider.id), state: oauth.state };
+      return c.redirect(provider.kind === 'facebook' ? facebookAuthorizeUrl(request) : xAuthorizeUrl({ ...request, codeChallenge: await pkceChallenge(oauth.verifier) }), 302);
+    }
     const found = await endpointsFor(provider);
     if ('problem' in found) {
       console.error(`[madauth] The OpenID Connect provider "${provider.id}" can't be reached: ${found.problem}`);
@@ -156,11 +205,13 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     const oauth = await startOAuth(c, ctx, pathOf(provider.id), returnUrl);
     if ('error' in oauth) return back(oauth.error);
     const url = new URL(found.endpoints.authorizationEndpoint);
-    // Apple has its own scopes, answers with a POST (form_post, which it demands for them) and knows no PKCE.
+    // Apple has its own scopes, answers with a POST (form_post, which it demands for them) and knows no PKCE; nor
+    // do some presets' providers (LinkedIn, Slack).
+    const pkce = { code_challenge: await pkceChallenge(oauth.verifier), code_challenge_method: 'S256' };
     const params =
       provider.kind === 'apple'
         ? { scope: APPLE_SCOPES.join(' '), response_mode: 'form_post' }
-        : { scope: [...OIDC_SCOPES, ...(provider.scopes ?? [])].join(' '), code_challenge: await pkceChallenge(oauth.verifier), code_challenge_method: 'S256' };
+        : { scope: [...OIDC_SCOPES, ...(provider.scopes ?? [])].join(' '), ...(rulesOf(provider.preset).pkce ? pkce : {}) };
     for (const [name, value] of Object.entries({
       client_id: provider.clientId,
       redirect_uri: callbackUrl(provider.id),
@@ -210,12 +261,7 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     if (refused) return back(refused === 'access_denied' || refused === APPLE_CANCELLED ? 'cancelled' : 'verification_failed');
     const code = c.req.query('code');
     if (!code || c.req.query('state') !== oauth.state) return back('verification_failed');
-    const found = await endpointsFor(provider);
-    if ('problem' in found) return back('temporarily_unavailable');
-
-    const tokens = await tokensFor(provider, found.endpoints, code, oauth.verifier);
-    if (!tokens) return back('verification_failed');
-    const account = await accountOf(provider, found.endpoints, tokens, oauth.nonce, name);
+    const account = await callbackAccount(provider, code, oauth.verifier, oauth.nonce, name);
     if ('error' in account) return back(account.error);
 
     // Linking takes the account by its id, whatever its address, or without one: the signed-in user is the proof.
@@ -224,7 +270,8 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     /** Signs the resolved user in, or goes on with their second step; or sends the browser back with the error. */
     const signIn = async (resolved: SignInResult) => {
       if (!resolved.ok) return back(resolved.error);
-      const step = await ctx.secondStep(c, resolved.user, [provider.id], provider.id, account.name ? { name: account.name } : undefined);
+      const known = { ...(account.name ? { name: account.name } : {}), ...(account.picture ? { picture: account.picture } : {}) };
+      const step = await ctx.secondStep(c, resolved.user, [provider.id], provider.id, account.name || account.picture ? known : undefined);
       if ('disabled' in step) return back('method_disabled');
       // The app continues with the second step (a code, or a setup); the challenge cookie is set.
       if ('next' in step) return back(undefined, step.next, step.factors);
