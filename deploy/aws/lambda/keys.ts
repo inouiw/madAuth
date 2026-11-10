@@ -14,9 +14,10 @@ const ssm = new SSMClient({});
 
 /**
  * `setUpKmsKeys` with its options: an RS256 key too (madAuth 0.7.2 or newer; the construct refuses `rs256Signing`
- * with an older installed server, and this file typechecks against the installed one).
+ * with an older installed server, and this file typechecks against the installed one), and the Ed25519 key that
+ * signs the webhook calls (`webhook`, default true; an older server ignores the option and creates none).
  */
-const setUp = setUpKmsKeys as (kms: Kms, deployment: string, now?: number, options?: { rs256?: boolean }) => Promise<string[]>;
+const setUp = setUpKmsKeys as (kms: Kms, deployment: string, now?: number, options?: { rs256?: boolean; webhook?: boolean }) => Promise<string[]>;
 
 /** Whether a parameter exists. GetParameters lists a missing one as invalid instead of failing. */
 async function parameterExists(name: string): Promise<boolean> {
@@ -58,6 +59,7 @@ export async function handler(event: KeysEvent): Promise<{ PhysicalResourceId: s
         `aws ssm delete-parameters --names ${present.join(' ')}`,
     );
   }
-  for (const message of await setUp(sdk.kms, deployment, Date.now(), { rs256: process.env.RS256_SIGNING === 'true' })) console.log(message);
+  const options = { rs256: process.env.RS256_SIGNING === 'true', webhook: process.env.WEBHOOK_KEY === 'true' };
+  for (const message of await setUp(sdk.kms, deployment, Date.now(), options)) console.log(message);
   return { PhysicalResourceId: deployment };
 }

@@ -5,6 +5,7 @@
 // may be a relay address Apple made for the user. See docs/apple-security.md.
 import { SignJWT, decodeJwt, importPKCS8, jwtVerify, type CryptoKey, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import type { OidcEndpoints } from './oidc.js';
+import { cutName } from './user.js';
 
 /** Apple's issuer and the host of its endpoints. */
 export const APPLE_ISSUER = 'https://appleid.apple.com';
@@ -140,14 +141,14 @@ export function appleUserName(value: unknown): string | undefined {
   const parsed = typeof value === 'string' ? parseJson(value) : value;
   const name = parsed && typeof parsed === 'object' ? (parsed as { name?: unknown }).name : undefined;
   // A native app may pass the name it put together itself.
-  if (typeof name === 'string') return name.trim() ? name.trim().slice(0, 200) : undefined;
+  if (typeof name === 'string') return cutName(name);
   if (!name || typeof name !== 'object') return undefined;
   const { firstName, lastName } = name as { firstName?: unknown; lastName?: unknown };
   const full = [firstName, lastName]
     .filter((part): part is string => typeof part === 'string' && !!part.trim())
     .map((part) => part.trim())
     .join(' ');
-  return full ? full.slice(0, 200) : undefined;
+  return cutName(full);
 }
 
 function parseJson(text: string): unknown {

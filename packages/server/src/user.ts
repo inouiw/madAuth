@@ -19,6 +19,20 @@ export interface MadauthUser {
   sessionId?: string;
 }
 
+/** The longest name madAuth keeps: typed at sign-up or given by a provider; longer ones are cut. */
+export const MAX_NAME_LENGTH = 100;
+
+/**
+ * A name as a user typed it or a provider (Google, GitHub, an OpenID Connect provider, Microsoft, Apple) gave it:
+ * trimmed and cut to {@link MAX_NAME_LENGTH} characters, or undefined if there is none. Kept short so it fits every
+ * webhook call (see webhook-size.test.ts) and the session.
+ */
+export function cutName(value: unknown, maxLength = MAX_NAME_LENGTH): string | undefined {
+  // Control characters are no part of a name (and would take 6 bytes each in a webhook call's JSON).
+  const name = typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, '').trim() : '';
+  return name ? name.slice(0, maxLength) : undefined;
+}
+
 /** The start of every API key, so a leaked one is recognisable, e.g. by secret scanning. */
 export const API_KEY_PREFIX = 'madauth_';
 

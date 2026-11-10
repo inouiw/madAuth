@@ -12,6 +12,9 @@ export const MAX_API_KEYS = 20;
 /** The longest name of a key. */
 export const MAX_API_KEY_NAME = 64;
 
+/** The most scopes one key can have: `user.api_key_created` lists them, and must fit what AWS KMS signs (see webhook-size.test.ts). */
+export const MAX_API_KEY_SCOPES = 20;
+
 /** How often the time of a key's last use is written at most: "last used" is shown as a date. */
 const LAST_USED_PRECISION_MS = 60 * 60 * 1000;
 

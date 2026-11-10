@@ -6,7 +6,7 @@ import { ApiKeys, MADAUTH_SCOPES, ScopeCatalog, apiKeyInfo, grantedScopes, type 
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
 import { importAppleKey } from './apple.js';
-import { Providers, importProviders, isProviderMethodKind, parseProviderFields, parseProviderKind, providerOf, type ProviderKind, type StoredProvider } from './providers.js';
+import { MAX_PROVIDERS, Providers, importProviders, isProviderMethodKind, parseProviderFields, parseProviderKind, providerOf, type ProviderKind, type StoredProvider } from './providers.js';
 import { SETUP_TOKEN_PREFIX, Setup } from './setup.js';
 import { discover, keysCache } from './oidc.js';
 import type { JWTVerifyGetKey } from 'jose';
@@ -59,7 +59,7 @@ import { canSign, readToken, signRenewal, signSession, userFromClaims, type Sess
 import { parseUserSearch, searchUsers } from './user-search.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, bearerTokenOf, type MadauthUser } from './user.js';
 import { Users, factorsAmong, preferredFirst, toMadauthUser, type StoredAccount, type StoredUser } from './users.js';
-import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
+import { WEBHOOK_KEYS_PATH, WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 import { deviceOf } from './device.js';
 import { Sessions, legacySessionId, newSessionId, sessionInfo, type NewSession, type StoredSession } from './sessions.js';
 import { sessionNotFound, sessionRoutes } from './routes/sessions.js';
@@ -589,10 +589,10 @@ export function createApp(config: MadauthConfig): Hono {
     async emit(type, data) {
       if (!this.webhook?.wants(type)) return;
       // The user in an event is the user, not their session: `amr` (how the session was authenticated) and the
-      // session's id stay out (`user.signed_in` and `user.session_ended` name the session apart).
+      // session's id stay out (`user.signed_in` and `user.session_ended` name the session apart). So does the provider's
+      // `picture`, a URL of any length: every call must fit what AWS KMS signs (see webhook-size.test.ts).
       const user = data.user;
-      const payload =
-        user && typeof user === 'object' && ('amr' in user || 'sessionId' in user) ? { ...data, user: { ...(user as object), amr: undefined, sessionId: undefined } } : data;
+      const payload = user && typeof user === 'object' ? { ...data, user: { ...(user as object), amr: undefined, sessionId: undefined, picture: undefined } } : data;
       const result = await this.webhook.call(type, payload, EVENT_TIMEOUT_MS);
       if (!result.ok) console.error(`[madauth] Webhook "${type}" failed: ${result.reason}`);
     },
@@ -634,6 +634,13 @@ export function createApp(config: MadauthConfig): Hono {
     c.header('Access-Control-Allow-Origin', '*');
     // Every key that verifies tokens: also those signed before a rotation.
     return c.json({ keys: await keys.verificationKeys() });
+  });
+
+  // The public keys of the webhook calls' v1a signatures, which receivers fetch (see "Signatures" in docs/server.md):
+  // the one that signs first, then the ones only published. Five minutes, so a new key reaches receivers soon.
+  app.get(WEBHOOK_KEYS_PATH, async (c) => {
+    c.header('Cache-Control', 'public, max-age=300');
+    return c.json({ keys: (await keys.webhookKeys?.()) ?? [] });
   });
 
   // The methods that are on right now, so the web library shows exactly those.
@@ -881,7 +888,7 @@ export function createApp(config: MadauthConfig): Hono {
         {
           error: 'invalid_claims',
           message:
-            'claims must be a JSON object of at most 2048 characters whose keys are names (letters, digits and "_", ' +
+            'claims must be a JSON object of at most 1024 bytes as JSON (UTF-8) whose keys are names (letters, digits and "_", ' +
             'starting with a letter). "roles" must be a list of names of lower-case letters, digits, "-" and "_".',
         },
         400,
@@ -1062,6 +1069,9 @@ export function createApp(config: MadauthConfig): Hono {
     const added = await providers.add(kind, id, fields, caller.by);
     if ('error' in added && added.error === 'issuer_bound') {
       return c.json({ error: 'invalid_provider', message: `The id "${id}" belongs to the issuer "${added.issuer}", whose users' accounts it has: give this provider another id.` }, 400);
+    }
+    if ('error' in added && added.error === 'too_many_providers') {
+      return c.json({ error: 'invalid_provider', message: `There are ${MAX_PROVIDERS} providers, the most madAuth keeps: remove one first.` }, 400);
     }
     if ('error' in added) return c.json({ error: added.error, message: `There is a provider "${id}" already: change it with providers/update.` }, 409);
     await ctx.emit('provider.added', { provider: providerInfo(added.provider), ...changedBy(caller) });

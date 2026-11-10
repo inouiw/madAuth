@@ -4,6 +4,7 @@
 // verified only when Microsoft says the domain's owner verified it. See docs/microsoft-security.md.
 import { decodeJwt, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import { suggestedAddress, verifyIdToken, type OidcEndpoints } from './oidc.js';
+import { cutName } from './user.js';
 
 /** Where Microsoft's sign-in is: the Microsoft identity platform of the global cloud. */
 const LOGIN_HOST = 'https://login.microsoftonline.com';
@@ -76,7 +77,7 @@ export async function verifyMicrosoftIdToken(
  */
 export function microsoftProfile(claims: JWTPayload): { email?: string; verified: boolean; name?: string; suggestion?: string } {
   const email = typeof claims.email === 'string' && claims.email ? claims.email : undefined;
-  const name = typeof claims.name === 'string' && claims.name ? claims.name : undefined;
+  const name = cutName(claims.name);
   const suggestion = suggestedAddress(claims);
   return {
     ...(email ? { email } : {}),

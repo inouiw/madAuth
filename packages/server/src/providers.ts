@@ -115,6 +115,15 @@ export type ProviderProblem = { error: 'invalid_provider'; message: string };
 const MAX_NAME = 64;
 const MAX_SECRET = 512;
 const MAX_BUNDLE_IDS = 20;
+/**
+ * Limits that keep every `provider.*` webhook call, and the `methods` a user's e-mails list, within what AWS KMS signs
+ * (see webhook-size.test.ts): the issuer and the extra scopes and bundle identifiers, each all together, in characters
+ * (all three are ASCII), and the number of providers.
+ */
+const MAX_ISSUER = 256;
+const MAX_SCOPES_LENGTH = 512;
+const MAX_BUNDLE_IDS_LENGTH = 512;
+export const MAX_PROVIDERS = 20;
 const FIELDS = ['kind', 'id', 'name', 'clientId', 'clientSecret', 'issuer', 'scopes', 'trustEmail', 'preset', 'tenant', 'teamId', 'keyId', 'bundleIds'];
 const OIDC_FIELDS = ['issuer', 'scopes', 'trustEmail', 'preset'];
 const APPLE_FIELDS = ['teamId', 'keyId', 'bundleIds'];
@@ -157,7 +166,7 @@ export function parseProviderKind(data: Record<string, unknown>): { kind: Provid
 function parseScopes(value: unknown): string[] | null {
   if (typeof value !== 'string') return null;
   const scopes = [...new Set(value.split(' ').filter(Boolean))].filter((scope) => !OIDC_SCOPES.includes(scope));
-  return scopes.length <= MAX_SCOPES && scopes.every((scope) => SCOPE.test(scope)) ? scopes : null;
+  return scopes.length <= MAX_SCOPES && scopes.join(' ').length <= MAX_SCOPES_LENGTH && scopes.every((scope) => SCOPE.test(scope)) ? scopes : null;
 }
 
 /** What a provider of `kind` is called in the messages about its fields. */
@@ -168,7 +177,7 @@ function parseBundleIds(value: unknown): string[] | null {
   const given = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\s,]+/) : null;
   if (!given) return null;
   const ids = [...new Set(given.filter((id) => id !== ''))];
-  return ids.length <= MAX_BUNDLE_IDS && ids.every(isBundleId) ? (ids as string[]) : null;
+  return ids.length <= MAX_BUNDLE_IDS && ids.every(isBundleId) && ids.join(' ').length <= MAX_BUNDLE_IDS_LENGTH ? (ids as string[]) : null;
 }
 
 /**
@@ -240,14 +249,20 @@ export function parseProviderFields(kind: ProviderKind, data: Record<string, unk
   if (oidc && (issuer === undefined ? adding : !adding)) {
     return problem(adding ? 'An OpenID Connect provider needs its issuer, e.g. "https://gitlab.com".' : "An OpenID Connect provider's issuer can't change: its accounts belong to it. Add a new provider instead.");
   }
-  if (issuer !== undefined && !isIssuer(issuer)) return problem('issuer must be an https URL without a query, e.g. "https://gitlab.com" (http only on localhost).');
+  if (issuer !== undefined && (!isIssuer(issuer) || !/^[\x21-\x7E]+$/.test(issuer) || issuer.length > MAX_ISSUER)) {
+    return problem(`issuer must be an https URL without a query, e.g. "https://gitlab.com" (http only on localhost), of at most ${MAX_ISSUER} characters.`);
+  }
   const extraScopes = scopes === undefined ? undefined : parseScopes(scopes);
-  if (extraScopes === null) return problem(`scopes must be up to ${MAX_SCOPES} scope names, separated by spaces; ${OIDC_SCOPES.join(', ')} are always asked for.`);
+  if (extraScopes === null) {
+    return problem(`scopes must be up to ${MAX_SCOPES} scope names, separated by spaces, ${MAX_SCOPES_LENGTH} characters in all; ${OIDC_SCOPES.join(', ')} are always asked for.`);
+  }
   if (trustEmail !== undefined && typeof trustEmail !== 'boolean') return problem('trustEmail must be true or false.');
   if (apple && (teamId === undefined ? adding : !isAppleId(teamId))) return problem('teamId must be the Team ID of the Apple developer account: 10 letters and digits.');
   if (apple && (keyId === undefined ? adding : !isAppleId(keyId))) return problem('keyId must be the Key ID of the Sign in with Apple key: 10 letters and digits.');
   const appIds = bundleIds === undefined ? undefined : parseBundleIds(bundleIds);
-  if (appIds === null) return problem(`bundleIds must be up to ${MAX_BUNDLE_IDS} App IDs (bundle identifiers, e.g. "com.example.app"), separated by spaces.`);
+  if (appIds === null) {
+    return problem(`bundleIds must be up to ${MAX_BUNDLE_IDS} App IDs (bundle identifiers, e.g. "com.example.app"), separated by spaces, ${MAX_BUNDLE_IDS_LENGTH} characters in all.`);
+  }
   return {
     ...(typeof name === 'string' ? { name: name.trim() } : {}),
     ...(typeof clientId === 'string' ? { clientId } : {}),
@@ -331,7 +346,7 @@ export class Providers {
     id: string,
     fields: ProviderFields,
     by: string | null,
-  ): Promise<{ provider: StoredProvider } | { error: 'provider_exists' } | { error: 'issuer_bound'; issuer: string }> {
+  ): Promise<{ provider: StoredProvider } | { error: 'provider_exists' } | { error: 'too_many_providers' } | { error: 'issuer_bound'; issuer: string }> {
     if (kind === 'oidc') {
       const bound = await this.bindIssuer(id, fields.issuer!, by);
       if (bound !== fields.issuer) return { error: 'issuer_bound', issuer: bound };
@@ -349,15 +364,18 @@ export class Providers {
       ...(kind === 'microsoft' ? { tenant: fields.tenant! } : {}),
       ...(kind === 'apple' ? { teamId: fields.teamId!, keyId: fields.keyId!, bundleIds: fields.bundleIds ?? [] } : {}),
     };
+    // Set on every attempt, as the setting's change may run again.
+    let full = false;
     const added = await this.settings.change<unknown>(
       PROVIDERS_SETTING,
       (current) => {
         const providers = this.parse(current);
-        return providers.some((p) => p.id === provider.id) ? null : [...providers, provider];
+        full = providers.length >= MAX_PROVIDERS;
+        return full || providers.some((p) => p.id === provider.id) ? null : [...providers, provider];
       },
       by,
     );
-    return added ? { provider } : { error: 'provider_exists' };
+    return added ? { provider } : full ? { error: 'too_many_providers' } : { error: 'provider_exists' };
   }
 
   /** Changes the given fields of a provider (see {@link ProviderFields}). */

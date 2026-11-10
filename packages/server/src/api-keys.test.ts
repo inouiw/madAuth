@@ -110,6 +110,8 @@ describe('making and using API keys', () => {
     expect(await (await create(app, cookie, { name: '', scopes: ['orders:read'] })).json()).toMatchObject({ error: 'invalid_options' });
     expect(await (await create(app, cookie, { name: 'x'.repeat(65), scopes: ['orders:read'] })).json()).toMatchObject({ error: 'invalid_options' });
     expect(await (await create(app, cookie, { name: 'k', scopes: [] })).json()).toMatchObject({ error: 'invalid_options' });
+    // At most 20, so user.api_key_created always fits what AWS KMS signs.
+    expect(await (await create(app, cookie, { name: 'k', scopes: Array.from({ length: 21 }, (_, i) => `s${i}`) })).json()).toEqual({ error: 'invalid_options', message: 'A key can have at most 20 scopes.' });
     expect(await (await create(app, cookie, { name: 'k', scopes: ['orders:read', 'orders:read'] })).json()).toMatchObject({ error: 'invalid_options' });
     expect(await (await create(app, cookie, { name: 'k', scopes: ['orders:read'], expiresAt: START })).json()).toMatchObject({ error: 'invalid_options' });
     expect(await (await create(app, cookie, { name: 'k', scopes: ['orders:write'] })).json()).toMatchObject({ error: 'invalid_scopes' });

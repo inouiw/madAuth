@@ -1,6 +1,7 @@
 // GitHub's side of GitHub sign-in: the code exchange and the account behind an access token, over GitHub's
 // REST API, and revoking the OAuth App's authorization. Every call carries a User-Agent, which
 // api.github.com insists on.
+import { cutName } from './user.js';
 
 
 const TOKEN_ENDPOINT = 'https://github.com/login/oauth/access_token';
@@ -111,7 +112,7 @@ export async function fetchGitHubAccount(token: string): Promise<GitHubAccountRe
   const account: GitHubAccount = {
     id,
     email: address.email as string,
-    name: typeof user.name === 'string' && user.name.trim() ? user.name.trim() : user.login,
+    name: cutName(user.name) ?? cutName(user.login) ?? user.login,
   };
   if (typeof user.avatar_url === 'string' && user.avatar_url) account.picture = user.avatar_url;
   return { ok: true, account };

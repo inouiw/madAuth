@@ -72,7 +72,8 @@ describe('the session record', () => {
     const verifySession = createSessionVerifier({ issuer: ISSUER, jwks: createLocalJWKSet({ keys: await keyService.verificationKeys() }) });
     expect(await verifySession(cookie.split('; ').find((c) => c.startsWith('madauth_session='))!.split('=')[1])).toMatchObject({ sessionId: sid });
     expect(hook.calls.find((call) => call.type === 'user.signed_in')!.data).toEqual({
-      user: { id: expect.stringMatching(/^usr_/), email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://example.com/ada.png' },
+      // Google's picture is in the session's user, never in a webhook call.
+      user: { id: expect.stringMatching(/^usr_/), email: 'ada@example.com', name: 'Ada Lovelace' },
       method: 'google',
       session: { id: sid, ip: '203.0.113.7', browser: 'Firefox', os: 'macOS' },
     });

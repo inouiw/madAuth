@@ -32,6 +32,8 @@ madAuth's scopes, one per admin task, need the role `admin`:
 | `madauth:providers:read` | `POST /auth/admin/providers/list` |
 | `madauth:clients:read` | `POST /auth/admin/clients/list` |
 
+A key has at most 20 scopes (`400 invalid_options`), so the webhook call `user.api_key_created`, which lists them, stays small.
+
 **A key never does more than its user may.** A user gives a key only scopes whose role they hold (`403 scope_not_allowed`), and every use checks again with the user's roles of now: a scope whose role the user lost, or that your app no longer lists, stops counting, and comes back with the role. So a key doesn't keep a power its user lost.
 
 ### Your app's scopes

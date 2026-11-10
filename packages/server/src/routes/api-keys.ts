@@ -5,6 +5,7 @@ import type { AppContext } from '../app.js';
 import {
   MAX_API_KEYS,
   MAX_API_KEY_NAME,
+  MAX_API_KEY_SCOPES,
   apiKeyInfo,
   grantedScopes,
   mayHold,
@@ -58,6 +59,7 @@ export function apiKeyRoutes(app: Hono, ctx: AppContext, apiKeys: ApiKeys, catal
     if (!Array.isArray(requested) || !requested.length || !requested.every((s) => typeof s === 'string') || new Set(requested).size !== requested.length) {
       return invalid(c, 'scopes must list different scope names, at least one. GET /auth/api-keys/scopes lists them.');
     }
+    if (requested.length > MAX_API_KEY_SCOPES) return invalid(c, `A key can have at most ${MAX_API_KEY_SCOPES} scopes.`);
     const expiresAt = data.expiresAt ?? null;
     if (expiresAt !== null && (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
       return invalid(c, 'expiresAt must be a time in the future (milliseconds since 1970), or left out for a key that does not expire.');

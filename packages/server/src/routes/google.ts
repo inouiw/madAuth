@@ -100,7 +100,7 @@ export function googleRoutes(app: Hono, ctx: AppContext): void {
     const resolved = await resolveProviderUser(ctx, GOOGLE, toProfile(profile), localeOf(body.locale));
     if (!resolved.ok) {
       if (resolved.error === 'other_method') return c.json({ error: resolved.error, message: resolved.message, methods: resolved.methods }, 403);
-      return c.json({ error: resolved.error, message: resolved.message }, resolved.error === 'signup_rejected' ? 403 : 503);
+      return c.json({ error: resolved.error, message: resolved.message }, resolved.error === 'temporarily_unavailable' ? 503 : 403);
     }
     return signInAnswer(c, await ctx.secondStep(c, resolved.user, ['google'], 'google', profile));
   });

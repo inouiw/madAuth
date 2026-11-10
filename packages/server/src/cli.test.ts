@@ -5,7 +5,7 @@ import { parseEnv } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runCli, type CliIo } from './cli.js';
 import { loadConfig } from './config.js';
-import { DEV_WEBHOOK_RECEIVER_URL, checkWebhookSecret } from './webhooks.js';
+import { DEV_WEBHOOK_RECEIVER_URL } from './webhooks.js';
 import { fakeKms } from './test/kms.js';
 
 const CLIENT_ID = '123-test.apps.googleusercontent.com';
@@ -75,6 +75,10 @@ describe('generate-key', () => {
     const rsa = await runCli(['generate-key', '--rs256']);
     expect(rsa.exitCode).toBe(0);
     expect(JSON.parse(rsa.output)).toMatchObject({ kty: 'RSA', alg: 'RS256', n: expect.any(String), e: 'AQAB', d: expect.any(String), kid: expect.any(String) });
+    const ed = await runCli(['generate-key', '--ed25519']);
+    expect(ed.exitCode).toBe(0);
+    expect(JSON.parse(ed.output)).toMatchObject({ kty: 'OKP', crv: 'Ed25519', alg: 'Ed25519', x: expect.any(String), d: expect.any(String), kid: expect.any(String) });
+    expect(await runCli(['generate-key', '--rs256', '--ed25519'])).toEqual({ exitCode: 1, output: 'generate-key makes one key: --rs256 or --ed25519, not both.' });
   });
 });
 
@@ -93,12 +97,16 @@ describe('init', () => {
       ALLOWED_ORIGINS: 'http://localhost:5173',
       DATABASE_URL: 'sqlite:./madauth.db',
       WEBHOOK_URL: 'http://localhost:8790/webhook',
-      WEBHOOK_SECRET: expect.any(String),
       WEBHOOK_EVENTS: EMAIL_TYPES,
       PORT: '8787',
     });
-    expect(JSON.parse(env.MADAUTH_SIGNING_KEY!)).toMatchObject({ kty: 'EC', crv: 'P-256', alg: 'ES256', d: expect.any(String) });
-    expect(checkWebhookSecret(env.WEBHOOK_SECRET!)).toBeNull();
+    // The session key, and an Ed25519 key that signs the webhook calls (v1a): no secret to share with the receiver.
+    expect(JSON.parse(env.MADAUTH_SIGNING_KEY!)).toEqual({
+      keys: [
+        expect.objectContaining({ kty: 'EC', crv: 'P-256', alg: 'ES256', d: expect.any(String) }),
+        expect.objectContaining({ kty: 'OKP', crv: 'Ed25519', alg: 'Ed25519', d: expect.any(String) }),
+      ],
+    });
     expect(statSync(file).mode & 0o777).toBe(0o600);
     const lines = readFileSync(file, 'utf8').trimEnd().split('\n');
     lines.forEach((line, i) => {
@@ -291,7 +299,8 @@ Next steps:
      npx @madauth/server start --env-file ${file}
 
 2. madAuth hands its e-mails to your webhook receiver. For development, start the development receiver,
-   which prints them, with the same WEBHOOK_URL and WEBHOOK_SECRET as in ${file}:
+   which prints them, with WEBHOOK_URL=http://localhost:8790/webhook as in ${file} and
+   WEBHOOK_KEYS_URL=http://localhost:8787/.well-known/webhook-keys.json, where it fetches the key that checks the calls:
 
      ${DEV_WEBHOOK_RECEIVER_URL}
 
@@ -325,7 +334,7 @@ Next steps:
    provider on with /auth/admin/settings/set.
    Later an admin does this with Madauth.admin.addProvider. See "Providers" in docs/server.md.
 
-6. Never commit ${file}: it holds the signing key and your secrets. Production needs an https app URL
+6. Never commit ${file}: it holds the signing keys and your secrets. Production needs an https app URL
    and a signing key of its own: run init again for it.`);
   });
 
@@ -365,7 +374,7 @@ describe('usage', () => {
     const { output, exitCode } = await runCli([]);
 
     expect(exitCode).toBe(0);
-    for (const text of ['  init  ', '  start  ', '  generate-key [--rs256]  ', '  --env-file <path>  ']) expect(output).toContain(text);
+    for (const text of ['  init  ', '  start  ', '  generate-key [--rs256 | --ed25519]', '  --env-file <path>  ']) expect(output).toContain(text);
   });
 
   it('names what replaced a command madAuth before 0.6 had', async () => {

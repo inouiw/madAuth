@@ -3,6 +3,7 @@
 // (routes/oidc.ts). The address comes as `confirmed_email`, with the scope `users.email`; an account without one
 // types it. See "X setup" in docs/server.md and docs/social-security.md.
 import type { SocialProfile, SocialProfileResult } from './facebook.js';
+import { cutName } from './user.js';
 
 const AUTHORIZE = 'https://x.com/i/oauth2/authorize';
 const TOKEN = 'https://api.x.com/2/oauth2/token';
@@ -69,7 +70,7 @@ export async function fetchXProfile(token: string, fetchFn: typeof fetch = fetch
   const user = answer?.data;
   if (typeof user?.id !== 'string' || !user.id) return { ok: false, reason: 'GET /2/users/me did not return an account' };
   const email = typeof user.confirmed_email === 'string' && user.confirmed_email ? user.confirmed_email : undefined;
-  const name = typeof user.name === 'string' && user.name.trim() ? user.name.trim() : typeof user.username === 'string' && user.username ? user.username : undefined;
+  const name = cutName(user.name) ?? cutName(user.username);
   const profile: SocialProfile = {
     id: user.id,
     verified: !!email,

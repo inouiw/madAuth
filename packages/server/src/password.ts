@@ -93,9 +93,15 @@ export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-/** A plausible e-mail address: something@domain.tld, no spaces, at most 254 characters. */
+/**
+ * A plausible e-mail address: something@domain.tld, at most 254 bytes in UTF-8 (the limit of RFC 5321), without
+ * spaces, control characters, quotes or backslashes (no quoted local parts). So an address takes as many bytes in a
+ * webhook call's JSON as it has, and every call fits what AWS KMS signs (see webhook-size.test.ts).
+ */
 export function isValidEmail(email: unknown): email is string {
-  return typeof email === 'string' && email.trim().length <= MAX_EMAIL_LENGTH && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  if (typeof email !== 'string') return false;
+  const address = email.trim();
+  return Buffer.byteLength(address, 'utf8') <= MAX_EMAIL_LENGTH && /^[^\s@"\\\x00-\x1f\x7f]+@[^\s@"\\\x00-\x1f\x7f]+\.[^\s@"\\\x00-\x1f\x7f]+$/.test(address);
 }
 
 /** A random token for e-mail links (32 bytes, base64url). */

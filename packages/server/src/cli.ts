@@ -4,11 +4,11 @@ import { parseArgs, parseEnv } from 'node:util';
 import { aliasPrefix, deploymentOf, kmsFromSdk, type Kms } from './aws-kms.js';
 import { loadConfig, unquote } from './config.js';
 import { rotateKmsKeys, serverKmsPolicy, setUpKmsKeys } from './kms-rotation.js';
-import { generateSigningKey } from './keys.js';
+import { generateSigningKey, generateWebhookKey } from './keys.js';
 import { isValidEmail, normalizeEmail } from './password.js';
 import { madauthSchema, type StoreAdapter } from './store/schema.js';
 import { createTablesSql, upgradeTablesSql, type SqlDialect } from './store/sql.js';
-import { DEV_WEBHOOK_RECEIVER_URL, generateWebhookSecret } from './webhooks.js';
+import { DEV_WEBHOOK_RECEIVER_URL, WEBHOOK_KEYS_PATH, generateWebhookSecret } from './webhooks.js';
 
 /** The server's default port, which `init` writes as PORT. */
 const PORT = 8787;
@@ -26,15 +26,21 @@ Commands:
                                writes another file, --force overwrites. Google, GitHub and the other sign-in
                                providers are added later, in the store (see the next steps it prints).
   start                        Start the server on PORT (default ${PORT})
-  generate-key [--rs256]       Print a new private ES256 key to use as MADAUTH_SIGNING_KEY; with --rs256 an
-                               RS256 key to add to it, for the ID tokens of OpenID Connect clients that
-                               can't verify ES256 (see "RS256 ID tokens" in docs/server.md)
-  generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver)
-  kms-setup [--rs256]          For MADAUTH_KEY_SERVICE=aws-kms without the AWS template (which does it itself):
+  generate-key [--rs256 | --ed25519]
+                               Print a new private ES256 key to use as MADAUTH_SIGNING_KEY; with --rs256 an
+                               RS256 key to add to its set, for the ID tokens of OpenID Connect clients that
+                               can't verify ES256 (see "RS256 ID tokens" in docs/server.md); with --ed25519
+                               an Ed25519 key to add to its set, which signs the webhook calls (v1a; see
+                               "Webhook signing key" in docs/server.md)
+  generate-webhook-secret      Print a new secret to use as WEBHOOK_SECRET (madAuth and your receiver), for a
+                               receiver that checks the shared secret (v1) instead of the webhook key
+  kms-setup [--rs256] [--no-webhook]
+                               For MADAUTH_KEY_SERVICE=aws-kms without the AWS template (which does it itself):
                                create this deployment's keys in AWS KMS with your own AWS credentials, under
                                alias/madauth/<the host of MADAUTH_ISSUER>/, and print the IAM policy the
                                server's role needs. Keys that exist already are kept. --rs256 also creates
-                               an RS256 signing key (signing-rsa), for ID tokens in RS256.
+                               an RS256 signing key (signing-rsa), for ID tokens in RS256. The Ed25519 key that
+                               signs the webhook calls (webhook) is created unless --no-webhook.
   kms-rotate                   Rotate those keys, with your AWS credentials; run it every day (the AWS
                                template's rotator does). A key gets a successor once a year.
   schema [--dialect <name>] [--from <version>]
@@ -166,7 +172,7 @@ const terminalIo: CliIo = {
  * kms-setup and kms-rotate, with the AWS credentials of whoever runs them: the server's role may only use the
  * keys, never create them (see kms-rotation.ts).
  */
-async function kmsCommand(command: 'kms-setup' | 'kms-rotate', env: Env, rs256: boolean, given?: Kms): Promise<CliResult> {
+async function kmsCommand(command: 'kms-setup' | 'kms-rotate', env: Env, setup: { rs256: boolean; webhook: boolean }, given?: Kms): Promise<CliResult> {
   const issuer = unquote(env.MADAUTH_ISSUER);
   if (!issuer || !URL.canParse(issuer)) {
     return { output: `${command} needs MADAUTH_ISSUER, the server's public address: the keys are named after its host. Use --env-file .env or set it.`, exitCode: 1 };
@@ -181,7 +187,7 @@ async function kmsCommand(command: 'kms-setup' | 'kms-rotate', env: Env, rs256: 
     const output = [...done, ...problems];
     return { output: output.length ? output.join('\n') : `Nothing to rotate under ${aliasPrefix(deployment)}.`, exitCode: problems.length ? 1 : 0 };
   }
-  const done = await setUpKmsKeys(kms, deployment, Date.now(), { rs256 });
+  const done = await setUpKmsKeys(kms, deployment, Date.now(), setup);
   const policy = JSON.stringify({ Version: '2012-10-17', Statement: serverKmsPolicy(deployment) }, null, 2);
   return {
     output: [
@@ -205,6 +211,10 @@ function parseCliArgs(args: string[]) {
       'env-file': { type: 'string' },
       // generate-key and kms-setup: an RS256 key (too).
       rs256: { type: 'boolean' },
+      // generate-key: an Ed25519 key, which signs the webhook calls.
+      ed25519: { type: 'boolean' },
+      // kms-setup: --no-webhook leaves out the webhook key.
+      webhook: { type: 'boolean' },
       dialect: { type: 'string' },
       // schema: print only the changes since this schema version.
       from: { type: 'string' },
@@ -263,13 +273,14 @@ export async function runCli(args: string[], io: CliIo = terminalIo, env: Env = 
       return { output: '', exitCode: 0 };
     }
     if (command === 'generate-key') {
-      return { output: JSON.stringify(await generateSigningKey(options.rs256 ? 'RS256' : 'ES256')), exitCode: 0 };
+      if (options.rs256 && options.ed25519) return { output: 'generate-key makes one key: --rs256 or --ed25519, not both.', exitCode: 1 };
+      return { output: JSON.stringify(options.ed25519 ? await generateWebhookKey() : await generateSigningKey(options.rs256 ? 'RS256' : 'ES256')), exitCode: 0 };
     }
     if (command === 'generate-webhook-secret') {
       return { output: generateWebhookSecret(), exitCode: 0 };
     }
     if (command === 'kms-setup' || command === 'kms-rotate') {
-      return await kmsCommand(command, env, options.rs256 === true, kms);
+      return await kmsCommand(command, env, { rs256: options.rs256 === true, webhook: options.webhook !== false }, kms);
     }
     if (command === 'schema') {
       const dialect = (options.dialect ?? 'postgres') as SqlDialect;
@@ -365,11 +376,14 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
       'Where the keys are: local, in the server memory from MADAUTH_SIGNING_KEY; on AWS use aws-kms, see docs/server.md.',
     ),
     // In single quotes, as JSON is full of double quotes. Node's parser removes them; Docker's --env-file
-    // keeps them, and the server removes them then.
+    // keeps them, and the server removes them then. The Ed25519 key signs the webhook calls (v1a), whose
+    // receivers check them with its public key alone, so no secret is shared with them.
     variable(
       'MADAUTH_SIGNING_KEY',
-      `'${JSON.stringify(await generateSigningKey())}'`,
-      'Private key that signs the sessions. Keep it secret, and use the same one on every instance.',
+      `'${JSON.stringify(webhook ? { keys: [await generateSigningKey(), await generateWebhookKey()] } : await generateSigningKey())}'`,
+      webhook
+        ? 'Private keys: the first signs the sessions, the Ed25519 one the webhook calls. Keep them secret, and use the same value on every instance.'
+        : 'Private key that signs the sessions. Keep it secret, and use the same one on every instance.',
     ),
     variable('ALLOWED_ORIGINS', origin, 'Origins of your apps, comma-separated. Only these may call the server.'),
     variable('DATABASE_URL', database, 'Where the users are stored, whichever way they sign in.'),
@@ -380,7 +394,6 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
         'Who signs in with this address, once it is proven, gets the role admin. Once per value: a new one makes another admin.',
       ),
     webhook && variable('WEBHOOK_URL', webhookUrl, `Your webhook receiver. madAuth hands its ${sms ? 'e-mails and SMS' : 'e-mails'} to it.`),
-    webhook && variable('WEBHOOK_SECRET', generateWebhookSecret(), 'Signs every webhook call. Your receiver needs the same one.'),
     webhook &&
       variable('WEBHOOK_EVENTS', events, 'The types your webhook receiver handles; only these are sent. Add e.g. user.signing_up or user.signed_up.'),
     variable('PORT', String(PORT), 'Port the server listens on.'),
@@ -396,7 +409,7 @@ async function init(options: CliOptions, io: CliIo): Promise<CliResult> {
   if (options.force) rmSync(file, { force: true });
   writeFileSync(file, content, { mode: 0o600, flag: 'wx' });
 
-  const steps = nextSteps(file, origin, password, authenticator, emailLink, sms, normalizeEmail(adminEmail));
+  const steps = nextSteps(file, origin, password, authenticator, emailLink, sms, normalizeEmail(adminEmail), webhookUrl);
   return { output: `Wrote ${file}.\n\nNext steps:\n\n${steps}`, exitCode: 0 };
 }
 
@@ -409,6 +422,7 @@ function nextSteps(
   emailLink = false,
   sms = false,
   adminEmail = '',
+  webhookUrl = '',
 ): string {
   const server = `http://localhost:${PORT}`;
   // Quoted when needed, so the command can be pasted as it is.
@@ -426,7 +440,8 @@ function nextSteps(
     ['Start the madAuth server:', '', `  npx @madauth/server start --env-file ${envFile}`],
     (password || authenticator || emailLink || sms) && [
       `madAuth hands its ${sms ? 'e-mails and SMS' : 'e-mails'} to your webhook receiver. For development, start the development receiver,`,
-      `which prints them, with the same WEBHOOK_URL and WEBHOOK_SECRET as in ${file}:`,
+      `which prints them, with WEBHOOK_URL=${webhookUrl} as in ${file} and`,
+      `WEBHOOK_KEYS_URL=${server}${WEBHOOK_KEYS_PATH}, where it fetches the key that checks the calls:`,
       '',
       `  ${DEV_WEBHOOK_RECEIVER_URL}`,
     ],
@@ -476,7 +491,7 @@ function nextSteps(
         `  await Madauth.admin.setSettings({ methods: { ${methodList} } });`,
       ],
     [
-      `Never commit ${file}: it holds the signing key and your secrets. Production needs an https app URL`,
+      `Never commit ${file}: it holds the signing keys and your secrets. Production needs an https app URL`,
       'and a signing key of its own: run init again for it.',
     ],
   ].filter((step) => !!step);

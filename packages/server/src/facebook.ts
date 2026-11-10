@@ -3,6 +3,7 @@
 // providers' (routes/oidc.ts). Facebook says nothing about whether an address is confirmed, so madAuth confirms it by
 // e-mail once. See "Facebook setup" in docs/server.md and docs/social-security.md.
 import { createHmac } from 'node:crypto';
+import { cutName } from './user.js';
 
 /** The Graph API version madAuth calls: each one works for at least two years after the next one comes out. */
 export const FACEBOOK_API_VERSION = 'v26.0';
@@ -80,7 +81,7 @@ export async function fetchFacebookProfile(token: string, appSecret: string, fet
       id: me.id,
       verified: false,
       ...(typeof me.email === 'string' && me.email ? { email: me.email } : {}),
-      ...(typeof me.name === 'string' && me.name.trim() ? { name: me.name.trim() } : {}),
+      ...(cutName(me.name) ? { name: cutName(me.name) } : {}),
       ...(typeof picture?.url === 'string' && picture.url && picture.is_silhouette !== true ? { picture: picture.url } : {}),
     },
   };

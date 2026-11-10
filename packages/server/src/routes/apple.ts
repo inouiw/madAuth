@@ -131,7 +131,7 @@ export function appleRoutes(app: Hono, ctx: AppContext): void {
     const resolved = await resolveProviderUser(ctx, asAppleProvider(provider), profile, localeOf(data.locale));
     if (!resolved.ok) {
       if (resolved.error === 'other_method') return c.json({ error: resolved.error, message: resolved.message, methods: resolved.methods }, 403);
-      return error(c, resolved.error === 'signup_rejected' ? 403 : 503, resolved.error, resolved.message);
+      return error(c, resolved.error === 'temporarily_unavailable' ? 503 : 403, resolved.error, resolved.message);
     }
     return signInAnswer(c, await ctx.secondStep(c, resolved.user, ['apple'], 'apple', profile.name ? { name: profile.name } : undefined));
   });

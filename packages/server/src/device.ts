@@ -44,6 +44,9 @@ export function parseUserAgent(userAgent: string | undefined): Pick<Device, 'bro
   return { browser: firstMatch(BROWSERS, value), os: firstMatch(SYSTEMS, value) };
 }
 
+/** The longest IP address in text: an IPv6 address with an IPv4 tail. */
+export const MAX_IP_LENGTH = 45;
+
 /**
  * An IP address as a header or the runtime gives it, without a port (`203.0.113.7:5123`, `[2001:db8::1]:443`) and
  * an IPv4 address mapped into IPv6 as IPv4; null if it is none.
@@ -53,7 +56,9 @@ export function normalizeIp(value: string | undefined): string | null {
   const bracketed = /^\[([^\]]+)\](:\d+)?$/.exec(trimmed)?.[1];
   const withoutPort = bracketed ?? (/^[\d.]+:\d+$/.test(trimmed) ? trimmed.slice(0, trimmed.lastIndexOf(':')) : trimmed);
   const address = withoutPort.replace(/^::ffff:(?=[\d.]+$)/i, '');
-  return isIP(address) ? address : null;
+  // At most 45 characters, the longest IPv6 address in text: a zone id (`fe80::1%eth0`) could make it longer, and
+  // `user.signed_in` carries it, which must fit what AWS KMS signs (see webhook-size.test.ts).
+  return address.length <= MAX_IP_LENGTH && isIP(address) ? address : null;
 }
 
 /** What the runtimes put into Hono's `c.env`: Node's socket (@hono/node-server), the event of AWS Lambda. */
