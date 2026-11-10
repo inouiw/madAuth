@@ -1,7 +1,8 @@
-// Sign-in providers, which admins configure while the server runs: Google, GitHub, Microsoft (see microsoft.ts) and
-// generic OpenID Connect providers (the kind `oidc`, e.g. GitLab, Okta, Keycloak; see oidc.ts). They are kept in the store
-// as one setting, `providers`, like the sign-in methods; each client secret is encrypted by the key service, so the
-// store alone doesn't reveal it. See "Providers" in docs/server.md.
+// Sign-in providers, which admins configure while the server runs: Google, GitHub, Microsoft (see microsoft.ts), Apple
+// (see apple.ts) and generic OpenID Connect providers (the kind `oidc`, e.g. GitLab, Okta, Keycloak; see oidc.ts). They
+// are kept in the store as one setting, `providers`, like the sign-in methods; each client secret is encrypted by the
+// key service, so the store alone doesn't reveal it. See "Providers" in docs/server.md.
+import { appleKeyPem, isAppleId, isBundleId } from './apple.js';
 import type { KeyService } from './key-service.js';
 import { isTenant } from './microsoft.js';
 import { isIssuer } from './oidc.js';
@@ -16,34 +17,34 @@ export const PROVIDERS_SETTING = 'providers';
 export const PROVIDER_ISSUERS_SETTING = 'provider-issuers';
 
 /** The kinds of providers madAuth has. */
-export const PROVIDER_KINDS = ['google', 'github', 'microsoft', 'oidc'] as const;
+export const PROVIDER_KINDS = ['google', 'github', 'microsoft', 'apple', 'oidc'] as const;
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 /** The kinds that exist once, with the kind as their id. */
-export const BUILT_IN_KINDS = ['google', 'github', 'microsoft'] as const;
+export const BUILT_IN_KINDS = ['google', 'github', 'microsoft', 'apple'] as const;
 export type BuiltInKind = (typeof BUILT_IN_KINDS)[number];
 
 const isProviderKind = (value: unknown): value is ProviderKind => (PROVIDER_KINDS as readonly unknown[]).includes(value);
 const isBuiltInKind = (value: unknown): value is BuiltInKind => (BUILT_IN_KINDS as readonly unknown[]).includes(value);
 
 /** What a built-in provider's button says when the admin gives it no name. */
-const DEFAULT_NAMES: Record<BuiltInKind, string> = { google: 'Google', github: 'GitHub', microsoft: 'Microsoft' };
+const DEFAULT_NAMES: Record<BuiltInKind, string> = { google: 'Google', github: 'GitHub', microsoft: 'Microsoft', apple: 'Apple' };
 
 /** What an OpenID Connect provider's id looks like: it names its method, routes and accounts. */
 const PROVIDER_ID = /^[a-z][a-z0-9-]{1,31}$/;
 /** Ids an OpenID Connect provider can't have: madAuth's own methods and kinds, and `totp`, the authenticator app's id before 0.6. */
-export const RESERVED_IDS = ['password', 'authenticator', 'email-link', 'passkey', 'sms', 'google', 'github', 'microsoft', 'totp'];
+export const RESERVED_IDS = ['password', 'authenticator', 'email-link', 'passkey', 'sms', 'google', 'github', 'microsoft', 'apple', 'totp'];
 
 /** Whether `value` can be an OpenID Connect provider's id, and so its method's id in the settings. */
 export const isProviderId = (value: unknown): value is string => typeof value === 'string' && PROVIDER_ID.test(value) && !RESERVED_IDS.includes(value);
 
 /**
  * The kinds whose sign-in is the OpenID Connect providers' (routes/oidc.ts): their methods exist only while an
- * admin has added the provider, by its id. Microsoft's id is its kind.
+ * admin has added the provider, by its id. Microsoft's and Apple's ids are their kinds.
  */
-export const isProviderMethodKind = (kind: ProviderKind): boolean => kind === 'oidc' || kind === 'microsoft';
+export const isProviderMethodKind = (kind: ProviderKind): boolean => kind === 'oidc' || kind === 'microsoft' || kind === 'apple';
 
-/** Whether `value` is the method of such a provider: an OpenID Connect provider's id, or `microsoft`. */
-export const isProviderMethod = (value: unknown): value is string => isProviderId(value) || value === 'microsoft';
+/** Whether `value` is the method of such a provider: an OpenID Connect provider's id, `microsoft` or `apple`. */
+export const isProviderMethod = (value: unknown): value is string => isProviderId(value) || value === 'microsoft' || value === 'apple';
 
 /** The scopes every OpenID Connect sign-in asks for; an admin may add more. */
 export const OIDC_SCOPES = ['openid', 'email', 'profile'];
@@ -70,6 +71,12 @@ export interface StoredProvider {
   trustEmail?: boolean;
   /** Microsoft: whose accounts sign in, `common`, `organizations`, `consumers` or a tenant id (see microsoft.ts). */
   tenant?: string;
+  /** Apple: the Team ID of the developer account, which signs the client secret (`secret` holds its `.p8` key). */
+  teamId?: string;
+  /** Apple: the Key ID of that key. */
+  keyId?: string;
+  /** Apple: the App IDs (bundle identifiers) of the native apps whose identity tokens sign in, see routes/apple.ts. */
+  bundleIds?: string[];
 }
 
 /**
@@ -88,19 +95,27 @@ export interface ProviderFields {
   trustEmail?: boolean;
   /** Microsoft only. */
   tenant?: string;
+  /** Apple only. */
+  teamId?: string;
+  keyId?: string;
+  bundleIds?: string[];
 }
 
 export type ProviderProblem = { error: 'invalid_provider'; message: string };
 
 const MAX_NAME = 64;
 const MAX_SECRET = 512;
-const FIELDS = ['kind', 'id', 'name', 'clientId', 'clientSecret', 'issuer', 'scopes', 'trustEmail', 'tenant'];
+const MAX_BUNDLE_IDS = 20;
+const FIELDS = ['kind', 'id', 'name', 'clientId', 'clientSecret', 'issuer', 'scopes', 'trustEmail', 'tenant', 'teamId', 'keyId', 'bundleIds'];
 const OIDC_FIELDS = ['issuer', 'scopes', 'trustEmail'];
+const APPLE_FIELDS = ['teamId', 'keyId', 'bundleIds'];
 const CLIENT_ID_PATTERNS: Record<ProviderKind, RegExp> = {
   google: /^[\w.-]+\.apps\.googleusercontent\.com$/,
   github: /^[A-Za-z0-9._-]{1,100}$/,
   // The application (client) ID of the app registration: a GUID.
   microsoft: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  // The Services ID: reverse-DNS, like a bundle identifier.
+  apple: /^[A-Za-z0-9.-]{1,255}$/,
   oidc: /^[\x21-\x7E]{1,255}$/,
 };
 
@@ -131,21 +146,36 @@ function parseScopes(value: unknown): string[] | null {
 }
 
 /** What a provider of `kind` is called in the messages about its fields. */
-const KIND_NAMES: Record<ProviderKind, string> = { google: 'Google', github: 'GitHub', microsoft: 'Microsoft', oidc: 'OpenID Connect' };
+const KIND_NAMES: Record<ProviderKind, string> = { google: 'Google', github: 'GitHub', microsoft: 'Microsoft', apple: 'Apple', oidc: 'OpenID Connect' };
+
+/** Apple's bundle identifiers as an admin sends them, one or several separated by spaces or commas, or an array; null if one is none. */
+function parseBundleIds(value: unknown): string[] | null {
+  const given = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\s,]+/) : null;
+  if (!given) return null;
+  const ids = [...new Set(given.filter((id) => id !== ''))];
+  return ids.length <= MAX_BUNDLE_IDS && ids.every(isBundleId) ? (ids as string[]) : null;
+}
 
 /**
  * The fields an admin sends for a provider of `kind`, checked. `adding` asks for what a new provider needs:
- * a client ID, the secret of the kinds that exchange the code on the server, and Microsoft's tenant.
+ * a client ID, the secret of the kinds that exchange the code on the server, Microsoft's tenant, and Apple's
+ * Team ID and Key ID. Apple's `clientSecret` is the `.p8` key, kept as PEM; whether it is an ES256 key is
+ * checked where it is imported (the routes do that once, when it is set).
  */
 export function parseProviderFields(kind: ProviderKind, data: Record<string, unknown>, adding: boolean): ProviderFields | ProviderProblem {
   // A field madAuth doesn't have would otherwise be dropped without a word.
   const unknown = Object.keys(data).find((key) => !FIELDS.includes(key));
   if (unknown) return problem(`"${unknown}" is not a field of a provider: it has ${FIELDS.join(', ')}.`);
-  const { name, clientId, clientSecret, issuer, scopes, trustEmail, tenant } = data;
+  const { name, clientId, issuer, scopes, trustEmail, tenant, teamId, keyId, bundleIds } = data;
   const oidc = kind === 'oidc';
+  const apple = kind === 'apple';
   const notHere = OIDC_FIELDS.find((field) => !oidc && data[field] !== undefined);
   if (notHere) return problem(`"${notHere}" is a field of OpenID Connect providers only.`);
   if (kind !== 'microsoft' && tenant !== undefined) return problem('"tenant" is a field of the Microsoft provider only.');
+  const appleOnly = APPLE_FIELDS.find((field) => !apple && data[field] !== undefined);
+  if (appleOnly) return problem(`"${appleOnly}" is a field of the Apple provider only.`);
+  // Apple's secret is the key file's text: with its line breaks as `\n`, or on one line, it is still the key.
+  const clientSecret = apple && typeof data.clientSecret === 'string' ? (appleKeyPem(data.clientSecret) ?? '') : data.clientSecret;
   if (name === undefined ? adding && oidc : typeof name !== 'string' || !name.trim() || name.trim().length > MAX_NAME) {
     return problem(`name must be text of 1 to ${MAX_NAME} characters: the sign-in button says "Continue with <name>".`);
   }
@@ -157,16 +187,24 @@ export function parseProviderFields(kind: ProviderKind, data: Record<string, unk
           ? 'clientId must be the client ID of a GitHub OAuth App.'
           : kind === 'microsoft'
             ? 'clientId must be the application (client) ID of an app registration in Microsoft Entra, a GUID.'
-            : 'clientId must be the client ID the provider gave madAuth: up to 255 characters, no spaces.',
+            : kind === 'apple'
+              ? 'clientId must be the Services ID of the Apple developer account, e.g. "com.example.app.web".'
+              : 'clientId must be the client ID the provider gave madAuth: up to 255 characters, no spaces.',
     );
   }
   const secretGiven = clientSecret !== undefined && clientSecret !== null;
   if (secretGiven && (typeof clientSecret !== 'string' || !clientSecret || clientSecret.length > MAX_SECRET)) {
-    return problem(`clientSecret must be text of 1 to ${MAX_SECRET} characters${kind === 'google' ? ', or null to remove it' : ''}.`);
+    return problem(
+      apple
+        ? 'clientSecret must be the private key Apple gave for the Key ID, the text of the .p8 file ("-----BEGIN PRIVATE KEY-----" to "-----END PRIVATE KEY-----").'
+        : `clientSecret must be text of 1 to ${MAX_SECRET} characters${kind === 'google' ? ', or null to remove it' : ''}.`,
+    );
   }
   // GitHub only has the redirect flow, in which the server exchanges the code with the secret; madAuth is a
   // confidential client of Microsoft and of every OpenID Connect provider.
-  if (kind !== 'google' && (clientSecret === null || (adding && !secretGiven))) return problem(`A ${KIND_NAMES[kind]} provider needs its clientSecret.`);
+  if (kind !== 'google' && (clientSecret === null || (adding && !secretGiven))) {
+    return problem(apple ? 'An Apple provider needs its clientSecret: the private key of the .p8 file.' : `A ${KIND_NAMES[kind]} provider needs its clientSecret.`);
+  }
   // No default: which accounts sign in is the operator's choice. It can change, since accounts are `<tid>:<oid>`.
   if (kind === 'microsoft' && (tenant === undefined ? adding : !isTenant(tenant))) {
     return problem('tenant must be "common" (work, school and personal accounts), "organizations", "consumers" or the id of one tenant (a GUID).');
@@ -178,6 +216,10 @@ export function parseProviderFields(kind: ProviderKind, data: Record<string, unk
   const extraScopes = scopes === undefined ? undefined : parseScopes(scopes);
   if (extraScopes === null) return problem(`scopes must be up to ${MAX_SCOPES} scope names, separated by spaces; ${OIDC_SCOPES.join(', ')} are always asked for.`);
   if (trustEmail !== undefined && typeof trustEmail !== 'boolean') return problem('trustEmail must be true or false.');
+  if (apple && (teamId === undefined ? adding : !isAppleId(teamId))) return problem('teamId must be the Team ID of the Apple developer account: 10 letters and digits.');
+  if (apple && (keyId === undefined ? adding : !isAppleId(keyId))) return problem('keyId must be the Key ID of the Sign in with Apple key: 10 letters and digits.');
+  const appIds = bundleIds === undefined ? undefined : parseBundleIds(bundleIds);
+  if (appIds === null) return problem(`bundleIds must be up to ${MAX_BUNDLE_IDS} App IDs (bundle identifiers, e.g. "com.example.app"), separated by spaces.`);
   return {
     ...(typeof name === 'string' ? { name: name.trim() } : {}),
     ...(typeof clientId === 'string' ? { clientId } : {}),
@@ -186,6 +228,9 @@ export function parseProviderFields(kind: ProviderKind, data: Record<string, unk
     ...(extraScopes === undefined ? {} : { scopes: extraScopes }),
     ...(trustEmail === undefined ? {} : { trustEmail }),
     ...(typeof tenant === 'string' ? { tenant: tenant.toLowerCase() } : {}),
+    ...(typeof teamId === 'string' ? { teamId } : {}),
+    ...(typeof keyId === 'string' ? { keyId } : {}),
+    ...(appIds === undefined ? {} : { bundleIds: appIds }),
   };
 }
 
@@ -215,7 +260,8 @@ function isStoredProvider(value: unknown): value is StoredProvider {
     typeof p.updatedAt === 'number' &&
     (p.kind !== 'oidc' ||
       (isIssuer(p.issuer) && Array.isArray(p.scopes) && p.scopes.every((scope) => typeof scope === 'string') && typeof p.trustEmail === 'boolean')) &&
-    (p.kind !== 'microsoft' || isTenant(p.tenant))
+    (p.kind !== 'microsoft' || isTenant(p.tenant)) &&
+    (p.kind !== 'apple' || (isAppleId(p.teamId) && isAppleId(p.keyId) && Array.isArray(p.bundleIds) && p.bundleIds.every(isBundleId)))
   );
 }
 
@@ -268,6 +314,7 @@ export class Providers {
       updatedAt: now,
       ...(kind === 'oidc' ? { issuer: fields.issuer!, scopes: fields.scopes ?? [], trustEmail: fields.trustEmail ?? false } : {}),
       ...(kind === 'microsoft' ? { tenant: fields.tenant! } : {}),
+      ...(kind === 'apple' ? { teamId: fields.teamId!, keyId: fields.keyId!, bundleIds: fields.bundleIds ?? [] } : {}),
     };
     const added = await this.settings.change<unknown>(
       PROVIDERS_SETTING,
@@ -300,6 +347,9 @@ export class Providers {
           ...(fields.scopes === undefined ? {} : { scopes: fields.scopes }),
           ...(fields.trustEmail === undefined ? {} : { trustEmail: fields.trustEmail }),
           ...(fields.tenant === undefined ? {} : { tenant: fields.tenant }),
+          ...(fields.teamId === undefined ? {} : { teamId: fields.teamId }),
+          ...(fields.keyId === undefined ? {} : { keyId: fields.keyId }),
+          ...(fields.bundleIds === undefined ? {} : { bundleIds: fields.bundleIds }),
           updatedAt: Date.now(),
         };
         return providers.map((p) => (p.id === id ? updated! : p));

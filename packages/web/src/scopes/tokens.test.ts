@@ -16,7 +16,7 @@ describe('Madauth.tokens', () => {
     server.clients.push(app);
     await Madauth.initialize({ serverUrl: SERVER, providers: [], locale: 'de' });
 
-    expect(await Madauth.tokens.nonce({ clientId: 'mc_1' })).toEqual({ isSuccess: true, nonce: 'nonce-token', googleClientId: 'google-client', expiresIn: 300 });
+    expect(await Madauth.tokens.nonce({ clientId: 'mc_1' })).toEqual({ isSuccess: true, nonce: 'nonce-token', googleClientId: 'google-client', apple: false, expiresIn: 300 });
     expect(server.requests.at(-1)).toMatchObject({ method: 'POST', path: '/auth/oidc/nonce', body: { client_id: 'mc_1' } });
 
     expect(await Madauth.tokens.exchange({ clientId: 'mc_1', credential: 'google-id-token' })).toEqual({

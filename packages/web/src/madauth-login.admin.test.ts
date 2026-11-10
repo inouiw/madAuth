@@ -70,7 +70,7 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     await click('[data-action="add-provider"]');
     expect(text('h2')).toBe('Add a provider');
     // Google is there already: GitHub and OpenID Connect are left.
-    expect($$('[data-kind]').map((row) => row.dataset.kind)).toEqual(['github', 'microsoft', 'oidc']);
+    expect($$('[data-kind]').map((row) => row.dataset.kind)).toEqual(['github', 'microsoft', 'apple', 'oidc']);
     await click('[data-kind="oidc"]');
     expect(text('h2')).toBe('Add OpenID Connect');
 
@@ -115,6 +115,38 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
 
     await click('[data-action="done"]');
     expect(await result).toEqual({ isSuccess: true });
+  });
+
+  it('DA9: adds Apple with its Services ID, Team ID, Key ID, the key file’s text and the App IDs, and changes the App IDs later', async () => {
+    const { server } = await openAdmin();
+    await click('[data-action="add-provider"]');
+    await click('[data-kind="apple"]');
+    expect(text('h2')).toBe('Add Apple');
+    expect(text('.callback-url')).toBe(`${SERVER}/auth/providers/apple/callback`);
+    expect($('textarea[name="clientSecret"]')).not.toBeNull();
+    expect(text('label[for="provider-client-secret"]')).toBe('Private key');
+    await type('clientId', 'com.example.app.web');
+    await type('teamId', 'TEAM123456');
+    await type('keyId', 'KEY1234567');
+    await type('clientSecret', '-----BEGIN PRIVATE KEY-----\nMIGH\n-----END PRIVATE KEY-----');
+    await type('bundleIds', 'com.example.app');
+    await save();
+
+    expect(rows()).toContain('Apple Apple · Off');
+    expect(sent(server, '/auth/admin/providers/add')).toEqual([
+      { kind: 'apple', clientId: 'com.example.app.web', clientSecret: '-----BEGIN PRIVATE KEY-----\nMIGH\n-----END PRIVATE KEY-----', teamId: 'TEAM123456', keyId: 'KEY1234567', bundleIds: 'com.example.app' },
+    ]);
+
+    // The form shows the ids again (never the key), and sends only a change.
+    await click('[data-provider="apple"]');
+    expect($<HTMLInputElement>('input[name="teamId"]')!.value).toBe('TEAM123456');
+    expect($<HTMLInputElement>('input[name="keyId"]')!.value).toBe('KEY1234567');
+    expect($<HTMLInputElement>('input[name="bundleIds"]')!.value).toBe('com.example.app');
+    expect($<HTMLTextAreaElement>('textarea[name="clientSecret"]')!.value).toBe('');
+    expect(text('textarea[name="clientSecret"] ~ .hint')).toContain('Leave empty to keep the current one.');
+    await type('bundleIds', 'com.example.app com.example.app.mac');
+    await save();
+    expect(sent(server, '/auth/admin/providers/update')).toEqual([{ id: 'apple', bundleIds: 'com.example.app com.example.app.mac' }]);
   });
 
   it('DA8: adds Microsoft with whose accounts sign in, one organization’s by its tenant id, and changes it later', async () => {

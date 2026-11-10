@@ -300,7 +300,7 @@ With `purpose: 'link'` it says "Connect GitHub" and adds GitHub to the signed-in
 
 ## Any provider: `Madauth.provider(id)`
 
-Every provider the server offers, by its id: [Microsoft](server.md#microsoft-setup) (`microsoft`), the [OpenID Connect providers](server.md#openid-connect-provider-setup) an admin added (e.g. `gitlab`), and Google and GitHub too. madAuth registers them by itself, so `initialize` needs nothing for them (Google's One Tap aside: `new GoogleFedcm()`).
+Every provider the server offers, by its id: [Microsoft](server.md#microsoft-setup) (`microsoft`), [Apple](server.md#apple-setup) (`apple`, also as `Madauth.apple`, see below), the [OpenID Connect providers](server.md#openid-connect-provider-setup) an admin added (e.g. `gitlab`), and Google and GitHub too. madAuth registers them by itself, so `initialize` needs nothing for them (Google's One Tap aside: `new GoogleFedcm()`).
 
 ```ts
 const result = Madauth.provider('gitlab').renderButton(document.querySelector('#gitlab-button')!, { theme: 'auto' });
@@ -308,7 +308,7 @@ const result = Madauth.provider('gitlab').renderButton(document.querySelector('#
 await Madauth.provider('gitlab').signIn(); // the browser goes to the provider and back
 ```
 
-- `renderButton(container, options?)` renders a "Continue with <name>" button, with the name an admin gave the provider, in the dialog's colours with a neutral sign-in mark (nothing is loaded from the provider). Google's and GitHub's buttons are the ones of `Madauth.google` and `Madauth.github`; Microsoft's has its four squares in Microsoft's colours. It takes the same options, and can be called before `initialize` has finished: when the server turns out not to offer the provider, `onResult` gets `flow_not_enabled`.
+- `renderButton(container, options?)` renders a "Continue with <name>" button, with the name an admin gave the provider, in the dialog's colours with a neutral sign-in mark (nothing is loaded from the provider). Google's and GitHub's buttons are the ones of `Madauth.google` and `Madauth.github`; Microsoft's has its four squares in Microsoft's colours, Apple's the Apple logo on black (white on a dark theme), as Apple's guidelines have it. It takes the same options, and can be called before `initialize` has finished: when the server turns out not to offer the provider, `onResult` gets `flow_not_enabled`.
 - `signIn({ purpose? })` starts the redirect without a button of madAuth's. It fails with `flow_not_enabled` when the server doesn't offer the provider, or when it signs in without a redirect here (Google with `GoogleFedcm`).
 - Like GitHub's, the result arrives after the return: the user through `onAuthStateChanged`, a failure (e.g. `cancelled`, `email_unverified`, `other_method`) from `initialize`, a second step in `Madauth.authenticator.pendingStep` with the provider's id as `method`.
 - An OpenID Connect provider that doesn't vouch for the address comes back with the pending step `{ step: 'email', method: '<id>', email: 'l•••@example.com' }`: the confirmation e-mail went to that (masked) address. Ask for the code from it and call `Madauth.provider(id).verifyEmail({ code })`, which resolves like a sign-in (the browser's cookie says whose sign-up it is); `sendVerificationEmail()` sends it again. The link in the e-mail works on its own.
@@ -316,6 +316,32 @@ await Madauth.provider('gitlab').signIn(); // the browser goes to the provider a
 - With `purpose: 'link'` it adds the provider to the signed-in user's methods, and the page comes back with `linked: '<id>'`.
 
 The ids the server offers, with their names, are in `GET /auth/config` (`providers`). The method of an OpenID Connect provider is its id: in `amr`, in the user's [methods](#a-users-sign-in-methods-madauthmethods) and in the TypeScript type `LoginMethodId`, which is any string besides madAuth's own ids (`BuiltInMethodId`).
+
+## Apple: `Madauth.apple`
+
+Sign in with Apple needs no provider in `initialize`: madAuth adds it when the server has an [Apple provider](server.md#apple-setup) that is on. `Madauth.apple.renderButton(container, options?)` renders the "Continue with Apple" button, which starts the redirect like `Madauth.provider('apple')`.
+
+An iOS or macOS app shows Apple's own sheet instead, e.g. with [`@capacitor-community/apple-sign-in`](https://github.com/capacitor-community/apple-sign-in), and hands madAuth the identity token, with `nonce` and `signIn` as for a [Google ID token](#an-id-token-the-app-obtained-itself):
+
+```ts
+import { SignInWithApple } from '@capacitor-community/apple-sign-in';
+
+const start = await Madauth.apple.nonce(); // { nonce }
+if (!start.isSuccess) return showError(start.error);
+const { response } = await SignInWithApple.authorize({ clientId: 'com.example.app', redirectURI: '', scopes: 'email name', nonce: start.nonce });
+const result = await Madauth.apple.signIn({
+  credential: response.identityToken,
+  name: { firstName: response.givenName ?? undefined, lastName: response.familyName ?? undefined }, // Apple sends it the first time only
+  authorizationCode: response.authorizationCode,
+});
+if (!result.isSuccess) showError(result.error); // or the second step, as with Google
+```
+
+- `nonce()` resolves with the nonce to pass to Apple's request **as it is** (Apple puts it into the token; don't hash it). The server keeps it in a cookie for five minutes: get a new one for each sign-in.
+- `signIn({ credential, name?, authorizationCode? })` sends the token to the server, which verifies it (Apple's signature, the audience, the nonce, a verified address). The token's audience is the app's App ID (bundle identifier): the admin lists it in the provider's `bundleIds`, else `verification_failed`. `name` is Apple's `fullName`, which the app gets at the first authorization only: pass it, or the new user has no name. `authorizationCode` lets the server keep the refresh token with which it gives the authorization back to Apple when the user deletes their account (App Store Review Guideline 5.1.1 (v)); without it the sign-in works, but nothing is given back. The errors and the second step are as for `Madauth.google.signIn`; `pendingStep` has `method: 'apple'`.
+- `signIn({ credential, purpose: 'link' })` adds the Apple ID to the signed-in user's methods instead, within two minutes of signing in.
+
+The session is a cookie, as with Google's token: on a cross-site origin, use `Madauth.tokens` with the same token instead, see [Native apps](server.md#native-apps).
 
 ## Passkeys: `Madauth.passkey`
 
@@ -374,7 +400,7 @@ A TV or a command-line tool that signs in with madAuth as its [OpenID Connect pr
 
 ## Tokens for a native app: `Madauth.tokens`
 
-A native app on a cross-site origin, where the madAuth server's cookies don't arrive, signs in as a registered application of the [OpenID Connect provider](server.md#native-apps) and gets tokens: `Madauth.tokens.nonce({ clientId })` for Google's sign-in, `exchange({ clientId, credential })` with the Google ID token for `{ accessToken, idToken, refreshToken, expiresIn, scope }`, and `refresh({ clientId, refreshToken })` later. `exchange` fails with `interaction_required` when the sign-in needs a second factor or a setup: finish it through the authorization code flow in the system browser. None of these calls use cookies or `Madauth.currentUser`; `initialize` is still needed for the server URL.
+A native app on a cross-site origin, where the madAuth server's cookies don't arrive, signs in as a registered application of the [OpenID Connect provider](server.md#native-apps) and gets tokens: `Madauth.tokens.nonce({ clientId })` for Google's or Apple's sign-in, `exchange({ clientId, credential })` with the Google ID token or the Apple identity token (for Apple's, with `name` and `authorizationCode` as for [`Madauth.apple.signIn`](#apple-madauthapple)) for `{ accessToken, idToken, refreshToken, expiresIn, scope }`, and `refresh({ clientId, refreshToken })` later. `exchange` fails with `interaction_required` when the sign-in needs a second factor or a setup: finish it through the authorization code flow in the system browser. None of these calls use cookies or `Madauth.currentUser`; `initialize` is still needed for the server URL.
 
 ## Language
 

@@ -60,10 +60,10 @@ export interface Settings {
 export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 
 /**
- * The kinds of sign-in providers. Google and GitHub exist once each, with the kind as the id; `oidc`, an
- * OpenID Connect provider (e.g. GitLab, Keycloak, Okta), as often as needed, each with an id of its own.
+ * The kinds of sign-in providers. Google, GitHub, Microsoft and Apple exist once each, with the kind as the id;
+ * `oidc`, an OpenID Connect provider (e.g. GitLab, Keycloak, Okta), as often as needed, each with an id of its own.
  */
-export type ProviderKind = 'google' | 'github' | 'microsoft' | 'oidc';
+export type ProviderKind = 'google' | 'github' | 'microsoft' | 'apple' | 'oidc';
 
 /** A sign-in provider as the admin API answers it: never its secret, only whether it has one. */
 export interface ProviderInfo {
@@ -86,9 +86,18 @@ export interface ProviderInfo {
   trustEmail?: boolean;
   /** Microsoft: whose accounts sign in, `common`, `organizations`, `consumers` or one tenant's id. */
   tenant?: string;
+  /** Apple: the Team ID of the developer account. */
+  teamId?: string;
+  /** Apple: the Key ID of the Sign in with Apple key (the provider's secret is that key). */
+  keyId?: string;
+  /** Apple: the App IDs (bundle identifiers) of the native apps whose identity tokens sign in with `Madauth.apple.signIn`. */
+  bundleIds?: string[];
 }
 
-/** What an admin sets of a provider: `clientSecret` in plain text, `null` to remove it (Google only), left out to keep it. */
+/**
+ * What an admin sets of a provider: `clientSecret` in plain text, `null` to remove it (Google only), left out to
+ * keep it. Apple's `clientSecret` is the private key Apple gives for the Key ID: the text of the `.p8` file.
+ */
 export interface ProviderChanges {
   name?: string;
   clientId?: string;
@@ -105,12 +114,22 @@ export interface ProviderChanges {
    * school accounts), `consumers` (personal accounts) or one tenant's id. Its users' accounts stay when it changes.
    */
   tenant?: string;
+  /** Apple: the Team ID of the developer account, 10 letters and digits. */
+  teamId?: string;
+  /** Apple: the Key ID of the key `clientSecret` holds, 10 letters and digits. */
+  keyId?: string;
+  /** Apple: the App IDs (bundle identifiers) whose identity tokens sign in, separated by spaces, e.g. `'com.example.app'`; empty for none. */
+  bundleIds?: string;
 }
 
-/** A new provider: Google or GitHub by its kind, Microsoft with its tenant, an OpenID Connect provider with its id, name and issuer. */
+/**
+ * A new provider: Google or GitHub by its kind, Microsoft with its tenant, Apple with its Services ID (`clientId`),
+ * Team ID, Key ID and key (`clientSecret`), an OpenID Connect provider with its id, name and issuer.
+ */
 export type NewProvider = (
   | { kind: 'google' | 'github' }
   | { kind: 'microsoft'; clientId: string; clientSecret: string; tenant: string }
+  | { kind: 'apple'; clientId: string; clientSecret: string; teamId: string; keyId: string }
   | { kind: 'oidc'; id: string; name: string; issuer: string; clientId: string; clientSecret: string }
 ) &
   ProviderChanges;

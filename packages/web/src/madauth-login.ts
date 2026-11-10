@@ -141,6 +141,10 @@ interface ProviderDraft {
   /** Microsoft: `common`, `organizations`, `consumers`, or `single` with `tenantId`; empty until chosen. */
   tenantChoice: '' | 'common' | 'organizations' | 'consumers' | 'single';
   tenantId: string;
+  /** Apple: the Team ID, the Key ID of the key in `clientSecret`, and the App IDs separated by spaces. */
+  teamId: string;
+  keyId: string;
+  bundleIds: string;
   /** On as a sign-in method, with this policy for a second factor. */
   on: boolean;
   secondFactor: SecondFactorPolicy;
@@ -157,6 +161,9 @@ const EMPTY_DRAFT: ProviderDraft = {
   trustEmail: false,
   tenantChoice: '',
   tenantId: '',
+  teamId: '',
+  keyId: '',
+  bundleIds: '',
   on: false,
   secondFactor: 'none',
 };
@@ -179,6 +186,10 @@ function newProviderOf(kind: ProviderKind, d: ProviderDraft): NewProvider {
   const name = d.name.trim();
   const shared = { clientId: d.clientId.trim(), ...(d.clientSecret ? { clientSecret: d.clientSecret } : {}) };
   if (kind === 'microsoft') return { kind, clientId: shared.clientId, clientSecret: d.clientSecret, tenant: tenantOf(d), ...(name ? { name } : {}) };
+  if (kind === 'apple') {
+    const bundleIds = d.bundleIds.trim();
+    return { kind, clientId: shared.clientId, clientSecret: d.clientSecret, teamId: d.teamId.trim(), keyId: d.keyId.trim(), ...(bundleIds ? { bundleIds } : {}), ...(name ? { name } : {}) };
+  }
   if (kind !== 'oidc') return { kind, ...shared, ...(name ? { name } : {}) };
   const scopes = d.scopes.trim();
   return { kind, id: d.id.trim(), name, issuer: d.issuer.trim(), clientId: shared.clientId, clientSecret: d.clientSecret, trustEmail: d.trustEmail, ...(scopes ? { scopes } : {}) };
@@ -196,6 +207,9 @@ function changesOf(provider: ProviderInfo, d: ProviderDraft): ProviderChanges {
     ...(provider.kind === 'oidc' && scopes !== (provider.scopes ?? []).join(' ') ? { scopes } : {}),
     ...(provider.kind === 'oidc' && d.trustEmail !== !!provider.trustEmail ? { trustEmail: d.trustEmail } : {}),
     ...(provider.kind === 'microsoft' && tenantOf(d) !== provider.tenant ? { tenant: tenantOf(d) } : {}),
+    ...(provider.kind === 'apple' && d.teamId.trim() && d.teamId.trim() !== provider.teamId ? { teamId: d.teamId.trim() } : {}),
+    ...(provider.kind === 'apple' && d.keyId.trim() && d.keyId.trim() !== provider.keyId ? { keyId: d.keyId.trim() } : {}),
+    ...(provider.kind === 'apple' && d.bundleIds.trim() !== (provider.bundleIds ?? []).join(' ') ? { bundleIds: d.bundleIds.trim() } : {}),
   };
 }
 type ChangeView = (typeof changeViews)[number];
@@ -2705,12 +2719,12 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
-  /** Which kind of provider to add: Google and GitHub once each, OpenID Connect providers as many as needed. */
+  /** Which kind of provider to add: Google, GitHub, Microsoft and Apple once each, OpenID Connect providers as many as needed. */
   private renderAdminAdd() {
     const s = this.strings;
     const v = s.adminView;
     const has = (kind: ProviderKind) => !!this.adminProviders?.some((provider) => provider.id === kind);
-    const kinds = (['google', 'github', 'microsoft', 'oidc'] as const).filter((kind) => kind === 'oidc' || !has(kind));
+    const kinds = (['google', 'github', 'microsoft', 'apple', 'oidc'] as const).filter((kind) => kind === 'oidc' || !has(kind));
     return html`
       <p class="lead">${v.chooseKind}</p>
       <ul>
@@ -2754,6 +2768,9 @@ export class MadauthLogin extends LitElement {
         scopes: (provider.scopes ?? []).join(' '),
         trustEmail: !!provider.trustEmail,
         ...tenantChoiceOf(provider.tenant),
+        teamId: provider.teamId ?? '',
+        keyId: provider.keyId ?? '',
+        bundleIds: (provider.bundleIds ?? []).join(' '),
         on,
         secondFactor: on ? setting!.secondFactor : 'none',
       },
@@ -2778,7 +2795,8 @@ export class MadauthLogin extends LitElement {
     const callbackUrl = form.provider?.callbackUrl ?? (this.callbackBase ? `${this.callbackBase}${id || '<id>'}/callback` : undefined);
     // A new GitHub or OpenID Connect provider needs its secret: they only have the server's code exchange.
     const secretRequired = !editing && form.kind !== 'google';
-    const secretHint = editing ? v.secretKept : form.kind === 'google' ? v.googleSecret : undefined;
+    const apple = form.kind === 'apple';
+    const secretHint = apple ? (editing ? `${v.appleKeyHint} ${v.secretKept}` : v.appleKeyHint) : editing ? v.secretKept : form.kind === 'google' ? v.googleSecret : undefined;
     return html`
       <form part="form" class="provider-form" @input=${this.onProviderInput} @change=${this.onProviderInput} @submit=${this.onProviderSave}>
         ${oidc && !editing
@@ -2822,13 +2840,24 @@ export class MadauthLogin extends LitElement {
           <label for="provider-client-id">${v.clientId}</label>
           <input part="input" id="provider-client-id" name="clientId" type="text" autocomplete="off" spellcheck="false" required .value=${d.clientId} />
         </div>
+        ${apple ? this.renderAppleIds(d) : null}
         <div class="field">
-          <label for="provider-client-secret">${v.clientSecret} ${secretRequired ? null : html`<span class="optional">${s.optional}</span>`}</label>
-          <input part="input" id="provider-client-secret" name="clientSecret" type="password" autocomplete="off" spellcheck="false"
-            ?required=${secretRequired} .value=${d.clientSecret} />
+          <label for="provider-client-secret">${apple ? v.appleKey : v.clientSecret} ${secretRequired ? null : html`<span class="optional">${s.optional}</span>`}</label>
+          ${apple
+            ? html`<textarea part="input" id="provider-client-secret" name="clientSecret" autocomplete="off" spellcheck="false" rows="4"
+                ?required=${secretRequired} .value=${d.clientSecret}></textarea>`
+            : html`<input part="input" id="provider-client-secret" name="clientSecret" type="password" autocomplete="off" spellcheck="false"
+                ?required=${secretRequired} .value=${d.clientSecret} />`}
           ${secretHint ? html`<p class="hint">${secretHint}</p>` : null}
         </div>
         ${form.kind === 'microsoft' ? this.renderTenantFields(d) : null}
+        ${apple
+          ? html`<div class="field">
+              <label for="provider-bundle-ids">${v.bundleIds} <span class="optional">${s.optional}</span></label>
+              <input part="input" id="provider-bundle-ids" name="bundleIds" type="text" autocomplete="off" spellcheck="false" .value=${d.bundleIds} />
+              <p class="hint">${v.bundleIdsHint}</p>
+            </div>`
+          : null}
         ${editing && form.kind === 'google' && form.provider!.hasClientSecret
           ? html`<label class="scope"><input type="checkbox" name="removeSecret" .checked=${d.removeSecret} /><span>${v.removeSecret}</span></label>`
           : null}
@@ -2863,6 +2892,23 @@ export class MadauthLogin extends LitElement {
           : null}
         <button class="link" part="link" type="button" data-action="back-to-providers" @click=${() => this.backToAdmin()}>${s.cancel}</button>
       </p>
+    `;
+  }
+
+  /** Apple's Team ID and Key ID, which sign the client secret with the key. */
+  private renderAppleIds(d: ProviderDraft) {
+    const v = this.strings.adminView;
+    return html`
+      <div class="field">
+        <label for="provider-team-id">${v.teamId}</label>
+        <input part="input" id="provider-team-id" name="teamId" type="text" autocomplete="off" spellcheck="false" required pattern="[A-Z0-9]{10}" .value=${d.teamId} />
+        <p class="hint">${v.teamIdHint}</p>
+      </div>
+      <div class="field">
+        <label for="provider-key-id">${v.keyId}</label>
+        <input part="input" id="provider-key-id" name="keyId" type="text" autocomplete="off" spellcheck="false" required pattern="[A-Z0-9]{10}" .value=${d.keyId} />
+        <p class="hint">${v.keyIdHint}</p>
+      </div>
     `;
   }
 
@@ -2911,6 +2957,9 @@ export class MadauthLogin extends LitElement {
         trustEmail: data.has('trustEmail'),
         tenantChoice: text('tenantChoice') as ProviderDraft['tenantChoice'],
         tenantId: text('tenantId'),
+        teamId: text('teamId'),
+        keyId: text('keyId'),
+        bundleIds: text('bundleIds'),
         on: data.has('on'),
         secondFactor: text('secondFactor') as SecondFactorPolicy,
       },

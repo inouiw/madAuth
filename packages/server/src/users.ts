@@ -194,8 +194,16 @@ export const methodOf = (account: Pick<StoredAccount, 'key'>): string => {
 
 const OIDC_KEY_PREFIX = 'oidc';
 
-/** Whether an account is at a sign-in provider (Google, GitHub, Microsoft, an OpenID Connect provider), which tells its address. */
-export const isProviderAccount = (account: Pick<StoredAccount, 'key'>): boolean => ['google', 'github', 'microsoft', OIDC_KEY_PREFIX].includes(String(account.key).split(':')[0]!);
+/** Whether an account is at a sign-in provider (Google, GitHub, Microsoft, Apple, an OpenID Connect provider), which tells its address. */
+export const isProviderAccount = (account: Pick<StoredAccount, 'key'>): boolean => ['google', 'github', 'microsoft', 'apple', OIDC_KEY_PREFIX].includes(String(account.key).split(':')[0]!);
+
+/**
+ * The key of an Apple account: Apple's `sub`, which is the same for every app and Services ID of the developer
+ * team, so the web flow and a native app find the same account; its address may change.
+ */
+export function appleAccountKey(sub: string): string {
+  return `apple:${sub}`;
+}
 
 /**
  * The key of a Microsoft account: its tenant (`tid`) and its object id there (`oid`), which stay when the app is

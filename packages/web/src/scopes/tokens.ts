@@ -1,4 +1,5 @@
 import { toErrorCode, type MadauthError, type Result } from '../result.js';
+import type { AppleName } from './apple.js';
 import type { Core } from './core.js';
 
 /** The tokens madAuth's OpenID Connect provider issues a client, see "OpenID Connect provider" in docs/server.md. */
@@ -15,27 +16,30 @@ export interface TokenSet {
 }
 
 /**
- * Tokens instead of cookies, for a native app (Capacitor, say) that signs in with a Google ID token it obtained
- * itself: a WebView gets no cookies from the madAuth server, so the app is a registered application of madAuth's
- * OpenID Connect provider and exchanges the Google token for madAuth's own (RFC 8693). An admin allows it with
- * `tokenExchange: true` on the application. See "Native apps" in docs/server.md.
+ * Tokens instead of cookies, for a native app (Capacitor, say) that signs in with a Google ID token or an Apple
+ * identity token it obtained itself: a WebView gets no cookies from the madAuth server, so the app is a registered
+ * application of madAuth's OpenID Connect provider and exchanges the provider's token for madAuth's own (RFC 8693).
+ * An admin allows it with `tokenExchange: true` on the application. See "Native apps" in docs/server.md.
  */
 export interface TokensApi {
   /**
-   * The nonce for Google's sign-in (the plugin's `nonce` option) and the server's Google client ID the token must
-   * be issued for. A nonce works five minutes. Fails with `unauthorized_client` (the application may not exchange
-   * tokens) or `invalid_request` (Google sign-in is off).
+   * The nonce for Google's sign-in (the plugin's `nonce` option) or Apple's (`ASAuthorizationAppleIDRequest.nonce`),
+   * with the server's Google client ID a Google token must be issued for (`googleClientId`, when Google sign-in is
+   * on) and whether Apple's is on (`apple`). A nonce works five minutes. Fails with `unauthorized_client` (the
+   * application may not exchange tokens) or `invalid_request` (neither Google nor Apple sign-in is on).
    */
-  nonce(options: ClientOptions): Promise<Result<{ nonce: string; googleClientId: string; expiresIn: number }>>;
+  nonce(options: ClientOptions): Promise<Result<{ nonce: string; googleClientId?: string; apple: boolean; expiresIn: number }>>;
   /**
-   * Signs the user in with the Google ID token (`credential`) and resolves with the application's tokens: an ID
-   * token with the scope `openid`, a refresh token with `offline_access` (default scope: `openid email profile
-   * offline_access`). The user is created when new. Fails with `invalid_grant` (the token, its nonce or its
-   * address; `message` says what), `interaction_required` (the sign-in needs a second factor or a setup, which the
-   * app finishes through the authorization endpoint in the system browser), `unauthorized_client` or
-   * `temporarily_unavailable`.
+   * Signs the user in with the Google ID token or the Apple identity token (`credential`) and resolves with the
+   * application's tokens: an ID token with the scope `openid`, a refresh token with `offline_access` (default
+   * scope: `openid email profile offline_access`). The user is created when new. With Apple's token, `name` is the
+   * name Apple gives the app at the first sign-in only, and `authorizationCode` the code from the same sheet, with
+   * which the server keeps what gives the authorization back when the user is deleted (see `Madauth.apple.signIn`).
+   * Fails with `invalid_grant` (the token, its nonce or its address; `message` says what), `interaction_required`
+   * (the sign-in needs a second factor or a setup, which the app finishes through the authorization endpoint in
+   * the system browser), `unauthorized_client` or `temporarily_unavailable`.
    */
-  exchange(options: ClientOptions & { credential: string; scope?: string; locale?: string }): Promise<Result<TokenSet>>;
+  exchange(options: ClientOptions & { credential: string; name?: AppleName | string; authorizationCode?: string; scope?: string; locale?: string }): Promise<Result<TokenSet>>;
   /** New tokens for a refresh token, which stops working: keep the new one. Fails with `invalid_grant` when it ended. */
   refresh(options: ClientOptions & { refreshToken: string; scope?: string }): Promise<Result<TokenSet>>;
 }
@@ -78,10 +82,11 @@ export function createTokensApi(core: Core): TokensApi {
 
   return {
     async nonce({ clientId, clientSecret }) {
-      const result = await call<{ nonce: string; google_client_id: string; expires_in: number }>('/auth/oidc/nonce', { client_id: clientId, client_secret: clientSecret });
-      return result.isSuccess ? { isSuccess: true, nonce: result.nonce, googleClientId: result.google_client_id, expiresIn: result.expires_in } : result;
+      const result = await call<{ nonce: string; google_client_id?: string; apple?: boolean; expires_in: number }>('/auth/oidc/nonce', { client_id: clientId, client_secret: clientSecret });
+      if (!result.isSuccess) return result;
+      return { isSuccess: true, nonce: result.nonce, ...(result.google_client_id ? { googleClientId: result.google_client_id } : {}), apple: result.apple === true, expiresIn: result.expires_in };
     },
-    async exchange({ clientId, clientSecret, credential, scope = DEFAULT_SCOPE, locale }) {
+    async exchange({ clientId, clientSecret, credential, name, authorizationCode, scope = DEFAULT_SCOPE, locale }) {
       const result = await call<Raw>('/auth/oidc/token', {
         grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
         client_id: clientId,
@@ -90,6 +95,8 @@ export function createTokensApi(core: Core): TokensApi {
         subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
         scope,
         locale: locale ?? core.locale(),
+        name: name === undefined ? undefined : typeof name === 'string' ? name : JSON.stringify(name),
+        authorization_code: authorizationCode,
       });
       return result.isSuccess ? { isSuccess: true, ...tokenSet(result) } : result;
     },
