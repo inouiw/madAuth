@@ -34,8 +34,15 @@ export function sessionRoutes(app: Hono, ctx: AppContext): void {
     const signIn = await ctx.currentSignIn(c);
     if (!signIn) return noSession(c);
     if (!(await isRecent(ctx, signIn))) return reauthRequired(c);
-    const ended = await ctx.sessions.endAll(signIn.user.id, signIn.stored.sessionVersion, signIn.sessionId);
-    await ctx.sessionsEnded(signIn.stored, ended, 'ended');
+    const { stored: user } = signIn;
+    const ended = await ctx.sessions.endAll(user.id, user.sessionVersion, signIn.sessionId);
+    // The session version goes up too, so sessions without a record (from before madAuth 0.7.5), the sign-ins that
+    // wait for their second step and the OpenID Connect refresh tokens end as well. This session goes on with it, as
+    // the same sign-in: new tokens and its record with the new version.
+    const sessionVersion = user.sessionVersion + 1;
+    await ctx.users.updateUser(user.id, { sessionVersion });
+    await ctx.continueSession(c, signIn, sessionVersion);
+    await ctx.sessionsEnded(user, ended, 'ended');
     return c.json({ ended: ended.length });
   });
 }

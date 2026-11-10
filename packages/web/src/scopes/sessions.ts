@@ -39,7 +39,11 @@ export interface SessionsApi {
    * fails with `reauth_required`. Fails with `session_not_found` (gone already) or `no_session`.
    */
   end(id: string): Promise<Result>;
-  /** Ends every session but the current one; `ended` says how many. Needs a recent sign-in like {@link end}. */
+  /**
+   * Ends every session but the current one; `ended` says how many. It raises the user's session version too, so also
+   * sessions from before madAuth 0.7.5 and the user's OpenID Connect refresh tokens end; this browser gets new cookies
+   * for the same sign-in. Needs a recent sign-in like {@link end}.
+   */
   endOthers(): Promise<Result<{ ended: number }>>;
 }
 

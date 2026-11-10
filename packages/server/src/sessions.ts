@@ -57,6 +57,9 @@ export const newSessionId = (): string => `${SESSION_ID_PREFIX}${randomString(16
 export const legacySessionId = (renewalToken: string): string =>
   `${SESSION_ID_PREFIX}${createHash('sha256').update(renewalToken).digest('base64url').slice(0, 22)}`;
 
+/** How many sessions a user has at most: a new one beyond it ends the one with the oldest activity. */
+export const MAX_SESSIONS_PER_USER = 50;
+
 /** How often an instance at most deletes the expired sessions of every user (with a store that has `deleteExpired`). */
 export const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -92,10 +95,11 @@ export class Sessions {
   ) {}
 
   /**
-   * Records a new session. Resolves to false if one with this id exists already (only a legacy id repeats).
-   * Deletes the user's sessions that ended meanwhile, and now and then those of every user that expired.
+   * Records a new session. `started` is false if one with this id exists already (only a legacy id repeats).
+   * Deletes the user's sessions that ended meanwhile, and now and then those of every user that expired. Beyond
+   * MAX_SESSIONS_PER_USER, it ends the user's sessions with the oldest activity: `overLimit` are those it deleted.
    */
-  async start(session: NewSession): Promise<boolean> {
+  async start(session: NewSession): Promise<{ started: boolean; overLimit: StoredSession[] }> {
     const now = Date.now();
     const record: StoredSession = {
       id: session.id,
@@ -108,9 +112,9 @@ export class Sessions {
       renewedAt: now,
       expiresAt: now + this.renewalTtlMs,
     };
-    const created = await this.store.create('session', record as unknown as Row);
-    await Promise.all([this.dropEnded(session.userId, session.sessionVersion), this.cleanUp(now)]);
-    return created;
+    const started = await this.store.create('session', record as unknown as Row);
+    const [overLimit] = await Promise.all([this.dropEnded(session.userId, session.sessionVersion, session.id), this.cleanUp(now)]);
+    return { started, overLimit };
   }
 
   /**
@@ -153,11 +157,21 @@ export class Sessions {
     return ended.flat();
   }
 
-  /** Deletes the user's sessions that ended without being deleted: expired, or from before their session version. */
-  private async dropEnded(userId: string, sessionVersion: number): Promise<void> {
+  /**
+   * Deletes the user's sessions that ended without being deleted (expired, or from before their session version),
+   * and those beyond MAX_SESSIONS_PER_USER with the oldest activity, never `keep`: resolves to the latter that this
+   * request deleted.
+   */
+  private async dropEnded(userId: string, sessionVersion: number, keep: string): Promise<StoredSession[]> {
     const all = (await this.store.findMany('session', { userId })) as unknown as StoredSession[];
     const now = Date.now();
-    await Promise.all(all.filter((session) => !isGoing(session, sessionVersion, now)).map((session) => this.store.delete('session', { id: session.id })));
+    const ended = all.filter((session) => !isGoing(session, sessionVersion, now));
+    // `keep` counts as one: the others, the latest activity first, fill the rest.
+    const others = all.filter((session) => session.id !== keep && isGoing(session, sessionVersion, now)).sort((a, b) => b.renewedAt - a.renewedAt);
+    const over = others.slice(MAX_SESSIONS_PER_USER - 1);
+    await Promise.all(ended.map((session) => this.store.delete('session', { id: session.id })));
+    const deleted = await Promise.all(over.map(async (session) => ((await this.store.delete('session', { id: session.id })) === 1 ? [session] : [])));
+    return deleted.flat();
   }
 
   /** At most once per CLEANUP_INTERVAL_MS per instance: the expired sessions of every user, with a store that can. */

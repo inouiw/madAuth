@@ -338,7 +338,8 @@ export interface AdminSessionsApi {
    */
   list(userId: string): Promise<Result<{ email: string; sessions: SessionInfo[] }>>;
   /**
-   * Ends one session of the user, or with `'all'` every one; `ended` says how many. Needs a recent sign-in. Fails
+   * Ends one session of the user, or with `'all'` every one (raising their session version, which also ends their
+   * OpenID Connect refresh tokens); `ended` says how many. Needs a recent sign-in. Fails
    * with `forbidden`, `reauth_required`, `user_not_found` or `session_not_found`.
    */
   end(userId: string, id: string | 'all'): Promise<Result<{ ended: number }>>;

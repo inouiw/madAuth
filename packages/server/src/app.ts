@@ -61,7 +61,7 @@ import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP
 import { Users, factorsAmong, preferredFirst, toMadauthUser, type StoredAccount, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
 import { deviceOf } from './device.js';
-import { Sessions, legacySessionId, newSessionId, sessionInfo, type StoredSession } from './sessions.js';
+import { Sessions, legacySessionId, newSessionId, sessionInfo, type NewSession, type StoredSession } from './sessions.js';
 import { sessionNotFound, sessionRoutes } from './routes/sessions.js';
 
 /** How long madAuth waits for an event call; events never make a request fail. */
@@ -96,9 +96,10 @@ export interface SignIn {
 
 /**
  * Why a session ended, as `user.session_ended` tells it: `ended` from another session of the user's or by an admin,
- * `signed_out` at its browser (also by a sign-in there that goes on to a second step), `replaced` by a new session there.
+ * `signed_out` at its browser (also by a sign-in there that goes on to a second step), `replaced` by a new session there,
+ * `limit` by a new session of the user beyond MAX_SESSIONS_PER_USER (the one with the oldest activity).
  */
-export type SessionEndReason = 'ended' | 'signed_out' | 'replaced';
+export type SessionEndReason = 'ended' | 'signed_out' | 'replaced' | 'limit';
 
 /** What a request finds the server set up for: read from the store, so a change applies on every instance at once. */
 export interface MethodsNow {
@@ -332,13 +333,24 @@ export function createApp(config: MadauthConfig): Hono {
   };
 
   /**
+   * Records a new session: resolves to whether it was made (see `Sessions.start`). The sessions it ended beyond
+   * MAX_SESSIONS_PER_USER send `user.session_ended` with `limit`.
+   */
+  const startRecord = async (session: NewSession): Promise<boolean> => {
+    const { started, overLimit } = await sessions.start(session);
+    const user = overLimit.length && ctx.webhook?.wants('user.session_ended') ? await users.findById(session.userId) : null;
+    if (user) await ctx.sessionsEnded(user, overLimit, 'limit');
+    return started;
+  };
+
+  /**
    * Renews the record of the session a renewal token is for: resolves to its id, or null if it has ended (the record
    * is gone). A token from before madAuth 0.7.5 has no id: its first renewal makes the record, so nobody is signed out.
    */
   const renewRecord = async (c: Context, renewal: SessionClaims, stored: StoredUser): Promise<string | null> => {
     if (renewal.sid) return (await sessions.renew(renewal.sid, renewal.sub, device(c))) ? renewal.sid : null;
     const id = legacySessionId(getCookie(c, RENEWAL_COOKIE) ?? '');
-    const started = await sessions.start({ id, userId: renewal.sub, sessionVersion: stored.sessionVersion, authTime: renewal.auth_time ?? null, amr: renewal.amr, device: device(c) });
+    const started = await startRecord({ id, userId: renewal.sub, sessionVersion: stored.sessionVersion, authTime: renewal.auth_time ?? null, amr: renewal.amr, device: device(c) });
     // Another renewal with the same token made it just now.
     return started || (await sessions.renew(id, renewal.sub, device(c))) ? id : null;
   };
@@ -477,7 +489,7 @@ export function createApp(config: MadauthConfig): Hono {
         // The session this browser had, if any, ends: this one replaces it.
         await endBrowserSession(c, 'replaced');
         const authTime = Math.floor(Date.now() / 1000);
-        await sessions.start({ id: sid, userId: user.id, sessionVersion: extra.sv, authTime, amr, device: device(c) });
+        await startRecord({ id: sid, userId: user.id, sessionVersion: extra.sv, authTime, amr, device: device(c) });
         await issueSession(c, user, amr, { ...extra, auth_time: authTime, sid });
       });
       return { ...result, sessionId: sid };
@@ -491,7 +503,7 @@ export function createApp(config: MadauthConfig): Hono {
       }
       // A session from before madAuth 0.7.5 gets its record now.
       const sid = sessionId ?? newSessionId();
-      if (sessionId === null) await sessions.start({ id: sid, userId: user.id, sessionVersion: sv, authTime, amr, device: device(c) });
+      if (sessionId === null) await startRecord({ id: sid, userId: user.id, sessionVersion: sv, authTime, amr, device: device(c) });
       await issueSession(c, user, amr, { sv, ...(authTime !== null ? { auth_time: authTime } : {}), sid });
     },
     async signOut(c) {
@@ -1252,6 +1264,9 @@ export function createApp(config: MadauthConfig): Hono {
     const one = data.id === 'all' ? null : await sessions.end(user.id, data.id);
     if (data.id !== 'all' && !one) return sessionNotFound(c);
     const ended = one ? [one] : await sessions.endAll(user.id, user.sessionVersion);
+    // All of them: the session version goes up too, so sessions without a record (from before madAuth 0.7.5), the
+    // sign-ins that wait for their second step and the OpenID Connect refresh tokens end as well.
+    if (!one) await users.updateUser(user.id, { sessionVersion: user.sessionVersion + 1 });
     await ctx.sessionsEnded(user, ended, 'ended', { by: caller.email, ...byApiKey(caller) });
     // An admin who ends their own session here is signed out at once, as on the user's route.
     const ownSession = caller.signIn?.sessionId;

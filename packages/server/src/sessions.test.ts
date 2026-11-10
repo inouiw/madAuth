@@ -172,17 +172,28 @@ describe("the user's sessions", () => {
     expect((await check(app, renewalOnly(phone))).status).toBe(401);
   });
 
-  it('SE6: ending all others keeps this one; ending the current one signs this browser out', async () => {
-    const { app, hook } = sessionsApp();
-    await signInFrom(app, FIREFOX_MAC, '203.0.113.7');
+  it('SE6: ending all others keeps this one with a new session version, which ends the old tokens too; ending the current one signs this browser out', async () => {
+    const { app, hook, store } = sessionsApp();
+    const laptop = await signInFrom(app, FIREFOX_MAC, '203.0.113.7');
     await signInFrom(app, SAFARI_IPHONE, '203.0.113.8');
-    const current = await signInFrom(app, FIREFOX_MAC, '203.0.113.9');
+    const signedIn = await signInFrom(app, FIREFOX_MAC, '203.0.113.9');
+    const userId = sidOwner(signedIn);
+    // A renewal token from before sessions had records.
+    const legacy = await signRenewal(keyService, ISSUER, 30 * 24 * 3600, { id: userId, email: 'ada@example.com' }, ['google'], { sv: 0, auth_time: Math.floor(Date.now() / 1000) });
     hook.calls.length = 0;
 
-    const res = await post(app, '/auth/sessions/end-others', {}, { Cookie: current });
+    const res = await post(app, '/auth/sessions/end-others', {}, { Cookie: signedIn });
     expect(await res.json()).toEqual({ ended: 2 });
     expect(ended(hook)).toHaveLength(2);
-    expect((await sessionsOf(app, current)).map((s) => s.id)).toEqual([sidOf(current)]);
+    expect(await store.findOne('user', { id: userId })).toMatchObject({ sessionVersion: 1 });
+    // This browser goes on, with new tokens of the new version and the same session.
+    const current = cookieHeader(res);
+    expect(decodeJwt(current.split('; ').find((c) => c.startsWith('madauth_session='))!.split('=')[1])).toMatchObject({ sid: sidOf(signedIn), sv: 1 });
+    expect((await check(app, renewalOnly(current))).status).toBe(200);
+    expect((await sessionsOf(app, current)).map((s) => s.id)).toEqual([sidOf(signedIn)]);
+    // The others end at once now, the old token too.
+    expect((await check(app, laptop)).status).toBe(401);
+    expect((await check(app, `madauth_renewal=${legacy}`)).status).toBe(401);
 
     const self = await post(app, '/auth/sessions/end', { id: sidOf(current) }, { Cookie: current });
     expect(self.status).toBe(204);
@@ -260,6 +271,9 @@ describe("an admin and a user's sessions", () => {
     const all = await post(app, '/auth/admin/sessions/end', { userId: graceId, id: 'all' }, { Cookie: ada });
     expect(await all.json()).toMatchObject({ ended: 1 });
     expect(await store.findMany('session', { userId: graceId })).toEqual([]);
+    // With a new session version: every session of hers ends at once, also one without a record.
+    expect(await store.findOne('user', { id: graceId })).toMatchObject({ sessionVersion: 1 });
+    expect((await check(app, grace)).status).toBe(401);
 
     // An admin who ends their own session is signed out at once.
     const own = await post(app, '/auth/admin/sessions/end', { userId: sidOwner(ada), id: sidOf(ada) }, { Cookie: ada });
@@ -300,6 +314,28 @@ describe('the records of ended sessions', () => {
     advance(CLEANUP_INTERVAL_MS);
     await sessions.start({ id: 'ses_3', userId: 'usr_3', sessionVersion: 0, authTime: 1, amr: ['pwd'], device });
     expect(deleteExpired).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('the sessions of a user', () => {
+  it('SE15: are at most 50: a new one ends the one with the oldest activity, told with reason limit', async () => {
+    const { app, hook, store } = sessionsApp();
+    const first = await signInFrom(app, FIREFOX_MAC, '203.0.113.7');
+    const userId = sidOwner(first);
+    const now = Date.now();
+    for (let i = 0; i < 49; i++) {
+      await store.create('session', { id: `ses_old${i}`, userId, sessionVersion: 0, authTime: 1, amr: 'google', ip: null, browser: null, os: null, createdAt: 1, renewedAt: now - 1000 * (i + 1), expiresAt: now + HOUR });
+    }
+    hook.calls.length = 0;
+
+    const latest = await signInFrom(app, SAFARI_IPHONE, '203.0.113.8');
+
+    expect(ended(hook)).toEqual([{ user: expect.objectContaining({ email: 'ada@example.com' }), session: { id: 'ses_old48' }, reason: 'limit' }]);
+    const ids = (await sessionsOf(app, latest)).map((s) => s.id);
+    expect(ids).toHaveLength(50);
+    expect(ids).toContain(sidOf(first));
+    expect(ids).toContain(sidOf(latest));
+    expect(ids).not.toContain('ses_old48');
   });
 });
 

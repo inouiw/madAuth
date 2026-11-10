@@ -398,9 +398,9 @@ Where the signed-in user is signed in, and ending a session. See [Seeing and end
 | --- | --- | --- |
 | `list()` | `{ sessions: [{ id, current, browser, os, ip, signedInAt, amr, createdAt, lastActiveAt, expiresAt }] }`: the current session first (`current: true`), then by the latest activity; `browser`, `os` and `ip` are null when unknown | `no_session` |
 | `end(id)` | — (ending the current session signs this browser out) | `session_not_found`, `reauth_required`, `no_session` |
-| `endOthers()` | `{ ended }`: how many sessions ended | `reauth_required`, `no_session` |
+| `endOthers()` | `{ ended }`: how many sessions ended. It raises the session version too: this browser stays signed in (new cookies), every other session ends, also one from before madAuth 0.7.5, and so do the user's OpenID Connect refresh tokens | `reauth_required`, `no_session` |
 
-Ending needs a sign-in within the last two minutes, like removing a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. An ended session stops at its next renewal, within the session lifetime (`SESSION_TTL`, 8 hours by default). `Madauth.admin.sessions.list(userId)` and `end(userId, id | 'all')` let an admin do the same for a user.
+Ending needs a sign-in within the last two minutes, like removing a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. An ended session stops at its next renewal, within the session lifetime (`SESSION_TTL`, 8 hours by default). A user has at most 50 sessions: a new one beyond them ends the one with the oldest activity. `Madauth.admin.sessions.list(userId)` and `end(userId, id | 'all')` let an admin do the same for a user.
 
 ## A device's sign-in: `Madauth.device`
 
