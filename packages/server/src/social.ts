@@ -1,7 +1,7 @@
 // The sign-in providers that speak OAuth 2.0 without OpenID Connect (the kinds `facebook` and `x`), as one table
 // for the OpenID Connect providers' routes (routes/oidc.ts): where the user approves, how the code becomes an
 // access token, and what the provider's API says about the account behind it. Another such provider is one more
-// entry. See docs/social-security.md.
+// entry. See docs/facebook-security.md and docs/x-security.md.
 import { exchangeFacebookCode, facebookAuthorizeUrl, fetchFacebookProfile } from './facebook.js';
 import { facebookAccountKey, xAccountKey } from './users.js';
 import { exchangeXCode, fetchXProfile, xAuthorizeUrl } from './x.js';

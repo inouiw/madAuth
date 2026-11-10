@@ -1,7 +1,7 @@
 // Facebook's side of Facebook sign-in (the kind `facebook` in providers.ts): Facebook Login's manual redirect flow,
 // the code exchange and the account behind the access token, over the Graph API. The routes are the OpenID Connect
 // providers' (routes/oidc.ts), through SOCIAL_FLOWS in social.ts. Facebook says nothing about whether an address is
-// confirmed, so madAuth confirms it by e-mail once. See "Facebook setup" in docs/server.md and docs/social-security.md.
+// confirmed, so madAuth confirms it by e-mail once. See "Facebook setup" in docs/server.md and docs/facebook-security.md.
 import { createHmac } from 'node:crypto';
 import type { SocialAuthorizeRequest, SocialProfileResult } from './social.js';
 import { cutName } from './user.js';

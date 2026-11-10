@@ -278,7 +278,7 @@ madAuth asks for `name email` (Apple's scopes), signs a client secret from the k
 
 ### Facebook setup
 
-Facebook sign-in is Facebook Login's redirect flow ("manually build a login flow"), of which madAuth is a confidential client with the App Secret, and the Graph API (`v26.0`) for the account. See [Social provider security](social-security.md#facebook).
+Facebook sign-in is Facebook Login's redirect flow ("manually build a login flow"), of which madAuth is a confidential client with the App Secret, and the Graph API (`v26.0`) for the account. See [Facebook security](facebook-security.md).
 
 1. At [Meta for Developers → My Apps](https://developers.facebook.com/apps), create an app with the use case **Authenticate and request data from users with Facebook Login**.
 2. Under **Facebook Login → Settings**, enter `<MADAUTH_ISSUER>/auth/providers/facebook/callback` under **Valid OAuth Redirect URIs**, e.g. `https://app.example.com/auth/providers/facebook/callback`. Leave **Login with the JavaScript SDK** off. Facebook takes https only; it lets `localhost` through while the app is in development mode.
@@ -296,7 +296,7 @@ madAuth asks for the permissions `email` and `public_profile`, which need no app
 
 ### X setup
 
-X sign-in is X's OAuth 2.0 authorization-code flow with PKCE, of which madAuth is a confidential client, and the X API v2 for the account. See [Social provider security](social-security.md#x).
+X sign-in is X's OAuth 2.0 authorization-code flow with PKCE, of which madAuth is a confidential client, and the X API v2 for the account. See [X security](x-security.md).
 
 1. In the [X Developer Console](https://developer.x.com/en/portal/dashboard), open your app (a project's app; the Free tier will do) and choose **User authentication settings → Set up**.
 2. Choose the **App permissions** **Read**, turn on **Request email from users** (it needs your app's **Privacy policy** and **Terms of service** URLs), and choose the **Type of App** **Web App, Automated App or Bot**: a confidential client, which gets a Client Secret.
@@ -343,7 +343,7 @@ How madAuth signs in with it:
 
 ### GitLab setup
 
-GitLab sign-in is the preset `gitlab` of the OpenID Connect providers: the [generic flow](#openid-connect-provider-setup), unchanged, with GitLab's tanuki on the button, on gitlab.com or a self-hosted GitLab. See [Social provider security](social-security.md#gitlab).
+GitLab sign-in is the preset `gitlab` of the OpenID Connect providers: the [generic flow](#openid-connect-provider-setup), unchanged, with GitLab's tanuki on the button, on gitlab.com or a self-hosted GitLab. See [GitLab security](gitlab-security.md).
 
 1. Register an application in GitLab: for yourself under **Edit profile → Applications**, for a group under the group's **Settings → Applications**, or, on your own instance, for everyone under **Admin → Applications**. Give it a name, the **Redirect URI** `<MADAUTH_ISSUER>/auth/providers/gitlab/callback` (with the id you give it, e.g. `…/gitlab-corp/callback`), leave **Confidential** ticked, and tick the scopes `openid`, `profile` and `email`.
 2. Add the provider with the **Application ID** and the **Secret**, and switch it on with its id:
@@ -359,7 +359,7 @@ GitLab sign-in is the preset `gitlab` of the OpenID Connect providers: the [gene
 
 ### LinkedIn setup
 
-LinkedIn sign-in is the preset `linkedin` of the OpenID Connect providers: "Sign In with LinkedIn using OpenID Connect", with LinkedIn's issuer `https://www.linkedin.com/oauth`. Where LinkedIn departs from the generic flow, the preset follows it: no PKCE (LinkedIn has it for native apps only), the client secret in the form (`client_secret_post`), and an ID token without the `nonce`, which LinkedIn doesn't return. See [Social provider security](social-security.md#linkedin).
+LinkedIn sign-in is the preset `linkedin` of the OpenID Connect providers: "Sign In with LinkedIn using OpenID Connect", with LinkedIn's issuer `https://www.linkedin.com/oauth`. Where LinkedIn departs from the generic flow, the preset follows it: no PKCE (LinkedIn has it for native apps only), the client secret in the form (`client_secret_post`), and an ID token without the `nonce`, which LinkedIn doesn't return. See [LinkedIn security](linkedin-security.md).
 
 1. At [LinkedIn Developers → My apps](https://www.linkedin.com/developers/apps), create an app (it needs a LinkedIn company page), and under **Products** request **Sign In with LinkedIn using OpenID Connect**.
 2. Under **Auth**, add `<MADAUTH_ISSUER>/auth/providers/linkedin/callback` under **Authorized redirect URLs for your app**, and copy the **Client ID** and the **Primary Client Secret**.
@@ -374,7 +374,7 @@ LinkedIn sign-in is the preset `linkedin` of the OpenID Connect providers: "Sign
 
 ### Slack setup
 
-Slack sign-in is the preset `slack` of the OpenID Connect providers: "Sign in with Slack", with Slack's issuer `https://slack.com`, without PKCE: Slack's PKCE setting makes an app a public client for good, and madAuth is a confidential one, with the client secret, the state and the nonce. See [Social provider security](social-security.md#slack).
+Slack sign-in is the preset `slack` of the OpenID Connect providers: "Sign in with Slack", with Slack's issuer `https://slack.com`, without PKCE: Slack's PKCE setting makes an app a public client for good, and madAuth is a confidential one, with the client secret, the state and the nonce. See [Slack security](slack-security.md).
 
 1. At [Slack API → Your Apps](https://api.slack.com/apps), create an app (from scratch) in your workspace. Leave **PKCE** under **OAuth & Permissions** off.
 2. Under **OAuth & Permissions → Redirect URLs**, add `<MADAUTH_ISSUER>/auth/providers/slack/callback`; under **User Token Scopes**, add `openid`, `email` and `profile`. Under **Manage Distribution**, distribute the app if people of other workspaces sign in.

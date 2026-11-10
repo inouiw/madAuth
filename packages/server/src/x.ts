@@ -1,7 +1,7 @@
 // X's side of X sign-in (the kind `x` in providers.ts): X's OAuth 2.0 authorization-code flow with PKCE, the code
 // exchange and the account behind the access token, over the X API v2. The routes are the OpenID Connect providers'
 // (routes/oidc.ts), through SOCIAL_FLOWS in social.ts. The address comes as `confirmed_email`, with the scope
-// `users.email`; an account without one types it. See "X setup" in docs/server.md and docs/social-security.md.
+// `users.email`; an account without one types it. See "X setup" in docs/server.md and docs/x-security.md.
 import { basicAuthorization } from './oidc.js';
 import type { SocialAuthorizeRequest, SocialProfile, SocialProfileResult } from './social.js';
 import { cutName } from './user.js';

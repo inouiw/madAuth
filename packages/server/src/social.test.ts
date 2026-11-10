@@ -1,5 +1,5 @@
 // GitLab, LinkedIn and Slack (OpenID Connect presets), Facebook and X: see "Providers" in docs/server.md and
-// docs/social-security.md.
+// docs/gitlab-security.md, linkedin-security.md, slack-security.md, facebook-security.md and x-security.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PRESET_RULES } from './oidc-presets.js';
 import { parseProviderFields, parseProviderKind } from './providers.js';
