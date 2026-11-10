@@ -390,6 +390,18 @@ A user's keys for programs that call your API, or madAuth's admin API, in their 
 
 Making a key needs a sign-in within the last two minutes, like adding a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. Offer only the scopes with `allowed`; the server refuses the others. `Madauth.admin.listApiKeys(email)` and `revokeApiKey(email, id)` let an admin revoke a user's key.
 
+## Sessions: `Madauth.sessions`
+
+Where the signed-in user is signed in, and ending a session. See [Seeing and ending sessions](server.md#seeing-and-ending-sessions).
+
+| Method | Resolves to | Errors |
+| --- | --- | --- |
+| `list()` | `{ sessions: [{ id, current, browser, os, ip, signedInAt, amr, createdAt, lastActiveAt, expiresAt }] }`: the current session first (`current: true`), then by the latest activity; `browser`, `os` and `ip` are null when unknown | `no_session` |
+| `end(id)` | — (ending the current session signs this browser out) | `session_not_found`, `reauth_required`, `no_session` |
+| `endOthers()` | `{ ended }`: how many sessions ended | `reauth_required`, `no_session` |
+
+Ending needs a sign-in within the last two minutes, like removing a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. An ended session stops at its next renewal, within the session lifetime (`SESSION_TTL`, 8 hours by default). `Madauth.admin.sessions.list(userId)` and `end(userId, id | 'all')` let an admin do the same for a user.
+
 ## A device's sign-in: `Madauth.device`
 
 A TV or a command-line tool that signs in with madAuth as its [OpenID Connect provider](server.md#devices-without-a-browser) shows a code, which the signed-in user types on your page:

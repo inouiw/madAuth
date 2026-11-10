@@ -60,6 +60,9 @@ import { parseUserSearch, searchUsers } from './user-search.js';
 import { EXPIRY_COOKIE, RENEWAL_COOKIE, RENEWAL_TYP, SESSION_COOKIE, SESSION_TYP, bearerTokenOf, type MadauthUser } from './user.js';
 import { Users, factorsAmong, preferredFirst, toMadauthUser, type StoredAccount, type StoredUser } from './users.js';
 import { WEBHOOK_TIMEOUT_MS, createWebhookClient, type WebhookClient, type WebhookType } from './webhooks.js';
+import { deviceOf } from './device.js';
+import { Sessions, legacySessionId, newSessionId, sessionInfo, type StoredSession } from './sessions.js';
+import { sessionNotFound, sessionRoutes } from './routes/sessions.js';
 
 /** How long madAuth waits for an event call; events never make a request fail. */
 export const EVENT_TIMEOUT_MS = 5_000;
@@ -87,7 +90,15 @@ export interface SignIn {
   signedInAt: number | null;
   /** How the user signed in, as the session's token says. */
   amr: string[];
+  /** The session's id; null for a session from before madAuth 0.7.5 that was not renewed since. */
+  sessionId: string | null;
 }
+
+/**
+ * Why a session ended, as `user.session_ended` tells it: `ended` from another session of the user's or by an admin,
+ * `signed_out` at its browser, `replaced` by a new sign-in at its browser.
+ */
+export type SessionEndReason = 'ended' | 'signed_out' | 'replaced';
 
 /** What a request finds the server set up for: read from the store, so a change applies on every instance at once. */
 export interface MethodsNow {
@@ -124,15 +135,24 @@ export interface AppContext {
     user: MadauthUser,
     amr: string[],
     signIn: { method: string; signedUpAt: number | null },
-    extra?: { sv?: number },
+    extra: { sv: number },
   ): Promise<MadauthUser>;
   /**
    * Sets new session cookies for the same sign-in with the session version `sv`, e.g. after a change that ended
    * the user's other sessions: its time and `amr` stay, so the change doesn't count as a recent sign-in.
    */
   continueSession(c: Context, signIn: SignIn, sv: number): Promise<void>;
-  /** Ends the session at this browser, and a sign-in that waits for its second step. */
-  signOut(c: Context): void;
+  /** Ends the session at this browser (its record goes, `user.session_ended` with `signed_out`), and a sign-in that waits for its second step. */
+  signOut(c: Context): Promise<void>;
+  /**
+   * Sends `user.session_ended` for each of the user's sessions that ended, if the webhook wants it. `by` (and
+   * `byApiKey`): the admin who ended them.
+   */
+  sessionsEnded(user: StoredUser, sessions: StoredSession[], reason: SessionEndReason, by?: { by: string; byApiKey?: { id: string; name: string } }): Promise<void>;
+  /** Sends `user.signed_in` for a user who signed in, with their session's id and device when a session started. */
+  signedIn(c: Context, user: MadauthUser, data: Record<string, unknown>): Promise<void>;
+  /** The users' sessions, see sessions.ts. */
+  sessions: Sessions;
   /**
    * Finishes a primary sign-in method that succeeded: the session, or the next step with a second factor
    * as the policy of `method` and what the user has set up demand. `amr` is how the user signed in so far;
@@ -203,6 +223,8 @@ export function createApp(config: MadauthConfig): Hono {
   const apiKeys = new ApiKeys(config.store);
   const oidcClients = new OidcClients(config.store);
   const scopeCatalog = new ScopeCatalog(config.apiKeyScopesUrl, config.scopesFetch);
+  const sessions = new Sessions(config.store, renewalTtlSeconds * 1000);
+  const device = (c: Context) => deviceOf(c, config.clientIpHeader);
   const emailVerification = sendsVerificationEmails(config);
 
   // GOOGLE_* and GITHUB_* of madAuth before 0.7 become providers once, before the first request reads them. A
@@ -298,11 +320,28 @@ export function createApp(config: MadauthConfig): Hono {
   };
 
   /** The checked user, with the sign-in time of the token they were read from. */
-  const signInOf = (user: { user: MadauthUser; stored: StoredUser }, claims: SessionClaims): SignIn => ({
-    ...user,
-    signedInAt: typeof claims.auth_time === 'number' ? claims.auth_time * 1000 : null,
-    amr: claims.amr,
-  });
+  const signInOf = (user: { user: MadauthUser; stored: StoredUser }, claims: SessionClaims): SignIn => {
+    const { sessionId: _, ...rest } = user.user;
+    return {
+      ...user,
+      user: claims.sid ? { ...rest, sessionId: claims.sid } : rest,
+      signedInAt: typeof claims.auth_time === 'number' ? claims.auth_time * 1000 : null,
+      amr: claims.amr,
+      sessionId: claims.sid ?? null,
+    };
+  };
+
+  /**
+   * Renews the record of the session a renewal token is for: resolves to its id, or null if it has ended (the record
+   * is gone). A token from before madAuth 0.7.5 has no id: its first renewal makes the record, so nobody is signed out.
+   */
+  const renewRecord = async (c: Context, renewal: SessionClaims, stored: StoredUser): Promise<string | null> => {
+    if (renewal.sid) return (await sessions.renew(renewal.sid, renewal.sub, device(c))) ? renewal.sid : null;
+    const id = legacySessionId(getCookie(c, RENEWAL_COOKIE) ?? '');
+    const started = await sessions.start({ id, userId: renewal.sub, sessionVersion: stored.sessionVersion, authTime: renewal.auth_time ?? null, amr: renewal.amr, device: device(c) });
+    // Another renewal with the same token made it just now.
+    return started || (await sessions.renew(id, renewal.sub, device(c))) ? id : null;
+  };
 
   /**
    * The user of the request's session and when they signed in, or null if there is none or it has ended. A
@@ -324,9 +363,15 @@ export function createApp(config: MadauthConfig): Hono {
       session && user && renewal && renewal.sub === session.sub && renewal.sv === session.sv && renewal.email === session.email;
     const renewed = sameSignIn ? user : renewal ? await checked(renewal) : null;
     if (renewal && renewed) {
+      // A session that was ended has no record any more: it ends here, at its renewal.
+      const sid = await renewRecord(c, renewal, renewed.stored);
+      if (!sid) {
+        clearSession(c);
+        return null;
+      }
       // The sign-in it renews is still the one the user made: its time stays.
-      await issueSession(c, renewed.user, renewal.amr, { sv: renewal.sv, auth_time: renewal.auth_time });
-      return signInOf(renewed, renewal);
+      await issueSession(c, renewed.user, renewal.amr, { sv: renewal.sv, auth_time: renewal.auth_time, sid });
+      return signInOf(renewed, { ...renewal, sid });
     }
     // Still valid, but not renewable (e.g. the renewal cookie is gone): it lasts until it expires.
     return session && user ? signInOf(user, session) : null;
@@ -397,6 +442,17 @@ export function createApp(config: MadauthConfig): Hono {
     return { next: has[0] ?? (policy === 'required' ? 'second-factor-setup' : null), factors: has.length ? has : on };
   };
 
+  /**
+   * Ends the session this browser has, by its renewal token (or, without one, its session token): deletes its record
+   * and sends `user.session_ended`. Nothing for a session that is gone, or from before madAuth 0.7.5.
+   */
+  const endBrowserSession = async (c: Context, reason: SessionEndReason): Promise<void> => {
+    const token = (await tokenClaims(c, RENEWAL_COOKIE, RENEWAL_TYP)) ?? (await tokenClaims(c, SESSION_COOKIE, SESSION_TYP));
+    const ended = token?.sid ? await sessions.end(token.sub, token.sid) : null;
+    const user = ended && ctx.webhook?.wants('user.session_ended') ? await users.findById(ended.userId) : null;
+    if (ended && user) await ctx.sessionsEnded(user, [ended], reason);
+  };
+
   const ctx: AppContext = {
     config,
     keys,
@@ -414,19 +470,41 @@ export function createApp(config: MadauthConfig): Hono {
       return url;
     },
     async startSession(c, signedIn, amr, signIn, extra) {
-      return establish(signedIn, amr, signIn, async (user) => {
+      const sid = newSessionId();
+      const result = await establish(signedIn, amr, signIn, async (user) => {
         // A sign-in that was waiting for the authenticator app is over, whichever way this session came about.
         clearChallenge(c, secure);
-        await issueSession(c, user, amr, { ...extra, auth_time: Math.floor(Date.now() / 1000) });
+        // The session this browser had, if any, ends: this one replaces it.
+        await endBrowserSession(c, 'replaced');
+        const authTime = Math.floor(Date.now() / 1000);
+        await sessions.start({ id: sid, userId: user.id, sessionVersion: extra.sv, authTime, amr, device: device(c) });
+        await issueSession(c, user, amr, { ...extra, auth_time: authTime, sid });
       });
+      return { ...result, sessionId: sid };
     },
-    async continueSession(c, { user, amr, signedInAt }, sv) {
-      await issueSession(c, user, amr, { sv, ...(signedInAt !== null ? { auth_time: Math.floor(signedInAt / 1000) } : {}) });
+    async continueSession(c, { user, amr, signedInAt, sessionId }, sv) {
+      const authTime = signedInAt === null ? null : Math.floor(signedInAt / 1000);
+      // The record goes on with the new session version; one that is gone (ended meanwhile) is made anew.
+      const kept = sessionId !== null && (await sessions.renew(sessionId, user.id, device(c), sv));
+      const sid = kept ? sessionId : newSessionId();
+      if (!kept) await sessions.start({ id: sid, userId: user.id, sessionVersion: sv, authTime, amr, device: device(c) });
+      await issueSession(c, user, amr, { sv, ...(authTime !== null ? { auth_time: authTime } : {}), sid });
     },
-    signOut(c) {
+    async signOut(c) {
+      await endBrowserSession(c, 'signed_out');
       clearSession(c);
       clearChallenge(c, secure);
     },
+    async sessionsEnded(user, ended, reason, by) {
+      if (!this.webhook?.wants('user.session_ended')) return;
+      const madauthUser = toMadauthUser(user);
+      await Promise.all(ended.map((session) => this.emit('user.session_ended', { user: madauthUser, session: { id: session.id }, reason, ...(by ?? {}) })));
+    },
+    async signedIn(c, user, data) {
+      const session = user.sessionId ? { session: { id: user.sessionId, ...device(c) } } : {};
+      await this.emit('user.signed_in', { user, ...data, ...session });
+    },
+    sessions,
     async secondStep(c, user, amr, method, profile) {
       const step = await nextStepFor(c, user, amr, method);
       if ('disabled' in step) return step;
@@ -434,6 +512,7 @@ export function createApp(config: MadauthConfig): Hono {
       if (next) {
         // A sign-in that goes on with a second step ends the session there was at this browser, if any:
         // whoever was signed in is signed out until the step is done, so the setup can't be taken for theirs.
+        await endBrowserSession(c, 'replaced');
         clearSession(c);
         // Only what the session will show; the cookie is signed, not encrypted.
         const known = { ...(profile?.name ? { name: profile.name } : {}), ...(profile?.picture ? { picture: profile.picture } : {}) };
@@ -442,7 +521,7 @@ export function createApp(config: MadauthConfig): Hono {
         return { next, method, factors };
       }
       const result = await this.startSession(c, toMadauthUser(user, profile), amr, { method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
-      await this.emit('user.signed_in', { user: result, method });
+      await this.signedIn(c, result, { method });
       return { user: result };
     },
     async signInForTokens(c, user, amr, method, profile) {
@@ -493,9 +572,11 @@ export function createApp(config: MadauthConfig): Hono {
     },
     async emit(type, data) {
       if (!this.webhook?.wants(type)) return;
-      // The user in an event is the user, not their session: `amr` (how the session was authenticated) stays out.
+      // The user in an event is the user, not their session: `amr` (how the session was authenticated) and the
+      // session's id stay out (`user.signed_in` and `user.session_ended` name the session apart).
       const user = data.user;
-      const payload = user && typeof user === 'object' && 'amr' in user ? { ...data, user: { ...(user as object), amr: undefined } } : data;
+      const payload =
+        user && typeof user === 'object' && ('amr' in user || 'sessionId' in user) ? { ...data, user: { ...(user as object), amr: undefined, sessionId: undefined } } : data;
       const result = await this.webhook.call(type, payload, EVENT_TIMEOUT_MS);
       if (!result.ok) console.error(`[madauth] Webhook "${type}" failed: ${result.reason}`);
     },
@@ -613,10 +694,12 @@ export function createApp(config: MadauthConfig): Hono {
     return c.json({ user });
   });
 
-  app.post('/auth/logout', (c) => {
-    ctx.signOut(c);
+  app.post('/auth/logout', async (c) => {
+    await ctx.signOut(c);
     return c.body(null, 204);
   });
+
+  sessionRoutes(app, ctx);
 
   // --- Account ---
 
@@ -677,7 +760,7 @@ export function createApp(config: MadauthConfig): Hono {
   const admin = async (
     c: Context,
     scope?: MadauthScope,
-  ): Promise<{ id: string; email: string; byApiKey?: { id: string; name: string } } | { answer: Response }> => {
+  ): Promise<{ id: string; email: string; byApiKey?: { id: string; name: string }; sessionId?: string | null } | { answer: Response }> => {
     if (c.req.header('authorization') !== undefined) {
       if (!scope) return { answer: c.json({ error: 'forbidden', message: "API keys can't manage API keys: sign in as an admin." }, 403) };
       const caller = await keyCaller(c, ctx, apiKeys);
@@ -695,8 +778,9 @@ export function createApp(config: MadauthConfig): Hono {
     }
     // currentSession reads the claims from the store, not from the session token: a removed admin role
     // stops counting at once.
-    const user = await currentSession(c);
-    if (!user) return { answer: c.json({ error: 'no_session' }, 401) };
+    const signIn = await currentSignIn(c);
+    if (!signIn) return { answer: c.json({ error: 'no_session' }, 401) };
+    const { user } = signIn;
     const email = user.email ? normalizeEmail(user.email) : undefined;
     if (!email || !isAdmin(user)) {
       const message = `Only users with the role "${ADMIN_ROLE}" can manage claims and settings.`;
@@ -704,7 +788,7 @@ export function createApp(config: MadauthConfig): Hono {
     }
     // An admin exists, so the setup token of a deployment from before 0.7 stops working too.
     await setup.close();
-    return { id: user.id, email };
+    return { id: user.id, email, sessionId: signIn.sessionId };
   };
 
   /**
@@ -1135,6 +1219,36 @@ export function createApp(config: MadauthConfig): Hono {
     if (!key) return apiKeyNotFound(c);
     await ctx.emit('user.api_key_revoked', { user: toMadauthUser(user), apiKey: { id: key.id, name: key.name }, by: caller.email });
     return c.json({ email: user.emailNormalized, userId: user.id });
+  });
+
+  // A user's sessions, by the user's id (e.g. from users/search). See "Ending a user's sessions" in docs/server.md.
+  const userById = async (c: Context, userId: unknown): Promise<StoredUser | Response> => {
+    const user = typeof userId === 'string' && userId ? await users.findById(userId) : null;
+    return user ?? c.json({ error: 'user_not_found', message: 'No user has this id.' }, 404);
+  };
+
+  app.post('/auth/admin/sessions/list', async (c) => {
+    const caller = await admin(c, 'madauth:sessions:read');
+    if ('answer' in caller) return caller.answer;
+    const user = await userById(c, (await body(c)).userId);
+    if (user instanceof Response) return user;
+    const list = await sessions.list(user.id, user.sessionVersion);
+    return c.json({ email: user.emailNormalized, userId: user.id, sessions: list.map((session) => sessionInfo(session, caller.sessionId ?? null)) });
+  });
+
+  // `id: "all"` ends every session of the user. Each ends at its next renewal, within SESSION_TTL.
+  app.post('/auth/admin/sessions/end', async (c) => {
+    const caller = await adminChange(c, 'madauth:sessions:end');
+    if ('answer' in caller) return caller.answer;
+    const data = await body(c);
+    if (typeof data.id !== 'string' || !data.id) return c.json({ error: 'invalid_options', message: 'Pass the id of a session, or "all".' }, 400);
+    const user = await userById(c, data.userId);
+    if (user instanceof Response) return user;
+    const one = data.id === 'all' ? null : await sessions.end(user.id, data.id);
+    if (data.id !== 'all' && !one) return sessionNotFound(c);
+    const ended = one ? [one] : await sessions.endAll(user.id, user.sessionVersion);
+    await ctx.sessionsEnded(user, ended, 'ended', { by: caller.email, ...byApiKey(caller) });
+    return c.json({ email: user.emailNormalized, userId: user.id, ended: ended.length });
   });
 
   return app;

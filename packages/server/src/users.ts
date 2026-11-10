@@ -578,6 +578,7 @@ export class Users {
     await this.store.delete('oidcCode', { userId });
     await this.store.delete('oidcRefreshToken', { userId });
     await this.store.delete('oidcDeviceCode', { userId });
+    await this.store.delete('session', { userId });
     return removed;
   }
 
@@ -724,6 +725,7 @@ export class Users {
       await this.store.delete('oidcCode', { userId: user.id });
       await this.store.delete('oidcRefreshToken', { userId: user.id });
       await this.store.delete('oidcDeviceCode', { userId: user.id });
+      await this.store.delete('session', { userId: user.id });
     } catch (e) {
       console.error(`[madauth] Deleted user ${user.id}, but not all of their records: ${(e as Error).message}`);
     }

@@ -32,6 +32,13 @@ export interface StoreAdapter {
    * one added or deleted meanwhile may be or not. madAuth scans only for admins, e.g. to search users.
    */
   scan(model: string, opts: { after?: string; limit: number }): Promise<Row[]>;
+  /**
+   * Optional: deletes the records of a model whose `expiry` field (see {@link FieldDef}) is at or before `now`, and
+   * resolves to how many. madAuth calls it now and then for the models that have such a field (the sessions), so
+   * the records of users who never come back go too. A store that deletes them by itself (DynamoDB's TTL) or
+   * leaves them doesn't need it: madAuth never reads an expired record as valid.
+   */
+  deleteExpired?(model: string, now: number): Promise<number>;
 }
 
 export type FieldType = 'string' | 'number' | 'boolean';
@@ -43,6 +50,16 @@ export interface FieldDef {
   /** Looked up often, so it should have an index. */
   index?: boolean;
   nullable?: boolean;
+  /**
+   * When the record is of no use any more (milliseconds since 1970): a store may delete it from then on, e.g. with
+   * DynamoDB's TTL or {@link StoreAdapter.deleteExpired}. madAuth itself treats such a record as gone. At most one per model.
+   */
+  expiry?: boolean;
+}
+
+/** The field of a model that says when its records expire (see {@link FieldDef.expiry}), or undefined. */
+export function expiryField(fields: Record<string, FieldDef>): string | undefined {
+  return Object.keys(fields).find((field) => fields[field].expiry);
 }
 
 export interface Schema {
@@ -53,7 +70,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 15,
+  version: 16,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -298,6 +315,33 @@ export const madauthSchema = {
         /** 30 days after its last use. */
         expiresAt: { type: 'number' },
         lastUsedAt: { type: 'number' },
+      },
+    },
+    /**
+     * A session of a user at a browser (since version 16): made at the sign-in, `id` (`ses_…`) is the `sid` its tokens
+     * carry. Each renewal checks that it still exists and moves `expiresAt` on; ending the session deletes it, and so
+     * does a sign-out. It records the device as madAuth saw it at the last renewal.
+     */
+    session: {
+      fields: {
+        id: { type: 'string', primaryKey: true },
+        userId: { type: 'string', index: true },
+        /** The user's session version when the session started or last changed it: an older one has ended. */
+        sessionVersion: { type: 'number' },
+        /** When the user signed in, in seconds since 1970; empty for a session from before madAuth 0.6 that did not say. */
+        authTime: { type: 'number', nullable: true },
+        /** How the user signed in, separated by spaces, e.g. `pwd otp`. */
+        amr: { type: 'string' },
+        /** The IP address of the browser, as CLIENT_IP_HEADER or the runtime tells it; empty if unknown. */
+        ip: { type: 'string', nullable: true },
+        /** The browser and the operating system, as read from the user agent, e.g. `Firefox` and `macOS`; empty if unknown. */
+        browser: { type: 'string', nullable: true },
+        os: { type: 'string', nullable: true },
+        createdAt: { type: 'number' },
+        /** When the session was last renewed (or started): within SESSION_TTL of the user's last activity. */
+        renewedAt: { type: 'number' },
+        /** When the renewal token runs out (SESSION_RENEWAL_TTL after the last renewal): the record can go then. */
+        expiresAt: { type: 'number', expiry: true },
       },
     },
     /**

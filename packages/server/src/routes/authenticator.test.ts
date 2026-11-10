@@ -377,9 +377,9 @@ describe('signing in with the app alone', () => {
     const res = await signInWithApp(app, { email: 'Grace@Example.com', code: codeFor(secret) });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ user: { ...graceUser, amr: ['otp'] } });
+    expect(await res.json()).toEqual({ user: { ...graceUser, amr: ['otp'], sessionId: expect.stringMatching(/^ses_/) } });
     expect(await sessionClaims(app, res)).toMatchObject({ sub: userId, amr: ['otp'], sv: 0 });
-    expect(hook.calls).toEqual([{ type: 'user.signed_in', data: { user: graceUser, method: 'authenticator' } }]);
+    expect(hook.calls).toEqual([{ type: 'user.signed_in', data: { user: graceUser, method: 'authenticator', session: expect.objectContaining({ id: expect.stringMatching(/^ses_/) }) } }]);
     expect(await store.findOne('account', { key: `totp:${userId}` })).toMatchObject({ lastUsedStep: stepOf(Date.now()), failedAttempts: 0 });
   });
 
@@ -575,10 +575,10 @@ describe('the second step after a password, Google or GitHub', () => {
     const second = await post(app, '/auth/authenticator/verify', { code: codeFor(secret, 1) }, { Cookie: `madauth_challenge=${challenge.value}` });
 
     expect(second.status).toBe(200);
-    expect(await second.json()).toEqual({ user: { ...graceUser, amr: ['pwd', 'otp'] } });
+    expect(await second.json()).toEqual({ user: { ...graceUser, amr: ['pwd', 'otp'], sessionId: expect.stringMatching(/^ses_/) } });
     expect(await sessionClaims(app, second)).toMatchObject({ sub: userId, amr: ['pwd', 'otp'], sv: 0 });
     expect(cookies(second).madauth_challenge).toMatchObject({ value: '', attrs: { 'max-age': '0' } });
-    expect(hook.calls).toEqual([{ type: 'user.signed_in', data: { user: graceUser, method: 'password', secondFactor: 'authenticator' } }]);
+    expect(hook.calls).toEqual([{ type: 'user.signed_in', data: { user: graceUser, method: 'password', secondFactor: 'authenticator', session: expect.objectContaining({ id: expect.stringMatching(/^ses_/) }) } }]);
   });
 
   it('T16: a recovery code finishes the sign-in as well, and says so', async () => {
@@ -663,14 +663,14 @@ describe('the second step after a password, Google or GitHub', () => {
 
     expect(confirm.status).toBe(200);
     const body = (await confirm.json()) as { user: unknown; recoveryCodes: string[] };
-    expect(body.user).toEqual({ ...graceUser, amr: ['pwd', 'otp'] });
+    expect(body.user).toEqual({ ...graceUser, amr: ['pwd', 'otp'], sessionId: expect.stringMatching(/^ses_/) });
     expect(body.recoveryCodes).toHaveLength(10);
     expect(await sessionClaims(app, confirm)).toMatchObject({ amr: ['pwd', 'otp'] });
     expect(cookies(confirm).madauth_challenge).toMatchObject({ value: '' });
     // Her first session: the sign-up is complete only now, with the app the policy asks for, not at the e-mail.
     expect(hook.types()).toEqual(['user.second_factor_enabled', 'user.signed_up', 'user.signed_in']);
     expect(hook.calls[1].data).toEqual({ user: graceUser, method: 'password' });
-    expect(hook.calls[2].data).toEqual({ user: graceUser, method: 'password', secondFactor: 'authenticator' });
+    expect(hook.calls[2].data).toEqual({ user: graceUser, method: 'password', secondFactor: 'authenticator', session: expect.objectContaining({ id: expect.stringMatching(/^ses_/) }) });
   });
 
   it('T20: Google asks for the code too when its policy says so, in both flows', async () => {
@@ -824,12 +824,12 @@ describe('signing up with the app alone', () => {
     const confirm = await post(app, '/auth/authenticator/confirm', { code: codeFor(secret) }, { Cookie: `${challenge}; madauth_authenticator_setup=${cookies(setup).madauth_authenticator_setup.value}` });
 
     expect(confirm.status).toBe(200);
-    expect(((await confirm.json()) as { user: unknown }).user).toEqual({ ...graceUser, amr: ['otp'] });
+    expect(((await confirm.json()) as { user: unknown }).user).toEqual({ ...graceUser, amr: ['otp'], sessionId: expect.stringMatching(/^ses_/) });
     expect(await sessionClaims(app, confirm)).toMatchObject({ amr: ['otp'], sv: 0 });
     // The app is how she signs in, not a second factor: her sign-up is complete, and she is in.
     expect(hook.calls).toEqual([
       { type: 'user.signed_up', data: { user: graceUser, method: 'authenticator' } },
-      { type: 'user.signed_in', data: { user: graceUser, method: 'authenticator' } },
+      { type: 'user.signed_in', data: { user: graceUser, method: 'authenticator', session: expect.objectContaining({ id: expect.stringMatching(/^ses_/) }) } },
     ]);
     expect(await store.findOne('account', { key: `totp:${user.id}` })).toMatchObject({ primaryUserId: user.id });
     // The app is her only way in: it can't be removed, only the account deleted.

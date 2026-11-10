@@ -155,6 +155,11 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
     version: 15,
     sql: (dialect) => `ALTER TABLE ${tableName('oidcClient')} ADD COLUMN ${columnName('idTokenAlg')} ${columnType(dialect, madauthSchema.models.oidcClient.fields.idTokenAlg)};`,
   },
+  {
+    // The sessions, which users and admins see and end.
+    version: 16,
+    sql: (dialect) => createTablesSql(dialect, { version: 16, models: { session: madauthSchema.models.session } }),
+  },
 ];
 
 /**

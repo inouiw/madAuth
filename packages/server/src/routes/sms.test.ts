@@ -294,7 +294,7 @@ describe('SMS codes as the second step', () => {
     expect((await done.json()).user).toMatchObject({ email: 'grace@example.com', amr: ['pwd', 'sms'] });
     expect(cookies(done).madauth_session.value).toBeTruthy();
     expect(cookies(done).madauth_challenge).toMatchObject({ value: '', attrs: { 'max-age': '0' } });
-    expect(hook.calls).toEqual([{ type: 'user.signed_in', data: { user: { ...graceUser, amr: undefined }, method: 'password', secondFactor: 'sms' } }]);
+    expect(hook.calls).toEqual([{ type: 'user.signed_in', data: { user: { ...graceUser, amr: undefined, sessionId: undefined }, method: 'password', secondFactor: 'sms', session: { id: expect.stringMatching(/^ses_/), ip: null, browser: null, os: null } } }]);
     // The code and the challenge are used up.
     expect((await post(app, '/auth/sms/verify', { code }, withChallenge(first))).status).toBe(401);
   });

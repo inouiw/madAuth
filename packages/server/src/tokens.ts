@@ -81,12 +81,15 @@ export interface SessionClaims extends JWTPayload {
   auth_time?: number;
   /** The user's claims when the session was issued. */
   claims?: Record<string, unknown>;
+  /** The session's id (`ses_…`), as `user.session_ended` names it. Absent in tokens from before madAuth 0.7.5. */
+  sid?: string;
 }
 
-/** What a session carries next to the user: their session version, and when they signed in. */
+/** What a session carries next to the user: their session version, when they signed in, and its id. */
 export interface SessionExtra {
   sv?: number;
   auth_time?: number;
+  sid?: string;
 }
 
 export function signSession(
@@ -141,5 +144,6 @@ export function userFromClaims(claims: SessionClaims): MadauthUser {
   if (claims.picture) user.picture = claims.picture;
   if (claims.claims && typeof claims.claims === 'object' && Object.keys(claims.claims).length) user.claims = claims.claims;
   if (Array.isArray(claims.amr)) user.amr = claims.amr.filter((value): value is string => typeof value === 'string');
+  if (typeof claims.sid === 'string') user.sessionId = claims.sid;
   return user;
 }

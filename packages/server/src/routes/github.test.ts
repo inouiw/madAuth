@@ -159,13 +159,14 @@ describe('GitHub sign-in', () => {
       name: 'Ada Lovelace',
       picture: 'https://avatars.githubusercontent.com/u/7001',
       amr: ['github'],
+      sessionId: expect.stringMatching(/^ses_/),
     });
     // The sign-up is complete with the first session, so user.signed_up comes with it.
     expect(hook.types()).toEqual(['user.signing_up', 'user.signed_up', 'user.signed_in']);
     expect(hook.calls[0].data).toEqual({ email: 'ada@example.com', name: 'Ada Lovelace', method: 'github' });
     const signedIn = { user: { id: user.id, email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://avatars.githubusercontent.com/u/7001' }, method: 'github' };
     expect(hook.calls[1].data).toEqual(signedIn);
-    expect(hook.calls[2].data).toEqual(signedIn);
+    expect(hook.calls[2].data).toEqual({ ...signedIn, session: expect.objectContaining({ id: expect.stringMatching(/^ses_/) }) });
   });
 
   it('O5: an account without a display name is named by its login', async () => {

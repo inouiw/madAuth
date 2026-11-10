@@ -46,6 +46,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `SESSION_TTL` | no | Lifetime of a session token in seconds: how long your backends accept it. Default `28800` (8 hours). The web library renews it when needed, see [Sessions](#sessions). |
 | `SESSION_RENEWAL_TTL` | no | How long a user stays signed in without opening your app, in seconds: a session can be renewed this long after its last renewal. Default `2592000` (30 days). Not less than `SESSION_TTL`. |
 | `COOKIE_DOMAIN` | no | Cookie domain, e.g. `.example.com`, so backends on sibling subdomains receive the session cookie. By default the cookie belongs to the server's host only. |
+| `CLIENT_IP_HEADER` | no | The request header in which the proxy in front of madAuth passes the browser's IP address, e.g. `x-forwarded-for`, `x-real-ip` or `cf-connecting-ip`. Its last entry counts: the one the nearest proxy added, which the browser can't forge. Set it only behind a proxy that sets the header. Default: the address the runtime sees (the socket's on Node and Docker, the source IP on AWS Lambda; none on Azure Functions, set `x-forwarded-for` there). The address is only shown in the [list of sessions](#seeing-and-ending-sessions). |
 | `PORT` | no | Port for the Node / Docker server. Default `8787`. |
 
 A server needs no sign-in method to start. Google and GitHub are [providers](#providers) in the store, which an admin adds, or, before the first admin exists, whoever has the [setup token](#first-setup). The e-mail methods come with a webhook that sends the e-mails: e-mail & password sign-in needs `email.send_verification` and `email.send_password_reset` among its events, the e-mail link needs `email.send_signin_link`, sign-up with the authenticator app alone needs `email.send_verification`. Which configured methods are on, and whether they ask for the authenticator app, admins set while the server runs, see [Sign-in methods](#sign-in-methods).
@@ -333,6 +334,12 @@ export const handler = createHandler({ store: createDynamoDbAdapter({ tableName:
 
 How the records are stored: each record is one item (`pk` = `r|<model>|<id>`), with one more item per unique value (`u|user|emailNormalized|<address>`) and per indexed value (`i|account|userId|<id>`). A record and these items are always written in one transaction, and every read is strongly consistent, so the table needs no secondary index.
 
+**Expired sessions.** A [session's](#seeing-and-ending-sessions) items carry the attribute `ttl`, when the session expires (in seconds since 1970). Turn on DynamoDB's TTL for it, so DynamoDB deletes them, for free; without it they stay in the table (madAuth never reads an expired session as valid, and deletes a user's expired ones at their next sign-in). The [AWS template](../deploy/aws/README.md) turns it on.
+
+```bash
+aws dynamodb update-time-to-live --table-name madauth --time-to-live-specification Enabled=true,AttributeName=ttl
+```
+
 ### Postgres
 
 Store the users in PostgreSQL with `DATABASE_URL=postgres://<user>:<password>@<host>:5432/<database>`; `postgresql://` works as well, so the `uri` that e.g. CloudNativePG puts in its `<cluster>-app` Secret can be passed on unchanged. The madAuth Docker image and the Lambda and Azure bundles contain the driver; with madAuth from npm, install it next to it:
@@ -517,7 +524,8 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `user.email_verified` | An address was confirmed with the link or code of `email.send_verification` or `email.send_signin_link` | `user`, `method` (`password`, `authenticator`, `passkey` or `email-link`), `via` (`link` or `code`) | the same | the same |
 | `user.password_reset` | A password was reset (older sessions end) | `user` | the same | the same |
 | `user.password_changed` | A signed-in user changed their password (their other sessions end) | `user` | the same | the same |
-| `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `github`, `authenticator`, `email-link` or `passkey`), `secondFactor` (`passkey`, `authenticator`, `recovery_code` or `sms`, when there was a second step) | the same | the same |
+| `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `github`, `authenticator`, `email-link` or `passkey`), `secondFactor` (`passkey`, `authenticator`, `recovery_code` or `sms`, when there was a second step), `session { id, browser, os, ip }` (the new [session](#seeing-and-ending-sessions) and its device, e.g. to tell the user "New sign-in from Firefox on macOS"; absent for the tokens of an [OpenID Connect](#openid-connect-provider) token exchange, which start no session) | the same | the same |
+| `user.session_ended` | A [session](#seeing-and-ending-sessions) ended before it expired: `reason` `ended` (the user ended it from another session, or an admin did), `signed_out` (a sign-out at its browser) or `replaced` (a new sign-in at its browser). One call per session. Not for a password reset or change, a reset of the sign-in or a deletion, whose own events say that every (other) session ended. | `user`, `session { id }`, `reason`, `by` (the admin's address, when an admin ended it), `byApiKey { id, name }` (when the admin used an API key) | the same | the same |
 | `user.deleted` | A user deleted their account, or an admin [deleted the user](#deleting-a-user) | `user`; when an admin deleted them, also `by` (the admin's address) and `byApiKey { id, name }` (when the admin used an API key) | the same | the same |
 | `user.claims_changed` | An admin set the claims of a user, or [`INITIAL_ADMIN_EMAIL`](#the-first-admin) gave a user the role `admin` | `user` (with the new claims), `claims`, `by` (the admin's address, or `INITIAL_ADMIN_EMAIL`), `byApiKey { id, name }` (when the admin used an [API key](api-keys.md)) | the same | the same |
 | `user.second_factor_enabled` | A user set up or replaced a second factor: the authenticator app as the second step of their sign-in method, or a phone number for SMS codes | `user`, `method` (`authenticator` or `sms`), `phone` (for `sms`) | the same | the same |
@@ -618,7 +626,20 @@ const response = await fetch('/api/orders');
 
 A backend that answers 401 although the user is signed in met a session that expired in between: call `Madauth.sessionReady()` and send the request once more.
 
-**What renewal can't do.** Whoever has both cookies stays signed in until the renewal token expires or the password is reset. A password reset ends every session of the user, also those started with Google. A session token issued by madAuth 0.1 has no renewal token, and one issued by madAuth 0.2 for a Google user belongs to an id that no longer exists: either lasts until it expires, and then the user signs in again.
+**What renewal can't do.** Whoever has both cookies stays signed in until the renewal token expires, the password is reset or the session is [ended](#seeing-and-ending-sessions). A password reset ends every session of the user, also those started with Google. A session token issued by madAuth 0.1 has no renewal token, and one issued by madAuth 0.2 for a Google user belongs to an id that no longer exists: either lasts until it expires, and then the user signs in again.
+
+### Seeing and ending sessions
+
+Each session has a record in the store, made at the sign-in: its id (`ses_…`, the `sid` of its tokens), the user, when and how they signed in (`auth_time`, `amr`), the browser and the operating system (read from the user agent, by name only, e.g. `Firefox` and `macOS`), the full IP address (see `CLIENT_IP_HEADER` in [Configuration](#configuration)), and when it was made and last renewed. Each renewal checks that the record still exists, and records the device and the time anew. So the list shows where the user is signed in and when each session was last active (within `SESSION_TTL`: a session is renewed at most every half of it).
+
+- **The user** lists them with `Madauth.sessions.list()` (`GET /auth/sessions`; the current one first, marked `current`), and ends one with `Madauth.sessions.end(id)` or every other one with `Madauth.sessions.endOthers()`. Ending takes a sign-in within the last two minutes, like changing a method (`401 reauth_required`), so a session someone took over can't end the user's own. Ending the current one signs this browser out. `Madauth.showManageSignInMethodsDialog()` shows them under "Sessions".
+- **An admin** lists a user's sessions with `Madauth.admin.sessions.list(userId)` and ends one, or with `'all'` every one, with `Madauth.admin.sessions.end(userId, id)`: the way to sign a user out everywhere without [resetting their sign-in](#resetting-a-users-sign-in). See [Ending a user's sessions](#ending-a-users-sessions).
+
+**An ended session stops at its next renewal**, so within `SESSION_TTL` (8 hours) at the latest: its record is gone, so the renewal fails, the cookies are cleared, and the web library sees nobody signed in. Until then its session token is valid, and your backends, which check it without asking madAuth, accept it. A backend that needs it to stop sooner keeps its own list of ended sessions: the [`user.session_ended`](#webhooks) webhook names each ended session (`session.id`, the `sessionId` of the [verified user](#verifying-the-session-in-your-backend)), with `by` when an admin ended it, and the backend refuses those until `SESSION_TTL` after the event. This is madAuth's counterpart of OpenID Connect's back-channel logout.
+
+**Records go when a session ends**: when it is ended, at a sign-out (`POST /auth/logout`), when a new sign-in at the same browser replaces it, and with a password reset or change (the other sessions), a [reset of the sign-in](#resetting-a-users-sign-in) or the deletion of the user. Nothing is kept of an ended session. An expired session's record goes at the user's next sign-in, by [DynamoDB's TTL](#dynamodb), and in the SQL stores (SQLite, Postgres) at most once an hour with a sign-in. The IP address and the device are personal data: name them in your privacy policy.
+
+**Sessions from before madAuth 0.7.5** have no record: their tokens have no `sid`. Their next renewal makes one (with the time and the methods of the sign-in, and the device of the renewal) and gives them a `sid`, so nobody is signed out by the upgrade. Until then they aren't listed, so ending all of a user's sessions doesn't reach them; a [reset of the sign-in](#resetting-a-users-sign-in) does.
 
 ## Claims
 
@@ -783,6 +804,12 @@ The user then signs up again with any method that is on, and gets the same id. T
 
 Code: `resetSignIn` in [`users.ts`](../packages/server/src/users.ts), `/auth/admin/sign-in/reset` in [`app.ts`](../packages/server/src/app.ts).
 
+## Ending a user's sessions
+
+`Madauth.admin.sessions.list(userId)` in the web library (`POST /auth/admin/sessions/list`) lists the [sessions](#seeing-and-ending-sessions) of a user, by their id (e.g. from [Searching users](#searching-users)): the device, the IP address and the last activity of each. `Madauth.admin.sessions.end(userId, id)` (`POST /auth/admin/sessions/end`) ends one, and `end(userId, 'all')` every one: the user is signed out everywhere, and keeps their sign-in methods. Each ended session stops at its next renewal, within `SESSION_TTL`, and `user.session_ended` tells your webhook, with the admin's address as `by`. Ending takes a sign-in within the last two minutes, like every admin change. Programs call these with an admin's [API key](api-keys.md) with the scopes `madauth:sessions:read` and `madauth:sessions:end`.
+
+To also lock the user out, [reset their sign-in](#resetting-a-users-sign-in) or [delete them](#deleting-a-user): both end the sessions as well.
+
 ## Searching users
 
 `Madauth.admin.searchUsers(search)` in the web library (`POST /auth/admin/users/search`) finds users for admins: who has a role, the user with an address, who signed up when, or every user, e.g. for a list on an admin screen. Every filter given must match:
@@ -840,13 +867,16 @@ interface StoreAdapter {
   update(model: string, where: Where, patch: Row): Promise<number>; // records changed
   delete(model: string, where: Where): Promise<number>; // records deleted; must be exact under concurrency
   scan(model: string, opts: { after?: string; limit: number }): Promise<Row[]>; // a page of all records of the model
+  deleteExpired?(model: string, now: number): Promise<number>; // optional: deletes the records whose `expiry` field is at or before now
 }
 // Row: { field: string | number | boolean | null }. Where: every field equals the value (null: is empty).
 ```
 
 `scan` returns a model's records a page at a time, for admins only (it is how [searching users](#searching-users) reads them): at most `limit`, in an order of your choosing that stays the same, starting after the record whose id is `after`, which may have been deleted since. Fewer than `limit` means there are no more. Ordering by the primary key does all of this in SQL (`where id > $after order by id limit $limit`); the DynamoDB adapter scans the table, whose order is fixed, from the key of `after`.
 
-The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` (one per sign-in method of a user), `verification`, `setting`, `recoveryCode` and `apiKey`. The schema says nothing about how records are stored, so it fits any database. For SQL databases there are helpers: rows use the schema's camelCase field names, while the SQL tables use `madauth_<model>` and snake_case columns (`madauth_recovery_code`; `tableName()` and `columnName()` convert), and `createTablesSql()` creates them. Print the SQL to create the tables:
+`deleteExpired` is optional. A model with an `expiry` field (`session.expiresAt`) has records that are of no use once that time is past; madAuth calls `deleteExpired` for it at most once an hour per instance, so the records of users who never come back go too (`delete from madauth_session where expires_at <= $now`). A store that deletes them by itself, like DynamoDB with its TTL, doesn't need it.
+
+The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` (one per sign-in method of a user), `verification`, `setting`, `recoveryCode`, `apiKey`, `session` and the OpenID Connect provider's. The schema says nothing about how records are stored, so it fits any database. For SQL databases there are helpers: rows use the schema's camelCase field names, while the SQL tables use `madauth_<model>` and snake_case columns (`madauth_recovery_code`; `tableName()` and `columnName()` convert), and `createTablesSql()` creates them. Print the SQL to create the tables:
 
 ```bash
 npx @madauth/server schema --dialect postgres
@@ -874,6 +904,7 @@ npx @madauth/server schema --dialect postgres --from 1
 | 9 | [Sign-up with a passkey alone](#passkeys): `user.signUpMethod`, the method the user's pending sign-up confirms the address for (`password`, `authenticator` or `passkey`; string, empty before; `totp`, the app's id before it was named `authenticator`, is read as `authenticator`). Each sign-up that sends a confirmation e-mail sets it, and the confirmation reads it. |
 | 10 | New model `apiKey`: the users' [API keys](api-keys.md), each with its `userId` (indexed), `hash` (the SHA-256 of the key; **unique**), `name`, `scopes` (separated by spaces), `createdAt`, `expiresAt` (empty: never) and `lastUsedAt` (0: never). A new table; existing ones don't change. |
 | 11 | `user.preferredSecondFactor`: the second factor the user wants to be asked for first (`authenticator`, `passkey` or `sms`; empty: the usual order). Records from before read as empty. |
+| 16 | [Sessions](#seeing-and-ending-sessions): the new model `session` (a session at a browser, by its id, with `userId` (indexed), `sessionVersion`, `authTime`, `amr`, `ip`, `browser`, `os`, `createdAt`, `renewedAt` and `expiresAt`). `expiresAt` is the schema's first `expiry` field: an adapter may delete such a record once the time is past (the DynamoDB adapter gives its items a `ttl`), and can offer the optional `deleteExpired`, which madAuth calls now and then. A new table; existing ones don't change. |
 | 15 | [RS256 ID tokens](#rs256-id-tokens): `oidcClient.idTokenAlg` (the algorithm of the application's ID tokens, `ES256` or `RS256`; empty: ES256). |
 | 14 | The [token exchange](#native-apps): `oidcClient.tokenExchange` (whether the application may exchange a Google ID token for tokens; empty: no) and the new model `oidcNonce` (a native app's nonce, by its SHA-256, with its `clientId` (indexed) and `expiresAt`; the record goes when the nonce is used). |
 | 13 | The [device authorization grant](#devices-without-a-browser): `oidcClient.deviceFlow` (whether the application may use it; empty: no), `user.wrongDeviceCodes` and `user.wrongDeviceCodeAt` (wrong codes the user typed within ten minutes; empty: none), and the new model `oidcDeviceCode` (a device's pending sign-in, by the SHA-256 of its device code, with the `userCode` (**unique**), the client, the scope, the status, the user it is bound to and the client (both indexed), how they signed in, and when it expires and was last polled). |
@@ -941,6 +972,8 @@ if (!user) return new Response('Unauthorized', { status: 401 });
 console.log(user.id, user.email, user.claims, user.amr); // claims: e.g. { roles: ['admin'] }; amr: e.g. ['pwd', 'otp']
 ```
 
+`user.sessionId` is the session's id (`ses_…`), which [`user.session_ended`](#webhooks) names: a backend that keeps a list of ended sessions refuses those (see [Seeing and ending sessions](#seeing-and-ending-sessions)). A session from before madAuth 0.7.5 has none until its next renewal.
+
 `user.amr` says how the session was authenticated: `pwd` (password), `google`, `github`, `email` (the [e-mail link](email-link-security.md)), `passkey` (a [passkey](#passkeys), on its own or as the second step), `otp` (the [authenticator app](#authenticator-app), as the second step or on its own), `sms` (a code by SMS as the second step). Require `otp` or `passkey` before a sensitive action if your users have them.
 
 A session token is valid for `SESSION_TTL`. When `verifySession` finds none, answer 401: the web library then renews the session, and the app sends the request again (see [Sessions](#sessions)).
@@ -951,7 +984,7 @@ Other languages can verify the JWT with any JOSE library:
 - header `typ` `madauth-session+jwt`
 - keys from `/.well-known/jwks.json`
 
-The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the session was authenticated: `pwd`, `google`, `github`, `email`, `passkey`, `otp`, `sms`), `auth_time` (when the user signed in, kept across renewals) and `claims` (what admins attached, see [Claims](#claims)).
+The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the session was authenticated: `pwd`, `google`, `github`, `email`, `passkey`, `otp`, `sms`), `auth_time` (when the user signed in, kept across renewals), `sid` (the session's id) and `claims` (what admins attached, see [Claims](#claims)).
 
 ## Verifying an API key in your backend
 
@@ -1128,7 +1161,10 @@ What ends the tokens is what ends the code flow's.
 | `POST /auth/api-keys/revoke` | `{ id }`, signed in → `{}`; 404 `api_key_not_found` |
 | `POST /auth/api-keys/verify` | With `Authorization: Bearer madauth_…`, for your backend → `{ user, apiKey: { id, name, scopes } }` (the scopes that count now); 401 `invalid_api_key` |
 | `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
-| `POST /auth/logout` | Clears the cookies of the session |
+| `POST /auth/logout` | Clears the cookies of the session and ends it: its record goes, `user.session_ended` with `reason: signed_out` |
+| `GET /auth/sessions` | `{ sessions: [{ id, current, browser, os, ip, signedInAt, amr, createdAt, lastActiveAt, expiresAt }] }`: the signed-in user's [sessions](#seeing-and-ending-sessions), the current one first; 401 `no_session` |
+| `POST /auth/sessions/end` | `{ id }`, signed in within two minutes → 204; the session stops at its next renewal (the current one at once: its cookies are cleared); 401 `reauth_required` or `no_session`, 404 `session_not_found` |
+| `POST /auth/sessions/end-others` | Signed in within two minutes → `{ ended }` (how many); 401 `reauth_required` or `no_session` |
 | `POST /auth/admin/users/search` | `{ role?, email?, signedUpAfter?, signedUpBefore?, pending?, limit?, cursor? }` → `{ users: [{ id, email, name, emailVerified, claims, methods, signedUpAt, pending }], cursor? }`, for admins; 400 `invalid_search`, `invalid_email`. See [Searching users](#searching-users). |
 | `POST /auth/admin/claims/get` | `{ email }` → `{ email, userId, claims }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`, 404 `user_not_found`. See [Claims](#claims). |
 | `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user (a session within two minutes of its sign-in, else 401 `reauth_required`; an API key with the scope needs none, as for every admin change but the providers'); also 400 `invalid_claims`, 403 `own_admin_role` (it would take the role `admin` from the caller, see [The first admin](#the-first-admin)) |
@@ -1141,6 +1177,8 @@ What ends the tokens is what ends the code flow's.
 | `POST /auth/admin/providers/remove` | `{ id }` → `{ provider, usersWithoutSignIn }`: removes a provider, its users' accounts stay; like `update`. With `dryRun: true` → `{ provider, usersWithoutSignIn, dryRun: true }`: only counts, like `list` (no recent sign-in needed); 400 `invalid_options` for a `dryRun` that is no boolean |
 | `POST /auth/admin/sign-in/reset` | `{ email }` → `{ email, userId }` (a session within two minutes of its sign-in, else 401 `reauth_required`): removes all of the user's sign-in methods and second factors, ends their sessions and marks the address unconfirmed, for admins; they sign up again. See [Resetting a user's sign-in](#resetting-a-users-sign-in). |
 | `POST /auth/admin/users/delete` | `{ email }` → `{ email, userId }` (a session within two minutes of its sign-in, else 401 `reauth_required`; an API key with the scope `madauth:users:delete` needs none): deletes the user with all their sign-in methods, claims, API keys and pending links, for admins; the address can sign up again as a new user. 400 `invalid_email`, 404 `user_not_found`, 403 `forbidden` (the user has the role `admin`), `own_admin_role` (the caller). See [Deleting a user](#deleting-a-user). |
+| `POST /auth/admin/sessions/list` | `{ userId }` → `{ email, userId, sessions }`: the user's [sessions](#ending-a-users-sessions) (`current` marks the admin's own); 404 `user_not_found`. API keys need `madauth:sessions:read`. |
+| `POST /auth/admin/sessions/end` | `{ userId, id }`, `id` a session's or `"all"` → `{ email, userId, ended }`; needs a recent sign-in (API keys: `madauth:sessions:end`); 400 `invalid_options`, 404 `user_not_found` or `session_not_found` |
 | `POST /auth/admin/api-keys/list` | `{ email }` → `{ email, userId, apiKeys }`: the user's [API keys](api-keys.md), for admins with a session (an API key gets 403 `forbidden`) |
 | `POST /auth/admin/api-keys/revoke` | `{ email, id }` → `{ email, userId }`; 404 `api_key_not_found` |
 | `POST /auth/account/delete` | Deletes the account of the user signed in within two minutes (else 401 `reauth_required`) and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`, 403 `own_admin_role` (the user has the role `admin`). See [Deleting an account](#deleting-an-account). |

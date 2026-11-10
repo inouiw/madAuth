@@ -1,7 +1,7 @@
 // A store adapter built only on madAuth's public API, exactly as a custom adapter would be.
 // Published as `@madauth/server/sqlite`; read it as the reference when writing your own.
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import { madauthSchema, type FieldDef, type Row, type StoreAdapter, type Value, type Where } from './schema.js';
+import { expiryField, madauthSchema, type FieldDef, type Row, type StoreAdapter, type Value, type Where } from './schema.js';
 import { columnName, createTablesSql, tableName, upgradeTablesSql } from './sql.js';
 
 /**
@@ -104,6 +104,13 @@ export function createSqliteAdapter(path: string): StoreAdapter {
         .prepare(`SELECT * FROM ${tableName(model)}${from} ORDER BY ${id} LIMIT ${Math.max(0, Math.floor(limit))}`)
         .all(...(after === undefined ? [] : [after]))
         .map((raw) => fromSql(fields, raw));
+    },
+
+    async deleteExpired(model, now) {
+      const fields = fieldsOf(model);
+      const field = expiryField(fields);
+      if (!field) throw new Error(`"${model}" records don't expire`);
+      return Number(db.prepare(`DELETE FROM ${tableName(model)} WHERE ${column(fields, field)} <= ?`).run(now).changes);
     },
   };
 }

@@ -5,7 +5,7 @@
 // table `madauth_schema`; opening the adapter creates or upgrades the tables under an advisory lock, so several
 // instances can start at the same time.
 import type { Pool, PoolClient, PoolConfig } from 'pg';
-import { madauthSchema, type FieldDef, type Row, type StoreAdapter, type Value, type Where } from './schema.js';
+import { expiryField, madauthSchema, type FieldDef, type Row, type StoreAdapter, type Value, type Where } from './schema.js';
 import { columnName, createTablesSql, tableName, upgradeTablesSql } from './sql.js';
 
 export interface PostgresAdapterOptions {
@@ -140,6 +140,13 @@ export async function openPostgresAdapter(url: string, options: PostgresAdapterO
       return (await query(`SELECT * FROM ${tableName(model)}${from} ORDER BY ${id}${limitSql(limit)}`, after === undefined ? [] : [after])).rows.map(
         (raw) => fromSql(fields, raw),
       );
+    },
+
+    async deleteExpired(model, now) {
+      const fields = fieldsOf(model);
+      const field = expiryField(fields);
+      if (!field) throw new Error(`"${model}" records don't expire`);
+      return (await query(`DELETE FROM ${tableName(model)} WHERE ${column(fields, field)} <= $1`, [now])).rowCount;
     },
 
     async close() {

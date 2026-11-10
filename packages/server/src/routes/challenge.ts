@@ -153,6 +153,6 @@ export async function finishSignIn(
 ): Promise<MadauthUser> {
   const result = await ctx.startSession(c, toMadauthUser(user, challenge.profile), [...challenge.amr, amr], { method: challenge.method, signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
   // For a sign-up with the app, the app is the method itself, not a second factor.
-  await ctx.emit('user.signed_in', { user: result, method: challenge.method, ...(isSignUpStep(challenge) ? {} : { secondFactor: via }) });
+  await ctx.signedIn(c, result, { method: challenge.method, ...(isSignUpStep(challenge) ? {} : { secondFactor: via }) });
   return result;
 }
