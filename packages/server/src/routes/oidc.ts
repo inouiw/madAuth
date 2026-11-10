@@ -8,16 +8,15 @@ import type { Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppContext } from '../app.js';
 import { APPLE_CANCELLED, APPLE_ENDPOINTS, APPLE_SCOPES, appleProfile, appleUserName, exchangeAppleCode, verifyAppleIdToken } from '../apple.js';
-import { exchangeFacebookCode, facebookAuthorizeUrl, fetchFacebookProfile, type SocialProfileResult } from '../facebook.js';
 import { microsoftEndpoints, microsoftProfile, verifyMicrosoftIdToken } from '../microsoft.js';
 import { addressOf, discoveryCache, exchangeCode, suggestedAddress, verifyIdToken, type OidcEndpoints, type OidcTokens } from '../oidc.js';
 import { rulesOf } from '../oidc-presets.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
 import { OIDC_SCOPES, isProviderMethodKind, providerOf, type StoredProvider } from '../providers.js';
 import { readToken, signToken } from '../tokens.js';
-import { appleAccountKey, facebookAccountKey, microsoftAccountKey, oidcAccountKey, xAccountKey } from '../users.js';
+import { SOCIAL_FLOWS, isSocialKind, type SocialKind } from '../social.js';
+import { appleAccountKey, microsoftAccountKey, oidcAccountKey } from '../users.js';
 import { localeOf } from '../webhooks.js';
-import { exchangeXCode, fetchXProfile, xAuthorizeUrl } from '../x.js';
 import { appleCredentialsOf, encryptAppleGrant } from './apple.js';
 import { createEmails } from './emails.js';
 import { setConfirmation } from './email.js';
@@ -115,21 +114,19 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
    * API's profile, since neither gives an ID token. An address they don't confirm (Facebook's, always) is confirmed
    * by e-mail; none at all (an X account made with a phone number) is typed by the user.
    */
-  const socialAccountOf = async (provider: StoredProvider, code: string, verifier: string): Promise<ProviderAccount | { error: string }> => {
+  const socialAccountOf = async (provider: StoredProvider, kind: SocialKind, code: string, verifier: string): Promise<ProviderAccount | { error: string }> => {
+    const flow = SOCIAL_FLOWS[kind];
     const clientSecret = await ctx.clientSecret(provider);
     if (!clientSecret) return { error: 'verification_failed' };
-    const app = { clientId: provider.clientId, clientSecret };
-    const redirectUri = callbackUrl(provider.id);
-    const token = provider.kind === 'facebook' ? await exchangeFacebookCode(app, { code, redirectUri }, fetchFn) : await exchangeXCode(app, { code, redirectUri, verifier }, fetchFn);
+    const token = await flow.exchange({ clientId: provider.clientId, clientSecret }, { code, redirectUri: callbackUrl(provider.id), verifier }, fetchFn);
     if (!token) return { error: 'verification_failed' };
-    const result: SocialProfileResult = provider.kind === 'facebook' ? await fetchFacebookProfile(token, clientSecret, fetchFn) : await fetchXProfile(token, fetchFn);
+    const result = await flow.profile(token, clientSecret, fetchFn);
     if (!result.ok) {
       console.error(`[madauth] The ${provider.name} account could not be read: ${result.reason}`);
       return { error: 'verification_failed' };
     }
     const { id, email, verified, name, picture } = result.profile;
-    const key = provider.kind === 'facebook' ? facebookAccountKey(id) : xAccountKey(id);
-    return { key, ...(email ? { email } : {}), verified: !!email && verified, ...(name ? { name } : {}), ...(picture ? { picture } : {}) };
+    return { key: flow.accountKey(id), ...(email ? { email } : {}), verified: !!email && verified, ...(name ? { name } : {}), ...(picture ? { picture } : {}) };
   };
 
   /**
@@ -174,7 +171,7 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
 
   /** The account behind the callback's code, by the provider's kind: Facebook's and X's from their APIs, the others' from the ID token. */
   const callbackAccount = async (provider: StoredProvider, code: string, verifier: string, nonce: string, name?: string): Promise<ProviderAccount | { error: string }> => {
-    if (provider.kind === 'facebook' || provider.kind === 'x') return socialAccountOf(provider, code, verifier);
+    if (isSocialKind(provider.kind)) return socialAccountOf(provider, provider.kind, code, verifier);
     const found = await endpointsFor(provider);
     if ('problem' in found) return { error: 'temporarily_unavailable' };
     const tokens = await tokensFor(provider, found.endpoints, code, verifier);
@@ -190,11 +187,11 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     const back = redirectBack(c, returnUrl.href, provider.id);
     // The browser is on its way from the app: a method that is off sends it back there, with the error.
     if (!(await ctx.enabled(c, provider.id))) return back('method_disabled');
-    if (provider.kind === 'facebook' || provider.kind === 'x') {
+    if (isSocialKind(provider.kind)) {
       const oauth = await startOAuth(c, ctx, pathOf(provider.id), returnUrl);
       if ('error' in oauth) return back(oauth.error);
-      const request = { clientId: provider.clientId, redirectUri: callbackUrl(provider.id), state: oauth.state };
-      return c.redirect(provider.kind === 'facebook' ? facebookAuthorizeUrl(request) : xAuthorizeUrl({ ...request, codeChallenge: await pkceChallenge(oauth.verifier) }), 302);
+      const request = { clientId: provider.clientId, redirectUri: callbackUrl(provider.id), state: oauth.state, codeChallenge: await pkceChallenge(oauth.verifier) };
+      return c.redirect(SOCIAL_FLOWS[provider.kind].authorizeUrl(request), 302);
     }
     const found = await endpointsFor(provider);
     if ('problem' in found) {
@@ -252,7 +249,8 @@ export function oidcRoutes(app: Hono, ctx: AppContext): void {
     if (!provider) return c.notFound();
     const oauth = await takeOAuthState(c, ctx, pathOf(provider.id));
     if (!oauth) return c.text('Sign-in expired or was started in another browser. Please try again.', 400);
-    const back = redirectBack(c, oauth.returnTo, provider.id);
+    // Facebook sends the browser to the callback with `#_=_`, which it would keep on a redirect without a fragment.
+    const back = redirectBack(c, oauth.returnTo, provider.id, provider.kind === 'facebook');
     // Used up whatever follows, so it never names the next sign-in's user.
     const name = provider.kind === 'apple' ? await takeProviderName(c, provider, oauth.state) : undefined;
     if (!(await ctx.enabled(c, provider.id))) return back('method_disabled');

@@ -30,6 +30,12 @@ describe('what an admin sends for a preset, Facebook or X', () => {
     expect(parseProviderFields('oidc', { ...secret, preset: 'discord' }, true)).toMatchObject({ message: expect.stringContaining('preset must be one of gitlab, linkedin, slack') });
     expect(parseProviderFields('oidc', { preset: 'gitlab' }, false)).toMatchObject({ message: expect.stringContaining("preset can't change") });
     expect(parseProviderFields('github', { preset: 'gitlab' }, false)).toMatchObject({ message: '"preset" is a field of OpenID Connect providers only.' });
+    // Anyone can sign up at gitlab.com, LinkedIn or Slack: their addresses can't be trusted wholesale; a self-hosted GitLab's can.
+    expect(parseProviderFields('oidc', { ...secret, preset: 'linkedin', trustEmail: true }, true)).toMatchObject({ message: expect.stringContaining('trustEmail') });
+    expect(parseProviderFields('oidc', { ...secret, preset: 'gitlab', trustEmail: true }, true)).toMatchObject({ message: expect.stringContaining('trustEmail') });
+    expect(parseProviderFields('oidc', { trustEmail: true }, false, { preset: 'slack', issuer: 'https://slack.com' })).toMatchObject({ message: expect.stringContaining('trustEmail') });
+    expect(parseProviderFields('oidc', { ...secret, preset: 'gitlab', issuer: 'https://gitlab.example.com', trustEmail: true }, true)).toMatchObject({ trustEmail: true });
+    expect(parseProviderFields('oidc', { trustEmail: true }, false, { preset: 'gitlab', issuer: 'https://gitlab.example.com' })).toEqual({ trustEmail: true });
     // Without a preset, the name and the issuer are still needed.
     expect(parseProviderFields('oidc', { ...secret, issuer: 'https://idp.example.com' }, true)).toMatchObject({ error: 'invalid_provider' });
   });
@@ -155,7 +161,7 @@ describe('the OpenID Connect presets', () => {
 });
 
 describe('Facebook', () => {
-  const ada = { id: '10158000000000001', name: 'Grace Hopper', email: 'grace@example.com', picture: { data: { url: 'https://platform-lookaside.fbsbx.com/grace.jpg', is_silhouette: false } } };
+  const ada = { id: '10158000000000001', name: 'Grace Hopper', email: 'grace@example.com' };
 
   async function withFacebook() {
     const social = fakeSocial();
@@ -183,14 +189,15 @@ describe('Facebook', () => {
     const confirmed = await post(made.app, '/auth/email/verify', { email: 'grace@example.com', code });
     expect(((await confirmed.json()) as { user: Record<string, unknown> }).user).toMatchObject({ email: 'grace@example.com', name: 'Grace Hopper', amr: ['facebook'] });
     expect(await accountKeys(made)).toContain(`facebook:${ada.id}`);
-    // The profile call carries the token as a header and the app secret proof, never the secret itself.
+    // The profile call carries the token as a header and the app secret proof; no URL carries the secret.
     const me = social.calls.find((call) => call.url.startsWith('https://graph.facebook.com/v26.0/me'))!;
     expect(me.authorization).toMatch(/^Bearer token-/);
-    expect(me.url).not.toContain(FACEBOOK_APP_SECRET);
+    expect(social.calls.filter((call) => call.url.includes(FACEBOOK_APP_SECRET))).toEqual([]);
 
+    // Back from Facebook, whose callback URL ends with #_=_, the page gets an empty fragment instead of keeping it.
     const again = await signIn(made, 'facebook', as(ada));
-    expect(again.location).toBe(`${APP}/page`);
-    expect(await userOf(made, again.session)).toMatchObject({ email: 'grace@example.com', picture: ada.picture.data.url, amr: ['facebook'] });
+    expect(again.location).toBe(`${APP}/page#`);
+    expect(await userOf(made, again.session)).toMatchObject({ email: 'grace@example.com', amr: ['facebook'] });
   });
 
   it('SP7: without an address the user types one; a refused exchange or profile is verification_failed; cancelling is cancelled', async () => {
@@ -215,12 +222,12 @@ describe('X', () => {
 
   it('SP8: PKCE and the users.email scope; a confirmed address signs up at once, the secret as HTTP Basic', async () => {
     const { made, social, as } = await withX();
-    const { authorize, location, session } = await signIn(made, 'x', as({ id: '1500000000000000001', name: 'Ada', username: 'ada', confirmed_email: 'ada.x@example.com', profile_image_url: 'https://pbs.twimg.com/ada.jpg' }));
+    const { authorize, location, session } = await signIn(made, 'x', as({ id: '1500000000000000001', name: 'Ada', username: 'ada', confirmed_email: 'ada.x@example.com', profile_image_url: 'https://pbs.twimg.com/profile_images/1/ada_normal.jpg' }));
     expect(authorize.origin + authorize.pathname).toBe('https://x.com/i/oauth2/authorize');
     expect(Object.fromEntries(authorize.searchParams)).toMatchObject({ client_id: X_CLIENT_ID, scope: 'tweet.read users.read users.email', code_challenge_method: 'S256', response_type: 'code' });
     expect(location).toBe(`${APP}/page`);
     const user = (await userOf(made, session)) as { id: string; sessionId: string };
-    expect(user).toMatchObject({ email: 'ada.x@example.com', name: 'Ada', picture: 'https://pbs.twimg.com/ada.jpg', amr: ['x'] });
+    expect(user).toMatchObject({ email: 'ada.x@example.com', name: 'Ada', picture: 'https://pbs.twimg.com/profile_images/1/ada_400x400.jpg', amr: ['x'] });
     // Like every sign-in, it starts a session with its record.
     expect(await made.store.findOne('session', { id: user.sessionId })).toMatchObject({ userId: user.id, amr: 'x' });
     expect(await accountKeys(made)).toContain('x:1500000000000000001');

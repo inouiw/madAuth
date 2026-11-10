@@ -324,6 +324,8 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     expect($<HTMLInputElement>('input[name="name"]')!.required).toBe(false);
     expect($<HTMLInputElement>('input[name="name"]')!.placeholder).toBe('LinkedIn');
     expect(text('.callback-url')).toBe(`${SERVER}/auth/providers/linkedin/callback`);
+    // Anyone signs up at LinkedIn: its addresses can't be marked as verified wholesale.
+    expect($('input[name="trustEmail"]')).toBeNull();
     await type('clientId', 'li-client');
     await type('clientSecret', 'li-secret');
     expect(text('form.provider-form .submit')).toBe('Add LinkedIn');
@@ -333,14 +335,17 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     await click('[data-action="add-provider"]');
     await click('[data-kind="gitlab"]');
     expect($<HTMLInputElement>('input[name="issuer"]')!.value).toBe('https://gitlab.com');
+    expect($('input[name="trustEmail"]')).toBeNull();
     await type('id', 'gitlab-corp');
     await type('name', 'Corp GitLab');
     await type('issuer', 'https://gitlab.example.com');
+    // A self-hosted GitLab's operator may vouch for its addresses.
+    expect($('input[name="trustEmail"]')).not.toBeNull();
     await type('clientId', 'gl-client');
     await type('clientSecret', 'gl-secret');
     await save();
     expect(sent(server, '/auth/admin/providers/add')).toEqual([
-      { kind: 'oidc', preset: 'linkedin', id: 'linkedin', clientId: 'li-client', clientSecret: 'li-secret', trustEmail: false },
+      { kind: 'oidc', preset: 'linkedin', id: 'linkedin', clientId: 'li-client', clientSecret: 'li-secret' },
       { kind: 'oidc', preset: 'gitlab', id: 'gitlab-corp', name: 'Corp GitLab', issuer: 'https://gitlab.example.com', clientId: 'gl-client', clientSecret: 'gl-secret', trustEmail: false },
     ]);
     expect(rows()).toContain('Corp GitLab GitLab · gitlab-corp · Off');

@@ -1,8 +1,9 @@
 // X's side of X sign-in (the kind `x` in providers.ts): X's OAuth 2.0 authorization-code flow with PKCE, the code
 // exchange and the account behind the access token, over the X API v2. The routes are the OpenID Connect providers'
-// (routes/oidc.ts). The address comes as `confirmed_email`, with the scope `users.email`; an account without one
-// types it. See "X setup" in docs/server.md and docs/social-security.md.
-import type { SocialProfile, SocialProfileResult } from './facebook.js';
+// (routes/oidc.ts), through SOCIAL_FLOWS in social.ts. The address comes as `confirmed_email`, with the scope
+// `users.email`; an account without one types it. See "X setup" in docs/server.md and docs/social-security.md.
+import { basicAuthorization } from './oidc.js';
+import type { SocialAuthorizeRequest, SocialProfile, SocialProfileResult } from './social.js';
 import { cutName } from './user.js';
 
 const AUTHORIZE = 'https://x.com/i/oauth2/authorize';
@@ -14,7 +15,7 @@ export const X_SCOPES = ['tweet.read', 'users.read', 'users.email'];
 const TIMEOUT_MS = 10_000;
 
 /** X's authorization page for a sign-in: the state and PKCE (`S256`), which X requires. */
-export function xAuthorizeUrl(request: { clientId: string; redirectUri: string; state: string; codeChallenge: string }): string {
+export function xAuthorizeUrl(request: SocialAuthorizeRequest): string {
   const url = new URL(AUTHORIZE);
   url.search = new URLSearchParams({
     response_type: 'code',
@@ -39,8 +40,7 @@ export async function exchangeXCode(
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       Accept: 'application/json',
-      // RFC 6749, section 2.3.1: both form-encoded before they are joined.
-      Authorization: `Basic ${Buffer.from(`${encodeURIComponent(app.clientId)}:${encodeURIComponent(app.clientSecret)}`).toString('base64')}`,
+      Authorization: basicAuthorization(app.clientId, app.clientSecret),
     },
     body: new URLSearchParams({ grant_type: 'authorization_code', code: exchange.code, redirect_uri: exchange.redirectUri, code_verifier: exchange.verifier }).toString(),
     signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -56,7 +56,7 @@ export async function exchangeXCode(
 /**
  * The account behind an access token: `GET /2/users/me` with the id, name, username, picture and
  * `confirmed_email`, the address X confirmed, which counts as verified. Without it (an account made with a phone
- * number) the profile has no address.
+ * number) the profile has no address. The picture is the 400×400 one, not the 48×48 `_normal` X answers.
  */
 export async function fetchXProfile(token: string, fetchFn: typeof fetch = fetch): Promise<SocialProfileResult> {
   const url = `${ME}?${new URLSearchParams({ 'user.fields': 'profile_image_url,confirmed_email' }).toString()}`;
@@ -76,7 +76,7 @@ export async function fetchXProfile(token: string, fetchFn: typeof fetch = fetch
     verified: !!email,
     ...(email ? { email } : {}),
     ...(name ? { name } : {}),
-    ...(typeof user.profile_image_url === 'string' && user.profile_image_url ? { picture: user.profile_image_url } : {}),
+    ...(typeof user.profile_image_url === 'string' && user.profile_image_url ? { picture: user.profile_image_url.replace(/_normal(\.\w+)$/, '_400x400$1') } : {}),
   };
   return { ok: true, profile };
 }

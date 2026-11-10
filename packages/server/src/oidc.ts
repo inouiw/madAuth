@@ -81,6 +81,10 @@ export function discoveryCache(fetchFn: typeof fetch = fetch): (issuer: string) 
   };
 }
 
+/** The `Authorization` header of `client_secret_basic`: RFC 6749, section 2.3.1, both form-encoded before they are joined. */
+export const basicAuthorization = (clientId: string, clientSecret: string): string =>
+  `Basic ${Buffer.from(`${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`).toString('base64')}`;
+
 /** The tokens of a code exchange that madAuth uses. */
 export interface OidcTokens {
   idToken: string;
@@ -102,8 +106,7 @@ export async function exchangeCode(
   if (exchange.verifier !== undefined) form.set('code_verifier', exchange.verifier);
   const headers: Record<string, string> = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
   if (endpoints.clientAuth === 'client_secret_basic') {
-    // RFC 6749, section 2.3.1: both form-encoded before they are joined.
-    headers.Authorization = `Basic ${Buffer.from(`${encodeURIComponent(client.clientId)}:${encodeURIComponent(client.clientSecret)}`).toString('base64')}`;
+    headers.Authorization = basicAuthorization(client.clientId, client.clientSecret);
   } else {
     form.set('client_id', client.clientId);
     form.set('client_secret', client.clientSecret);

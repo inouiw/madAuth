@@ -190,6 +190,12 @@ const isPreset = (choice: ProviderChoice): choice is OidcPreset => (PRESETS as r
 /** The issuer a preset's form starts with: only GitLab's can be another (a self-hosted instance). */
 const GITLAB_ISSUER = 'https://gitlab.com';
 
+/**
+ * Whether an admin may mark a provider's addresses as verified: not those of gitlab.com, LinkedIn or Slack, where
+ * anyone signs up (the server refuses it), only a self-hosted GitLab's or another OpenID Connect provider's.
+ */
+const canTrustEmail = (preset: OidcPreset | undefined, issuer: string | undefined): boolean => !preset || (preset === 'gitlab' && !!issuer && issuer !== GITLAB_ISSUER);
+
 /** What `addProvider` takes for a new provider of `kind` (of `preset`), from the form. */
 function newProviderOf(kind: ProviderKind, d: ProviderDraft, preset?: OidcPreset): NewProvider {
   const name = d.name.trim();
@@ -213,7 +219,7 @@ function newProviderOf(kind: ProviderKind, d: ProviderDraft, preset?: OidcPreset
       ...(issuer ? { issuer } : {}),
       clientId: shared.clientId,
       clientSecret: d.clientSecret,
-      trustEmail: d.trustEmail,
+      ...(canTrustEmail(preset, issuer || undefined) ? { trustEmail: d.trustEmail } : {}),
       ...(scopes ? { scopes } : {}),
     };
   }
@@ -2991,10 +2997,12 @@ export class MadauthLogin extends LitElement {
                 <input part="input" id="provider-scopes" name="scopes" type="text" autocomplete="off" spellcheck="false" .value=${d.scopes} />
                 <p class="hint">${v.scopesHint}</p>
               </div>
-              <label class="scope">
-                <input type="checkbox" name="trustEmail" .checked=${d.trustEmail} />
-                <span class="method-text"><span>${v.trustEmail}</span><span class="hint">${v.trustEmailHint}</span></span>
-              </label>`
+              ${canTrustEmail(preset, d.issuer.trim())
+                ? html`<label class="scope">
+                    <input type="checkbox" name="trustEmail" .checked=${d.trustEmail} />
+                    <span class="method-text"><span>${v.trustEmail}</span><span class="hint">${v.trustEmailHint}</span></span>
+                  </label>`
+                : null}`
           : null}
         <label class="scope"><input type="checkbox" name="on" .checked=${d.on} /><span>${v.switchOn}</span></label>
         ${d.on

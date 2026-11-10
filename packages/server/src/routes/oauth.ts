@@ -125,15 +125,17 @@ export function appOriginOf(c: Context): string | undefined {
 /**
  * The way back to the app after the callback: plain when the user is signed in (the session cookies are
  * set), with the error, or with the second step the sign-in goes on with and which second factors can
- * finish it (the challenge cookie is set). `method` names the sign-in in the hash in the last two cases.
+ * finish it (the challenge cookie is set). `method` names the sign-in in the hash in the last two cases. With
+ * `emptyFragment`, the plain way back ends with `#`, so the page doesn't keep the provider's fragment.
  */
-export function redirectBack(c: Context, returnTo: string, method: string): (error?: string, next?: NextStep, factors?: SecondFactor[]) => Response {
+export function redirectBack(c: Context, returnTo: string, method: string, emptyFragment = false): (error?: string, next?: NextStep, factors?: SecondFactor[]) => Response {
   return (error, next, factors = []) => {
     const url = new URL(returnTo);
     if (error) url.hash = `${REDIRECT_ERROR_PARAM}=${error}&${REDIRECT_METHOD_PARAM}=${method}`;
     // The step, and which second factors can finish it, so the page can offer the switch.
     if (next) url.hash = `${REDIRECT_NEXT_PARAM}=${next}${factors.length ? `&${REDIRECT_FACTORS_PARAM}=${factors.join(',')}` : ''}&${REDIRECT_METHOD_PARAM}=${method}`;
-    return c.redirect(url.href, 302);
+    // A browser keeps the fragment of the page it is redirected from when the location has none (Facebook's `#_=_`).
+    return c.redirect(emptyFragment && !url.hash ? `${url.href}#` : url.href, 302);
   };
 }
 
