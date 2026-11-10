@@ -33,6 +33,11 @@ export function fakeKms() {
     },
     async sign(keyId, message, alg) {
       calls.push(`sign ${keyId}`);
+      // Like KMS: Ed25519 only as the message is, at most 4096 bytes.
+      if (alg === 'Ed25519') {
+        if (message.length > 4096) throw Object.assign(new Error('Message too long'), { name: 'ValidationException' });
+        return new Uint8Array(sign(null, message, usable(keyId, 'webhook').privateKey!));
+      }
       return new Uint8Array(sign('sha256', message, usable(keyId, alg === 'RS256' ? 'signing-rsa' : 'signing').privateKey!));
     },
     async mac(keyId, message) {
@@ -66,7 +71,14 @@ export function fakeKms() {
     async createKey(kind) {
       const keyId = `key-${next++}`;
       calls.push(`createKey ${kind} ${keyId}`);
-      const pair = kind === 'signing' ? generateKeyPairSync('ec', { namedCurve: 'P-256' }) : kind === 'signing-rsa' ? generateKeyPairSync('rsa', { modulusLength: 2048 }) : undefined;
+      const pair =
+        kind === 'signing'
+          ? generateKeyPairSync('ec', { namedCurve: 'P-256' })
+          : kind === 'signing-rsa'
+            ? generateKeyPairSync('rsa', { modulusLength: 2048 })
+            : kind === 'webhook'
+              ? generateKeyPairSync('ed25519')
+              : undefined;
       keys.set(keyId, { kind, enabled: true, privateKey: pair?.privateKey, publicKey: pair?.publicKey, secret: pair ? undefined : randomBytes(32) });
       return keyId;
     },

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Puts madAuth's secrets into the Parameter Store as SecureString parameters, once per deployment:
 #   scripts/bootstrap-secrets.sh [path]          (default path: /madauth)
-# It creates WEBHOOK_SECRET if it doesn't exist yet, after asking (never with WEBHOOK_AUTH=aws-iam, for a receiver whose Function URL
-# has AWS_IAM auth: webhookFunctionArn in cdk.json). The value is never printed and never passed on a command line
+# It creates WEBHOOK_SECRET if it doesn't exist yet, only if you answer yes: the template signs the webhook calls with an
+# Ed25519 key in AWS KMS (v1a), which receivers check with its public key alone, so a shared secret is only for a receiver
+# that checks v1 signatures (never with WEBHOOK_AUTH=aws-iam, for a receiver whose Function URL has AWS_IAM auth:
+# webhookFunctionArn in cdk.json). The value is never printed and never passed on a command line
 # (other processes can read those); it reaches the AWS CLI through a file only you can read. Google and GitHub
 # are no secrets of the deployment any more: an admin adds them as providers (see "Providers" in docs/server.md).
 # Uses the AWS CLI's current credentials and region (aws configure / aws sso login, AWS_REGION).
@@ -43,9 +45,11 @@ if [[ "${WEBHOOK_AUTH:-}" == "aws-iam" ]]; then
 elif exists WEBHOOK_SECRET; then
   echo "$path/WEBHOOK_SECRET exists, kept."
 else
-  # Asked, since running the script again for another secret must not bring it back where AWS IAM replaced it.
-  read -r -p "Create $path/WEBHOOK_SECRET? Not with a receiver with AWS IAM (webhookFunctionArn in cdk.json). [Y/n] " create
-  if [[ ! "$create" =~ ^[Nn] ]]; then
+  # Asked, and no by default: the webhook key in KMS signs the calls (v1a), and the receiver needs no secret.
+  echo "The webhook calls are signed with an Ed25519 key in AWS KMS (v1a): a receiver checks them with the public key"
+  echo "from <issuer>/.well-known/webhook-keys.json, and needs no secret."
+  read -r -p "Create $path/WEBHOOK_SECRET anyway, for a receiver that checks only v1 signatures with a shared secret? Not with AWS IAM. [y/N] " create
+  if [[ "$create" =~ ^[Yy] ]]; then
     npx --yes @madauth/server generate-webhook-secret | put WEBHOOK_SECRET
   fi
 fi

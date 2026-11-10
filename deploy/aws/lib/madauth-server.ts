@@ -50,6 +50,9 @@ export interface MadAuthServerProps {
    * WEBHOOK_URL and WEBHOOK_EVENTS, e.g. the aws-ses-mailer of madAuth-webhooks. E-mail & password sign-in
    * is on when the events include the e-mails; default: {@link EMAIL_EVENTS}. The e-mail link needs
    * `email.send_signin_link` as well, e.g. {@link EMAIL_LINK_EVENTS}. Without a webhook, Google and GitHub only.
+   * The calls are signed with an Ed25519 key in KMS (Standard Webhooks `v1a`), which the receiver checks with the
+   * public key from `<issuer>/.well-known/webhook-keys.json`, and also with `<secretsPath>/WEBHOOK_SECRET` (`v1`)
+   * while it exists; with `awsIamReceiver`, with the server's role instead.
    */
   readonly webhook?: {
     readonly url: string;
@@ -95,7 +98,10 @@ export class MadAuthServer extends Construct {
   readonly table: dynamodb.Table;
   /** The server's role: the caller an AWS_IAM receiver accepts (`webhook.awsIamReceiver`). */
   readonly role: iam.IRole;
-  /** Creates the KMS keys at the deploy and rotates them daily; a failed rotation is an error of this function. */
+  /**
+   * Creates the KMS keys at the deploy and rotates them daily; a failed rotation is an error of this function. With a
+   * webhook that isn't `awsIamReceiver`, that includes the Ed25519 key that signs the webhook calls (v1a).
+   */
   readonly keyManager: nodejs.NodejsFunction;
 
   constructor(scope: Construct, id: string, props: MadAuthServerProps) {
@@ -215,6 +221,9 @@ export class MadAuthServer extends Construct {
     // With AWS IAM, a webhook secret (or the previous one) left in the Parameter Store would keep the server from starting:
     // the deploy checks.
     const webhookSecretParameters: Record<string, string> = awsIamReceiver ? { WEBHOOK_SECRET_PARAMETER: `${secretsPath}/WEBHOOK_SECRET`, WEBHOOK_PREVIOUS_SECRET_PARAMETER: `${secretsPath}/WEBHOOK_PREVIOUS_SECRET` } : {};
+    // A receiver that checks Standard Webhooks signatures gets the v1a ones: an Ed25519 key in KMS signs every call, and the
+    // receiver checks it with the public key from /.well-known/webhook-keys.json alone. An AWS_IAM receiver needs none.
+    const webhookKey = !!props.webhook && !awsIamReceiver;
     this.keyManager = new nodejs.NodejsFunction(this, 'Keys', {
       entry: fileURLToPath(new URL('../lambda/keys.ts', import.meta.url)),
       handler: 'handler',
@@ -227,6 +236,7 @@ export class MadAuthServer extends Construct {
         SIGNING_KEY_PARAMETER: signingKeyParameter,
         ...webhookSecretParameters,
         ...(props.rs256Signing ? { RS256_SIGNING: 'true' } : {}),
+        ...(webhookKey ? { WEBHOOK_KEY: 'true' } : {}),
       },
       // What was rotated when, for a year.
       logGroup: new logs.LogGroup(this, 'KeysLogs', {
@@ -271,8 +281,14 @@ export class MadAuthServer extends Construct {
       serviceToken: provider.serviceToken,
       resourceType: 'Custom::MadAuthKmsKeys',
       // A new property makes CloudFormation run the check again on the deploy that switches to AWS IAM, and the
-      // setup again on the one that adds the RS256 key.
-      properties: { Deployment: deployment, ...(awsIamReceiver ? { WebhookAuth: 'aws-iam' } : {}), ...(props.rs256Signing ? { Rs256Signing: 'true' } : {}) },
+      // setup again on the one that adds the RS256 key or the webhook key (also the first deploy of this template
+      // version for a deployment from before).
+      properties: {
+        Deployment: deployment,
+        ...(awsIamReceiver ? { WebhookAuth: 'aws-iam' } : {}),
+        ...(props.rs256Signing ? { Rs256Signing: 'true' } : {}),
+        ...(webhookKey ? { WebhookKey: 'ed25519' } : {}),
+      },
     });
     // The server's new configuration only once its keys exist.
     this.function.node.addDependency(keys);

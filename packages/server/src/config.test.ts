@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { ConfigError, envVars, loadConfig, methodConfig } from './config.js';
 import { CLIENT_ID, WEBHOOK_SECRET, WEBHOOK_URL, signingKey } from './test/helpers.js';
 import { createSqliteAdapter } from './store/sqlite.js';
-import { checkWebhookSecret, generateWebhookSecret } from './webhooks.js';
+import { generateWebhookKey } from './keys.js';
+import { checkWebhookSecret, generateWebhookSecret, type WebhookKeySigner } from './webhooks.js';
 
 const env = {
   MADAUTH_ISSUER: 'https://auth.example.com/',
@@ -93,9 +94,11 @@ describe('loadConfig', () => {
     const error = await loadConfig({ ...env, MADAUTH_SIGNING_KEY: undefined }).catch((e: Error) => e);
 
     expect(error).toBeInstanceOf(ConfigError);
-    const jwk = JSON.parse((error as Error).message.match(/MADAUTH_SIGNING_KEY='(.*)'/)![1]);
-    expect(jwk).toMatchObject({ kty: 'EC', crv: 'P-256', alg: 'ES256' });
-    await expect(importJWK(jwk, 'ES256')).resolves.toBeTruthy();
+    const set = JSON.parse((error as Error).message.match(/MADAUTH_SIGNING_KEY='(.*)'/)![1]);
+    // The session key and the webhook key (v1a).
+    expect(set.keys).toEqual([expect.objectContaining({ kty: 'EC', crv: 'P-256', alg: 'ES256' }), expect.objectContaining({ kty: 'OKP', crv: 'Ed25519', alg: 'Ed25519' })]);
+    await expect(importJWK(set.keys[0], 'ES256')).resolves.toBeTruthy();
+    await expect(loadConfig({ ...env, MADAUTH_SIGNING_KEY: JSON.stringify(set) })).resolves.toBeTruthy();
   });
 
   it('X6: rejects an invalid signing key', async () => {
@@ -219,6 +222,33 @@ describe('loadConfig', () => {
     await expect(loadConfig({ ...env, WEBHOOK_URL, WEBHOOK_SECRET: 'not-a-secret' })).rejects.toThrow(/WEBHOOK_SECRET must start with/);
   });
 
+  it('K8: an Ed25519 key in the key service signs the calls (v1a), without WEBHOOK_SECRET or next to it; AWS IAM leaves it out', async () => {
+    const withKey = { ...env, MADAUTH_SIGNING_KEY: JSON.stringify({ keys: [signingKey, await generateWebhookKey()] }) };
+    const hook = { WEBHOOK_URL, WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset' };
+
+    const keyOnly = await loadConfig({ ...withKey, ...hook });
+    expect(keyOnly.webhook).toEqual({ url: WEBHOOK_URL, events: expect.any(Set), ed25519: expect.any(Function) });
+    expect(keyOnly.password).toEqual({});
+    const { ed25519 } = keyOnly.webhook as { ed25519: WebhookKeySigner };
+    expect(await ed25519(new Uint8Array([1]))).toEqual({ signature: expect.any(Uint8Array) });
+    // With AWS IAM, AWS checks the caller: no v1a signature.
+    const iamUrl = 'https://abcdefghijklmnopqrstuvwxyz012345.lambda-url.eu-central-1.on.aws/';
+    expect((await loadConfig({ ...withKey, ...hook, WEBHOOK_URL: iamUrl, WEBHOOK_AUTH: 'aws-iam' })).webhook).toEqual({ url: iamUrl, events: expect.any(Set), awsIam: expect.any(Function) });
+    // Both while receivers move from the secret to the key, the previous secret too.
+    const previous = generateWebhookSecret();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect((await loadConfig({ ...withKey, ...hook, WEBHOOK_SECRET, WEBHOOK_PREVIOUS_SECRET: previous })).webhook).toMatchObject({
+      ed25519: expect.any(Function),
+      secret: WEBHOOK_SECRET,
+      previousSecret: previous,
+    });
+    vi.restoreAllMocks();
+    // A previous secret alone is a mistake.
+    await expect(loadConfig({ ...withKey, ...hook, WEBHOOK_PREVIOUS_SECRET: previous })).rejects.toThrow(/WEBHOOK_PREVIOUS_SECRET is set without WEBHOOK_SECRET/);
+    // Neither: the error says how to add a key, and offers a secret.
+    await expect(loadConfig({ ...env, ...hook })).rejects.toThrow(/the key service has no webhook key and WEBHOOK_SECRET is not set.*generate-key --ed25519/s);
+  });
+
   it('K7: WEBHOOK_AUTH=aws-iam signs the calls to a Function URL with AWS IAM, and takes no WEBHOOK_SECRET', async () => {
     const url = 'https://abcdefghijklmnopqrstuvwxyz012345.lambda-url.eu-central-1.on.aws/';
     const iam = { WEBHOOK_URL: url, WEBHOOK_AUTH: 'aws-iam', WEBHOOK_EVENTS: 'email.send_verification,email.send_password_reset' };
@@ -268,7 +298,7 @@ describe('loadConfig', () => {
     expect((await loadConfig({ ...env, ...hook, WEBHOOK_AUTH: '""' })).webhook).toMatchObject({ secret: WEBHOOK_SECRET });
     for (const value of ['secret', 'AWS-IAM', 'iam']) {
       await expect(loadConfig({ ...env, ...hook, WEBHOOK_AUTH: value })).rejects.toThrow(
-        new ConfigError(`WEBHOOK_AUTH must be aws-iam, or not set to sign the calls with WEBHOOK_SECRET, but is "${value}".`),
+        new ConfigError(`WEBHOOK_AUTH must be aws-iam, or not set to sign the calls with the webhook key or WEBHOOK_SECRET, but is "${value}".`),
       );
     }
   });

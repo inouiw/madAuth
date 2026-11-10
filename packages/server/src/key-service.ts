@@ -3,11 +3,23 @@
 // out of the process (e.g. AWS KMS); the local one below holds them, from MADAUTH_SIGNING_KEY. Each operation has a
 // list of keys: the newest signs, hashes and encrypts, and every listed one still verifies, finds and decrypts,
 // so keys can be rotated. Besides the ES256 keys, a deployment may have RS256 keys, for the ID tokens of OpenID
-// Connect clients that can't verify ES256; they only sign. See "Signing key" in docs/server.md.
-import { createHmac, createSecretKey, type KeyObject } from 'node:crypto';
+// Connect clients that can't verify ES256, and Ed25519 keys, for the webhook calls' `v1a` signatures; they only
+// sign. See "Signing key" and "Webhook signing key" in docs/server.md.
+import { createHmac, createPrivateKey, createSecretKey, sign as cryptoSign, type KeyObject, type webcrypto } from 'node:crypto';
 import { calculateJwkThumbprint, importJWK, type JWK } from 'jose';
 import { decrypt, deriveKey, encrypt } from './crypto.js';
-import { RSA_SIGNING_ALG, SIGNING_ALG, algOf, assertPrivateSigningJwk, publicSigningJwk, signingJwkProblem, thumbprintMembers, type SigningAlg } from './keys.js';
+import {
+  RSA_SIGNING_ALG,
+  SIGNING_ALG,
+  algOf,
+  assertPrivateSigningJwk,
+  isWebhookJwk,
+  publicSigningJwk,
+  publicWebhookJwk,
+  signingJwkProblem,
+  thumbprintMembers,
+  type SigningAlg,
+} from './keys.js';
 
 /** What a value is encrypted for: each purpose has keys of its own, so one kind can never be read as another. */
 export type EncryptionPurpose = 'authenticator-secret' | 'provider-token' | 'provider-secret';
@@ -38,6 +50,18 @@ export interface KeyService {
    * with, or a key that is gone). `current` is false when an older key made it: encrypt it again.
    */
   decrypt(purpose: EncryptionPurpose, value: string): Promise<{ plaintext: Uint8Array; current: boolean } | null>;
+  /**
+   * The public keys of the webhook calls' `v1a` signatures (Ed25519), each with its `alg` and `kid`: the one that
+   * signs now first, then the others, which are only published. Served at /.well-known/webhook-keys.json, where
+   * receivers fetch them. Empty (or not there, in a key service of your own) when the deployment has no webhook key:
+   * then only `WEBHOOK_SECRET` signs the calls.
+   */
+  webhookKeys?(): Promise<JWK[]>;
+  /**
+   * The Ed25519 signature (64 bytes) of `data` with the webhook key that signs now; or why there is none, e.g. no
+   * webhook key, or a message longer than the key service signs.
+   */
+  signWebhook?(data: Uint8Array): Promise<{ signature: Uint8Array } | { problem: string }>;
 }
 
 /**
@@ -59,6 +83,12 @@ interface LocalKey {
   publicJwk: JWK;
   macKey: KeyObject;
   encryptionKeys: Record<EncryptionPurpose, Buffer>;
+}
+
+/** One local Ed25519 key: it signs the webhook calls. */
+interface LocalWebhookKey {
+  privateKey: KeyObject;
+  publicJwk: JWK;
 }
 
 /** One local RS256 key: it only signs. */
@@ -96,16 +126,23 @@ async function localRsaKey(jwk: JWK): Promise<LocalRsaKey> {
   return { kid, privateKey: await importPrivate(jwk, RSA_SIGNING_ALG), publicJwk: publicSigningJwk(jwk, kid) };
 }
 
+async function localWebhookKey(jwk: JWK): Promise<LocalWebhookKey> {
+  return { privateKey: createPrivateKey({ key: jwk as webcrypto.JsonWebKey, format: 'jwk' }), publicJwk: publicWebhookJwk(jwk, await kidOf(jwk)) };
+}
+
 /**
  * A key service that holds its keys in the process: private JWKs, the newest first (MADAUTH_SIGNING_KEY). The
  * ES256 keys (at least one) sign madAuth's tokens, and each brings its own hash and encryption keys, derived from
  * it as madAuth always did, so a deployment that adds a key keeps reading what the older ones wrote. RS256 keys,
- * if any, sign the ID tokens of the clients that ask for RS256. Whoever reads the process's memory reads these keys.
+ * if any, sign the ID tokens of the clients that ask for RS256; Ed25519 keys, if any, the webhook calls (`v1a`),
+ * the first of them alone. Whoever reads the process's memory reads these keys.
  */
 export async function createLocalKeyService(jwks: JWK[]): Promise<KeyService> {
   for (const jwk of jwks) assertPrivateSigningJwk(jwk);
   const keys = await Promise.all(jwks.filter((jwk) => algOf(jwk) === SIGNING_ALG).map(localKey));
   const rsaKeys = await Promise.all(jwks.filter((jwk) => algOf(jwk) === RSA_SIGNING_ALG).map(localRsaKey));
+  const webhookKeys = await Promise.all(jwks.filter(isWebhookJwk).map(localWebhookKey));
+  const webhookJwks = webhookKeys.map((key) => key.publicJwk);
   if (!keys.length) throw new Error('createLocalKeyService needs at least one ES256 key.');
   const verificationKeys = [...keys, ...rsaKeys].map((key) => key.publicJwk);
   const [newest] = keys;
@@ -131,6 +168,13 @@ export async function createLocalKeyService(jwks: JWK[]): Promise<KeyService> {
       }
       return null;
     },
+    webhookKeys: async () => webhookJwks,
+    async signWebhook(data) {
+      const [signing] = webhookKeys;
+      if (!signing) return { problem: 'MADAUTH_SIGNING_KEY has no Ed25519 key' };
+      // Ed25519 hashes the message itself: no digest algorithm.
+      return { signature: new Uint8Array(cryptoSign(null, data, signing.privateKey)) };
+    },
   };
 }
 
@@ -144,8 +188,8 @@ const parseJson = (value: string): unknown => {
 
 /**
  * The keys of MADAUTH_SIGNING_KEY: one private JWK, or a JWK set (`{ "keys": [newest, …, oldest] }`) of ES256
- * keys and, if the deployment needs them, RS256 keys, each kind the newest first; or why it is not that, to
- * complete "MADAUTH_SIGNING_KEY …".
+ * keys and, if the deployment needs them, RS256 keys and Ed25519 (webhook) keys, each kind the newest first; or why
+ * it is not that, to complete "MADAUTH_SIGNING_KEY …".
  */
 export async function parseSigningKeys(value: string): Promise<{ keys: JWK[] } | { problem: string }> {
   const parsed = parseJson(value);
@@ -157,7 +201,7 @@ export async function parseSigningKeys(value: string): Promise<{ keys: JWK[] } |
   const wrong = problems.findIndex((problem) => problem !== null);
   if (wrong >= 0) return { problem: list.length > 1 ? `has a key (number ${wrong + 1}) that ${problems[wrong]}` : problems[wrong]! };
   const keys = list as JWK[];
-  if (!keys.some((jwk) => algOf(jwk) === SIGNING_ALG)) return { problem: 'has no EC P-256 key: madAuth signs its own tokens with ES256, RSA keys only sign ID tokens' };
+  if (!keys.some((jwk) => algOf(jwk) === SIGNING_ALG)) return { problem: 'has no EC P-256 key: madAuth signs its own tokens with ES256, RSA keys only sign ID tokens and Ed25519 keys only the webhook calls' };
   const kids = await Promise.all(keys.map(kidOf));
   return new Set(kids).size === kids.length ? { keys } : { problem: 'has the same key twice (or two keys with the same kid)' };
 }

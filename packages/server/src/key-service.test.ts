@@ -1,12 +1,12 @@
 // The key service and rotating the signing key. Behaviour described in "Signing key" in docs/server.md; update
 // the doc when changing it.
-import { createHmac } from 'node:crypto';
+import { createHmac, createPublicKey, verify, type webcrypto } from 'node:crypto';
 import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { base32Decode, stepOf, totp } from './authenticator.js';
 import { decrypt, deriveKey, encrypt } from './crypto.js';
 import { createLocalKeyService, parseSigningKeys } from './key-service.js';
-import { generateSigningKey } from './keys.js';
+import { generateSigningKey, generateWebhookKey } from './keys.js';
 import { codeHashes } from './password.js';
 import { ISSUER, cookies, linkAndCode, passwordApp, post, setMethods, type TestMethods } from './test/helpers.js';
 import { readToken, signToken } from './tokens.js';
@@ -32,6 +32,33 @@ describe('the local key service', () => {
     expect(await parseSigningKeys('{"keys":"x"}')).toMatchObject({ problem: expect.stringContaining('a set of them') });
     expect((await rotated.verificationKeys()).map((key) => key.kid)).toEqual([newKey.kid, oldKey.kid]);
     expect(await rotated.verificationKeys()).toEqual([expect.not.objectContaining({ d: expect.anything() }), expect.not.objectContaining({ d: expect.anything() })]);
+  });
+
+  it('KS10: Ed25519 keys in the set sign the webhook calls (v1a), the first alone; all are published, none in the JWKS', async () => {
+    const webhookKey = await generateWebhookKey();
+    const nextWebhookKey = await generateWebhookKey();
+    expect(await parseSigningKeys(JSON.stringify({ keys: [newKey, webhookKey] }))).toEqual({ keys: [newKey, webhookKey] });
+    // A webhook key alone is no set madAuth can run on: it signs nothing but the webhook calls.
+    expect(await parseSigningKeys(JSON.stringify(webhookKey))).toEqual({ problem: expect.stringContaining('has no EC P-256 key') });
+    const { d: _d, ...publicOnly } = webhookKey;
+    expect(await parseSigningKeys(JSON.stringify({ keys: [newKey, publicOnly] }))).toEqual({ problem: expect.stringContaining('private Ed25519 JWK') });
+
+    const keys = await createLocalKeyService([newKey, nextWebhookKey, webhookKey]);
+    expect((await keys.verificationKeys()).map((key) => key.alg)).toEqual(['ES256']);
+    const published = await keys.webhookKeys!();
+    expect(published).toEqual([
+      { kty: 'OKP', crv: 'Ed25519', x: nextWebhookKey.x, alg: 'Ed25519', use: 'sig', kid: nextWebhookKey.kid },
+      { kty: 'OKP', crv: 'Ed25519', x: webhookKey.x, alg: 'Ed25519', use: 'sig', kid: webhookKey.kid },
+    ]);
+    const content = new TextEncoder().encode('msg_1.1700000000.{"type":"user.signed_in"}');
+    const signed = await keys.signWebhook!(content);
+    if (!('signature' in signed)) throw new Error(signed.problem);
+    const keyOf = (jwk: (typeof published)[number]) => createPublicKey({ key: jwk as webcrypto.JsonWebKey, format: 'jwk' });
+    expect(verify(null, content, keyOf(published[0]!), signed.signature)).toBe(true);
+    expect(verify(null, content, keyOf(published[1]!), signed.signature)).toBe(false);
+    // Without one, nothing to publish or sign with.
+    expect(await onlyNew.webhookKeys!()).toEqual([]);
+    expect(await onlyNew.signWebhook!(content)).toEqual({ problem: 'MADAUTH_SIGNING_KEY has no Ed25519 key' });
   });
 
   it('KS2: reads what madAuth stored before the key service: the same derived keys', async () => {

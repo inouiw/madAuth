@@ -126,6 +126,30 @@ test('a receiver with the webhook secret, as before: no AWS IAM and no check for
   });
 });
 
+test('a receiver of Standard Webhooks signatures: the key manager creates the Ed25519 webhook key (v1a), and the server may sign with it', () => {
+  const { template, roleId } = synth();
+  // The new property runs the setup again on the first deploy of this template version, for a deployment from before.
+  template.hasResourceProperties('Custom::MadAuthKmsKeys', { Deployment: 'example-com', WebhookKey: 'ed25519' });
+  template.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: { SIGNING_KEY_PARAMETER: '/madauth/MADAUTH_SIGNING_KEY', WEBHOOK_KEY: 'true' } } });
+  // kms:Sign and kms:GetPublicKey on the keys under the deployment's aliases, the webhook key among them.
+  const kms = serverStatements(template, roleId).find((statement) => Array.isArray(statement.Action) && statement.Action.includes('kms:Sign'));
+  assert.deepEqual(kms, {
+    Action: ['kms:GetPublicKey', 'kms:Sign', 'kms:GenerateMac', 'kms:Encrypt', 'kms:Decrypt'],
+    Effect: 'Allow',
+    Resource: '*',
+    Condition: { 'ForAnyValue:StringLike': { 'kms:ResourceAliases': 'alias/madauth/example-com/*' } },
+  });
+
+  // With an AWS_IAM receiver, or without a webhook, there is none.
+  const { template: iam } = synth((scope) => lambda.Function.fromFunctionArn(scope, 'Mailer', 'arn:aws:lambda:eu-central-1:123456789012:function:madauth-mailer'));
+  iam.hasResourceProperties('Custom::MadAuthKmsKeys', { WebhookKey: Match.absent() });
+  iam.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: { SIGNING_KEY_PARAMETER: '/madauth/MADAUTH_SIGNING_KEY', WEBHOOK_KEY: Match.absent() } } });
+  const app = new App({ context: { 'aws:cdk:bundling-stacks': [] } });
+  const stack = new Stack(app, 'NoWebhook', { env: { account: '123456789012', region: 'eu-central-1' } });
+  new MadAuthServer(stack, 'MadAuth', { issuer: 'https://example.com', serverPackageDir: SERVER_DIR });
+  Template.fromStack(stack).hasResourceProperties('Custom::MadAuthKmsKeys', { WebhookKey: Match.absent() });
+});
+
 test('rs256Signing: the key manager creates the RS256 key too, and the deploy that turns it on runs the setup again', () => {
   const { template } = synth(undefined, SERVER_DIR, true);
   template.hasResourceProperties('Custom::MadAuthKmsKeys', { Deployment: 'example-com', Rs256Signing: 'true' });

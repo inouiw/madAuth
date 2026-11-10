@@ -19,6 +19,11 @@ export interface RotationOptions {
    * signed can be renewed, SESSION_RENEWAL_TTL, with a margin for the time between rotation runs. Default: 32 days.
    */
   retireAfterMs?: number;
+  /**
+   * How long an old webhook key stays published after the next one began to sign. A receiver checks a call within
+   * minutes (WEBHOOK_TOLERANCE_SECONDS), so a day is ample. Default: 1 day.
+   */
+  retireWebhookAfterMs?: number;
 }
 
 const description = (deployment: string, kind: KmsKeyKind) => `madAuth ${kind} key of ${deployment}`;
@@ -29,11 +34,24 @@ export interface SetupOptions {
    * ES256. Default: false; a deployment that has one keeps it either way.
    */
   rs256?: boolean;
+  /**
+   * Also an Ed25519 key (`webhook`) that signs the webhook calls (`v1a`), which receivers check with its public key
+   * alone. Default: true; false for a deployment whose receiver checks only WEBHOOK_SECRET or AWS IAM. A deployment
+   * that has one keeps it either way.
+   */
+  webhook?: boolean;
 }
 
-/** The kinds a deployment rotates: the RS256 keys only once it has them. */
-const rotatedKinds = (keys: Awaited<ReturnType<typeof deploymentKeys>>, rs256 = false): RotatedKind[] =>
-  rs256 || keys['signing-rsa'].current || keys['signing-rsa'].generations.length ? ['signing', 'signing-rsa', 'mac'] : ['signing', 'mac'];
+/** The kinds a deployment rotates: the RS256 and webhook keys only once it has them (or is set up with them). */
+const rotatedKinds = (keys: Awaited<ReturnType<typeof deploymentKeys>>, options: SetupOptions = {}): RotatedKind[] => {
+  const has = (kind: 'signing-rsa' | 'webhook') => !!keys[kind].current || keys[kind].generations.length > 0;
+  return [
+    'signing',
+    ...(options.rs256 || has('signing-rsa') ? (['signing-rsa'] as const) : []),
+    'mac',
+    ...(options.webhook || has('webhook') ? (['webhook'] as const) : []),
+  ];
+};
 
 /**
  * Creates the keys a deployment lacks, each under its aliases (aws-kms.ts); does nothing for the ones it has. A key
@@ -44,7 +62,7 @@ export async function setUpKmsKeys(kms: Kms, deployment: string, now = Date.now(
   const prefix = aliasPrefix(deployment);
   const keys = await deploymentKeys(kms, deployment);
   const done: string[] = [];
-  for (const kind of rotatedKinds(keys, options.rs256)) {
+  for (const kind of rotatedKinds(keys, { rs256: options.rs256, webhook: options.webhook ?? true })) {
     if (keys[kind].current) continue;
     const newest = keys[kind].generations.at(-1);
     if (newest) {
@@ -66,11 +84,12 @@ export async function setUpKmsKeys(kms: Kms, deployment: string, now = Date.now(
 }
 
 /**
- * One run of the rotation, for the signing and the hash key; run it at least daily. A key older than `everyMs`
+ * One run of the rotation, for the signing, hash and webhook keys; run it at least daily. A key older than `everyMs`
  * gets a successor, which is published first and used from a run at least `publishMs` later. An old signing key
- * is disabled once its sessions have expired, and its generation alias removed, so the server stops reading it;
- * old hash keys stay, since recovery codes hashed with them may be kept for years. KMS rotates the encryption key in
- * place. Resolves to what was done and what is missing, for people to read.
+ * is disabled once its sessions have expired, an old webhook key a day after its successor began to sign, and its
+ * generation alias removed, so the server stops reading it; old hash keys stay, since recovery codes hashed with
+ * them may be kept for years. KMS rotates the encryption key in place. Resolves to what was done and what is
+ * missing, for people to read.
  */
 export async function rotateKmsKeys(
   kms: Kms,
@@ -78,7 +97,7 @@ export async function rotateKmsKeys(
   now = Date.now(),
   options: RotationOptions = {},
 ): Promise<{ done: string[]; problems: string[] }> {
-  const { everyMs = 365 * DAY_MS, publishMs = 2 * 60 * 60 * 1000, retireAfterMs = 32 * DAY_MS } = options;
+  const { everyMs = 365 * DAY_MS, publishMs = 2 * 60 * 60 * 1000, retireAfterMs = 32 * DAY_MS, retireWebhookAfterMs = DAY_MS } = options;
   const prefix = aliasPrefix(deployment);
   const keys = await deploymentKeys(kms, deployment);
   const done: string[] = [];
@@ -99,15 +118,17 @@ export async function rotateKmsKeys(
       done.push(`Created the ${kind} key ${keyId}: it is used from a run in ${Math.round(publishMs / 3600_000)} hours.`);
     }
     if (kind === 'mac') continue;
-    // A signing key retires once the key after it has signed for `retireAfterMs`: it began no sooner than
-    // `publishMs` after it was made.
+    // A signing key retires once the key after it has signed for `retireAfterMs` (a webhook key `retireWebhookAfterMs`):
+    // it began no sooner than `publishMs` after it was made.
+    const retiresAfter = kind === 'webhook' ? retireWebhookAfterMs : retireAfterMs;
+    const signed = { signing: 'sessions it signed have expired', 'signing-rsa': 'tokens it signed have expired', webhook: 'calls it signed are checked' }[kind];
     for (const [index, generation] of generations.entries()) {
       const next = generations[index + 1];
-      if (!next || generation.keyId === current || now - (next.madeAt + publishMs) < retireAfterMs) continue;
+      if (!next || generation.keyId === current || now - (next.madeAt + publishMs) < retiresAfter) continue;
       // Disabled first: if removing the alias fails, the next run removes it.
       if (await kms.enabled(generation.keyId)) await kms.disableKey(generation.keyId);
       await kms.deleteAlias(generation.alias);
-      done.push(`Disabled the ${kind} key ${generation.keyId} and removed ${generation.alias}: the ${kind === 'signing' ? 'sessions' : 'tokens'} it signed have expired.`);
+      done.push(`Disabled the ${kind} key ${generation.keyId} and removed ${generation.alias}: the ${signed}.`);
     }
   }
   return { done, problems };

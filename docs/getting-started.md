@@ -18,7 +18,7 @@ npm install @madauth/web @madauth/server
 npx @madauth/server init
 ```
 
-`init` asks a few questions and writes the configuration to `.env`, with a new signing key:
+`init` asks a few questions and writes the configuration to `.env`, with new signing keys (one for the sessions, one for the webhook calls):
 
 | Question | Default | Description |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ npx @madauth/server init
 
 Choose at least one way to create users. At the end, `init` prints the next steps for your answers. They are the steps below.
 
-Never commit `.env`: it holds the signing key and your secrets.
+Never commit `.env`: it holds the signing keys and your secrets.
 
 Every question is also an option, so a script needs no prompts. `--yes` takes the default for everything you don't pass:
 
@@ -63,11 +63,13 @@ Get it once, in a folder of its own:
 git clone https://github.com/inouiw/madAuth-webhooks.git && cd madAuth-webhooks/dev-receiver && npm install
 ```
 
-Start it in a second terminal, with the `WEBHOOK_URL` and `WEBHOOK_SECRET` from your `.env`:
+Start it in a second terminal, with the `WEBHOOK_URL` from your `.env`:
 
 ```bash
-WEBHOOK_URL=http://localhost:8790/webhook WEBHOOK_SECRET=whsec_... npm run dev
+WEBHOOK_URL=http://localhost:8790/webhook npm run dev
 ```
+
+It needs no secret: madAuth signs every call with the Ed25519 key in `MADAUTH_SIGNING_KEY`, and the receiver checks the signature with the public key it fetches from `http://localhost:8787/.well-known/webhook-keys.json` (its `WEBHOOK_KEYS_URL`, which defaults to that). See [Signatures](server.md#signatures).
 
 ## 5. Proxy madAuth through your app
 

@@ -1,12 +1,12 @@
 # madAuth on AWS (CDK)
 
-Deploys the madAuth server as an AWS Lambda function with a Function URL. The users are stored in a DynamoDB table, madAuth's keys in AWS KMS, and the secrets in the Parameter Store. At low traffic it costs about $3 a month, for the three KMS keys: Lambda, DynamoDB and KMS's requests are paid per request, and the Parameter Store's standard parameters are free.
+Deploys the madAuth server as an AWS Lambda function with a Function URL. The users are stored in a DynamoDB table, madAuth's keys in AWS KMS, and the secrets in the Parameter Store. At low traffic it costs about $3 a month, for the three KMS keys ($4 with the webhook key): Lambda, DynamoDB and KMS's requests are paid per request, and the Parameter Store's standard parameters are free.
 
 What it creates (`lib/madauth-server.ts`, the `MadAuthServer` construct):
 
 - **A DynamoDB table** with the keys `pk` and `sk`. It is on-demand, has point-in-time recovery, and is kept when the stack is deleted.
-- **A Lambda function** (Node.js 22, arm64, 512 MB) that runs [`lambda/server.ts`](lambda/server.ts). It reads every parameter under the secrets path, e.g. `/madauth/WEBHOOK_SECRET`, as the environment variable of that name. The secrets therefore never appear in the function's configuration.
-- **Three keys in AWS KMS** that sign the sessions, hash the codes and encrypt the stored secrets (`MADAUTH_KEY_SERVICE=aws-kms`, see [AWS KMS](../../docs/server.md#aws-kms)). They never leave KMS, and the server's role may only use them. A second function with a role of its own, [`lambda/keys.ts`](lambda/keys.ts), creates them at the first deploy, checks them every day and rotates them once a year; a failed rotation is an error of that function (`keyManager`), which an alarm can watch. The keys are kept when the stack is deleted, like the table: without them nothing stored in it can be read. Each costs $1 a month, and every rotation, once a year, adds one. They are named after the issuer: a new `issuer` gets new keys, which signs every user out, and the old ones stay, and cost, until you schedule their deletion in KMS. A fourth key, RS256, for OpenID Connect clients that can't verify ES256, comes with the construct's `rs256Signing: true` (see [RS256 ID tokens](../../docs/server.md#rs256-id-tokens)); once created it stays and is rotated like the others.
+- **A Lambda function** (Node.js 22, arm64, 512 MB) that runs [`lambda/server.ts`](lambda/server.ts). It reads every parameter under the secrets path, e.g. `/madauth/WEBHOOK_SECRET` if you keep one, as the environment variable of that name. The secrets therefore never appear in the function's configuration.
+- **Three keys in AWS KMS** that sign the sessions, hash the codes and encrypt the stored secrets (`MADAUTH_KEY_SERVICE=aws-kms`, see [AWS KMS](../../docs/server.md#aws-kms)). They never leave KMS, and the server's role may only use them. A second function with a role of its own, [`lambda/keys.ts`](lambda/keys.ts), creates them at the first deploy, checks them every day and rotates them once a year; a failed rotation is an error of that function (`keyManager`), which an alarm can watch. The keys are kept when the stack is deleted, like the table: without them nothing stored in it can be read. Each costs $1 a month, and every rotation, once a year, adds one. They are named after the issuer: a new `issuer` gets new keys, which signs every user out, and the old ones stay, and cost, until you schedule their deletion in KMS. With a webhook receiver that isn't one with AWS IAM, a fourth key, Ed25519, signs the webhook calls (Standard Webhooks `v1a`): the receiver checks them with its public key from `<issuer>/.well-known/webhook-keys.json` alone, so no webhook secret is needed (see [Webhook signing key](../../docs/server.md#webhook-signing-key)). Another key, RS256, for OpenID Connect clients that can't verify ES256, comes with the construct's `rs256Signing: true` (see [RS256 ID tokens](../../docs/server.md#rs256-id-tokens)). Once created, each stays and is rotated like the others.
 
 It deploys madAuth 0.6 or newer, the first that keeps its keys in AWS KMS.
 - **A Function URL.** madAuth checks the `Origin` of every request itself (`ALLOWED_ORIGINS`).
@@ -40,13 +40,13 @@ npx cdk bootstrap
 
 ## 2. Store the secrets
 
-The script creates the webhook secret (after asking: answer `n` for a receiver with AWS IAM). It goes straight into the Parameter Store, under `/madauth` by default. Google and GitHub are no secrets of the deployment: an admin adds them later as providers (step 5).
+A new deployment needs no secret of its own: madAuth's keys are in KMS, and the webhook calls are signed with the Ed25519 key there, which the receiver checks with the public key from `<issuer>/.well-known/webhook-keys.json`, e.g. the aws-ses-mailer with `WebhookKeysUrl`. Google and GitHub are no secrets of the deployment either: an admin adds them later as providers (step 5). The script checks for secrets left from older templates, and creates a webhook secret only if you answer `y`: for a receiver that checks `v1` signatures with a shared secret (`WEBHOOK_SECRET`), which then needs the same one. It goes straight into the Parameter Store, under `/madauth` by default.
 
 ```bash
 scripts/bootstrap-secrets.sh /madauth
 ```
 
-Use the same `WEBHOOK_SECRET` for your webhook receiver. A receiver with AWS IAM (see [below](#a-webhook-receiver-with-aws-iam)) needs no secret, and the deploy fails while there is one; for it, run the script with `WEBHOOK_AUTH=aws-iam`, which creates none:
+A receiver with AWS IAM (see [below](#a-webhook-receiver-with-aws-iam)) needs no secret, and the deploy fails while there is one; for it, run the script with `WEBHOOK_AUTH=aws-iam`, which never creates one:
 
 ```bash
 WEBHOOK_AUTH=aws-iam scripts/bootstrap-secrets.sh /madauth
@@ -62,7 +62,7 @@ Set your values in [`cdk.json`](cdk.json) under `context`:
 | `allowedOrigins` | `https://example.com,https://admin.example.com` | Comma-separated. Default: the issuer |
 | `secretsPath` | `/madauth` | Where step 2 stored the secrets |
 | `webhookUrl` | `https://abc.lambda-url.eu-central-1.on.aws/` | Empty: no e-mails, so people sign in only through the providers an admin adds (step 5) |
-| `webhookFunctionArn` | `arn:aws:lambda:eu-central-1:123456789012:function:madauth-mailer` | The receiver's function, when `webhookUrl` is its Function URL with `AWS_IAM` auth, in this account. Empty: the calls are signed with `WEBHOOK_SECRET`. See [A webhook receiver with AWS IAM](#a-webhook-receiver-with-aws-iam). |
+| `webhookFunctionArn` | `arn:aws:lambda:eu-central-1:123456789012:function:madauth-mailer` | The receiver's function, when `webhookUrl` is its Function URL with `AWS_IAM` auth, in this account. Empty: the calls are signed with the Ed25519 key in KMS (`v1a`), and with `WEBHOOK_SECRET` (`v1`) while it is in the Parameter Store. See [A webhook receiver with AWS IAM](#a-webhook-receiver-with-aws-iam). |
 | `webhookEvents` | `email.send_verification,email.send_password_reset,email.send_already_registered` | What the receiver handles. This default turns on e-mail & password sign-in; add `email.send_signin_link` for the e-mail link. |
 | `environment` | `{ "INITIAL_ADMIN_EMAIL": "you@example.com" }` | More environment variables of the server, each under its own name, see [all settings](../../docs/server.md#configuration): `INITIAL_ADMIN_EMAIL` makes you the first admin (madAuth 0.6 or newer, see [Administration](#administration)), others are e.g. `PASSKEY_RP_ID`, `AUTHENTICATOR_ISSUER` or `SESSION_TTL`. |
 | `rs256Signing` | `true` | Also an RS256 key in KMS ($1 a month more), for OpenID Connect clients that can't verify ES256; see [RS256 ID tokens](../../docs/server.md#rs256-id-tokens). Default: `false`; once created, the key stays. |
@@ -192,6 +192,20 @@ For a deployment whose receiver checks `WEBHOOK_SECRET`, to a receiver with AWS 
 3. Deploy the receiver with `AWS_IAM` auth and the output `RoleArn`, e.g. the aws-ses-mailer with `MadauthRoleArn` and without `WebhookSecret`.
 
 From step 2 until step 3 is deployed, the receiver refuses madAuth's calls (they carry no secret's signature any more): no e-mail is sent, and with `user.signing_up` nobody signs up; users see that it failed and can try again. A receiver in the same CDK app (see the construct above) switches in the same deploy as the server.
+
+## Moving the receiver to v1a
+
+For a deployment whose receiver checks `WEBHOOK_SECRET` (`v1`), to one that checks the Ed25519 key's signatures (`v1a`) and holds no secret (see [Moving a receiver to v1a](../../docs/server.md#moving-a-receiver-to-v1a)):
+
+1. Deploy this template version (with madAuth 0.7.5 or newer). The deploy creates the Ed25519 key `alias/madauth/<deployment>/webhook`, and every call carries both signatures, `v1a` and `v1`, from then on; the receiver goes on checking `v1`.
+2. Give the receiver madAuth's key list as well as the secret, e.g. the aws-ses-mailer's `WebhookKeysUrl` (`<issuer>/.well-known/webhook-keys.json`) next to `WebhookSecret`, and check its log: the calls are accepted.
+3. Delete the secret, then make the server start new instances (see [Changing the webhook secret](#changing-the-webhook-secret)): the calls carry `v1a` alone.
+
+   ```bash
+   aws ssm delete-parameter --name /madauth/WEBHOOK_SECRET
+   ```
+
+4. Remove the secret from the receiver, e.g. deploy the aws-ses-mailer without `WebhookSecret`.
 
 ## Changing the webhook secret
 

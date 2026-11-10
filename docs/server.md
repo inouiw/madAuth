@@ -23,22 +23,22 @@ Every user is stored, whichever way they sign in, through a [store adapter](#cus
 
 ## Configuration
 
-All settings are environment variables. `npx @madauth/server init` asks for the main ones and writes them to a `.env` file, with a new signing key and webhook secret (see [Getting started](getting-started.md)).
+All settings are environment variables. `npx @madauth/server init` asks for the main ones and writes them to a `.env` file, with new keys: one that signs the sessions and, with a webhook, one that signs the webhook calls (see [Getting started](getting-started.md)).
 
 | Variable | Required | Description |
 | --- | --- | --- |
 | `MADAUTH_ISSUER` | yes | Public base URL of the server, e.g. `https://auth.example.com`. Used as the JWT issuer and for the callbacks of the redirect flows, `<issuer>/auth/providers/<id>/callback` (e.g. `google`, `github`). |
 | `MADAUTH_KEY_SERVICE` | yes | Where madAuth keeps its keys: `aws-kms`, in AWS KMS, where they never leave it (see [AWS KMS](#aws-kms)), or `local`, in the server's memory, from `MADAUTH_SIGNING_KEY`. There is no default: see [Key service](#key-service). |
-| `MADAUTH_SIGNING_KEY` | with `local` | Private ES256 key (JWK JSON) that signs the sessions; the keys that hash the codes and encrypt the stored secrets are derived from it. Or a set of keys, the newest first, to [rotate](#rotating-the-signing-key) it: `{"keys":[<new>,<old>]}`; an RS256 key in the set signs the ID tokens of the OpenID Connect clients that need it (see [RS256 ID tokens](#rs256-id-tokens)). Use the same value on every instance and keep it secret. |
+| `MADAUTH_SIGNING_KEY` | with `local` | Private ES256 key (JWK JSON) that signs the sessions; the keys that hash the codes and encrypt the stored secrets are derived from it. Or a set of keys, the newest first, to [rotate](#rotating-the-signing-key) it: `{"keys":[<new>,<old>]}`; an RS256 key in the set signs the ID tokens of the OpenID Connect clients that need it (see [RS256 ID tokens](#rs256-id-tokens)), an Ed25519 key the webhook calls (see [Webhook signing key](#webhook-signing-key)). Use the same value on every instance and keep it secret. |
 | `ALLOWED_ORIGINS` | yes | Comma-separated origins of your apps, e.g. `https://app.example.com`. Only these may call the server or be redirected back to. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | no | From madAuth before 0.7: imported once into the [providers](#providers) in the store when it has none of that kind, and ignored when it has one; either way the log says to remove them. Google and GitHub are providers now, which admins manage. |
 | `DATABASE_URL` | yes | Where the users are stored: `sqlite:<path>`, e.g. `sqlite:/data/madauth.db`, `postgres://<user>:<password>@<host>:5432/<database>` or `postgresql://…` (see [Postgres](#postgres)), or `dynamodb:<table>` (see [DynamoDB](#dynamodb)). For other databases pass your own [store adapter](#custom-store-adapter) instead. |
 | `DATABASE_MIGRATE` | no | With a Postgres `DATABASE_URL`: `true` (default) creates and upgrades madAuth's tables at start, `false` only checks that they are up to date, for a database user that may not change tables. See [Postgres](#postgres). |
 | `INITIAL_ADMIN_EMAIL` | no | Who signs in with this address gets the role `admin`, once the address is proven: confirmed by e-mail, or verified by Google or GitHub. Once per value; see [The first admin](#the-first-admin). |
 | `WEBHOOK_URL` | for the e-mail methods | Your [webhook](#webhooks) receiver, which sends the e-mails and can check sign-ups and receive events. Must be https, except `localhost`, `127.0.0.1` and `host.docker.internal`. |
-| `WEBHOOK_SECRET` | with `WEBHOOK_URL`, without `WEBHOOK_AUTH` | Signs every webhook call; your receiver needs the same one. Start without it once and the error message contains a new one, or run `npx @madauth/server generate-webhook-secret`. |
+| `WEBHOOK_SECRET` | with `WEBHOOK_URL`, when the key service has no [webhook signing key](#webhook-signing-key) and `WEBHOOK_AUTH` isn't set | A secret shared with the receiver, which signs every webhook call too (`v1`), next to the webhook key's signature (`v1a`): for receivers that check the secret. Run `npx @madauth/server generate-webhook-secret`; your receiver needs the same one. See [Signatures](#signatures). |
 | `WEBHOOK_PREVIOUS_SECRET` | no | While you change `WEBHOOK_SECRET`: the secret it had before. Every call is then signed with both, so a receiver that still has the old one accepts the calls too. Remove it once the receiver has the new secret. See [Changing the webhook secret](#changing-the-webhook-secret). |
-| `WEBHOOK_AUTH` | no | `aws-iam`: madAuth signs the webhook calls with its AWS role instead of `WEBHOOK_SECRET`, which must not be set then, for a receiver behind a Lambda Function URL with `AWS_IAM` auth. See [AWS IAM](#aws-iam). Not set: `WEBHOOK_SECRET` signs them. |
+| `WEBHOOK_AUTH` | no | `aws-iam`: madAuth signs the webhook calls with its AWS role instead of the webhook key and `WEBHOOK_SECRET`, which must not be set then, for a receiver behind a Lambda Function URL with `AWS_IAM` auth. See [AWS IAM](#aws-iam). Not set: the webhook key and `WEBHOOK_SECRET` sign them, whichever there are. |
 | `WEBHOOK_EVENTS` | with `WEBHOOK_URL` | Comma-separated [types](#webhooks) your receiver handles; only these are sent. E-mail & password sign-in is on when they include `email.send_verification` and `email.send_password_reset`, the e-mail link when they include `email.send_signin_link`, SMS codes when they include `sms.send_code`, e.g. `email.send_verification,email.send_password_reset,email.send_signin_link,email.send_already_registered,email.send_password_reset_no_password,sms.send_code`. |
 | `AUTHENTICATOR_ISSUER` | no | The name authenticator apps show next to the account, e.g. `My App`; the browser's passkey dialog shows it too (the WebAuthn relying party's name). Default: the host of the app that asked for the setup, e.g. `app.example.com`. See [Authenticator app](#authenticator-app). |
 | `PASSKEY_RP_ID` | no | The domain [passkeys](#passkeys) belong to, e.g. `example.com` so that they work on `app.example.com` and `www.example.com` alike. It must be the host of an app in `ALLOWED_ORIGINS` or a domain above it. Default: the host of the app that adds or uses the passkey, so a passkey works on that host only. Changing it later makes existing passkeys stop working, and locks out the users who sign in with passkeys alone until an admin [resets their sign-in](#resetting-a-users-sign-in) and they sign up again. |
@@ -52,7 +52,7 @@ A server needs no sign-in method to start. Google and GitHub are [providers](#pr
 
 ### Key service
 
-madAuth does everything it needs a key for through a key service ([`key-service.ts`](../packages/server/src/key-service.ts)): it signs the tokens (sessions, renewals and the cookies of a sign-in under way), hashes the e-mail and recovery codes (HMAC-SHA256), and encrypts the authenticator secrets and GitHub tokens it must read again. Whoever has these keys can sign sessions for anyone, so `MADAUTH_KEY_SERVICE` must say where they are; madAuth doesn't start without it:
+madAuth does everything it needs a key for through a key service ([`key-service.ts`](../packages/server/src/key-service.ts)): it signs the tokens (sessions, renewals and the cookies of a sign-in under way), hashes the e-mail and recovery codes (HMAC-SHA256), encrypts the authenticator secrets and GitHub tokens it must read again, and signs the webhook calls (see [Webhook signing key](#webhook-signing-key)). Whoever has these keys can sign sessions for anyone, so `MADAUTH_KEY_SERVICE` must say where they are; madAuth doesn't start without it:
 
 - **`aws-kms`**: the keys are in AWS KMS and never leave it; madAuth asks KMS to sign, hash and encrypt. Someone who breaks into the server can use the keys only while they are in, never take them away, and every use is logged in CloudTrail. The way to run madAuth in production; see [AWS KMS](#aws-kms).
 - **`local`**: the keys are in the server's memory, made from `MADAUTH_SIGNING_KEY` (see [Signing key](#signing-key)). Whoever can read that memory (a break-in, a core dump, a heap snapshot) can read them; see [Hardening](#hardening). For development, or where no key service is available; madAuth warns about it at every start.
@@ -69,6 +69,7 @@ With `MADAUTH_KEY_SERVICE=aws-kms`, madAuth finds its keys by itself, under alia
 | `alias/madauth/<deployment>/signing/<time>` | Every signing key, by when it was made, e.g. `…/signing/20261017T120000Z`: all of them verify, and `/.well-known/jwks.json` publishes them |
 | `alias/madauth/<deployment>/signing-rsa`, `…/signing-rsa/<time>` | The same for the RS256 keys (`RSA_2048`), only in a deployment set up with `--rs256` (see [RS256 ID tokens](#rs256-id-tokens)): they sign the ID tokens of the clients that ask for RS256 |
 | `alias/madauth/<deployment>/mac`, `…/mac/<time>` | The same for the HMAC keys (`HMAC_256`) that hash the codes |
+| `alias/madauth/<deployment>/webhook`, `…/webhook/<time>` | The same for the Ed25519 keys (`ECC_NIST_EDWARDS25519`) that sign the webhook calls (`v1a`, with `ED25519_SHA_512` and `MessageType` `RAW`): `/.well-known/webhook-keys.json` publishes them. `kms-setup` creates one unless `--no-webhook`; the AWS template for a receiver without AWS IAM (see [Webhook signing key](#webhook-signing-key)) |
 | `alias/madauth/<deployment>/encryption` | The symmetric key that encrypts the secrets, bound to their purpose (the encryption context); KMS gives it new material every year by itself and keeps the old to decrypt |
 
 madAuth reads the aliases when it starts and every five minutes after, so a rotation reaches every running instance; it doesn't start when the keys are missing.
@@ -93,7 +94,7 @@ The [AWS template](../deploy/aws/README.md) does all of this itself: it creates 
 npx @madauth/server kms-setup --env-file .env
 ```
 
-**Rotation.** The signing and hash keys get a successor once a year, through `npx @madauth/server kms-rotate` with an admin's credentials, run every day (e.g. by a scheduled job with a role of its own). A new key is published first, and used from a run at least two hours later, since backends may cache the list of signing keys for an hour. An old signing key is disabled 32 days after its successor began to sign, when the sessions it signed can't be renewed any more (the default `SESSION_RENEWAL_TTL`), and its generation alias is removed, so madAuth stops reading it (the key stays in KMS, disabled); the RS256 keys, where there are any, the same way; old hash keys stay, since recovery codes hashed with them may be kept for years. The encryption key KMS rotates in place. A run exits with code 1 when a key or its alias is missing, so a failing scheduled job is noticed. The role that rotates needs `kms:ListAliases`, `kms:CreateKey`, `kms:CreateAlias`, `kms:UpdateAlias`, `kms:DeleteAlias`, `kms:DescribeKey` and `kms:DisableKey`.
+**Rotation.** The signing, hash and webhook keys get a successor once a year, through `npx @madauth/server kms-rotate` with an admin's credentials, run every day (e.g. by a scheduled job with a role of its own). A new key is published first, and used from a run at least two hours later, since backends may cache the list of signing keys for an hour. An old signing key is disabled 32 days after its successor began to sign, when the sessions it signed can't be renewed any more (the default `SESSION_RENEWAL_TTL`), and its generation alias is removed, so madAuth stops reading it (the key stays in KMS, disabled); the RS256 keys, where there are any, the same way; an old webhook key a day after its successor began to sign, as receivers check each call within minutes; old hash keys stay, since recovery codes hashed with them may be kept for years. The encryption key KMS rotates in place. A run exits with code 1 when a key or its alias is missing, so a failing scheduled job is noticed. The role that rotates needs `kms:ListAliases`, `kms:CreateKey`, `kms:CreateAlias`, `kms:UpdateAlias`, `kms:DeleteAlias`, `kms:DescribeKey` and `kms:DisableKey`.
 
 **Moving from `local` to `aws-kms`** is a clean cut: `MADAUTH_SIGNING_KEY` must be gone (madAuth refuses to start while it is set), so no key stays in a variable. What the old key made can't be read any more:
 
@@ -101,7 +102,7 @@ npx @madauth/server kms-setup --env-file .env
 - authenticator apps and recovery codes set up before stop working: their users set the app up again, and users whose sign-in asks for the app ask an admin to [reset their sign-in](#resetting-a-users-sign-in);
 - the stored GitHub tokens can't be revoked: each is replaced at its user's next sign-in.
 
-Each KMS key costs a monthly fee, also when disabled: three keys (four with the RS256 key), plus one for each rotation of the signing and hash keys a year. Every signature, hash and encryption is a KMS request: a sign-in makes a few.
+Each KMS key costs a monthly fee, also when disabled: three keys, four with the webhook key and one more with the RS256 key, plus one for each rotation of these a year. Every signature, hash and encryption is a KMS request: a sign-in makes a few, and every webhook call one more for its `v1a` signature.
 
 ### Signing key
 
@@ -110,6 +111,8 @@ With `MADAUTH_KEY_SERVICE=local`, `MADAUTH_SIGNING_KEY` holds the keys: the sign
 ```bash
 npx @madauth/server generate-key
 ```
+
+With a webhook, the set also holds an Ed25519 key, which signs the webhook calls (`npx @madauth/server generate-key --ed25519`, see [Webhook signing key](#webhook-signing-key)); `init` and the error message write both: `{"keys":[<ES256 key>,<Ed25519 key>]}`.
 
 #### Rotating the signing key
 
@@ -142,6 +145,21 @@ madAuth signs with ES256, also the tokens of the [OpenID Connect provider](#open
 2. **Set the client to RS256:** `Madauth.admin.updateClient(id, { idTokenAlg: 'RS256' })` (or `addClient({ …, idTokenAlg: 'RS256' })`), OpenID Connect's `id_token_signed_response_alg`. Without an RS256 key in the key service, it is refused with `invalid_client`. The client's ID tokens, also refreshed ones, are signed with the RS256 key from then on; its access tokens and everything else stay ES256. `idTokenAlg: 'ES256'` switches back.
 
 Rotating the RS256 key works like the ES256 keys': in `MADAUTH_SIGNING_KEY`, put the new RS256 key before the old one; the old one can go once the ID tokens it signed have expired (an hour, but a client may keep one as `id_token_hint` for its sign-out, which also takes an expired one it can still verify). With a client set to RS256 whose key was removed (or, in KMS, disabled: the server logs it and runs on without RS256), the token endpoint answers `server_error` before it uses the code up, until the key is back or the client is set to ES256.
+
+### Webhook signing key
+
+The webhook calls are signed with an Ed25519 key of the key service (Standard Webhooks' asymmetric signature `v1a`, see [Signatures](#signatures)). Receivers check them with its public key alone, which madAuth publishes at `/.well-known/webhook-keys.json`: nobody but the key service can sign a call the receiver accepts, and the receiver holds nothing secret. madAuth signs with it whenever the key service has one when the server starts.
+
+- **`MADAUTH_KEY_SERVICE=local`:** an Ed25519 JWK in the set of `MADAUTH_SIGNING_KEY`, after the ES256 keys: `{"keys":[<ES256 key>,<Ed25519 key>]}`. `init` writes one, and the error message for a missing `MADAUTH_SIGNING_KEY` contains one; otherwise generate it with `npx @madauth/server generate-key --ed25519`. It signs nothing else, and nothing is derived from it.
+- **`MADAUTH_KEY_SERVICE=aws-kms`:** the KMS key under `alias/madauth/<deployment>/webhook` (`ECC_NIST_EDWARDS25519`), which signs with `ED25519_SHA_512` and `MessageType` `RAW`, so the private key never leaves KMS. `kms-setup` creates it (unless `--no-webhook`), and the [AWS template](../deploy/aws/README.md) does for a webhook receiver without AWS IAM; the server's role needs only the `kms:Sign` and `kms:GetPublicKey` it already has on its deployment's keys. KMS signs Ed25519 only as the message is, at most 4096 bytes: a call longer than that (`<id>.<timestamp>.<body>`, e.g. `user.claims_changed` of a user with claims near their 2048-character limit) can't get a `v1a` signature. madAuth then sends it with its `v1` signatures alone, if `WEBHOOK_SECRET` is set, and otherwise not at all (logged like a failed call).
+- **Another cloud's key service** (a [key service of your own](#key-service)) implements `webhookKeys()` and `signWebhook()`. Google Cloud KMS signs pure Ed25519 (`EC_SIGN_ED25519`); Azure Key Vault has no Ed25519 keys (only the NIST curves and P-256K), so there the webhook key stays a local one, or the receiver checks `WEBHOOK_SECRET` or AWS IAM instead.
+
+**Several keys.** Every Ed25519 key in the set is published, and the first one signs; each call carries one `v1a` signature, by that key alone. Receivers fetch the list again when a call's signature matches none of the keys they have (`verifyWebhook` does, at most every 30 seconds), so a new key is accepted as soon as it signs. Still, a cache in between (`Cache-Control: max-age=300`) may answer the old list for five minutes, so rotate in two steps:
+
+1. **Publish the new key.** Add it after the current one, which still signs: `{"keys":[<ES256 key>,<current Ed25519 key>,<new Ed25519 key>]}`, deploy it to every instance and wait five minutes.
+2. **Let it sign.** Put it before the old one, deploy again, and remove the old one once the calls it signed are checked: a few minutes, `verifyWebhook` takes calls up to five minutes old.
+
+After a suspected leak, put the new key alone; receivers fetch the list again at the first call it signs. In KMS, the rotation does this by itself once a year (see [AWS KMS](#aws-kms)).
 
 ## Providers
 
@@ -288,7 +306,7 @@ How madAuth signs in with it:
 
 ## E-mail & password sign-in
 
-Set `WEBHOOK_URL`, `WEBHOOK_SECRET` (or `WEBHOOK_AUTH`, see [AWS IAM](#aws-iam)) and `WEBHOOK_EVENTS` with `email.send_verification` and `email.send_password_reset` among the events: e-mail & password sign-in is on exactly when your webhook sends those e-mails. The users are in `DATABASE_URL`: with `sqlite:<path>` in that SQLite file (with Docker, keep it on a volume; the `docker-compose.yml` does this), with `postgres://…` in a [Postgres database](#postgres), with `dynamodb:<table>` in a [DynamoDB table](#dynamodb).
+Set `WEBHOOK_URL`, a [webhook signing key](#webhook-signing-key) or `WEBHOOK_SECRET` (or `WEBHOOK_AUTH`, see [AWS IAM](#aws-iam)) and `WEBHOOK_EVENTS` with `email.send_verification` and `email.send_password_reset` among the events: e-mail & password sign-in is on exactly when your webhook sends those e-mails. The users are in `DATABASE_URL`: with `sqlite:<path>` in that SQLite file (with Docker, keep it on a volume; the `docker-compose.yml` does this), with `postgres://…` in a [Postgres database](#postgres), with `dynamodb:<table>` in a [DynamoDB table](#dynamodb).
 
 madAuth does not send e-mails itself: it hands each one to your [webhook](#webhooks) receiver. There are three: the address confirmation, the password reset, and a note to the owner when someone tries to sign up with an address that already has an account. The confirmation and reset e-mails contain a link to the app page that asked for them (its origin must be in `ALLOWED_ORIGINS`) and a 6-digit code, for when the e-mail is read on another device.
 
@@ -435,7 +453,7 @@ export const handler = createHandler({
 
 `register` (Azure Functions) and `start` (Node) take the same `env` option.
 
-A receiver that is a Lambda function too needs no webhook secret: see [AWS IAM](#aws-iam).
+A receiver needs no webhook secret when it checks the `v1a` signatures (see [Signatures](#signatures)), or, as a Lambda function too, the caller (see [AWS IAM](#aws-iam)).
 
 ### Azure Functions
 
@@ -539,21 +557,50 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 
 ### Signatures
 
-With `WEBHOOK_SECRET`, every call is signed in the [Standard Webhooks](https://www.standardwebhooks.com/) format, so you can use their libraries in many languages. The headers are `webhook-id`, `webhook-timestamp` and `webhook-signature` (`v1,` and the base64 HMAC-SHA256 of `<id>.<timestamp>.<body>`, keyed with the base64 part of `WEBHOOK_SECRET` after `whsec_`).
+Every call is signed in the [Standard Webhooks](https://www.standardwebhooks.com/) format. The headers are `webhook-id`, `webhook-timestamp` and `webhook-signature`, which holds one or more signatures of `<id>.<timestamp>.<body>`, separated by spaces:
 
-Verify each call against the **raw** body before you trust it, and reject calls older than five minutes. In JavaScript:
+- **`v1a,<base64 Ed25519 signature>`**, by the [webhook signing key](#webhook-signing-key) of the key service, when it has one (`init` and the AWS template set one up). The receiver checks it with the public key alone: no secret is shared, so neither a leak at the receiver nor anyone who reads its configuration can make it accept a call.
+- **`v1,<base64 HMAC-SHA256>`**, keyed with the base64 part of `WEBHOOK_SECRET` after `whsec_`, when it is set: for receivers that check the shared secret, e.g. one written before madAuth signed `v1a`. With `WEBHOOK_PREVIOUS_SECRET`, one more `v1` signature (see [Changing the webhook secret](#changing-the-webhook-secret)).
+
+A call carries `v1a` first, then the `v1` signatures. A receiver accepts it when one signature it checks is valid, and skips the versions it doesn't know, as the specification says.
+
+madAuth publishes the public keys at `<MADAUTH_ISSUER>/.well-known/webhook-keys.json`, the one that signs first:
+
+```json
+{ "keys": [{ "kty": "OKP", "crv": "Ed25519", "x": "<public key, base64url>", "alg": "Ed25519", "use": "sig", "kid": "<RFC 7638 thumbprint>" }] }
+```
+
+A receiver fetches the list over https, keeps it, and fetches it again when a `v1a` signature matches none of its keys (madAuth may have begun to sign with a new key), but not on every such call: anyone can send a call with a wrong signature. It never trusts a key that comes with a call. A Standard Webhooks library that takes a public key as `whpk_<base64>` gets it from `x`: base64url-decoded, base64-encoded, with `whpk_` in front. Verify each call against the **raw** body before you trust it, and reject calls older than five minutes. In JavaScript:
 
 ```ts
-import { verifyWebhook } from '@madauth/server/webhook';
+import { verifyWebhook, webhookKeys } from '@madauth/server/webhook';
+
+// Once, at start: fetched at the first call, kept for ten minutes, fetched again (at most every 30 seconds) for a key it doesn't know.
+const keys = webhookKeys('https://app.example.com/.well-known/webhook-keys.json');
 
 const body = await request.text();
-if (!verifyWebhook(process.env.WEBHOOK_SECRET!, request.headers, body)) return new Response(null, { status: 401 });
+if (!(await verifyWebhook({ keys }, request.headers, body))) return new Response(null, { status: 401 });
 const { type, data } = JSON.parse(body);
 ```
 
+With a key list, `verifyWebhook` answers a promise: always `await` it, since a promise is truthy whatever it resolves to. `{ keys, secret: process.env.WEBHOOK_SECRET }` accepts a `v1a` or a `v1` signature, e.g. while you [move a receiver to v1a](#moving-a-receiver-to-v1a). With the secret alone, `verifyWebhook(process.env.WEBHOOK_SECRET!, request.headers, body)` checks `v1` and answers at once, as before. `webhookKeys` takes `maxAgeSeconds`, `cooldownSeconds`, `fetch` and `onError` (default: `console.error`; a failed fetch keeps the keys fetched before). The URL must be https, except `localhost`, `127.0.0.1`, `[::1]` and `host.docker.internal`.
+
 The calls contain e-mail links and codes, so `WEBHOOK_URL` must be https, except for a receiver on the same machine (`localhost`, `127.0.0.1`, or `host.docker.internal` from a Docker container). Calls with the same `webhook-id` are the same call; madAuth does not retry by itself.
 
+### Moving a receiver to v1a
+
+A deployment from before madAuth signed `v1a` has `WEBHOOK_SECRET`, and its receiver checks `v1`. Nothing changes for it until it adds a webhook key; then it can move without a gap, and without a breaking upgrade:
+
+1. **Add the webhook key** and restart madAuth: with `local`, `npx @madauth/server generate-key --ed25519` into the set of `MADAUTH_SIGNING_KEY` (`{"keys":[<your ES256 key>,<Ed25519 key>]}`); with `aws-kms`, `npx @madauth/server kms-setup` (or deploy the AWS template, which adds it by itself). Every call now carries both signatures, `v1a` and `v1`, in its one `webhook-signature` header; the receiver still checks `v1` and skips `v1a`. `/.well-known/webhook-keys.json` lists the key.
+2. **Let the receiver check `v1a`**, with the secret still accepted: `verifyWebhook({ keys: webhookKeys('<MADAUTH_ISSUER>/.well-known/webhook-keys.json'), secret: process.env.WEBHOOK_SECRET }, …)`, or for the receivers of [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks), `WEBHOOK_KEYS_URL` next to `WEBHOOK_SECRET`. Check its log: the calls are accepted.
+3. **Remove `WEBHOOK_SECRET`** (and `WEBHOOK_PREVIOUS_SECRET`) from madAuth and restart it: the calls carry `v1a` alone.
+4. **Remove the secret from the receiver**, which checks `v1a` alone from then on. The secret is gone from both sides.
+
+Back to `v1` at any step: put `WEBHOOK_SECRET` back (step 3) or take the key out (step 1). On AWS with the template, see [Moving the receiver to v1a](../deploy/aws/README.md#moving-the-receiver-to-v1a).
+
 ### Changing the webhook secret
+
+For a receiver that checks `v1`. One that checks `v1a` holds no secret, and the [webhook signing key](#webhook-signing-key) is rotated on madAuth's side alone.
 
 madAuth and the receiver share `WEBHOOK_SECRET`, so changing it in one place would make the receiver refuse every call until the other has it too: no e-mails, and with `user.signing_up` no sign-ups. To change it without such a gap, e.g. after it may have leaked:
 
@@ -1158,6 +1205,7 @@ What ends the tokens is what ends the code flow's.
 | `GET`, `POST /auth/oidc/userinfo` | With `Authorization: Bearer <access token>` → `{ sub, email?, email_verified?, name?, claims? }`; 401 `invalid_token` |
 | `GET`, `POST /auth/oidc/logout` | `id_token_hint`, `post_logout_redirect_uri?`, `state?`, `client_id?`: signs the user out of the application and redirects (see [OpenID Connect provider](#openid-connect-provider)); 400 for a missing or wrong `id_token_hint` or an unregistered `post_logout_redirect_uri` |
 | `GET /.well-known/jwks.json` | Public keys to verify sessions and the tokens of the OpenID Connect provider: the ES256 keys, then the RS256 keys if there are any |
+| `GET /.well-known/webhook-keys.json` | Public keys (Ed25519) to verify the webhook calls' `v1a` signatures, the one that signs first; empty without a [webhook signing key](#webhook-signing-key). See [Signatures](#signatures) |
 | `GET /health` | `ok` |
 
 POST requests must come from an origin in `ALLOWED_ORIGINS`, except those with an `Authorization` header (a program's [API key](api-keys.md)) and those to `/auth/oidc/*`, which other applications call from anywhere (with CORS for any origin, without cookies). The admin routes take an admin's API key with the route's scope instead of a session, except those that manage keys. The e-mail endpoints answer 202 whether or not the address has an account, and at most one e-mail per minute is sent to an account. The routes of Google, of GitHub, of e-mail & password, of the e-mail link and of SMS codes return 404 when the method is not configured; the routes that change a signed-in user's methods need a sign-in within the last two minutes (renewals don't count) and answer `401 reauth_required` otherwise; every method's routes return 403 `method_disabled` when it is not on, except the redirect flows' `start` and `callback`, which send the browser back to `return_to` with `madauth_error=method_disabled`.

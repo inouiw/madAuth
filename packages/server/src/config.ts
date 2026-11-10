@@ -2,7 +2,7 @@ import type { JWTVerifyGetKey } from 'jose';
 import { awsIamSignerFromSdk, functionUrlRegion } from './aws-iam.js';
 import { createAwsKmsKeyService, deploymentOf, kmsFromSdk } from './aws-kms.js';
 import { createLocalKeyService, parseSigningKeys, type KeyService } from './key-service.js';
-import { generateSigningKey } from './keys.js';
+import { generateSigningKey, generateWebhookKey } from './keys.js';
 import { isValidEmail, normalizeEmail } from './password.js';
 import type { MethodConfig } from './settings.js';
 import type { StoreAdapter } from './store/schema.js';
@@ -12,6 +12,7 @@ import {
   checkWebhookSecret,
   generateWebhookSecret,
   type WebhookAuth,
+  type WebhookKeySigner,
   type WebhookSettings,
 } from './webhooks.js';
 
@@ -241,7 +242,7 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
     );
   }
 
-  const webhook = await webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_PREVIOUS_SECRET'), read('WEBHOOK_AUTH'), read('WEBHOOK_EVENTS'));
+  const webhook = await webhookFromEnv(read('WEBHOOK_URL'), read('WEBHOOK_SECRET'), read('WEBHOOK_PREVIOUS_SECRET'), read('WEBHOOK_AUTH'), read('WEBHOOK_EVENTS'), keyService);
   // E-mail & password sign-in needs its e-mails sent, so it is on exactly when the webhook handles them.
   const sendsEmails = !!webhook && REQUIRED_EMAIL_TYPES.every((type) => webhook.events.has(type));
   const password = sendsEmails ? {} : undefined;
@@ -437,11 +438,11 @@ async function keyServiceFromEnv(read: (name: keyof typeof envVars) => string | 
     );
   }
   if (!signingKey) {
-    const key = await generateSigningKey();
+    const keys = { keys: [await generateSigningKey(), await generateWebhookKey()] };
     throw new ConfigError(
-      'MADAUTH_SIGNING_KEY is not set. Here is a newly generated key you can use ' +
-        '(keep it secret and use the same key on every instance):\n\n' +
-        `MADAUTH_SIGNING_KEY='${JSON.stringify(key)}'\n`,
+      'MADAUTH_SIGNING_KEY is not set. Here is a newly generated set you can use: a key that signs the sessions and one that signs ' +
+        'the webhook calls (keep it secret and use the same value on every instance):\n\n' +
+        `MADAUTH_SIGNING_KEY='${JSON.stringify(keys)}'\n`,
     );
   }
   const signingKeys = await parseSigningKeys(signingKey);
@@ -470,6 +471,7 @@ async function webhookFromEnv(
   previousSecret: string | undefined,
   auth: string | undefined,
   events: string | undefined,
+  keyService: KeyService,
 ): Promise<WebhookSettings | undefined> {
   if (!url) {
     if (secret || previousSecret || auth || events) {
@@ -487,7 +489,7 @@ async function webhookFromEnv(
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && LOCAL_HOSTS.includes(parsed.hostname))) {
     throw new ConfigError(`WEBHOOK_URL must be an https URL (http only for localhost) but is "${url}".`);
   }
-  const signing = await webhookSigning(parsed.href, secret, previousSecret, auth);
+  const signing = await webhookSigning(parsed.href, secret, previousSecret, auth, keyService);
   // Nothing is sent that the receiver did not ask for: a type it does not know could make it answer with an
   // error, and an unanswered user.signing_up refuses every sign-up.
   const selected = new Set((events ?? '').split(',').map((e) => e.trim()).filter(Boolean));
@@ -515,10 +517,17 @@ async function webhookFromEnv(
 }
 
 /**
- * How the webhook calls are signed: with WEBHOOK_SECRET (and WEBHOOK_PREVIOUS_SECRET while the secret is being changed),
- * or with WEBHOOK_AUTH=aws-iam with madAuth's AWS credentials, for a receiver behind a Lambda Function URL with AWS_IAM auth.
+ * How the webhook calls are signed: with the key service's webhook key (v1a) if it has one, and with WEBHOOK_SECRET (v1;
+ * and WEBHOOK_PREVIOUS_SECRET while the secret is being changed) if it is set, at least one of them; or with
+ * WEBHOOK_AUTH=aws-iam with madAuth's AWS credentials, for a receiver behind a Lambda Function URL with AWS_IAM auth.
  */
-async function webhookSigning(url: string, secret: string | undefined, previousSecret: string | undefined, auth: string | undefined): Promise<WebhookAuth> {
+async function webhookSigning(
+  url: string,
+  secret: string | undefined,
+  previousSecret: string | undefined,
+  auth: string | undefined,
+  keyService: KeyService,
+): Promise<WebhookAuth> {
   if (auth === 'aws-iam') {
     // As with MADAUTH_KEY_SERVICE=aws-kms: no secret is left in a variable, where it would still let others call the receiver.
     const set = [...(secret ? ['WEBHOOK_SECRET'] : []), ...(previousSecret ? ['WEBHOOK_PREVIOUS_SECRET'] : [])];
@@ -539,25 +548,38 @@ async function webhookSigning(url: string, secret: string | undefined, previousS
     if ('problem' in sdk) throw new ConfigError(`WEBHOOK_AUTH=aws-iam: ${sdk.problem}. AWS Lambda has the SDK; elsewhere, install it next to madAuth.`);
     return { awsIam: sdk.signer };
   }
-  if (auth) throw new ConfigError(`WEBHOOK_AUTH must be aws-iam, or not set to sign the calls with WEBHOOK_SECRET, but is "${auth}".`);
+  if (auth) throw new ConfigError(`WEBHOOK_AUTH must be aws-iam, or not set to sign the calls with the webhook key or WEBHOOK_SECRET, but is "${auth}".`);
+  // The key service's webhook key signs every call (v1a) when it has one at start; a key service of one's own may have none.
+  const hasWebhookKey = !!keyService.signWebhook && ((await keyService.webhookKeys?.()) ?? []).length > 0;
+  const ed25519 = hasWebhookKey ? { ed25519: webhookKeySigner(keyService) } : {};
   if (!secret) {
+    if (previousSecret) throw new ConfigError('WEBHOOK_PREVIOUS_SECRET is set without WEBHOOK_SECRET: it is the secret WEBHOOK_SECRET had before. Remove it.');
+    if (hasWebhookKey) return ed25519;
     throw new ConfigError(
-      'WEBHOOK_SECRET is not set. Here is a newly generated secret you can use (keep it secret; your ' +
-        `webhook receiver needs the same one):\n\nWEBHOOK_SECRET=${generateWebhookSecret()}\n`,
+      'The webhook calls need a signature, but the key service has no webhook key and WEBHOOK_SECRET is not set. Add an Ed25519 key, ' +
+        'whose public key receivers fetch from /.well-known/webhook-keys.json: with MADAUTH_KEY_SERVICE=local, generate one with ' +
+        'npx @madauth/server generate-key --ed25519 and add it to the set in MADAUTH_SIGNING_KEY ({"keys":[<signing key>,<webhook key>]}); ' +
+        'with aws-kms, run npx @madauth/server kms-setup (the AWS template creates it). Or, for a receiver that checks a shared secret, ' +
+        `set WEBHOOK_SECRET, e.g. this newly generated one:\n\nWEBHOOK_SECRET=${generateWebhookSecret()}\n\nSee "Signatures" in docs/server.md.`,
     );
   }
   const problem = checkWebhookSecret(secret);
   if (problem) {
     throw new ConfigError(`WEBHOOK_SECRET ${problem}. Generate one with: npx @madauth/server generate-webhook-secret`);
   }
-  if (!previousSecret) return { secret };
+  if (!previousSecret) return { ...ed25519, secret };
   const previousProblem = checkWebhookSecret(previousSecret);
   if (previousProblem) throw new ConfigError(`WEBHOOK_PREVIOUS_SECRET ${previousProblem}: it is the secret WEBHOOK_SECRET had before.`);
   console.warn(
     '[madauth] WEBHOOK_PREVIOUS_SECRET is set: every webhook call is signed with it and with WEBHOOK_SECRET. Remove it once your ' +
       'receiver has the new secret. See "Changing the webhook secret" in docs/server.md.',
   );
-  return { secret, previousSecret };
+  return { ...ed25519, secret, previousSecret };
+}
+
+/** The `v1a` signer of the key service's webhook key; a failure (e.g. KMS unreachable) is a problem, not an exception. */
+function webhookKeySigner(keyService: KeyService): WebhookKeySigner {
+  return (content) => keyService.signWebhook!(content).catch((e: unknown) => ({ problem: e instanceof Error ? e.message : String(e) }));
 }
 
 /** Whether `host` is `domain` or one of its subdomains, as WebAuthn requires of a page and its passkeys' domain. */

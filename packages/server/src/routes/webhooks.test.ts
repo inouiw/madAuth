@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ALL_EVENTS,
   APP_ORIGIN,
+  ISSUER,
   REDIRECT_TO,
   WEBHOOK_SECRET,
   WEBHOOK_URL,
@@ -16,8 +17,11 @@ import {
   signUpVerified,
   verify,
   setMethods,
+  signingKey,
 } from '../test/helpers.js';
-import { generateWebhookSecret } from '../webhooks.js';
+import { createLocalKeyService } from '../key-service.js';
+import { generateWebhookKey } from '../keys.js';
+import { WEBHOOK_KEYS_PATH, generateWebhookSecret, verifyWebhook, webhookKeys } from '../webhooks.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -388,5 +392,40 @@ describe('user.signed_up', () => {
     await verify(google.app, await googleIdToken({ nonce }), cookie);
     expect(google.hook.types()).toEqual(['user.signed_up', 'user.signed_in']);
     expect(google.hook.calls[0].data).toMatchObject({ method: 'google' });
+  });
+});
+
+describe('webhook calls signed with the webhook key (v1a)', () => {
+  it('V6: madAuth publishes the webhook keys, and a receiver that fetched them accepts its calls without a shared secret', async () => {
+    const keyService = await createLocalKeyService([signingKey, await generateWebhookKey()]);
+    // The receiver: madAuth's key list, fetched from the app itself, and nothing else.
+    let app: App | undefined;
+    const keys = webhookKeys(`${ISSUER}${WEBHOOK_KEYS_PATH}`, { fetch: ((url: string) => app!.request(new URL(url).pathname)) as typeof fetch });
+    const received: string[] = [];
+    const receiver = (async (_url: string, init: RequestInit) => {
+      const body = String(init.body);
+      if (!(await verifyWebhook({ keys }, new Headers(init.headers), body))) return new Response(null, { status: 401 });
+      received.push(body);
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    app = passwordApp({
+      keyService,
+      webhook: { url: WEBHOOK_URL, events: ALL_EVENTS, ed25519: (content) => keyService.signWebhook!(content) },
+      webhookFetch: receiver,
+    }).app;
+
+    const published = await app.request(WEBHOOK_KEYS_PATH);
+    expect(published.headers.get('cache-control')).toBe('public, max-age=300');
+    expect(await published.json()).toEqual({ keys: await keyService.webhookKeys!() });
+    // Not among the keys that verify sessions.
+    expect(((await (await app.request('/.well-known/jwks.json')).json()) as { keys: { kty: string }[] }).keys.map((key) => key.kty)).toEqual(['EC']);
+
+    expect((await signUp(app)).status).toBe(202);
+    expect(received.map((body) => JSON.parse(body).type)).toContain('email.send_verification');
+  });
+
+  it('V6: a server without a webhook key publishes an empty list', async () => {
+    const { app } = passwordApp();
+    expect(await (await app.request(WEBHOOK_KEYS_PATH)).json()).toEqual({ keys: [] });
   });
 });

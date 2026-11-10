@@ -1,7 +1,8 @@
+import { generateKeyPairSync, randomUUID, sign, type KeyObject } from 'node:crypto';
 import { SignatureV4 } from '@smithy/signature-v4';
 import { describe, expect, it, vi } from 'vitest';
 import { Sha256, createAwsIamSigner } from './aws-iam.js';
-import { WEBHOOK_TYPES, createWebhookClient, generateWebhookSecret, signWebhook, verifyWebhook } from './webhooks.js';
+import { WEBHOOK_TYPES, createWebhookClient, generateWebhookSecret, signWebhook, verifyWebhook, webhookKeys, type WebhookKeySigner } from './webhooks.js';
 
 // The example from the Standard Webhooks specification, so other implementations can verify our calls.
 // It is a public example key; it is split so secret scanners don't mistake it for a real (e.g. Stripe) secret.
@@ -177,5 +178,144 @@ describe('webhook client with AWS IAM (WEBHOOK_AUTH=aws-iam)', () => {
 
     expect(await client.call('email.send_verification', {}, 1000)).toEqual({ ok: false, reason: 'could not sign the call with AWS IAM: no credentials' });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('asymmetric signatures (v1a, Ed25519)', () => {
+  const KEYS_URL = 'https://app.example.com/.well-known/webhook-keys.json';
+  const pair = () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    return { privateKey, jwk: { ...publicKey.export({ format: 'jwk' }), alg: 'Ed25519', use: 'sig', kid: randomUUID() } };
+  };
+  const signer =
+    (privateKey: KeyObject): WebhookKeySigner =>
+    async (content) => ({ signature: new Uint8Array(sign(null, content, privateKey)) });
+  /** A madAuth that serves `published()` at KEYS_URL, counting the fetches. */
+  const served = (published: () => object[]) => {
+    const fetches = { count: 0 };
+    const fetchImpl = (async (url: string) => {
+      fetches.count++;
+      return url === KEYS_URL ? Response.json({ keys: published() }) : new Response(null, { status: 404 });
+    }) as typeof fetch;
+    return { fetches, fetchImpl };
+  };
+  /** Sends one call with `auth` and returns its headers and body as the receiver gets them. */
+  async function sent(auth: Parameters<typeof createWebhookClient>[0]) {
+    let received: { headers: Headers; body: string } | undefined;
+    const result = await createWebhookClient(auth, (async (_url: string, init: RequestInit) => {
+      received = { headers: new Headers(init.headers), body: String(init.body) };
+      return new Response(null, { status: 204 });
+    }) as typeof fetch).call('user.signed_in', { user: { id: 'usr_1' } }, 1000);
+    return { result, ...received! };
+  }
+  const base = { url: 'https://hooks.example.com/x', events: new Set<string>(WEBHOOK_TYPES) };
+
+  it('V1: signs with the webhook key alone, and a receiver with the published key accepts it; no shared secret', async () => {
+    const key = pair();
+    const { fetchImpl } = served(() => [key.jwk]);
+    const { headers, body } = await sent({ ...base, ed25519: signer(key.privateKey) });
+
+    expect(headers.get('webhook-signature')).toMatch(/^v1a,[A-Za-z0-9+/]{86}==$/);
+    const keys = webhookKeys(KEYS_URL, { fetch: fetchImpl });
+    expect(await verifyWebhook({ keys }, headers, body)).toBe(true);
+    expect(await verifyWebhook({ keys }, headers, body.replace('usr_1', 'usr_2'))).toBe(false);
+    // A key of someone else's: rejected.
+    expect(await verifyWebhook({ keys: webhookKeys(KEYS_URL, { fetch: served(() => [pair().jwk]).fetchImpl }) }, headers, body)).toBe(false);
+    // Old calls are rejected as with v1.
+    expect(await verifyWebhook({ keys }, headers, body, { now: Date.now() + 301_000 })).toBe(false);
+    // The string form checks v1 only: no secret matches a v1a signature.
+    expect(verifyWebhook(generateWebhookSecret(), headers, body)).toBe(false);
+  });
+
+  it('V2: with WEBHOOK_SECRET too, both signatures in one header, v1a first; a receiver of either kind accepts it', async () => {
+    const key = pair();
+    const secret = generateWebhookSecret();
+    const { headers, body } = await sent({ ...base, ed25519: signer(key.privateKey), secret });
+
+    expect(headers.get('webhook-signature')).toMatch(/^v1a,\S+ v1,\S+$/);
+    expect(verifyWebhook(secret, headers, body)).toBe(true);
+    const keys = webhookKeys(KEYS_URL, { fetch: served(() => [key.jwk]).fetchImpl });
+    expect(await verifyWebhook({ keys }, headers, body)).toBe(true);
+    expect(await verifyWebhook({ keys, secret }, headers, body)).toBe(true);
+    // A receiver moving to v1a accepts a call signed with the secret alone too.
+    const v1Only = await sent({ ...base, secret });
+    expect(await verifyWebhook({ keys, secret }, v1Only.headers, v1Only.body)).toBe(true);
+    expect(await verifyWebhook({ keys }, v1Only.headers, v1Only.body)).toBe(false);
+  });
+
+  it('V3: without its v1a signature (e.g. too long for KMS) a call goes with v1 alone; with no signature at all it is not sent', async () => {
+    const failing: WebhookKeySigner = async () => ({ problem: 'too long' });
+    const secret = generateWebhookSecret();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const withSecret = await sent({ ...base, ed25519: failing, secret });
+    expect(withSecret.headers.get('webhook-signature')).toMatch(/^v1,\S+$/);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('without its v1a signature'));
+    warn.mockRestore();
+
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    expect(await createWebhookClient({ ...base, ed25519: failing }, fetchImpl).call('user.signed_in', {}, 1000)).toEqual({
+      ok: false,
+      reason: 'could not sign the call with the webhook key (v1a): too long',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('V4: the receiver caches the keys, and fetches them again for a key it does not know, at most every 30 seconds', async () => {
+    const first = pair();
+    const second = pair();
+    let published = [first.jwk];
+    const { fetches, fetchImpl } = served(() => published);
+    const keys = webhookKeys(KEYS_URL, { fetch: fetchImpl });
+    const start = Date.now();
+    const byFirst = await sent({ ...base, ed25519: signer(first.privateKey) });
+    const bySecond = await sent({ ...base, ed25519: signer(second.privateKey) });
+    // The calls stay within their five minutes while the clock moves on.
+    const at = (ms: number) => ({ now: start + ms });
+
+    vi.useFakeTimers({ toFake: ['Date'], now: start });
+    try {
+      expect(await verifyWebhook({ keys }, byFirst.headers, byFirst.body, at(0))).toBe(true);
+      expect(await verifyWebhook({ keys }, byFirst.headers, byFirst.body, at(0))).toBe(true);
+      expect(fetches.count).toBe(1);
+      // madAuth signs with a new key: an unknown signature fetches the list again, once within the cooldown.
+      published = [second.jwk, first.jwk];
+      vi.setSystemTime(start + 31_000);
+      expect(await verifyWebhook({ keys }, bySecond.headers, bySecond.body, at(31_000))).toBe(true);
+      expect(fetches.count).toBe(2);
+      const forged = new Headers(bySecond.headers);
+      forged.set('webhook-signature', `v1a,${Buffer.alloc(64).toString('base64')}`);
+      expect(await verifyWebhook({ keys }, forged, bySecond.body, at(31_000))).toBe(false);
+      expect(await verifyWebhook({ keys }, forged, bySecond.body, at(31_000))).toBe(false);
+      expect(fetches.count).toBe(2);
+      // A call without any v1a signature fetches nothing.
+      forged.set('webhook-signature', 'v1,AAAA');
+      vi.setSystemTime(start + 62_000);
+      expect(await verifyWebhook({ keys }, forged, bySecond.body, at(62_000))).toBe(false);
+      expect(fetches.count).toBe(2);
+      // After ten minutes, the list is fetched again anyway.
+      vi.setSystemTime(start + 31_000 + 600_000);
+      await keys.keys();
+      expect(fetches.count).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('V5: a failed fetch keeps the keys fetched before and says so; the URL must be https or on this machine', async () => {
+    const key = pair();
+    let up = true;
+    const errors: string[] = [];
+    const fetchImpl = (async () =>
+      up ? Response.json({ keys: [key.jwk, { kty: 'EC' }, { kty: 'OKP', crv: 'Ed25519', x: 'short' }] }) : new Response(null, { status: 503 })) as typeof fetch;
+    const keys = webhookKeys(KEYS_URL, { fetch: fetchImpl, cooldownSeconds: 0, onError: (message) => errors.push(message) });
+    // What isn't an Ed25519 key is left out.
+    expect(await keys.keys()).toHaveLength(1);
+    up = false;
+    expect(await keys.refresh()).toHaveLength(1);
+    expect(errors).toEqual([`[madauth] Could not fetch the webhook keys from ${KEYS_URL}: HTTP 503. The keys fetched before stay.`]);
+
+    expect(() => webhookKeys('http://auth.example.com/.well-known/webhook-keys.json')).toThrow(/must be https/);
+    expect(() => webhookKeys('not a url')).toThrow(/must be https/);
+    expect(() => webhookKeys('http://localhost:8787/.well-known/webhook-keys.json')).not.toThrow();
   });
 });

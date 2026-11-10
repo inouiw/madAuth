@@ -28,13 +28,13 @@ Create the server's configuration from the example. It uses a Google client that
 cp packages/server/.env.example packages/server/.env
 ```
 
-Start the madAuth server. The first start prints a signing key, then a webhook secret; copy each into `packages/server/.env` (`MADAUTH_SIGNING_KEY`, `WEBHOOK_SECRET`) and start again:
+Start the madAuth server. The first start prints a set of keys (the signing key and the Ed25519 key that signs the webhook calls); copy it into `packages/server/.env` as `MADAUTH_SIGNING_KEY` and start again:
 
 ```bash
 npm run dev:server
 ```
 
-In a second terminal, start the development receiver from the [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks) repository. The confirmation and reset e-mails appear there, with their links and codes. Get it once, next to this repository. Its `.env` (see its [README](https://github.com/inouiw/madAuth-webhooks/tree/main/dev-receiver)) is linked to `packages/server/.env`, so it always has the server's `WEBHOOK_URL` and `WEBHOOK_SECRET`:
+In a second terminal, start the development receiver from the [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks) repository. The confirmation and reset e-mails appear there, with their links and codes. Get it once, next to this repository. Its `.env` (see its [README](https://github.com/inouiw/madAuth-webhooks/tree/main/dev-receiver)) is linked to `packages/server/.env`, so it always has the server's `WEBHOOK_URL` (and `WEBHOOK_SECRET`, if you set one). It checks each call with the public key it fetches from the server's `/.well-known/webhook-keys.json` (`WEBHOOK_KEYS_URL`, by default `http://localhost:8787/.well-known/webhook-keys.json`):
 
 ```bash
 git clone https://github.com/inouiw/madAuth-webhooks.git ../madAuth-webhooks && npm install --prefix ../madAuth-webhooks/dev-receiver && ln -s "$PWD/packages/server/.env" ../madAuth-webhooks/dev-receiver/.env

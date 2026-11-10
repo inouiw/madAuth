@@ -1,5 +1,6 @@
 // The AWS KMS key service, and setting up and rotating its keys. Behaviour described in "AWS KMS" in
 // docs/server.md; update the doc when changing it.
+import { createPublicKey, verify, type webcrypto } from 'node:crypto';
 import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { aliasPrefix, createAwsKmsKeyService, deploymentOf, derToJose } from './aws-kms.js';
@@ -96,17 +97,19 @@ describe('the AWS KMS key service', () => {
 });
 
 describe('setting up and rotating the KMS keys', () => {
-  it('KR1: kms-setup creates the three keys under their aliases once', async () => {
+  it('KR1: kms-setup creates the four keys under their aliases once', async () => {
     const { kms, aliases } = fakeKms();
     const prefix = aliasPrefix(DEPLOYMENT);
 
-    expect(await setUpKmsKeys(kms, DEPLOYMENT, START)).toHaveLength(3);
+    expect(await setUpKmsKeys(kms, DEPLOYMENT, START)).toHaveLength(4);
     expect([...aliases.keys()].sort()).toEqual([
       `${prefix}/encryption`,
       `${prefix}/mac`,
       `${prefix}/mac/20261017T120000Z`,
       `${prefix}/signing`,
       `${prefix}/signing/20261017T120000Z`,
+      `${prefix}/webhook`,
+      `${prefix}/webhook/20261017T120000Z`,
     ]);
     expect(await setUpKmsKeys(kms, DEPLOYMENT, START + DAY)).toEqual([]);
 
@@ -121,7 +124,7 @@ describe('setting up and rotating the KMS keys', () => {
   it('KR2: a key a year old gets a successor that is published first and used two hours later', async () => {
     const { kms, aliases } = fakeKms();
     const prefix = aliasPrefix(DEPLOYMENT);
-    await setUpKmsKeys(kms, DEPLOYMENT, START);
+    await setUpKmsKeys(kms, DEPLOYMENT, START, { webhook: false });
     const first = aliases.get(`${prefix}/signing`)!;
 
     expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 364 * DAY)).done).toEqual([]);
@@ -148,7 +151,7 @@ describe('setting up and rotating the KMS keys', () => {
   it('KR3: the old signing key is disabled and its alias removed once its sessions have expired; old hash keys stay', async () => {
     const { kms, aliases, keys, calls } = fakeKms();
     const prefix = aliasPrefix(DEPLOYMENT);
-    await setUpKmsKeys(kms, DEPLOYMENT, START);
+    await setUpKmsKeys(kms, DEPLOYMENT, START, { webhook: false });
     const oldSigning = aliases.get(`${prefix}/signing`)!;
     const oldMac = aliases.get(`${prefix}/mac`)!;
     await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY);
@@ -228,6 +231,50 @@ describe('setting up and rotating the KMS keys', () => {
     // Half of it gone: the rotation says so, like for the other keys.
     aliases.delete(`${prefix}/signing-rsa`);
     expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 400 * DAY)).problems).toEqual([`There is no signing-rsa key with its aliases under ${prefix}: run kms-setup --rs256 first.`]);
+  });
+
+  it('KR7: the webhook key signs v1a in Ed25519, is published apart from the JWKS, and is rotated; an old one retires a day after', async () => {
+    const { kms, aliases, keys: kmsKeys } = fakeKms();
+    const prefix = aliasPrefix(DEPLOYMENT);
+    // A deployment set up without it has none, and its rotation doesn't ask for one.
+    await setUpKmsKeys(kms, DEPLOYMENT, START, { webhook: false });
+    expect(await (await keyServiceOf(kms)).webhookKeys!()).toEqual([]);
+    expect(await (await keyServiceOf(kms)).signWebhook!(new Uint8Array(1))).toEqual({ problem: `there is no webhook signing key under ${prefix}/webhook` });
+    expect(await rotateKmsKeys(kms, DEPLOYMENT, START + DAY)).toEqual({ done: [], problems: [] });
+    // Setting up again adds it (the default).
+    expect(await setUpKmsKeys(kms, DEPLOYMENT, START)).toEqual([expect.stringMatching(new RegExp(`^Created the webhook key key-\\d+ \\(${prefix}/webhook\\)\\.$`))]);
+
+    const keys = await keyServiceOf(kms);
+    const [published] = await keys.webhookKeys!();
+    expect(published).toMatchObject({ kty: 'OKP', crv: 'Ed25519', alg: 'Ed25519', use: 'sig', kid: expect.any(String) });
+    expect(published).not.toHaveProperty('d');
+    expect((await keys.verificationKeys()).map((key) => key.alg)).toEqual(['ES256']);
+    const content = new TextEncoder().encode('msg_1.1700000000.{}');
+    const signed = await keys.signWebhook!(content);
+    if (!('signature' in signed)) throw new Error(signed.problem);
+    expect(signed.signature).toHaveLength(64);
+    expect(verify(null, content, createPublicKey({ key: published as webcrypto.JsonWebKey, format: 'jwk' }), signed.signature)).toBe(true);
+    // KMS signs pure Ed25519 only as the message is: up to 4096 bytes.
+    expect(await keys.signWebhook!(new Uint8Array(4097))).toEqual({ problem: 'the call is 4097 bytes long to sign, and AWS KMS signs at most 4096 with Ed25519' });
+
+    // Rotated with the others: published two hours before it signs; the old one goes a day after.
+    const first = aliases.get(`${prefix}/webhook`)!;
+    expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY)).done).toContainEqual(expect.stringMatching(/^Created the webhook key/));
+    expect(await (await keyServiceOf(kms)).webhookKeys!()).toHaveLength(2);
+    expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + 2 * HOUR)).done).toContainEqual(expect.stringMatching(/^The webhook key key-\d+ is used from now on/));
+    const rotated = await keyServiceOf(kms);
+    expect((await rotated.webhookKeys!())[0]!.kid).not.toBe(published!.kid);
+    expect((await rotateKmsKeys(kms, DEPLOYMENT, START + 365 * DAY + 2 * HOUR + DAY)).done).toContainEqual(
+      `Disabled the webhook key ${first} and removed ${prefix}/webhook/20261017T120000Z: the calls it signed are checked.`,
+    );
+    expect(kmsKeys.get(first)!.enabled).toBe(false);
+    expect(await (await keyServiceOf(kms)).webhookKeys!()).toHaveLength(1);
+
+    // Disabled by hand: the server runs on without v1a, and says so.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await kms.disableKey(aliases.get(`${prefix}/webhook`)!);
+    expect(await (await keyServiceOf(kms)).webhookKeys!()).toEqual([]);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining(`${prefix}/webhook is disabled`));
   });
 
   it("KR5: the server's role may only use keys with its deployment's aliases", () => {
