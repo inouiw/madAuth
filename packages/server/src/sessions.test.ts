@@ -41,6 +41,7 @@ const sessionsOf = async (app: App, cookie: string) => ((await (await list(app, 
 const check = (app: App, cookie: string) => app.request('/auth/session', { headers: { Cookie: cookie } });
 const renewalOnly = (cookie: string) => cookie.split('; ').find((c) => c.startsWith('madauth_renewal='))!;
 const sidOf = (cookie: string, name = 'madauth_session') => decodeJwt(cookie.split('; ').find((c) => c.startsWith(`${name}=`))!.split('=')[1]).sid as string;
+const sidOwner = (cookie: string) => decodeJwt(cookie.split('; ').find((c) => c.startsWith('madauth_session='))!.split('=')[1]).sub!;
 const ended = (hook: RecordingWebhook) => hook.calls.filter((call) => call.type === 'user.session_ended').map((call) => call.data);
 
 function sessionsApp() {
@@ -207,6 +208,31 @@ describe("the user's sessions", () => {
   });
 });
 
+describe('an ended session before its renewal', () => {
+  it('SE13: makes no sensitive change, although its sign-in is recent and its token valid', async () => {
+    const { app } = sessionsApp();
+    const taken = await signInFrom(app, FIREFOX_MAC, '198.51.100.9');
+    const owner = await signInFrom(app, SAFARI_IPHONE, '203.0.113.8');
+    expect((await post(app, '/auth/sessions/end', { id: sidOf(taken) }, { Cookie: owner })).status).toBe(204);
+
+    expect((await check(app, taken)).status).toBe(200);
+    expect(await (await post(app, '/auth/sessions/end-others', {}, { Cookie: taken })).json()).toMatchObject({ error: 'reauth_required' });
+    expect((await sessionsOf(app, owner)).map((s) => s.id)).toEqual([sidOf(owner)]);
+  });
+
+  it("SE14: a password change doesn't bring it back", async () => {
+    const { app, hook, store } = sessionsApp();
+    await signUpVerified(app, hook);
+    const signInWithPassword = async (agent: string) => cookieHeader(await post(app, '/auth/password/signin', { email: 'grace@example.com', password: 'correct horse battery' }, { 'User-Agent': agent }));
+    const taken = await signInWithPassword(FIREFOX_MAC);
+    await store.delete('session', { id: sidOf(taken) });
+
+    const res = await post(app, '/auth/password/change', { current: 'correct horse battery', password: 'another horse battery' }, { Cookie: taken });
+    expect(cookies(res).madauth_session).toMatchObject({ value: '' });
+    expect(await store.findOne('session', { id: sidOf(taken) })).toBeNull();
+  });
+});
+
 describe("an admin and a user's sessions", () => {
   it('SE8: an admin lists a user\'s sessions by id and ends one or all of them, told with `by`', async () => {
     const { app, hook, store } = sessionsApp();
@@ -234,6 +260,11 @@ describe("an admin and a user's sessions", () => {
     const all = await post(app, '/auth/admin/sessions/end', { userId: graceId, id: 'all' }, { Cookie: ada });
     expect(await all.json()).toMatchObject({ ended: 1 });
     expect(await store.findMany('session', { userId: graceId })).toEqual([]);
+
+    // An admin who ends their own session is signed out at once.
+    const own = await post(app, '/auth/admin/sessions/end', { userId: sidOwner(ada), id: sidOf(ada) }, { Cookie: ada });
+    expect(await own.json()).toMatchObject({ ended: 1 });
+    expect(cookies(own).madauth_session).toMatchObject({ value: '' });
 
     // Ending takes a recent sign-in, like every change of the admin API.
     advance(3 * MINUTE);

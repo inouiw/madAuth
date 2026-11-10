@@ -18,7 +18,7 @@ import { appleRoutes, revokeAppleGrant } from './routes/apple.js';
 import { githubRoutes, revokeGrant } from './routes/github.js';
 import { googleRoutes } from './routes/google.js';
 import { oidcRoutes } from './routes/oidc.js';
-import { body, error, reauthRequired, signedInUser } from './routes/helpers.js';
+import { body, error, isRecent, reauthRequired, signedInUser } from './routes/helpers.js';
 import { passwordRoutes } from './routes/password.js';
 import { clearChallenge, isSetupStep, setChallenge, type NextStep } from './routes/challenge.js';
 import { appOriginOf } from './routes/oauth.js';
@@ -96,7 +96,7 @@ export interface SignIn {
 
 /**
  * Why a session ended, as `user.session_ended` tells it: `ended` from another session of the user's or by an admin,
- * `signed_out` at its browser, `replaced` by a new sign-in at its browser.
+ * `signed_out` at its browser (also by a sign-in there that goes on to a second step), `replaced` by a new session there.
  */
 export type SessionEndReason = 'ended' | 'signed_out' | 'replaced';
 
@@ -484,10 +484,14 @@ export function createApp(config: MadauthConfig): Hono {
     },
     async continueSession(c, { user, amr, signedInAt, sessionId }, sv) {
       const authTime = signedInAt === null ? null : Math.floor(signedInAt / 1000);
-      // The record goes on with the new session version; one that is gone (ended meanwhile) is made anew.
-      const kept = sessionId !== null && (await sessions.renew(sessionId, user.id, device(c), sv));
-      const sid = kept ? sessionId : newSessionId();
-      if (!kept) await sessions.start({ id: sid, userId: user.id, sessionVersion: sv, authTime, amr, device: device(c) });
+      // The record goes on with the new session version. One that is gone was ended meanwhile: it stays ended.
+      if (sessionId !== null && !(await sessions.renew(sessionId, user.id, device(c), sv))) {
+        clearSession(c);
+        return;
+      }
+      // A session from before madAuth 0.7.5 gets its record now.
+      const sid = sessionId ?? newSessionId();
+      if (sessionId === null) await sessions.start({ id: sid, userId: user.id, sessionVersion: sv, authTime, amr, device: device(c) });
       await issueSession(c, user, amr, { sv, ...(authTime !== null ? { auth_time: authTime } : {}), sid });
     },
     async signOut(c) {
@@ -512,7 +516,7 @@ export function createApp(config: MadauthConfig): Hono {
       if (next) {
         // A sign-in that goes on with a second step ends the session there was at this browser, if any:
         // whoever was signed in is signed out until the step is done, so the setup can't be taken for theirs.
-        await endBrowserSession(c, 'replaced');
+        await endBrowserSession(c, 'signed_out');
         clearSession(c);
         // Only what the session will show; the cookie is signed, not encrypted.
         const known = { ...(profile?.name ? { name: profile.name } : {}), ...(profile?.picture ? { picture: profile.picture } : {}) };
@@ -760,7 +764,7 @@ export function createApp(config: MadauthConfig): Hono {
   const admin = async (
     c: Context,
     scope?: MadauthScope,
-  ): Promise<{ id: string; email: string; byApiKey?: { id: string; name: string }; sessionId?: string | null } | { answer: Response }> => {
+  ): Promise<{ id: string; email: string; byApiKey?: { id: string; name: string }; signIn?: SignIn } | { answer: Response }> => {
     if (c.req.header('authorization') !== undefined) {
       if (!scope) return { answer: c.json({ error: 'forbidden', message: "API keys can't manage API keys: sign in as an admin." }, 403) };
       const caller = await keyCaller(c, ctx, apiKeys);
@@ -788,7 +792,7 @@ export function createApp(config: MadauthConfig): Hono {
     }
     // An admin exists, so the setup token of a deployment from before 0.7 stops working too.
     await setup.close();
-    return { id: user.id, email, sessionId: signIn.sessionId };
+    return { id: user.id, email, signIn };
   };
 
   /**
@@ -798,7 +802,8 @@ export function createApp(config: MadauthConfig): Hono {
   const adminChange = async (c: Context, scope: MadauthScope): ReturnType<typeof admin> => {
     const caller = await admin(c, scope);
     if ('answer' in caller) return caller;
-    if (!caller.byApiKey && !(await signedInUser(c, ctx))?.recent) return { answer: reauthRequired(c) };
+    // The sign-in admin() read: the request's session isn't renewed a second time.
+    if (caller.signIn && !(await isRecent(ctx, caller.signIn))) return { answer: reauthRequired(c) };
     return caller;
   };
 
@@ -823,7 +828,7 @@ export function createApp(config: MadauthConfig): Hono {
     }
     const caller = need === 'change' && scope ? await adminChange(c, scope) : await admin(c, need === 'session' ? undefined : scope);
     if ('answer' in caller) return caller;
-    if (need === 'session' && !(await signedInUser(c, ctx))?.recent) return { answer: reauthRequired(c) };
+    if (need === 'session' && !(caller.signIn && (await isRecent(ctx, caller.signIn)))) return { answer: reauthRequired(c) };
     return { by: caller.email, setup: false, ...byApiKey(caller) };
   };
   /** What an event made with an API key adds: the key, next to its user's address in `by`. */
@@ -1101,7 +1106,7 @@ export function createApp(config: MadauthConfig): Hono {
     if (c.req.header('authorization') !== undefined) return { answer: c.json({ error: 'forbidden', message: byKey }, 403) };
     const caller = await admin(c);
     if ('answer' in caller) return caller;
-    if (!(await signedInUser(c, ctx))?.recent) return { answer: reauthRequired(c) };
+    if (!(caller.signIn && (await isRecent(ctx, caller.signIn)))) return { answer: reauthRequired(c) };
     return caller;
   };
   const clientsByKey = "An API key can't change the applications that sign in with madAuth: an admin signs in to do it.";
@@ -1233,7 +1238,7 @@ export function createApp(config: MadauthConfig): Hono {
     const user = await userById(c, (await body(c)).userId);
     if (user instanceof Response) return user;
     const list = await sessions.list(user.id, user.sessionVersion);
-    return c.json({ email: user.emailNormalized, userId: user.id, sessions: list.map((session) => sessionInfo(session, caller.sessionId ?? null)) });
+    return c.json({ email: user.emailNormalized, userId: user.id, sessions: list.map((session) => sessionInfo(session, caller.signIn?.sessionId ?? null)) });
   });
 
   // `id: "all"` ends every session of the user. Each ends at its next renewal, within SESSION_TTL.
@@ -1248,6 +1253,9 @@ export function createApp(config: MadauthConfig): Hono {
     if (data.id !== 'all' && !one) return sessionNotFound(c);
     const ended = one ? [one] : await sessions.endAll(user.id, user.sessionVersion);
     await ctx.sessionsEnded(user, ended, 'ended', { by: caller.email, ...byApiKey(caller) });
+    // An admin who ends their own session here is signed out at once, as on the user's route.
+    const ownSession = caller.signIn?.sessionId;
+    if (ownSession && ended.some((session) => session.id === ownSession)) await ctx.signOut(c);
     return c.json({ email: user.emailNormalized, userId: user.id, ended: ended.length });
   });
 

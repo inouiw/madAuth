@@ -130,6 +130,11 @@ export class Sessions {
     return all.filter((session) => isGoing(session, sessionVersion, now)).sort((a, b) => b.renewedAt - a.renewedAt);
   }
 
+  /** Whether a session of the user still has its record, i.e. was not ended (its token may still be valid). */
+  async exists(userId: string, id: string): Promise<boolean> {
+    return (await this.store.findOne('session', { id, userId })) !== null;
+  }
+
   /** Ends a session of the user: resolves to it if this request deleted it, null if it was gone. */
   async end(userId: string, id: string): Promise<StoredSession | null> {
     const session = (await this.store.findOne('session', { id, userId })) as unknown as StoredSession | null;
