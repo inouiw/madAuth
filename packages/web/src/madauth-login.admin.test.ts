@@ -69,8 +69,8 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     expect(rows()).toEqual(['Google Google · On, no second factor']);
     await click('[data-action="add-provider"]');
     expect(text('h2')).toBe('Add a provider');
-    // Google is there already: GitHub and OpenID Connect are left.
-    expect($$('[data-kind]').map((row) => row.dataset.kind)).toEqual(['github', 'microsoft', 'apple', 'oidc']);
+    // Google is there already: the other built-in kinds, the presets and OpenID Connect are left.
+    expect($$('[data-kind]').map((row) => row.dataset.kind)).toEqual(['github', 'microsoft', 'apple', 'facebook', 'x', 'gitlab', 'linkedin', 'slack', 'oidc']);
     await click('[data-kind="oidc"]');
     expect(text('h2')).toBe('Add OpenID Connect');
 
@@ -312,5 +312,63 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     await click('[data-provider="gitlab"]');
     await click('[data-action="remove-provider"]');
     expect(text('.lead')).toBe('1 Nutzer meldet sich nur damit an und kann sich nicht anmelden, bis er wieder da ist oder ein Admin seine Anmeldung zurücksetzt.');
+  });
+
+  it('DA12: adds a preset’s provider: LinkedIn with its id and name filled in and no issuer to type, GitLab with gitlab.com’s, which a self-hosted one changes', async () => {
+    const { server } = await openAdmin();
+    await click('[data-action="add-provider"]');
+    await click('[data-kind="linkedin"]');
+    expect(text('h2')).toBe('Add LinkedIn');
+    expect($<HTMLInputElement>('input[name="id"]')!.value).toBe('linkedin');
+    expect($('input[name="issuer"]')).toBeNull();
+    expect($<HTMLInputElement>('input[name="name"]')!.required).toBe(false);
+    expect($<HTMLInputElement>('input[name="name"]')!.placeholder).toBe('LinkedIn');
+    expect(text('.callback-url')).toBe(`${SERVER}/auth/providers/linkedin/callback`);
+    await type('clientId', 'li-client');
+    await type('clientSecret', 'li-secret');
+    expect(text('form.provider-form .submit')).toBe('Add LinkedIn');
+    await save();
+    expect(rows()).toContain('LinkedIn LinkedIn · linkedin · Off');
+
+    await click('[data-action="add-provider"]');
+    await click('[data-kind="gitlab"]');
+    expect($<HTMLInputElement>('input[name="issuer"]')!.value).toBe('https://gitlab.com');
+    await type('id', 'gitlab-corp');
+    await type('name', 'Corp GitLab');
+    await type('issuer', 'https://gitlab.example.com');
+    await type('clientId', 'gl-client');
+    await type('clientSecret', 'gl-secret');
+    await save();
+    expect(sent(server, '/auth/admin/providers/add')).toEqual([
+      { kind: 'oidc', preset: 'linkedin', id: 'linkedin', clientId: 'li-client', clientSecret: 'li-secret', trustEmail: false },
+      { kind: 'oidc', preset: 'gitlab', id: 'gitlab-corp', name: 'Corp GitLab', issuer: 'https://gitlab.example.com', clientId: 'gl-client', clientSecret: 'gl-secret', trustEmail: false },
+    ]);
+    expect(rows()).toContain('Corp GitLab GitLab · gitlab-corp · Off');
+  });
+
+  it('DA13: adds Facebook and X once each, with their client ID and secret', async () => {
+    const { server } = await openAdmin();
+    await click('[data-action="add-provider"]');
+    await click('[data-kind="facebook"]');
+    expect(text('h2')).toBe('Add Facebook');
+    expect(text('.callback-url')).toBe(`${SERVER}/auth/providers/facebook/callback`);
+    expect($('input[name="issuer"]')).toBeNull();
+    expect($('input[name="id"]')).toBeNull();
+    await type('clientId', '1234567890');
+    await type('clientSecret', 'fb-secret');
+    await save();
+    await click('[data-action="add-provider"]');
+    await click('[data-kind="x"]');
+    await type('clientId', 'x-client');
+    await type('clientSecret', 'x-secret');
+    await save();
+    expect(sent(server, '/auth/admin/providers/add')).toEqual([
+      { kind: 'facebook', clientId: '1234567890', clientSecret: 'fb-secret' },
+      { kind: 'x', clientId: 'x-client', clientSecret: 'x-secret' },
+    ]);
+    expect(rows()).toEqual(['Google Google · On, no second factor', 'Facebook Facebook · Off', 'X X · Off']);
+    await click('[data-action="add-provider"]');
+    expect($('[data-kind="facebook"]')).toBeNull();
+    expect($('[data-kind="x"]')).toBeNull();
   });
 });

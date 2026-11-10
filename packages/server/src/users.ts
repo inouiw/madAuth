@@ -194,8 +194,19 @@ export const methodOf = (account: Pick<StoredAccount, 'key'>): string => {
 
 const OIDC_KEY_PREFIX = 'oidc';
 
-/** Whether an account is at a sign-in provider (Google, GitHub, Microsoft, Apple, an OpenID Connect provider), which tells its address. */
-export const isProviderAccount = (account: Pick<StoredAccount, 'key'>): boolean => ['google', 'github', 'microsoft', 'apple', OIDC_KEY_PREFIX].includes(String(account.key).split(':')[0]!);
+/** Whether an account is at a sign-in provider (Google, GitHub, Microsoft, Apple, Facebook, X, an OpenID Connect provider), which tells its address. */
+export const isProviderAccount = (account: Pick<StoredAccount, 'key'>): boolean =>
+  ['google', 'github', 'microsoft', 'apple', 'facebook', 'x', OIDC_KEY_PREFIX].includes(String(account.key).split(':')[0]!);
+
+/** The key of a Facebook account: its app-scoped user id, which stays for this Meta app. */
+export function facebookAccountKey(id: string): string {
+  return `facebook:${id}`;
+}
+
+/** The key of an X account: its numeric user id, which stays when the user changes their @username. */
+export function xAccountKey(id: string): string {
+  return `x:${id}`;
+}
 
 /**
  * The key of an Apple account: Apple's `sub`, which is the same for every app and Services ID of the developer

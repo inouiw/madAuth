@@ -304,13 +304,14 @@ function handleRedirectReturn(ctx: ProviderContext): LoginMethodId | undefined {
 
 /**
  * The providers for the sign-in providers the server offers that the app didn't pass: GitHub's redirect,
- * Microsoft's, Apple's, the OpenID Connect providers', and Google's when the server has its code flow (a client secret). Google's One
+ * Microsoft's, Apple's, Facebook's, X's, the OpenID Connect providers', and Google's when the server has its code flow (a client secret). Google's One
  * Tap the app passes itself (`new GoogleFedcm()`), since it loads Google's script and prompts on page load.
  */
 function automaticProviders(config: ServerConfig, passed: Map<LoginMethodId, SignInProvider>): SignInProvider[] {
   return (config.providers ?? []).flatMap((offered): SignInProvider[] => {
     if (passed.has(offered.id)) return [];
     if (offered.kind === 'oidc') return [new OpenIdConnect(offered.id)];
+    if (offered.kind === 'facebook' || offered.kind === 'x') return [new OpenIdConnect(offered.id, offered.kind)];
     if (offered.kind === 'microsoft') return [new Microsoft()];
     if (offered.kind === 'apple') return [new Apple()];
     if (offered.kind === 'github') return [new GitHub()];
