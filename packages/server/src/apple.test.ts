@@ -128,7 +128,8 @@ describe('signing in with Apple', () => {
     const account = await appleAccount(made);
     expect(account?.key).toBe('apple:apple-sub-grace');
     expect(account?.secret).toEqual(expect.any(String));
-    expect(account?.secret).not.toContain('rt-');
+    // Encrypted by the key service, not the token as Apple gave it.
+    expect(account?.secret).toMatch(/^v1\.[\w-]+\.[\w-]+\.[\w-]+$/);
 
     // The next sign-in brings no name (Apple sends it once): the user keeps theirs, and the refresh token is the latest.
     const again = await signIn(made, { idToken: grace.idToken });
