@@ -145,19 +145,21 @@ Rotating the RS256 key works like the ES256 keys': in `MADAUTH_SIGNING_KEY`, put
 
 ## Providers
 
-Google, GitHub, [Microsoft](#microsoft-setup), [Apple](#apple-setup) and [OpenID Connect](#openid-connect-provider-setup) sign-in are providers: madAuth keeps them in its store, as the setting `providers`, and admins add, change and remove them through the admin API while the server runs, for every instance at once. A provider's client secret is encrypted by the [key service](#key-service), so the store alone doesn't reveal it, and the admin API never answers it, only whether one is set.
+Google, GitHub, [Microsoft](#microsoft-setup), [Apple](#apple-setup), [Facebook](#facebook-setup), [X](#x-setup) and [OpenID Connect](#openid-connect-provider-setup) sign-in, with the presets [GitLab](#gitlab-setup), [LinkedIn](#linkedin-setup) and [Slack](#slack-setup), are providers: madAuth keeps them in its store, as the setting `providers`, and admins add, change and remove them through the admin API while the server runs, for every instance at once. A provider's client secret is encrypted by the [key service](#key-service), so the store alone doesn't reveal it, and the admin API never answers it, only whether one is set.
 
 - **Add one** with `Madauth.admin.addProvider({ kind: 'google', clientId, clientSecret })` or `{ kind: 'github', clientId, clientSecret }` (`POST /auth/admin/providers/add`). Google and GitHub exist once each, with the kind as the id. Google's client secret is optional: without it, Google signs in with One Tap / FedCM only (`GoogleFedcm`), with it, also with the redirect flow (`GoogleRedirect`). GitHub needs it: it only has the redirect flow.
 - **Microsoft** exists once too, with the id `microsoft`: `{ kind: 'microsoft', clientId, clientSecret, tenant }`, where `tenant` says whose accounts sign in (`common`, `organizations`, `consumers` or one tenant's id), see [Microsoft setup](#microsoft-setup).
 - **Apple** exists once, with the id `apple`: `{ kind: 'apple', clientId, clientSecret, teamId, keyId, bundleIds? }`, where `clientId` is the Services ID, `clientSecret` the text of the `.p8` key file, `teamId` and `keyId` the Team ID and Key ID that go with it, and `bundleIds` the App IDs of the native apps that sign in with the identity token (separated by spaces), see [Apple setup](#apple-setup).
-- **Or an OpenID Connect provider**, as many as needed, each with an id of its own that becomes its method's: `{ kind: 'oidc', id: 'gitlab', name: 'GitLab', issuer: 'https://gitlab.com', clientId, clientSecret }`, optionally with `scopes` and `trustEmail`, see [OpenID Connect provider setup](#openid-connect-provider-setup).
+- **Facebook** and **X** exist once each, with their kind as the id: `{ kind: 'facebook', clientId, clientSecret }` (the Meta app's App ID and App Secret) and `{ kind: 'x', clientId, clientSecret }` (the X app's OAuth 2.0 Client ID and Client Secret), see [Facebook setup](#facebook-setup) and [X setup](#x-setup).
+- **Or an OpenID Connect provider**, as many as needed, each with an id of its own that becomes its method's: `{ kind: 'oidc', id: 'okta', name: 'Okta', issuer: 'https://example.okta.com', clientId, clientSecret }`, optionally with `scopes` and `trustEmail`, see [OpenID Connect provider setup](#openid-connect-provider-setup).
+- **A preset** of the OpenID Connect providers knows the issuer, the name, the button's logo and how the provider departs from the generic flow: `{ kind: 'oidc', preset: 'gitlab' | 'linkedin' | 'slack', clientId, clientSecret }`. The id is the preset's unless one is given (a second GitLab), and so is the name; only GitLab takes another `issuer`, a self-hosted instance's. See [GitLab setup](#gitlab-setup), [LinkedIn setup](#linkedin-setup) and [Slack setup](#slack-setup).
 - **It is off until switched on** in the [sign-in settings](#sign-in-methods), with its own policy for a second factor. On a server whose settings were never saved, the methods that are on are saved as they are first, so adding a provider switches nothing else on or off.
-- **The sign-in dialog shows its button by itself.** `GET /auth/config` lists the providers that are on, with their names, and the button says "Continue with <name>". GitHub's, Google's redirect and the OpenID Connect providers' buttons appear whether or not the app passes `new GitHub()` or `new GoogleRedirect()`; a custom screen renders any of them with `Madauth.provider(id)`. Google's One Tap the app passes itself (`new GoogleFedcm()`), since it loads Google's script and prompts.
+- **The sign-in dialog shows its button by itself.** `GET /auth/config` lists the providers that are on, with their names, and the button says "Continue with <name>". GitHub's, Google's redirect, Microsoft's, Apple's, Facebook's, X's and the OpenID Connect providers' buttons appear whether or not the app passes `new GitHub()` or `new GoogleRedirect()`; a custom screen renders any of them with `Madauth.provider(id)`. Google's One Tap the app passes itself (`new GoogleFedcm()`), since it loads Google's script and prompts.
 - **The answer gives the callback URL** to register at the provider: `<MADAUTH_ISSUER>/auth/providers/<id>/callback`. Before adding one, `listProviders()` answers its start as `callbackBase`, since most providers want the callback URL before they give out the client ID.
-- **Change one** with `updateProvider(id, { name, clientId, clientSecret })`, each optional, an OpenID Connect provider's `scopes` and `trustEmail`, Microsoft's `tenant`, and Apple's `teamId`, `keyId` and `bundleIds`; `clientSecret: null` removes Google's. The kind, the id and an OpenID Connect provider's issuer don't change: its accounts belong to it.
+- **Change one** with `updateProvider(id, { name, clientId, clientSecret })`, each optional, an OpenID Connect provider's `scopes` and `trustEmail`, Microsoft's `tenant`, and Apple's `teamId`, `keyId` and `bundleIds`; `clientSecret: null` removes Google's. The kind, the id, an OpenID Connect provider's issuer and its preset don't change: its accounts belong to it.
 - **Remove one** with `removeProvider(id)`. Its users' accounts stay, so adding it again brings their sign-ins back; the answer's `usersWithoutSignIn` says how many users have no other way in meanwhile. It goes out of the [sign-in settings](#sign-in-methods) as well: added again, it is off until switched on, like a new provider. An OpenID Connect provider's id comes back only with its issuer (see below).
 
-**In the admin dialog:** `Madauth.showAdminDialog()` does all of this in madAuth's dialog. It lists the providers with their state ("On, second factor optional" / "Off"), adds one (Google, GitHub, Microsoft with whose accounts sign in, or an OpenID Connect provider, showing the callback URL to register as the id is typed), changes one, switches it on or off with its second-factor policy in the same form (with `setMethod`, which changes only that provider's entry), and removes one after a confirmation that says how many users sign in with it alone. It asks the admin to sign in again when a change needs it. For a user without the role `admin`, or nobody signed in, it resolves to `forbidden` or `no_session` and doesn't open.
+**In the admin dialog:** `Madauth.showAdminDialog()` does all of this in madAuth's dialog. It lists the providers with their state ("On, second factor optional" / "Off"), adds one (Google, GitHub, Microsoft with whose accounts sign in, Apple, Facebook, X, GitLab, LinkedIn, Slack, or an OpenID Connect provider, showing the callback URL to register as the id is typed), changes one, switches it on or off with its second-factor policy in the same form (with `setMethod`, which changes only that provider's entry), and removes one after a confirmation that says how many users sign in with it alone. It asks the admin to sign in again when a change needs it. For a user without the role `admin`, or nobody signed in, it resolves to `forbidden` or `no_session` and doesn't open.
 
 Changing providers takes an admin's session (no API key) with a sign-in within the last two minutes, like every [sensitive change](sign-in-methods.md#only-within-two-minutes-of-signing-in). Listing them (`listProviders()`, `POST /auth/admin/providers/list`) and a dry run of a removal (`removeProvider(id, { dryRun: true })`, which only counts the users who sign in with nothing else) also work with an API key with the scope `madauth:providers:read`. Each change sends `provider.added`, `provider.changed` or `provider.removed` to the webhook (opt in with `WEBHOOK_EVENTS`), with the admin's address as `by`.
 
@@ -255,25 +257,59 @@ madAuth asks for `name email` (Apple's scopes), signs a client secret from the k
 
 **Native apps:** an iOS or macOS app shows Apple's sheet itself (`ASAuthorizationAppleIDProvider`; in Capacitor e.g. [`@capacitor-community/apple-sign-in`](https://github.com/capacitor-community/apple-sign-in)) and hands the identity token to madAuth: with a cookie session, `Madauth.apple.nonce()` and `Madauth.apple.signIn({ credential, name, authorizationCode })` (see [Custom UI](custom-ui.md#apple-madauthapple)), or with tokens, the [token exchange](#native-apps). The token's audience is the app's App ID (bundle identifier): list it in the provider's `bundleIds`, or the token is refused. Pass the nonce madAuth gives as it is (not hashed); pass `fullName` and `authorizationCode` from Apple's credential along, since the name comes once and the code is what lets madAuth give the authorization back later.
 
+### Facebook setup
+
+Facebook sign-in is Facebook Login's redirect flow ("manually build a login flow"), of which madAuth is a confidential client with the App Secret, and the Graph API (`v26.0`) for the account. See [Social provider security](social-security.md#facebook).
+
+1. At [Meta for Developers → My Apps](https://developers.facebook.com/apps), create an app with the use case **Authenticate and request data from users with Facebook Login**.
+2. Under **Facebook Login → Settings**, enter `<MADAUTH_ISSUER>/auth/providers/facebook/callback` under **Valid OAuth Redirect URIs**, e.g. `https://app.example.com/auth/providers/facebook/callback`. Leave **Login with the JavaScript SDK** off. Facebook takes https only; it lets `localhost` through while the app is in development mode.
+3. Under **App settings → Basic**, give a **Privacy Policy URL** and a **User data deletion** URL (instructions how to delete one's account, e.g. your account page, which calls `Madauth.deleteAccount()`): an app goes live only with both. Copy the **App ID** and the **App Secret**.
+4. Add the provider and switch it on with the id `facebook`:
+
+   ```bash
+   curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+     -H 'Content-Type: application/json' -d '{"kind":"facebook","clientId":"<App ID>","clientSecret":"<App Secret>"}'
+   ```
+
+5. Switch the app to **Live** in the app dashboard: in development mode, only the app's own developers and testers can sign in.
+
+madAuth asks for the permissions `email` and `public_profile`, which need no app review. **Facebook's address is not trusted:** Facebook's documentation doesn't say it is confirmed, so it is confirmed by e-mail once, at the first sign-in, before it signs anyone up; an account without one (made with a phone number) types it. The account is Facebook's app-scoped user id (`facebook:<id>`), the same for this app only: a new Meta app gives every user another id, so keep the app. madAuth sends `appsecret_proof` with every Graph call, so **Require App Secret** in the app's advanced settings can be on.
+
+### X setup
+
+X sign-in is X's OAuth 2.0 authorization-code flow with PKCE, of which madAuth is a confidential client, and the X API v2 for the account. See [Social provider security](social-security.md#x).
+
+1. In the [X Developer Console](https://developer.x.com/en/portal/dashboard), open your app (a project's app; the Free tier will do) and choose **User authentication settings → Set up**.
+2. Choose the **App permissions** **Read**, turn on **Request email from users** (it needs your app's **Privacy policy** and **Terms of service** URLs), and choose the **Type of App** **Web App, Automated App or Bot**: a confidential client, which gets a Client Secret.
+3. Enter `<MADAUTH_ISSUER>/auth/providers/x/callback` as **Callback URI / Redirect URL**, e.g. `https://app.example.com/auth/providers/x/callback`, and your app as **Website URL**. X matches the callback exactly; for development it takes `http://127.0.0.1:8787/auth/providers/x/callback`, not `localhost`.
+4. Copy the **OAuth 2.0 Client ID and Client Secret** (not the API Key and Secret of OAuth 1.0a), add the provider and switch it on with the id `x`:
+
+   ```bash
+   curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+     -H 'Content-Type: application/json' -d '{"kind":"x","clientId":"<OAuth 2.0 Client ID>","clientSecret":"<Client Secret>"}'
+   ```
+
+madAuth asks for the scopes `tweet.read users.read users.email` (X requires `tweet.read` with `users.read`) and reads the account from `GET /2/users/me`. **X's address is trusted when X sends it:** `confirmed_email` is the address X has confirmed; without it (an account made with a phone number, or an app without **Request email from users**) the user types one and its confirmation e-mail proves it. The account is X's numeric user id (`x:<id>`), which stays when the user changes their @username; the name is the display name, else the username.
+
 ### OpenID Connect provider setup
 
-Any provider that speaks OpenID Connect with a discovery document signs in through the kind `oidc`: GitLab, Keycloak, Okta, Auth0, Authentik, Zitadel, a company's own identity provider. madAuth is a confidential client of it, with the authorization-code flow.
+Any provider that speaks OpenID Connect with a discovery document signs in through the kind `oidc`: Keycloak, Okta, Auth0, Authentik, Zitadel, a company's own identity provider. GitLab, LinkedIn and Slack have [presets](#gitlab-setup), which fill in the issuer and the button's logo. madAuth is a confidential client of it, with the authorization-code flow.
 
-1. Register a web application (a confidential client, with a client secret) at the provider, with the redirect URI `<MADAUTH_ISSUER>/auth/providers/<id>/callback`, where `<id>` is the id you will give the provider, e.g. `https://app.example.com/auth/providers/gitlab/callback`. It needs the scopes `openid`, `email` and `profile`.
+1. Register a web application (a confidential client, with a client secret) at the provider, with the redirect URI `<MADAUTH_ISSUER>/auth/providers/<id>/callback`, where `<id>` is the id you will give the provider, e.g. `https://app.example.com/auth/providers/okta/callback`. It needs the scopes `openid`, `email` and `profile`.
 2. Add it (see [Providers](#providers)):
 
    ```bash
    curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
      -H 'Content-Type: application/json' \
-     -d '{"kind":"oidc","id":"gitlab","name":"GitLab","issuer":"https://gitlab.com","clientId":"…","clientSecret":"…"}'
+     -d '{"kind":"oidc","id":"okta","name":"Okta","issuer":"https://example.okta.com","clientId":"…","clientSecret":"…"}'
    ```
 
-   - `id`: 2 to 32 lowercase letters, digits and dashes, starting with a letter. It is the provider's method in the [settings](#sign-in-methods), in `amr` and in the webhooks' `method`, and part of the callback URL. madAuth's own methods' ids (`password`, `authenticator`, `email-link`, `passkey`, `sms`, `totp`, `google`, `github`, `microsoft`) are taken.
+   - `id`: 2 to 32 lowercase letters, digits and dashes, starting with a letter. It is the provider's method in the [settings](#sign-in-methods), in `amr` and in the webhooks' `method`, and part of the callback URL. madAuth's own methods' ids (`password`, `authenticator`, `email-link`, `passkey`, `sms`, `totp`, `google`, `github`, `microsoft`, `apple`, `facebook`, `x`) are taken.
    - `name`: what the button says, "Continue with <name>", and what the dialog calls it.
    - `issuer`: exactly as the provider's discovery document (`<issuer>/.well-known/openid-configuration`) names it, with its trailing slash if it has one. https, or http on `localhost` for development. It can't change later: the accounts belong to it. The id stays bound to the issuer for good, also after the provider is removed (the setting `provider-issuers`), since another issuer's users would sign in to its accounts by their `sub`: adding the id with another issuer is refused (`invalid_provider`), so a provider at another issuer takes another id.
    - `scopes` (optional): more scopes to ask for, separated by spaces, e.g. `"read_user"`; `openid email profile` are always asked for.
    - `trustEmail` (optional, default `false`): see below.
-3. Switch it on in the [sign-in settings](#sign-in-methods) with its id, e.g. `{"methods":{"gitlab":{"allowAsSignInMethod":true,"secondFactor":"none"}}}`. The settings refuse an id that is no provider of the server.
+3. Switch it on in the [sign-in settings](#sign-in-methods) with its id, e.g. `{"methods":{"okta":{"allowAsSignInMethod":true,"secondFactor":"none"}}}`. The settings refuse an id that is no provider of the server.
 
 How madAuth signs in with it:
 
@@ -285,6 +321,52 @@ How madAuth signs in with it:
 - **Confirmed by the provider later** (it now says `email_verified`, or an admin set `trustEmail`), a sign-up that waited for its address is confirmed at its next sign-in.
 - **A provider that tells no address** (neither the ID token nor userinfo has one): the user types one, and its confirmation e-mail proves it. The callback signs in a returning account at once; otherwise it keeps the account in a short-lived cookie (`madauth_pending_account`, HttpOnly, only sent to `/auth/providers/<id>`) and sends the browser back with `#madauth_next=email-address&madauth_method=<id>`. madAuth's dialog then asks for the address, filled in with the ID token's `preferred_username` when that looks like one (`GET /auth/providers/<id>/address`), and sends it (`POST /auth/providers/<id>/address`), which answers the same for every address, as a password sign-up does. See [Microsoft security](microsoft-security.md#an-account-without-an-address). A server whose webhook sends no e-mails refuses such an account (`email_unverified`).
 - **The account** is the provider's `sub` (`oidc:<id>:<sub>`), not the address: a user whose address changes at the provider keeps their account. An address that signs in another way is refused (`other_method`), as with Google and GitHub, see [Several sign-in methods](sign-in-methods.md). A signed-in user adds the provider to their methods with its button's `purpose: 'link'`, whatever its address: the account signs them in by its `sub`, and the address is only noted.
+
+### GitLab setup
+
+GitLab sign-in is the preset `gitlab` of the OpenID Connect providers: the [generic flow](#openid-connect-provider-setup), unchanged, with GitLab's tanuki on the button, on gitlab.com or a self-hosted GitLab. See [Social provider security](social-security.md#gitlab).
+
+1. Register an application in GitLab: for yourself under **Edit profile → Applications**, for a group under the group's **Settings → Applications**, or, on your own instance, for everyone under **Admin → Applications**. Give it a name, the **Redirect URI** `<MADAUTH_ISSUER>/auth/providers/gitlab/callback` (with the id you give it, e.g. `…/gitlab-corp/callback`), leave **Confidential** ticked, and tick the scopes `openid`, `profile` and `email`.
+2. Add the provider with the **Application ID** and the **Secret**, and switch it on with its id:
+
+   ```bash
+   curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+     -H 'Content-Type: application/json' -d '{"kind":"oidc","preset":"gitlab","clientId":"<Application ID>","clientSecret":"<Secret>"}'
+   ```
+
+   For a self-hosted GitLab, add its address as the issuer (its external URL, as `<issuer>/.well-known/openid-configuration` names it), and another id and name if you have gitlab.com too: `{"kind":"oidc","preset":"gitlab","id":"gitlab-corp","name":"Corp GitLab","issuer":"https://gitlab.example.com",…}`.
+
+**GitLab's address is trusted when GitLab says it is verified** (`email_verified`), as for any OpenID Connect provider; one it doesn't verify is confirmed by e-mail once, and an account whose address GitLab doesn't give (GitLab may leave it out unless the user has a public address) types one. On your own instance, `trustEmail: true` trusts every address, if your GitLab's admins verify them. The account is GitLab's user id at that issuer (`oidc:<id>:<sub>`).
+
+### LinkedIn setup
+
+LinkedIn sign-in is the preset `linkedin` of the OpenID Connect providers: "Sign In with LinkedIn using OpenID Connect", with LinkedIn's issuer `https://www.linkedin.com/oauth`. Where LinkedIn departs from the generic flow, the preset follows it: no PKCE (LinkedIn has it for native apps only), the client secret in the form (`client_secret_post`), and an ID token without the `nonce`, which LinkedIn doesn't return. See [Social provider security](social-security.md#linkedin).
+
+1. At [LinkedIn Developers → My apps](https://www.linkedin.com/developers/apps), create an app (it needs a LinkedIn company page), and under **Products** request **Sign In with LinkedIn using OpenID Connect**.
+2. Under **Auth**, add `<MADAUTH_ISSUER>/auth/providers/linkedin/callback` under **Authorized redirect URLs for your app**, and copy the **Client ID** and the **Primary Client Secret**.
+3. Add the provider and switch it on with the id `linkedin`:
+
+   ```bash
+   curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+     -H 'Content-Type: application/json' -d '{"kind":"oidc","preset":"linkedin","clientId":"<Client ID>","clientSecret":"<Client Secret>"}'
+   ```
+
+**LinkedIn's address is trusted when LinkedIn says it is verified** (`email_verified`, which LinkedIn may leave out); otherwise it is confirmed by e-mail once, and an account without an address types one. The account is LinkedIn's `sub` (`oidc:linkedin:<sub>`), which is pairwise: a new LinkedIn app gives every user another one, so keep the app.
+
+### Slack setup
+
+Slack sign-in is the preset `slack` of the OpenID Connect providers: "Sign in with Slack", with Slack's issuer `https://slack.com`, without PKCE: Slack's PKCE setting makes an app a public client for good, and madAuth is a confidential one, with the client secret, the state and the nonce. See [Social provider security](social-security.md#slack).
+
+1. At [Slack API → Your Apps](https://api.slack.com/apps), create an app (from scratch) in your workspace. Leave **PKCE** under **OAuth & Permissions** off.
+2. Under **OAuth & Permissions → Redirect URLs**, add `<MADAUTH_ISSUER>/auth/providers/slack/callback`; under **User Token Scopes**, add `openid`, `email` and `profile`. Under **Manage Distribution**, distribute the app if people of other workspaces sign in.
+3. Copy the **Client ID** and the **Client Secret** from **Basic Information**, add the provider and switch it on with the id `slack`:
+
+   ```bash
+   curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+     -H 'Content-Type: application/json' -d '{"kind":"oidc","preset":"slack","clientId":"<Client ID>","clientSecret":"<Client Secret>"}'
+   ```
+
+**Slack's address is trusted when Slack says it is verified** (`email_verified`); otherwise it is confirmed by e-mail once. The account is Slack's `sub` (`oidc:slack:<sub>`), one per workspace membership: the same person in two workspaces is two accounts.
 
 ## E-mail & password sign-in
 
@@ -658,7 +740,9 @@ madAuth has these methods, named by these ids in the settings:
 | `google` | Google sign-in (One Tap / FedCM, the redirect flow, or an ID token the app obtained itself) | `GoogleFedcm`, `GoogleRedirect`, `Madauth.google` |
 | `github` | [GitHub sign-in](github-security.md) (the redirect flow) | `GitHub`, `Madauth.github` |
 | `microsoft` | [Microsoft sign-in](microsoft-security.md) (the redirect flow), once an admin added it | `Madauth.provider('microsoft')` |
-| the provider's id, e.g. `gitlab` | An [OpenID Connect provider](#openid-connect-provider-setup) an admin added (the redirect flow) | `Madauth.provider(id)` |
+| `facebook` | [Facebook sign-in](#facebook-setup) (the redirect flow), once an admin added it | `Madauth.provider('facebook')` |
+| `x` | [X sign-in](#x-setup) (the redirect flow), once an admin added it | `Madauth.provider('x')` |
+| the provider's id, e.g. `gitlab` | An [OpenID Connect provider](#openid-connect-provider-setup) an admin added (the redirect flow), also of a preset ([GitLab](#gitlab-setup), [LinkedIn](#linkedin-setup), [Slack](#slack-setup)) | `Madauth.provider(id)` |
 | `password` | E-mail & password | `Password`, `Madauth.password` |
 | `email-link` | The passwordless [e-mail link](email-link-security.md) (the address, then the link or the code from the e-mail) | `EmailLink`, `Madauth.emailLink` |
 | `passkey` | [Passkeys](#passkeys) (WebAuthn): on their own, and as a second factor | `Passkey`, `Madauth.passkey`, `Madauth.showSetUpPasskeyDialog()` |

@@ -11,6 +11,10 @@ export interface FakeOidcOptions {
   authMethods?: string[];
   /** Whether it has a userinfo endpoint. Default: yes. */
   userinfo?: boolean;
+  /** Whether the code exchange takes a PKCE verifier; `false`: one sent is refused (LinkedIn's web flow has none). Default: required. */
+  pkce?: boolean;
+  /** Whether the ID token carries the sign-in's nonce. Default: yes. */
+  echoNonce?: boolean;
 }
 
 /** What the next code exchange answers: the ID token's claims (`sub` at least) and what userinfo says. */
@@ -65,10 +69,11 @@ export async function fakeOidcProvider(options: FakeOidcOptions = {}) {
       const allowed = options.authMethods ?? ['client_secret_basic'];
       if (client.id !== clientId || client.secret !== clientSecret || !allowed.includes(client.via)) return json({ error: 'invalid_client' }, 401);
       const issued = codes.get(form.get('code') ?? '');
-      if (!issued || form.get('redirect_uri') !== issued.redirectUri || !form.get('code_verifier')) return json({ error: 'invalid_grant' }, 400);
+      const pkceHolds = options.pkce === false ? !form.has('code_verifier') : !!form.get('code_verifier');
+      if (!issued || form.get('redirect_uri') !== issued.redirectUri || !pkceHolds) return json({ error: 'invalid_grant' }, 400);
       codes.delete(form.get('code')!);
       const now = Math.floor(Date.now() / 1000);
-      const idToken = await new SignJWT({ nonce: issued.nonce, ...issued.idToken })
+      const idToken = await new SignJWT({ ...(options.echoNonce === false ? {} : { nonce: issued.nonce }), ...issued.idToken })
         .setProtectedHeader({ alg: 'ES256', kid: 'key-1' })
         .setIssuer(issuer)
         .setAudience(issued.audience ?? clientId)

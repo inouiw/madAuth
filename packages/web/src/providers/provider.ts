@@ -35,10 +35,17 @@ export interface ServerConfig {
   passkey?: { signIn: boolean; signUp: boolean; secondFactor: SecondFactorPolicy } | null;
   /**
    * The sign-in providers that are on, with the names admins gave them; the dialog shows a button for each.
-   * `oidc`: an OpenID Connect provider, whose id is its method's. Absent from servers before madAuth 0.7, and
-   * `secondFactor` from 0.7.0-beta.1.
+   * `oidc`: an OpenID Connect provider, whose id is its method's, with the `preset` it was added with (GitLab,
+   * LinkedIn, Slack), whose logo its button shows. Absent from servers before madAuth 0.7, and `secondFactor` from
+   * 0.7.0-beta.1.
    */
-  providers?: { id: string; kind: 'google' | 'github' | 'microsoft' | 'apple' | 'oidc'; name: string; secondFactor?: SecondFactorPolicy }[];
+  providers?: {
+    id: string;
+    kind: 'google' | 'github' | 'microsoft' | 'apple' | 'facebook' | 'x' | 'oidc';
+    name: string;
+    preset?: 'gitlab' | 'linkedin' | 'slack';
+    secondFactor?: SecondFactorPolicy;
+  }[];
 }
 
 /** What a sign-in still needs after its first step, and which sign-in it is. */

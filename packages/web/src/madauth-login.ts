@@ -15,7 +15,7 @@ import {
 } from './madauth.js';
 import { isBuiltInMethodId, loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
 import type { SignInMethodInfo } from './scopes/methods.js';
-import type { NewProvider, ProviderChanges, ProviderInfo, ProviderKind, Settings } from './scopes/admin.js';
+import type { NewProvider, OidcPreset, ProviderChanges, ProviderInfo, ProviderKind, Settings } from './scopes/admin.js';
 import type { ApiKeyInfo, ApiKeyScope } from './scopes/api-keys.js';
 import type { DeviceRequest } from './scopes/device.js';
 import type { PasskeyInfo } from './scopes/passkey.js';
@@ -174,15 +174,23 @@ const tenantOf = (d: ProviderDraft): string => (d.tenantChoice === 'single' ? d.
 const tenantChoiceOf = (tenant: string | undefined): Pick<ProviderDraft, 'tenantChoice' | 'tenantId'> =>
   !tenant ? { tenantChoice: '', tenantId: '' } : tenant === 'common' || tenant === 'organizations' || tenant === 'consumers' ? { tenantChoice: tenant, tenantId: '' } : { tenantChoice: 'single', tenantId: tenant };
 
-/** The provider form: a new provider of `kind`, or `provider` being changed, with what is typed. */
+/** The provider form: a new provider of `kind` (an OpenID Connect provider maybe of a `preset`), or `provider` being changed, with what is typed. */
 interface ProviderForm {
   kind: ProviderKind;
+  preset?: OidcPreset;
   provider?: ProviderInfo;
   draft: ProviderDraft;
 }
 
-/** What `addProvider` takes for a new provider of `kind`, from the form. */
-function newProviderOf(kind: ProviderKind, d: ProviderDraft): NewProvider {
+/** What the admin dialog offers to add: a kind, or a preset of the OpenID Connect providers. */
+type ProviderChoice = ProviderKind | OidcPreset;
+const PRESETS: readonly OidcPreset[] = ['gitlab', 'linkedin', 'slack'];
+const isPreset = (choice: ProviderChoice): choice is OidcPreset => (PRESETS as readonly string[]).includes(choice);
+/** The issuer a preset's form starts with: only GitLab's can be another (a self-hosted instance). */
+const GITLAB_ISSUER = 'https://gitlab.com';
+
+/** What `addProvider` takes for a new provider of `kind` (of `preset`), from the form. */
+function newProviderOf(kind: ProviderKind, d: ProviderDraft, preset?: OidcPreset): NewProvider {
   const name = d.name.trim();
   const shared = { clientId: d.clientId.trim(), ...(d.clientSecret ? { clientSecret: d.clientSecret } : {}) };
   if (kind === 'microsoft') return { kind, clientId: shared.clientId, clientSecret: d.clientSecret, tenant: tenantOf(d), ...(name ? { name } : {}) };
@@ -190,8 +198,24 @@ function newProviderOf(kind: ProviderKind, d: ProviderDraft): NewProvider {
     const bundleIds = d.bundleIds.trim();
     return { kind, clientId: shared.clientId, clientSecret: d.clientSecret, teamId: d.teamId.trim(), keyId: d.keyId.trim(), ...(bundleIds ? { bundleIds } : {}), ...(name ? { name } : {}) };
   }
+  if (kind === 'facebook' || kind === 'x') return { kind, clientId: shared.clientId, clientSecret: d.clientSecret, ...(name ? { name } : {}) };
   if (kind !== 'oidc') return { kind, ...shared, ...(name ? { name } : {}) };
   const scopes = d.scopes.trim();
+  if (preset) {
+    const id = d.id.trim();
+    const issuer = preset === 'gitlab' ? d.issuer.trim() : '';
+    return {
+      kind,
+      preset,
+      ...(id ? { id } : {}),
+      ...(name ? { name } : {}),
+      ...(issuer ? { issuer } : {}),
+      clientId: shared.clientId,
+      clientSecret: d.clientSecret,
+      trustEmail: d.trustEmail,
+      ...(scopes ? { scopes } : {}),
+    };
+  }
   return { kind, id: d.id.trim(), name, issuer: d.issuer.trim(), clientId: shared.clientId, clientSecret: d.clientSecret, trustEmail: d.trustEmail, ...(scopes ? { scopes } : {}) };
 }
 
@@ -1127,7 +1151,7 @@ export class MadauthLogin extends LitElement {
       case 'admin-add':
         return s.adminView.add;
       case 'admin-provider':
-        return this.providerForm?.provider?.name ?? s.adminView.addHeading(s.adminView.kinds[this.providerForm?.kind ?? 'oidc']);
+        return this.providerForm?.provider?.name ?? s.adminView.addHeading(s.adminView.kinds[this.providerForm?.preset ?? this.providerForm?.kind ?? 'oidc']);
       case 'admin-remove':
         return s.adminView.removeHeading(this.removal?.provider.name ?? '');
       case 'api-keys':
@@ -2707,7 +2731,7 @@ export class MadauthLogin extends LitElement {
     const v = this.strings.adminView;
     const setting = this.adminSettings?.[provider.id];
     const state = setting ? (setting.enabled ? v.on(v.policies[setting.secondFactor]) : v.off) : undefined;
-    const details = [provider.kind === 'oidc' ? `${v.kinds.oidc} · ${provider.id}` : v.kinds[provider.kind], state].filter(Boolean);
+    const details = [provider.kind === 'oidc' ? `${v.kinds[provider.preset ?? 'oidc']} · ${provider.id}` : v.kinds[provider.kind], state].filter(Boolean);
     return html`
       <button part="method" class="row detailed" type="button" data-provider=${provider.id} ?disabled=${this.busy} @click=${() => this.editProvider(provider)}>
         <span class="method-text">
@@ -2719,12 +2743,16 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
-  /** Which kind of provider to add: Google, GitHub, Microsoft and Apple once each, OpenID Connect providers as many as needed. */
+  /**
+   * Which kind of provider to add: Google, GitHub, Microsoft, Apple, Facebook and X once each, OpenID Connect
+   * providers as many as needed, of a preset (GitLab, LinkedIn, Slack) or not.
+   */
   private renderAdminAdd() {
     const s = this.strings;
     const v = s.adminView;
     const has = (kind: ProviderKind) => !!this.adminProviders?.some((provider) => provider.id === kind);
-    const kinds = (['google', 'github', 'microsoft', 'apple', 'oidc'] as const).filter((kind) => kind === 'oidc' || !has(kind));
+    const choices: ProviderChoice[] = ['google', 'github', 'microsoft', 'apple', 'facebook', 'x', ...PRESETS, 'oidc'];
+    const kinds = choices.filter((kind) => kind === 'oidc' || isPreset(kind) || !has(kind));
     return html`
       <p class="lead">${v.chooseKind}</p>
       <ul>
@@ -2748,8 +2776,13 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
-  private newProvider(kind: ProviderKind): void {
-    this.providerForm = { kind, draft: EMPTY_DRAFT };
+  private newProvider(choice: ProviderChoice): void {
+    // A preset's form starts with its id and, for GitLab, gitlab.com's issuer; both can be changed for a second
+    // instance. A preset's id already taken (a second GitLab) is left for the admin to give.
+    const taken = (id: string) => !!this.adminProviders?.some((provider) => provider.id === id);
+    this.providerForm = isPreset(choice)
+      ? { kind: 'oidc', preset: choice, draft: { ...EMPTY_DRAFT, id: taken(choice) ? '' : choice, issuer: choice === 'gitlab' ? GITLAB_ISSUER : '' } }
+      : { kind: choice, draft: EMPTY_DRAFT };
     this.goTo('admin-provider');
   }
 
@@ -2758,6 +2791,7 @@ export class MadauthLogin extends LitElement {
     const on = !!setting?.enabled;
     this.providerForm = {
       kind: provider.kind,
+      ...(provider.preset ? { preset: provider.preset } : {}),
       provider,
       draft: {
         ...EMPTY_DRAFT,
@@ -2791,6 +2825,12 @@ export class MadauthLogin extends LitElement {
     const d = form.draft;
     const editing = !!form.provider;
     const oidc = form.kind === 'oidc';
+    const preset = form.preset;
+    /** What the form calls the provider: its preset's or its kind's name. */
+    const kindName = v.kinds[preset ?? form.kind];
+    // A preset knows the name and the issuer; only GitLab's issuer is asked for (a self-hosted instance).
+    const nameRequired = oidc && !preset;
+    const asksIssuer = oidc && (!preset || preset === 'gitlab');
     const id = oidc ? d.id.trim() : form.kind;
     const callbackUrl = form.provider?.callbackUrl ?? (this.callbackBase ? `${this.callbackBase}${id || '<id>'}/callback` : undefined);
     // A new GitHub or OpenID Connect provider needs its secret: they only have the server's code exchange.
@@ -2819,12 +2859,12 @@ export class MadauthLogin extends LitElement {
             </div>`
           : null}
         <div class="field">
-          <label for="provider-name">${v.name} ${oidc ? null : html`<span class="optional">${s.optional}</span>`}</label>
-          <input part="input" id="provider-name" name="name" type="text" autocomplete="off" maxlength="64" ?required=${oidc}
-            placeholder=${oidc ? '' : v.kinds[form.kind]} .value=${d.name} />
+          <label for="provider-name">${v.name} ${nameRequired ? null : html`<span class="optional">${s.optional}</span>`}</label>
+          <input part="input" id="provider-name" name="name" type="text" autocomplete="off" maxlength="64" ?required=${nameRequired}
+            placeholder=${nameRequired ? '' : kindName} .value=${d.name} />
           <p class="hint">${v.nameHint}</p>
         </div>
-        ${oidc
+        ${asksIssuer || (oidc && editing)
           ? editing
             ? html`<div class="field">
                 <span class="field-label" id="issuer-label">${v.issuer}</span>
@@ -2833,7 +2873,7 @@ export class MadauthLogin extends LitElement {
             : html`<div class="field">
                 <label for="provider-issuer">${v.issuer}</label>
                 <input part="input" id="provider-issuer" name="issuer" type="url" autocomplete="off" spellcheck="false" required .value=${d.issuer} />
-                <p class="hint">${v.issuerHint}</p>
+                <p class="hint">${preset === 'gitlab' ? v.gitlabIssuerHint : v.issuerHint}</p>
               </div>`
           : null}
         <div class="field">
@@ -2882,7 +2922,7 @@ export class MadauthLogin extends LitElement {
             </div>`
           : null}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
-          <span class="label">${editing ? v.save : v.addHeading(oidc ? d.name.trim() || v.kinds.oidc : v.kinds[form.kind])}</span>
+          <span class="label">${editing ? v.save : v.addHeading(nameRequired ? d.name.trim() || v.kinds.oidc : kindName)}</span>
         </button>
       </form>
       <p class="links">
@@ -2982,7 +3022,7 @@ export class MadauthLogin extends LitElement {
 
   /** Adds or changes the provider, then switches it on or off as the form says. */
   private async saveProvider(form: ProviderForm): Promise<Result> {
-    const saved = form.provider ? await this.changeProvider(form.provider, form.draft) : await Madauth.admin.addProvider(newProviderOf(form.kind, form.draft));
+    const saved = form.provider ? await this.changeProvider(form.provider, form.draft) : await Madauth.admin.addProvider(newProviderOf(form.kind, form.draft, form.preset));
     if (!saved.isSuccess) return saved;
     // From now on the form changes it, also when switching it on fails below; the secret is sent once.
     this.providerForm = { ...form, provider: saved.provider, draft: { ...form.draft, clientSecret: '', removeSecret: false } };
