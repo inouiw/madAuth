@@ -22,6 +22,7 @@ import { FACTOR_STEPS, pendingStepOf, type DeletedAccount, type PendingStep, typ
 import { fail, isSecondFactor, ok, toErrorCode, type MadauthError, type MadauthUser, type Result } from './result.js';
 import type { Core } from './scopes/core.js';
 import { createAdminApi } from './scopes/admin.js';
+import { createSessionsApi } from './scopes/sessions.js';
 import { createDeviceApi } from './scopes/device.js';
 import { createTokensApi } from './scopes/tokens.js';
 import { createEmailLinkApi } from './scopes/email-link.js';
@@ -303,13 +304,14 @@ function handleRedirectReturn(ctx: ProviderContext): LoginMethodId | undefined {
 
 /**
  * The providers for the sign-in providers the server offers that the app didn't pass: GitHub's redirect,
- * Microsoft's, Apple's, the OpenID Connect providers', and Google's when the server has its code flow (a client secret). Google's One
+ * Microsoft's, Apple's, Facebook's, X's, the OpenID Connect providers', and Google's when the server has its code flow (a client secret). Google's One
  * Tap the app passes itself (`new GoogleFedcm()`), since it loads Google's script and prompts on page load.
  */
 function automaticProviders(config: ServerConfig, passed: Map<LoginMethodId, SignInProvider>): SignInProvider[] {
   return (config.providers ?? []).flatMap((offered): SignInProvider[] => {
     if (passed.has(offered.id)) return [];
     if (offered.kind === 'oidc') return [new OpenIdConnect(offered.id)];
+    if (offered.kind === 'facebook' || offered.kind === 'x') return [new OpenIdConnect(offered.id, offered.kind)];
     if (offered.kind === 'microsoft') return [new Microsoft()];
     if (offered.kind === 'apple') return [new Apple()];
     if (offered.kind === 'github') return [new GitHub()];
@@ -790,6 +792,9 @@ export const Madauth = {
 
   /** The signed-in user's API keys, for programs that call your app's API or madAuth's admin API: making, listing and revoking them. */
   apiKeys: createApiKeysApi(core),
+
+  /** The signed-in user's sessions: where they are signed in, and ending one or all others. */
+  sessions: createSessionsApi(core),
 
   /** Reading and setting claims and settings, for users with the role `admin`. */
   admin: createAdminApi(core),

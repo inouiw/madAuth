@@ -128,10 +128,12 @@ export class MadAuthServer extends Construct {
       throw new Error(`MadAuthServer: rs256Signing needs madAuth ${RS256_FROM} or newer, which has an RS256 signing key, but @madauth/server ${installed} is installed. Update it.`);
     }
 
-    // One table with the string keys pk and sk; every read is strongly consistent, so no index is needed.
+    // One table with the string keys pk and sk; every read is strongly consistent, so no index is needed. The
+    // items of an expired session carry `ttl` (since madAuth 0.7.5): DynamoDB deletes them, without a call of the server.
     this.table = new dynamodb.Table(this, 'Table', {
       partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
+      timeToLiveAttribute: 'ttl',
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       removalPolicy: props.tableRemovalPolicy ?? RemovalPolicy.RETAIN,

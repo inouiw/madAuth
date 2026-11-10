@@ -103,7 +103,7 @@ describe('sign-up and e-mail verification', () => {
 
     expect(res.status).toBe(200);
     const { user } = (await res.json()) as { user: { id: string } };
-    expect(user).toEqual({ id: expect.stringMatching(/^usr_/), email: 'grace@example.com', name: 'Grace Hopper', amr: ['pwd'] });
+    expect(user).toEqual({ id: expect.stringMatching(/^usr_/), email: 'grace@example.com', name: 'Grace Hopper', amr: ['pwd'], sessionId: expect.stringMatching(/^ses_/) });
     const jwks = createLocalJWKSet(await (await app.request('/.well-known/jwks.json')).json());
     const { payload } = await jwtVerify(cookies(res).madauth_session.value, jwks, { issuer: ISSUER });
     expect(payload).toMatchObject({ sub: user.id, amr: ['pwd'], sv: 0 });

@@ -89,16 +89,17 @@ export interface OidcTokens {
 
 /**
  * Exchanges the authorization code for the tokens, authenticating as the confidential client the provider
- * knows (`client_secret_basic` or `client_secret_post`, see {@link OidcEndpoints}), with the PKCE verifier.
- * Null when the provider refuses, or answers without an ID token.
+ * knows (`client_secret_basic` or `client_secret_post`, see {@link OidcEndpoints}), with the PKCE verifier (none
+ * for a provider without PKCE, see oidc-presets.ts). Null when the provider refuses, or answers without an ID token.
  */
 export async function exchangeCode(
   endpoints: OidcEndpoints,
   client: { clientId: string; clientSecret: string },
-  exchange: { code: string; redirectUri: string; verifier: string },
+  exchange: { code: string; redirectUri: string; verifier?: string },
   fetchFn: typeof fetch = fetch,
 ): Promise<OidcTokens | null> {
-  const form = new URLSearchParams({ grant_type: 'authorization_code', code: exchange.code, redirect_uri: exchange.redirectUri, code_verifier: exchange.verifier });
+  const form = new URLSearchParams({ grant_type: 'authorization_code', code: exchange.code, redirect_uri: exchange.redirectUri });
+  if (exchange.verifier !== undefined) form.set('code_verifier', exchange.verifier);
   const headers: Record<string, string> = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
   if (endpoints.clientAuth === 'client_secret_basic') {
     // RFC 6749, section 2.3.1: both form-encoded before they are joined.
@@ -132,11 +133,13 @@ export function keysCache(fetchFn: typeof fetch = fetch): (jwksUri: string) => J
 /**
  * The claims of an ID token, checked as OpenID Connect Core (section 3.1.3.7) asks: signed with one of the
  * provider's published keys, by the issuer, for this client (and, with several audiences, authorized for it by
- * `azp`, which must name it whenever it is there), not expired, with the sign-in's nonce and a `sub`. Null if anything doesn't hold.
+ * `azp`, which must name it whenever it is there), not expired, with the sign-in's nonce and a `sub`. Null if anything
+ * doesn't hold. With `nonceRequired: false` (LinkedIn, which doesn't return it), a token without a nonce holds; one
+ * with a nonce must still have the sign-in's.
  */
 export async function verifyIdToken(
   idToken: string,
-  expected: { issuer: string; clientId: string; nonce: string; keys: JWTVerifyGetKey },
+  expected: { issuer: string; clientId: string; nonce: string; keys: JWTVerifyGetKey; nonceRequired?: boolean },
 ): Promise<JWTPayload | null> {
   const verified = await jwtVerify(idToken, expected.keys, { issuer: expected.issuer, audience: expected.clientId, algorithms: ID_TOKEN_ALGORITHMS }).catch(() => null);
   if (!verified) return null;
@@ -144,7 +147,8 @@ export async function verifyIdToken(
   const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   // With several audiences `azp` must name this client, and when present it must anyway (section 3.1.3.7).
   if ((audiences.length > 1 || payload.azp !== undefined) && payload.azp !== expected.clientId) return null;
-  if (payload.nonce !== expected.nonce || typeof payload.sub !== 'string' || !payload.sub) return null;
+  const nonceHolds = payload.nonce === expected.nonce || (expected.nonceRequired === false && payload.nonce === undefined);
+  if (!nonceHolds || typeof payload.sub !== 'string' || !payload.sub) return null;
   return payload;
 }
 

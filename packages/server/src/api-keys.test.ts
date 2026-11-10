@@ -78,6 +78,8 @@ describe('making and using API keys', () => {
       'madauth:sign-in:reset',
       'madauth:users:read',
       'madauth:users:delete',
+      'madauth:sessions:read',
+      'madauth:sessions:end',
       'madauth:providers:read',
       'madauth:clients:read',
       'orders:read',

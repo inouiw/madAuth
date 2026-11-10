@@ -23,8 +23,8 @@ Commands:
                                by e-mail), --sms or --no-sms (SMS codes as a second factor),
                                --database <url>, --webhook-url <url>, --initial-admin-email <address> (who
                                becomes the first admin). --yes takes the default for the rest. --out <path>
-                               writes another file, --force overwrites. Google, GitHub and Microsoft are added
-                               later, as providers in the store (see the next steps it prints).
+                               writes another file, --force overwrites. Google, GitHub and the other sign-in
+                               providers are added later, in the store (see the next steps it prints).
   start                        Start the server on PORT (default ${PORT})
   generate-key [--rs256 | --ed25519]
                                Print a new private ES256 key to use as MADAUTH_SIGNING_KEY; with --rs256 an
@@ -466,14 +466,15 @@ function nextSteps(
       '  signInButton.onclick = () => Madauth.showSignInDialog();',
     ],
     [
-      'Google, GitHub and Microsoft sign-in are providers in the store; the sign-in dialog shows a button for each one that is on.',
+      'Google, GitHub, Microsoft, Apple, Facebook, X and OpenID Connect sign-in (GitLab, LinkedIn, Slack, …) are providers',
+      'in the store; the sign-in dialog shows a button for each one that is on.',
       'Until the first admin exists, the server prints a setup token when it starts. Add a provider with it, e.g.:',
       '',
       `  curl -X POST ${server}/auth/admin/providers/add -H 'Authorization: Bearer <setup token>' \\`,
       `    -H 'Content-Type: application/json' -d '{"kind":"google","clientId":"<client ID>","clientSecret":"<client secret>"}'`,
       '',
       `Register what it answers as callbackUrl in your Google OAuth client (Authorized redirect URIs; JavaScript origins: ${[...googleOrigins].join(' and ')})`,
-      'GitHub OAuth App (Authorization callback URL) or Microsoft Entra app registration (Web redirect URI), and switch the',
+      'GitHub OAuth App (Authorization callback URL) or the other provider’s app (its redirect URI), and switch the',
       'provider on with /auth/admin/settings/set.',
       'Later an admin does this with Madauth.admin.addProvider. See "Providers" in docs/server.md.',
     ],

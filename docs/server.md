@@ -46,6 +46,7 @@ All settings are environment variables. `npx @madauth/server init` asks for the 
 | `SESSION_TTL` | no | Lifetime of a session token in seconds: how long your backends accept it. Default `28800` (8 hours). The web library renews it when needed, see [Sessions](#sessions). |
 | `SESSION_RENEWAL_TTL` | no | How long a user stays signed in without opening your app, in seconds: a session can be renewed this long after its last renewal. Default `2592000` (30 days). Not less than `SESSION_TTL`. |
 | `COOKIE_DOMAIN` | no | Cookie domain, e.g. `.example.com`, so backends on sibling subdomains receive the session cookie. By default the cookie belongs to the server's host only. |
+| `CLIENT_IP_HEADER` | no | The request header in which the proxy in front of madAuth passes the browser's IP address, e.g. `x-forwarded-for`, `x-real-ip` or `cf-connecting-ip`. Its last entry counts: the one the nearest proxy added, which the browser can't forge. Set it only behind a proxy that sets the header. Default: the address the runtime sees (the socket's on Node and Docker, the source IP on AWS Lambda; none on Azure Functions, set `x-forwarded-for` there). The address is only shown in the [list of sessions](#seeing-and-ending-sessions). |
 | `PORT` | no | Port for the Node / Docker server. Default `8787`. |
 
 A server needs no sign-in method to start. Google and GitHub are [providers](#providers) in the store, which an admin adds, or, before the first admin exists, whoever has the [setup token](#first-setup). The e-mail methods come with a webhook that sends the e-mails: e-mail & password sign-in needs `email.send_verification` and `email.send_password_reset` among its events, the e-mail link needs `email.send_signin_link`, sign-up with the authenticator app alone needs `email.send_verification`. Which configured methods are on, and whether they ask for the authenticator app, admins set while the server runs, see [Sign-in methods](#sign-in-methods).
@@ -163,19 +164,21 @@ After a suspected leak, put the new key alone; receivers fetch the list again at
 
 ## Providers
 
-Google, GitHub, [Microsoft](#microsoft-setup), [Apple](#apple-setup) and [OpenID Connect](#openid-connect-provider-setup) sign-in are providers: madAuth keeps them in its store, as the setting `providers`, and admins add, change and remove them through the admin API while the server runs, for every instance at once. A provider's client secret is encrypted by the [key service](#key-service), so the store alone doesn't reveal it, and the admin API never answers it, only whether one is set.
+Google, GitHub, [Microsoft](#microsoft-setup), [Apple](#apple-setup), [Facebook](#facebook-setup), [X](#x-setup) and [OpenID Connect](#openid-connect-provider-setup) sign-in, with the presets [GitLab](#gitlab-setup), [LinkedIn](#linkedin-setup) and [Slack](#slack-setup), are providers: madAuth keeps them in its store, as the setting `providers`, and admins add, change and remove them through the admin API while the server runs, for every instance at once. A provider's client secret is encrypted by the [key service](#key-service), so the store alone doesn't reveal it, and the admin API never answers it, only whether one is set.
 
 - **Add one** with `Madauth.admin.addProvider({ kind: 'google', clientId, clientSecret })` or `{ kind: 'github', clientId, clientSecret }` (`POST /auth/admin/providers/add`). Google and GitHub exist once each, with the kind as the id. Google's client secret is optional: without it, Google signs in with One Tap / FedCM only (`GoogleFedcm`), with it, also with the redirect flow (`GoogleRedirect`). GitHub needs it: it only has the redirect flow.
 - **Microsoft** exists once too, with the id `microsoft`: `{ kind: 'microsoft', clientId, clientSecret, tenant }`, where `tenant` says whose accounts sign in (`common`, `organizations`, `consumers` or one tenant's id), see [Microsoft setup](#microsoft-setup).
 - **Apple** exists once, with the id `apple`: `{ kind: 'apple', clientId, clientSecret, teamId, keyId, bundleIds? }`, where `clientId` is the Services ID, `clientSecret` the text of the `.p8` key file, `teamId` and `keyId` the Team ID and Key ID that go with it, and `bundleIds` the App IDs of the native apps that sign in with the identity token (separated by spaces), see [Apple setup](#apple-setup).
-- **Or an OpenID Connect provider**, as many as needed, each with an id of its own that becomes its method's: `{ kind: 'oidc', id: 'gitlab', name: 'GitLab', issuer: 'https://gitlab.com', clientId, clientSecret }`, optionally with `scopes` and `trustEmail`, see [OpenID Connect provider setup](#openid-connect-provider-setup).
+- **Facebook** and **X** exist once each, with their kind as the id: `{ kind: 'facebook', clientId, clientSecret }` (the Meta app's App ID and App Secret) and `{ kind: 'x', clientId, clientSecret }` (the X app's OAuth 2.0 Client ID and Client Secret), see [Facebook setup](#facebook-setup) and [X setup](#x-setup).
+- **Or an OpenID Connect provider**, as many as needed, each with an id of its own that becomes its method's: `{ kind: 'oidc', id: 'okta', name: 'Okta', issuer: 'https://example.okta.com', clientId, clientSecret }`, optionally with `scopes` and `trustEmail`, see [OpenID Connect provider setup](#openid-connect-provider-setup).
+- **A preset** of the OpenID Connect providers knows the issuer, the name, the button's logo and how the provider departs from the generic flow: `{ kind: 'oidc', preset: 'gitlab' | 'linkedin' | 'slack', clientId, clientSecret }`. The id is the preset's unless one is given (a second GitLab), and so is the name; only GitLab takes another `issuer`, a self-hosted instance's. See [GitLab setup](#gitlab-setup), [LinkedIn setup](#linkedin-setup) and [Slack setup](#slack-setup).
 - **It is off until switched on** in the [sign-in settings](#sign-in-methods), with its own policy for a second factor. On a server whose settings were never saved, the methods that are on are saved as they are first, so adding a provider switches nothing else on or off.
-- **The sign-in dialog shows its button by itself.** `GET /auth/config` lists the providers that are on, with their names, and the button says "Continue with <name>". GitHub's, Google's redirect and the OpenID Connect providers' buttons appear whether or not the app passes `new GitHub()` or `new GoogleRedirect()`; a custom screen renders any of them with `Madauth.provider(id)`. Google's One Tap the app passes itself (`new GoogleFedcm()`), since it loads Google's script and prompts.
+- **The sign-in dialog shows its button by itself.** `GET /auth/config` lists the providers that are on, with their names, and the button says "Continue with <name>". GitHub's, Google's redirect, Microsoft's, Apple's, Facebook's, X's and the OpenID Connect providers' buttons appear whether or not the app passes `new GitHub()` or `new GoogleRedirect()`; a custom screen renders any of them with `Madauth.provider(id)`. Google's One Tap the app passes itself (`new GoogleFedcm()`), since it loads Google's script and prompts.
 - **The answer gives the callback URL** to register at the provider: `<MADAUTH_ISSUER>/auth/providers/<id>/callback`. Before adding one, `listProviders()` answers its start as `callbackBase`, since most providers want the callback URL before they give out the client ID.
-- **Change one** with `updateProvider(id, { name, clientId, clientSecret })`, each optional, an OpenID Connect provider's `scopes` and `trustEmail`, Microsoft's `tenant`, and Apple's `teamId`, `keyId` and `bundleIds`; `clientSecret: null` removes Google's. The kind, the id and an OpenID Connect provider's issuer don't change: its accounts belong to it.
+- **Change one** with `updateProvider(id, { name, clientId, clientSecret })`, each optional, an OpenID Connect provider's `scopes` and `trustEmail`, Microsoft's `tenant`, and Apple's `teamId`, `keyId` and `bundleIds`; `clientSecret: null` removes Google's. The kind, the id, an OpenID Connect provider's issuer and its preset don't change: its accounts belong to it.
 - **Remove one** with `removeProvider(id)`. Its users' accounts stay, so adding it again brings their sign-ins back; the answer's `usersWithoutSignIn` says how many users have no other way in meanwhile. It goes out of the [sign-in settings](#sign-in-methods) as well: added again, it is off until switched on, like a new provider. An OpenID Connect provider's id comes back only with its issuer (see below).
 
-**In the admin dialog:** `Madauth.showAdminDialog()` does all of this in madAuth's dialog. It lists the providers with their state ("On, second factor optional" / "Off"), adds one (Google, GitHub, Microsoft with whose accounts sign in, or an OpenID Connect provider, showing the callback URL to register as the id is typed), changes one, switches it on or off with its second-factor policy in the same form (with `setMethod`, which changes only that provider's entry), and removes one after a confirmation that says how many users sign in with it alone. It asks the admin to sign in again when a change needs it. For a user without the role `admin`, or nobody signed in, it resolves to `forbidden` or `no_session` and doesn't open.
+**In the admin dialog:** `Madauth.showAdminDialog()` does all of this in madAuth's dialog. It lists the providers with their state ("On, second factor optional" / "Off"), adds one (Google, GitHub, Microsoft with whose accounts sign in, Apple, Facebook, X, GitLab, LinkedIn, Slack, or an OpenID Connect provider, showing the callback URL to register as the id is typed), changes one, switches it on or off with its second-factor policy in the same form (with `setMethod`, which changes only that provider's entry), and removes one after a confirmation that says how many users sign in with it alone. It asks the admin to sign in again when a change needs it. For a user without the role `admin`, or nobody signed in, it resolves to `forbidden` or `no_session` and doesn't open.
 
 Changing providers takes an admin's session (no API key) with a sign-in within the last two minutes, like every [sensitive change](sign-in-methods.md#only-within-two-minutes-of-signing-in). Listing them (`listProviders()`, `POST /auth/admin/providers/list`) and a dry run of a removal (`removeProvider(id, { dryRun: true })`, which only counts the users who sign in with nothing else) also work with an API key with the scope `madauth:providers:read`. Each change sends `provider.added`, `provider.changed` or `provider.removed` to the webhook (opt in with `WEBHOOK_EVENTS`), with the admin's address as `by`.
 
@@ -273,25 +276,59 @@ madAuth asks for `name email` (Apple's scopes), signs a client secret from the k
 
 **Native apps:** an iOS or macOS app shows Apple's sheet itself (`ASAuthorizationAppleIDProvider`; in Capacitor e.g. [`@capacitor-community/apple-sign-in`](https://github.com/capacitor-community/apple-sign-in)) and hands the identity token to madAuth: with a cookie session, `Madauth.apple.nonce()` and `Madauth.apple.signIn({ credential, name, authorizationCode })` (see [Custom UI](custom-ui.md#apple-madauthapple)), or with tokens, the [token exchange](#native-apps). The token's audience is the app's App ID (bundle identifier): list it in the provider's `bundleIds`, or the token is refused. Pass the nonce madAuth gives as it is (not hashed); pass `fullName` and `authorizationCode` from Apple's credential along, since the name comes once and the code is what lets madAuth give the authorization back later.
 
+### Facebook setup
+
+Facebook sign-in is Facebook Login's redirect flow ("manually build a login flow"), of which madAuth is a confidential client with the App Secret, and the Graph API (`v26.0`) for the account. See [Social provider security](social-security.md#facebook).
+
+1. At [Meta for Developers → My Apps](https://developers.facebook.com/apps), create an app with the use case **Authenticate and request data from users with Facebook Login**.
+2. Under **Facebook Login → Settings**, enter `<MADAUTH_ISSUER>/auth/providers/facebook/callback` under **Valid OAuth Redirect URIs**, e.g. `https://app.example.com/auth/providers/facebook/callback`. Leave **Login with the JavaScript SDK** off. Facebook takes https only; it lets `localhost` through while the app is in development mode.
+3. Under **App settings → Basic**, give a **Privacy Policy URL** and a **User data deletion** URL (instructions how to delete one's account, e.g. your account page, which calls `Madauth.deleteAccount()`): an app goes live only with both. Copy the **App ID** and the **App Secret**.
+4. Add the provider and switch it on with the id `facebook`:
+
+   ```bash
+   curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+     -H 'Content-Type: application/json' -d '{"kind":"facebook","clientId":"<App ID>","clientSecret":"<App Secret>"}'
+   ```
+
+5. Switch the app to **Live** in the app dashboard: in development mode, only the app's own developers and testers can sign in.
+
+madAuth asks for the permissions `email` and `public_profile`, which need no app review. **Facebook's address is not trusted:** Facebook's documentation doesn't say it is confirmed, so it is confirmed by e-mail once, at the first sign-in, before it signs anyone up; an account without one (made with a phone number) types it. The account is Facebook's app-scoped user id (`facebook:<id>`), the same for this app only: a new Meta app gives every user another id, so keep the app. madAuth sends `appsecret_proof` with every Graph call, so **Require App Secret** in the app's advanced settings can be on.
+
+### X setup
+
+X sign-in is X's OAuth 2.0 authorization-code flow with PKCE, of which madAuth is a confidential client, and the X API v2 for the account. See [Social provider security](social-security.md#x).
+
+1. In the [X Developer Console](https://developer.x.com/en/portal/dashboard), open your app (a project's app; the Free tier will do) and choose **User authentication settings → Set up**.
+2. Choose the **App permissions** **Read**, turn on **Request email from users** (it needs your app's **Privacy policy** and **Terms of service** URLs), and choose the **Type of App** **Web App, Automated App or Bot**: a confidential client, which gets a Client Secret.
+3. Enter `<MADAUTH_ISSUER>/auth/providers/x/callback` as **Callback URI / Redirect URL**, e.g. `https://app.example.com/auth/providers/x/callback`, and your app as **Website URL**. X matches the callback exactly; for development it takes `http://127.0.0.1:8787/auth/providers/x/callback`, not `localhost`.
+4. Copy the **OAuth 2.0 Client ID and Client Secret** (not the API Key and Secret of OAuth 1.0a), add the provider and switch it on with the id `x`:
+
+   ```bash
+   curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+     -H 'Content-Type: application/json' -d '{"kind":"x","clientId":"<OAuth 2.0 Client ID>","clientSecret":"<Client Secret>"}'
+   ```
+
+madAuth asks for the scopes `tweet.read users.read users.email` (X requires `tweet.read` with `users.read`) and reads the account from `GET /2/users/me`. **X's address is trusted when X sends it:** `confirmed_email` is the address X has confirmed; without it (an account made with a phone number, or an app without **Request email from users**) the user types one and its confirmation e-mail proves it. The account is X's numeric user id (`x:<id>`), which stays when the user changes their @username; the name is the display name, else the username.
+
 ### OpenID Connect provider setup
 
-Any provider that speaks OpenID Connect with a discovery document signs in through the kind `oidc`: GitLab, Keycloak, Okta, Auth0, Authentik, Zitadel, a company's own identity provider. madAuth is a confidential client of it, with the authorization-code flow.
+Any provider that speaks OpenID Connect with a discovery document signs in through the kind `oidc`: Keycloak, Okta, Auth0, Authentik, Zitadel, a company's own identity provider. GitLab, LinkedIn and Slack have [presets](#gitlab-setup), which fill in the issuer and the button's logo. madAuth is a confidential client of it, with the authorization-code flow.
 
-1. Register a web application (a confidential client, with a client secret) at the provider, with the redirect URI `<MADAUTH_ISSUER>/auth/providers/<id>/callback`, where `<id>` is the id you will give the provider, e.g. `https://app.example.com/auth/providers/gitlab/callback`. It needs the scopes `openid`, `email` and `profile`.
+1. Register a web application (a confidential client, with a client secret) at the provider, with the redirect URI `<MADAUTH_ISSUER>/auth/providers/<id>/callback`, where `<id>` is the id you will give the provider, e.g. `https://app.example.com/auth/providers/okta/callback`. It needs the scopes `openid`, `email` and `profile`.
 2. Add it (see [Providers](#providers)):
 
    ```bash
    curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
      -H 'Content-Type: application/json' \
-     -d '{"kind":"oidc","id":"gitlab","name":"GitLab","issuer":"https://gitlab.com","clientId":"…","clientSecret":"…"}'
+     -d '{"kind":"oidc","id":"okta","name":"Okta","issuer":"https://example.okta.com","clientId":"…","clientSecret":"…"}'
    ```
 
-   - `id`: 2 to 32 lowercase letters, digits and dashes, starting with a letter. It is the provider's method in the [settings](#sign-in-methods), in `amr` and in the webhooks' `method`, and part of the callback URL. madAuth's own methods' ids (`password`, `authenticator`, `email-link`, `passkey`, `sms`, `totp`, `google`, `github`, `microsoft`) are taken.
+   - `id`: 2 to 32 lowercase letters, digits and dashes, starting with a letter. It is the provider's method in the [settings](#sign-in-methods), in `amr` and in the webhooks' `method`, and part of the callback URL. madAuth's own methods' ids (`password`, `authenticator`, `email-link`, `passkey`, `sms`, `totp`, `google`, `github`, `microsoft`, `apple`, `facebook`, `x`) are taken.
    - `name`: what the button says, "Continue with <name>", and what the dialog calls it.
    - `issuer`: exactly as the provider's discovery document (`<issuer>/.well-known/openid-configuration`) names it, with its trailing slash if it has one. https, or http on `localhost` for development. It can't change later: the accounts belong to it. The id stays bound to the issuer for good, also after the provider is removed (the setting `provider-issuers`), since another issuer's users would sign in to its accounts by their `sub`: adding the id with another issuer is refused (`invalid_provider`), so a provider at another issuer takes another id.
    - `scopes` (optional): more scopes to ask for, separated by spaces, e.g. `"read_user"`; `openid email profile` are always asked for.
    - `trustEmail` (optional, default `false`): see below.
-3. Switch it on in the [sign-in settings](#sign-in-methods) with its id, e.g. `{"methods":{"gitlab":{"allowAsSignInMethod":true,"secondFactor":"none"}}}`. The settings refuse an id that is no provider of the server.
+3. Switch it on in the [sign-in settings](#sign-in-methods) with its id, e.g. `{"methods":{"okta":{"allowAsSignInMethod":true,"secondFactor":"none"}}}`. The settings refuse an id that is no provider of the server.
 
 How madAuth signs in with it:
 
@@ -303,6 +340,52 @@ How madAuth signs in with it:
 - **Confirmed by the provider later** (it now says `email_verified`, or an admin set `trustEmail`), a sign-up that waited for its address is confirmed at its next sign-in.
 - **A provider that tells no address** (neither the ID token nor userinfo has one): the user types one, and its confirmation e-mail proves it. The callback signs in a returning account at once; otherwise it keeps the account in a short-lived cookie (`madauth_pending_account`, HttpOnly, only sent to `/auth/providers/<id>`) and sends the browser back with `#madauth_next=email-address&madauth_method=<id>`. madAuth's dialog then asks for the address, filled in with the ID token's `preferred_username` when that looks like one (`GET /auth/providers/<id>/address`), and sends it (`POST /auth/providers/<id>/address`), which answers the same for every address, as a password sign-up does. See [Microsoft security](microsoft-security.md#an-account-without-an-address). A server whose webhook sends no e-mails refuses such an account (`email_unverified`).
 - **The account** is the provider's `sub` (`oidc:<id>:<sub>`), not the address: a user whose address changes at the provider keeps their account. An address that signs in another way is refused (`other_method`), as with Google and GitHub, see [Several sign-in methods](sign-in-methods.md). A signed-in user adds the provider to their methods with its button's `purpose: 'link'`, whatever its address: the account signs them in by its `sub`, and the address is only noted.
+
+### GitLab setup
+
+GitLab sign-in is the preset `gitlab` of the OpenID Connect providers: the [generic flow](#openid-connect-provider-setup), unchanged, with GitLab's tanuki on the button, on gitlab.com or a self-hosted GitLab. See [Social provider security](social-security.md#gitlab).
+
+1. Register an application in GitLab: for yourself under **Edit profile → Applications**, for a group under the group's **Settings → Applications**, or, on your own instance, for everyone under **Admin → Applications**. Give it a name, the **Redirect URI** `<MADAUTH_ISSUER>/auth/providers/gitlab/callback` (with the id you give it, e.g. `…/gitlab-corp/callback`), leave **Confidential** ticked, and tick the scopes `openid`, `profile` and `email`.
+2. Add the provider with the **Application ID** and the **Secret**, and switch it on with its id:
+
+   ```bash
+   curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+     -H 'Content-Type: application/json' -d '{"kind":"oidc","preset":"gitlab","clientId":"<Application ID>","clientSecret":"<Secret>"}'
+   ```
+
+   For a self-hosted GitLab, add its address as the issuer (its external URL, as `<issuer>/.well-known/openid-configuration` names it), and another id and name if you have gitlab.com too: `{"kind":"oidc","preset":"gitlab","id":"gitlab-corp","name":"Corp GitLab","issuer":"https://gitlab.example.com",…}`.
+
+**GitLab's address is trusted when GitLab says it is verified** (`email_verified`), as for any OpenID Connect provider; one it doesn't verify is confirmed by e-mail once, and an account whose address GitLab doesn't give (GitLab may leave it out unless the user has a public address) types one. On your own instance, `trustEmail: true` trusts every address, if your GitLab's admins verify them. The account is GitLab's user id at that issuer (`oidc:<id>:<sub>`).
+
+### LinkedIn setup
+
+LinkedIn sign-in is the preset `linkedin` of the OpenID Connect providers: "Sign In with LinkedIn using OpenID Connect", with LinkedIn's issuer `https://www.linkedin.com/oauth`. Where LinkedIn departs from the generic flow, the preset follows it: no PKCE (LinkedIn has it for native apps only), the client secret in the form (`client_secret_post`), and an ID token without the `nonce`, which LinkedIn doesn't return. See [Social provider security](social-security.md#linkedin).
+
+1. At [LinkedIn Developers → My apps](https://www.linkedin.com/developers/apps), create an app (it needs a LinkedIn company page), and under **Products** request **Sign In with LinkedIn using OpenID Connect**.
+2. Under **Auth**, add `<MADAUTH_ISSUER>/auth/providers/linkedin/callback` under **Authorized redirect URLs for your app**, and copy the **Client ID** and the **Primary Client Secret**.
+3. Add the provider and switch it on with the id `linkedin`:
+
+   ```bash
+   curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+     -H 'Content-Type: application/json' -d '{"kind":"oidc","preset":"linkedin","clientId":"<Client ID>","clientSecret":"<Client Secret>"}'
+   ```
+
+**LinkedIn's address is trusted when LinkedIn says it is verified** (`email_verified`, which LinkedIn may leave out); otherwise it is confirmed by e-mail once, and an account without an address types one. The account is LinkedIn's `sub` (`oidc:linkedin:<sub>`), which is pairwise: a new LinkedIn app gives every user another one, so keep the app.
+
+### Slack setup
+
+Slack sign-in is the preset `slack` of the OpenID Connect providers: "Sign in with Slack", with Slack's issuer `https://slack.com`, without PKCE: Slack's PKCE setting makes an app a public client for good, and madAuth is a confidential one, with the client secret, the state and the nonce. See [Social provider security](social-security.md#slack).
+
+1. At [Slack API → Your Apps](https://api.slack.com/apps), create an app (from scratch) in your workspace. Leave **PKCE** under **OAuth & Permissions** off.
+2. Under **OAuth & Permissions → Redirect URLs**, add `<MADAUTH_ISSUER>/auth/providers/slack/callback`; under **User Token Scopes**, add `openid`, `email` and `profile`. Under **Manage Distribution**, distribute the app if people of other workspaces sign in.
+3. Copy the **Client ID** and the **Client Secret** from **Basic Information**, add the provider and switch it on with the id `slack`:
+
+   ```bash
+   curl -X POST https://app.example.com/auth/admin/providers/add -H 'Authorization: Bearer madauth_setup_…' \
+     -H 'Content-Type: application/json' -d '{"kind":"oidc","preset":"slack","clientId":"<Client ID>","clientSecret":"<Client Secret>"}'
+   ```
+
+**Slack's address is trusted when Slack says it is verified** (`email_verified`); otherwise it is confirmed by e-mail once. The account is Slack's `sub` (`oidc:slack:<sub>`), one per workspace membership: the same person in two workspaces is two accounts.
 
 ## E-mail & password sign-in
 
@@ -350,6 +433,12 @@ export const handler = createHandler({ store: createDynamoDbAdapter({ tableName:
 ```
 
 How the records are stored: each record is one item (`pk` = `r|<model>|<id>`), with one more item per unique value (`u|user|emailNormalized|<address>`) and per indexed value (`i|account|userId|<id>`). A record and these items are always written in one transaction, and every read is strongly consistent, so the table needs no secondary index.
+
+**Expired sessions.** A [session's](#seeing-and-ending-sessions) items carry the attribute `ttl`, when the session expires (in seconds since 1970). Turn on DynamoDB's TTL for it, so DynamoDB deletes them, for free; without it they stay in the table (madAuth never reads an expired session as valid, and deletes a user's expired ones at their next sign-in). The [AWS template](../deploy/aws/README.md) turns it on.
+
+```bash
+aws dynamodb update-time-to-live --table-name madauth --time-to-live-specification Enabled=true,AttributeName=ttl
+```
 
 ### Postgres
 
@@ -535,7 +624,8 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `user.email_verified` | An address was confirmed with the link or code of `email.send_verification` or `email.send_signin_link` | `user`, `method` (`password`, `authenticator`, `passkey` or `email-link`), `via` (`link` or `code`) | the same | the same |
 | `user.password_reset` | A password was reset (older sessions end) | `user` | the same | the same |
 | `user.password_changed` | A signed-in user changed their password (their other sessions end) | `user` | the same | the same |
-| `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `github`, `authenticator`, `email-link` or `passkey`), `secondFactor` (`passkey`, `authenticator`, `recovery_code` or `sms`, when there was a second step) | the same | the same |
+| `user.signed_in` | Someone signed in, including after confirming or resetting | `user`, `method` (`password`, `google`, `github`, `authenticator`, `email-link` or `passkey`), `secondFactor` (`passkey`, `authenticator`, `recovery_code` or `sms`, when there was a second step), `session { id, browser, os, ip }` (the new [session](#seeing-and-ending-sessions) and its device, e.g. to tell the user "New sign-in from Firefox on macOS"; absent for the tokens of an [OpenID Connect](#openid-connect-provider) token exchange, which start no session) | the same | the same |
+| `user.session_ended` | A [session](#seeing-and-ending-sessions) ended before it expired: `reason` `ended` (the user ended it from another session, or an admin did), `signed_out` (a sign-out at its browser, or a sign-in there that goes on to a second step), `replaced` (a new session at its browser) or `limit` (a new session of the user beyond the 50 a user can have: the one with the oldest activity). One call per session. Not for a password reset or change, a reset of the sign-in or a deletion, whose own events say that every (other) session ended. | `user`, `session { id }`, `reason`, `by` (the admin's address, when an admin ended it), `byApiKey { id, name }` (when the admin used an API key) | the same | the same |
 | `user.deleted` | A user deleted their account, or an admin [deleted the user](#deleting-a-user) | `user`; when an admin deleted them, also `by` (the admin's address) and `byApiKey { id, name }` (when the admin used an API key) | the same | the same |
 | `user.claims_changed` | An admin set the claims of a user, or [`INITIAL_ADMIN_EMAIL`](#the-first-admin) gave a user the role `admin` | `user` (with the new claims), `claims`, `by` (the admin's address, or `INITIAL_ADMIN_EMAIL`), `byApiKey { id, name }` (when the admin used an [API key](api-keys.md)) | the same | the same |
 | `user.second_factor_enabled` | A user set up or replaced a second factor: the authenticator app as the second step of their sign-in method, or a phone number for SMS codes | `user`, `method` (`authenticator` or `sms`), `phone` (for `sms`) | the same | the same |
@@ -549,7 +639,7 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `provider.added`, `provider.changed`, `provider.removed` | An admin, or the [setup token](#first-setup), added, changed or removed a [sign-in provider](#providers) | `provider { id, kind, name, clientId, hasClientSecret, callbackUrl, createdAt, updatedAt }` (never its secret), `by` (the admin's address; null for the setup token, with `bySetupToken: true`) | the same | the same |
 
 - The prefix says what a call is: `email.send_*` and `sms.send_*` hand over a message for you to send, `user.signing_up` asks you to decide, and the other `user.*` types tell you what happened.
-- `user` in an event is `{ id, email, name, claims }` (`name` and `claims` when there are any): never the provider's `picture`, which the session's user has, nor how the session was authenticated (`amr`).
+- `user` in an event is `{ id, email, name, claims }` (`name` and `claims` when there are any): never the provider's `picture`, which the session's user has, nor how the session was authenticated (`amr`), nor its `sessionId` (`user.signed_in` and `user.session_ended` name the session in `session`).
 - A user signs up with one method and can [add more](sign-in-methods.md) while signed in (`user.method_added`). The authenticator app and SMS codes are told as second factors (`user.second_factor_*`), whether or not the app also signs in on its own; setting up or replacing the app a user signed up with is part of their sign-up (`user.signed_up`), so no `user.second_factor_*` is sent for it, nor `user.method_added` for the passkey a user signs up with.
 - `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
 - Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. E-mail & password sign-in is on when `email.send_verification` and `email.send_password_reset` are in the list, the e-mail link when `email.send_signin_link` is, SMS codes when `sms.send_code` is; a receiver that only wants events (e.g. `user.signed_in`) is fine on a Google-only server.
@@ -561,12 +651,13 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 Every call, `<webhook-id>.<webhook-timestamp>.<body>`, is at most 4096 bytes, the most AWS KMS signs with Ed25519, so the `v1a` signature is never missing. The limits that keep it so (a test builds the largest call of each type from them):
 
 - claims: 1024 bytes as JSON (see [Claims](#claims));
-- names, typed or from a provider (Google, GitHub, Microsoft, Apple, an OpenID Connect provider): cut to 100 characters, without control characters;
+- names, typed or from a provider (Google, GitHub, Microsoft, Apple, Facebook, X, an OpenID Connect provider and its presets): cut to 100 characters, without control characters;
 - e-mail addresses: 254 bytes in UTF-8, without quotes, backslashes or control characters; a provider's address that isn't one doesn't sign in (`email_unverified`);
 - `redirectTo`, of which the e-mail links are made: 1024 bytes as a URL (`400 invalid_options`);
 - an API key: at most 20 scopes;
 - providers: at most 20; an OpenID Connect provider's issuer 256 characters, its extra scopes 512 characters in all, Apple's bundle ids 512 characters in all;
 - the hosts of `MADAUTH_ISSUER` and `ALLOWED_ORIGINS`: 253 characters, as any domain name;
+- a session's IP address (`user.signed_in`): at most 45 characters, the longest IPv6 address in text (one with a zone id, `fe80::1%eth0`, longer than that is recorded as unknown); its browser and system come from madAuth's short lists;
 - no `picture` in a call.
 
 ### Signatures
@@ -679,7 +770,24 @@ const response = await fetch('/api/orders');
 
 A backend that answers 401 although the user is signed in met a session that expired in between: call `Madauth.sessionReady()` and send the request once more.
 
-**What renewal can't do.** Whoever has both cookies stays signed in until the renewal token expires or the password is reset. A password reset ends every session of the user, also those started with Google. A session token issued by madAuth 0.1 has no renewal token, and one issued by madAuth 0.2 for a Google user belongs to an id that no longer exists: either lasts until it expires, and then the user signs in again.
+**What renewal can't do.** Whoever has both cookies stays signed in until the renewal token expires, the password is reset or the session is [ended](#seeing-and-ending-sessions). A password reset ends every session of the user, also those started with Google. A session token issued by madAuth 0.1 has no renewal token, and one issued by madAuth 0.2 for a Google user belongs to an id that no longer exists: either lasts until it expires, and then the user signs in again.
+
+### Seeing and ending sessions
+
+Each session has a record in the store, made at the sign-in: its id (`ses_…`, the `sid` of its tokens), the user, when and how they signed in (`auth_time`, `amr`), the browser and the operating system (read from the user agent, by name only, e.g. `Firefox` and `macOS`), the full IP address (see `CLIENT_IP_HEADER` in [Configuration](#configuration)), and when it was made and last renewed. Each renewal checks that the record still exists, and records the device and the time anew. So the list shows where the user is signed in and when each session was last active (within `SESSION_TTL`: a session is renewed at most every half of it).
+
+- **The user** lists them with `Madauth.sessions.list()` (`GET /auth/sessions`; the current one first, marked `current`), and ends one with `Madauth.sessions.end(id)` or every other one with `Madauth.sessions.endOthers()`; this browser then goes on with new cookies for the same sign-in. Ending takes a sign-in within the last two minutes, like changing a method (`401 reauth_required`), so a session someone took over can't end the user's own. Ending the current one signs this browser out. `Madauth.showManageSignInMethodsDialog()` shows them under "Sessions".
+- **An admin** lists a user's sessions with `Madauth.admin.sessions.list(userId)` and ends one, or with `'all'` every one, with `Madauth.admin.sessions.end(userId, id)`: the way to sign a user out everywhere without [resetting their sign-in](#resetting-a-users-sign-in). See [Ending a user's sessions](#ending-a-users-sessions).
+
+Ending all of them raises the user's session version as well, so more ends at once: every session the madAuth server checks (`GET /auth/session`), with or without a record (also one from before madAuth 0.7.5), every sign-in that waits for its second step, and the refresh tokens of the applications that sign in with madAuth as their [OpenID Connect provider](#openid-connect-provider) (their access tokens work until they expire, 15 minutes). API keys stay. Your backends accept a session token until it expires (`SESSION_TTL`), as after a password reset, unless they keep a list of ended sessions.
+
+**At most 50 sessions per user.** A new session beyond them ends the one with the oldest activity (`user.session_ended` with `reason: limit`), so a client that signs in again and again without keeping its cookies doesn't pile up sessions. The limit is fixed.
+
+**An ended session stops at its next renewal**, so within `SESSION_TTL` (8 hours) at the latest: its record is gone, so the renewal fails, the cookies are cleared, and the web library sees nobody signed in. Until then its session token is valid, and your backends, which check it without asking madAuth, accept it; madAuth itself refuses it every change that takes a recent sign-in at once (`401 reauth_required`). A backend that needs it to stop sooner keeps its own list of ended sessions: the [`user.session_ended`](#webhooks) webhook names each ended session (`session.id`, the `sessionId` of the [verified user](#verifying-the-session-in-your-backend)), with `by` when an admin ended it, and the backend refuses those until `SESSION_TTL` after the event. This is madAuth's counterpart of OpenID Connect's back-channel logout.
+
+**Records go when a session ends**: when it is ended, at a sign-out (`POST /auth/logout`), when a new sign-in at the same browser replaces it, and with a password reset or change (the other sessions), a [reset of the sign-in](#resetting-a-users-sign-in) or the deletion of the user. Nothing is kept of an ended session. An expired session's record goes at the user's next sign-in, by [DynamoDB's TTL](#dynamodb), and in the SQL stores (SQLite, Postgres) at most once an hour with a sign-in. The IP address and the device are personal data: name them in your privacy policy.
+
+**Sessions from before madAuth 0.7.5** have no record: their tokens have no `sid`. Their next renewal makes one (with the time and the methods of the sign-in, and the device of the renewal) and gives them a `sid`, so nobody is signed out by the upgrade. Until then they aren't listed and can't be ended one by one; ending all of a user's sessions (the user's "all others" or the admin's `'all'`) ends them, by the session version.
 
 ## Claims
 
@@ -719,7 +827,9 @@ madAuth has these methods, named by these ids in the settings:
 | `google` | Google sign-in (One Tap / FedCM, the redirect flow, or an ID token the app obtained itself) | `GoogleFedcm`, `GoogleRedirect`, `Madauth.google` |
 | `github` | [GitHub sign-in](github-security.md) (the redirect flow) | `GitHub`, `Madauth.github` |
 | `microsoft` | [Microsoft sign-in](microsoft-security.md) (the redirect flow), once an admin added it | `Madauth.provider('microsoft')` |
-| the provider's id, e.g. `gitlab` | An [OpenID Connect provider](#openid-connect-provider-setup) an admin added (the redirect flow) | `Madauth.provider(id)` |
+| `facebook` | [Facebook sign-in](#facebook-setup) (the redirect flow), once an admin added it | `Madauth.provider('facebook')` |
+| `x` | [X sign-in](#x-setup) (the redirect flow), once an admin added it | `Madauth.provider('x')` |
+| the provider's id, e.g. `gitlab` | An [OpenID Connect provider](#openid-connect-provider-setup) an admin added (the redirect flow), also of a preset ([GitLab](#gitlab-setup), [LinkedIn](#linkedin-setup), [Slack](#slack-setup)) | `Madauth.provider(id)` |
 | `password` | E-mail & password | `Password`, `Madauth.password` |
 | `email-link` | The passwordless [e-mail link](email-link-security.md) (the address, then the link or the code from the e-mail) | `EmailLink`, `Madauth.emailLink` |
 | `passkey` | [Passkeys](#passkeys) (WebAuthn): on their own, and as a second factor | `Passkey`, `Madauth.passkey`, `Madauth.showSetUpPasskeyDialog()` |
@@ -844,6 +954,12 @@ The user then signs up again with any method that is on, and gets the same id. T
 
 Code: `resetSignIn` in [`users.ts`](../packages/server/src/users.ts), `/auth/admin/sign-in/reset` in [`app.ts`](../packages/server/src/app.ts).
 
+## Ending a user's sessions
+
+`Madauth.admin.sessions.list(userId)` in the web library (`POST /auth/admin/sessions/list`) lists the [sessions](#seeing-and-ending-sessions) of a user, by their id (e.g. from [Searching users](#searching-users)): the device, the IP address and the last activity of each. `Madauth.admin.sessions.end(userId, id)` (`POST /auth/admin/sessions/end`) ends one, and `end(userId, 'all')` every one: the user is signed out everywhere, and keeps their sign-in methods. One ended session stops at its next renewal, within `SESSION_TTL`; `'all'` also raises the session version, which ends the sessions at the madAuth server at once and the user's OpenID Connect refresh tokens too (see [Seeing and ending sessions](#seeing-and-ending-sessions)). Either way and `user.session_ended` tells your webhook, with the admin's address as `by`. Ending takes a sign-in within the last two minutes, like every admin change. Programs call these with an admin's [API key](api-keys.md) with the scopes `madauth:sessions:read` and `madauth:sessions:end`.
+
+To also lock the user out, [reset their sign-in](#resetting-a-users-sign-in) or [delete them](#deleting-a-user): both end the sessions as well.
+
 ## Searching users
 
 `Madauth.admin.searchUsers(search)` in the web library (`POST /auth/admin/users/search`) finds users for admins: who has a role, the user with an address, who signed up when, or every user, e.g. for a list on an admin screen. Every filter given must match:
@@ -901,13 +1017,16 @@ interface StoreAdapter {
   update(model: string, where: Where, patch: Row): Promise<number>; // records changed
   delete(model: string, where: Where): Promise<number>; // records deleted; must be exact under concurrency
   scan(model: string, opts: { after?: string; limit: number }): Promise<Row[]>; // a page of all records of the model
+  deleteExpired?(model: string, now: number): Promise<number>; // optional: deletes the records whose `expiry` field is at or before now
 }
 // Row: { field: string | number | boolean | null }. Where: every field equals the value (null: is empty).
 ```
 
 `scan` returns a model's records a page at a time, for admins only (it is how [searching users](#searching-users) reads them): at most `limit`, in an order of your choosing that stays the same, starting after the record whose id is `after`, which may have been deleted since. Fewer than `limit` means there are no more. Ordering by the primary key does all of this in SQL (`where id > $after order by id limit $limit`); the DynamoDB adapter scans the table, whose order is fixed, from the key of `after`.
 
-The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` (one per sign-in method of a user), `verification`, `setting`, `recoveryCode` and `apiKey`. The schema says nothing about how records are stored, so it fits any database. For SQL databases there are helpers: rows use the schema's camelCase field names, while the SQL tables use `madauth_<model>` and snake_case columns (`madauth_recovery_code`; `tableName()` and `columnName()` convert), and `createTablesSql()` creates them. Print the SQL to create the tables:
+`deleteExpired` is optional. A model with an `expiry` field (`session.expiresAt`) has records that are of no use once that time is past; madAuth calls `deleteExpired` for it at most once an hour per instance, so the records of users who never come back go too (`delete from madauth_session where expires_at <= $now`). A store that deletes them by itself, like DynamoDB with its TTL, doesn't need it.
+
+The models and their fields are in `madauthSchema` (exported by `@madauth/server`): `user`, `account` (one per sign-in method of a user), `verification`, `setting`, `recoveryCode`, `apiKey`, `session` and the OpenID Connect provider's. The schema says nothing about how records are stored, so it fits any database. For SQL databases there are helpers: rows use the schema's camelCase field names, while the SQL tables use `madauth_<model>` and snake_case columns (`madauth_recovery_code`; `tableName()` and `columnName()` convert), and `createTablesSql()` creates them. Print the SQL to create the tables:
 
 ```bash
 npx @madauth/server schema --dialect postgres
@@ -935,6 +1054,7 @@ npx @madauth/server schema --dialect postgres --from 1
 | 9 | [Sign-up with a passkey alone](#passkeys): `user.signUpMethod`, the method the user's pending sign-up confirms the address for (`password`, `authenticator` or `passkey`; string, empty before; `totp`, the app's id before it was named `authenticator`, is read as `authenticator`). Each sign-up that sends a confirmation e-mail sets it, and the confirmation reads it. |
 | 10 | New model `apiKey`: the users' [API keys](api-keys.md), each with its `userId` (indexed), `hash` (the SHA-256 of the key; **unique**), `name`, `scopes` (separated by spaces), `createdAt`, `expiresAt` (empty: never) and `lastUsedAt` (0: never). A new table; existing ones don't change. |
 | 11 | `user.preferredSecondFactor`: the second factor the user wants to be asked for first (`authenticator`, `passkey` or `sms`; empty: the usual order). Records from before read as empty. |
+| 16 | [Sessions](#seeing-and-ending-sessions): the new model `session` (a session at a browser, by its id, with `userId` (indexed), `sessionVersion`, `authTime`, `amr`, `ip`, `browser`, `os`, `createdAt`, `renewedAt` and `expiresAt`). `expiresAt` is the schema's first `expiry` field: an adapter may delete such a record once the time is past (the DynamoDB adapter gives its items a `ttl`), and can offer the optional `deleteExpired`, which madAuth calls now and then. A new table; existing ones don't change. |
 | 15 | [RS256 ID tokens](#rs256-id-tokens): `oidcClient.idTokenAlg` (the algorithm of the application's ID tokens, `ES256` or `RS256`; empty: ES256). |
 | 14 | The [token exchange](#native-apps): `oidcClient.tokenExchange` (whether the application may exchange a Google ID token for tokens; empty: no) and the new model `oidcNonce` (a native app's nonce, by its SHA-256, with its `clientId` (indexed) and `expiresAt`; the record goes when the nonce is used). |
 | 13 | The [device authorization grant](#devices-without-a-browser): `oidcClient.deviceFlow` (whether the application may use it; empty: no), `user.wrongDeviceCodes` and `user.wrongDeviceCodeAt` (wrong codes the user typed within ten minutes; empty: none), and the new model `oidcDeviceCode` (a device's pending sign-in, by the SHA-256 of its device code, with the `userCode` (**unique**), the client, the scope, the status, the user it is bound to and the client (both indexed), how they signed in, and when it expires and was last polled). |
@@ -1002,6 +1122,8 @@ if (!user) return new Response('Unauthorized', { status: 401 });
 console.log(user.id, user.email, user.claims, user.amr); // claims: e.g. { roles: ['admin'] }; amr: e.g. ['pwd', 'otp']
 ```
 
+`user.sessionId` is the session's id (`ses_…`), which [`user.session_ended`](#webhooks) names: a backend that keeps a list of ended sessions refuses those (see [Seeing and ending sessions](#seeing-and-ending-sessions)). A session from before madAuth 0.7.5 has none until its next renewal.
+
 `user.amr` says how the session was authenticated: `pwd` (password), `google`, `github`, `email` (the [e-mail link](email-link-security.md)), `passkey` (a [passkey](#passkeys), on its own or as the second step), `otp` (the [authenticator app](#authenticator-app), as the second step or on its own), `sms` (a code by SMS as the second step). Require `otp` or `passkey` before a sensitive action if your users have them.
 
 A session token is valid for `SESSION_TTL`. When `verifySession` finds none, answer 401: the web library then renews the session, and the app sends the request again (see [Sessions](#sessions)).
@@ -1012,7 +1134,7 @@ Other languages can verify the JWT with any JOSE library:
 - header `typ` `madauth-session+jwt`
 - keys from `/.well-known/jwks.json`
 
-The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the session was authenticated: `pwd`, `google`, `github`, `email`, `passkey`, `otp`, `sms`), `auth_time` (when the user signed in, kept across renewals) and `claims` (what admins attached, see [Claims](#claims)).
+The claims are `sub` (the user's id), `email`, `name`, `picture`, `amr` (how the session was authenticated: `pwd`, `google`, `github`, `email`, `passkey`, `otp`, `sms`), `auth_time` (when the user signed in, kept across renewals), `sid` (the session's id) and `claims` (what admins attached, see [Claims](#claims)).
 
 ## Verifying an API key in your backend
 
@@ -1189,7 +1311,10 @@ What ends the tokens is what ends the code flow's.
 | `POST /auth/api-keys/revoke` | `{ id }`, signed in → `{}`; 404 `api_key_not_found` |
 | `POST /auth/api-keys/verify` | With `Authorization: Bearer madauth_…`, for your backend → `{ user, apiKey: { id, name, scopes } }` (the scopes that count now); 401 `invalid_api_key` |
 | `GET /auth/session` | `{ user }` for the current session, [renewing](#sessions) it if needed; 401 `no_session`, which also clears the cookies |
-| `POST /auth/logout` | Clears the cookies of the session |
+| `POST /auth/logout` | Clears the cookies of the session and ends it: its record goes, `user.session_ended` with `reason: signed_out` |
+| `GET /auth/sessions` | `{ sessions: [{ id, current, browser, os, ip, signedInAt, amr, createdAt, lastActiveAt, expiresAt }] }`: the signed-in user's [sessions](#seeing-and-ending-sessions), the current one first; 401 `no_session` |
+| `POST /auth/sessions/end` | `{ id }`, signed in within two minutes → 204; the session stops at its next renewal (the current one at once: its cookies are cleared); 401 `reauth_required` or `no_session`, 404 `session_not_found` |
+| `POST /auth/sessions/end-others` | Signed in within two minutes → `{ ended }` (how many) and new cookies for this session: the session version goes up, which also ends sessions without a record, pending second steps and OpenID Connect refresh tokens; 401 `reauth_required` or `no_session` |
 | `POST /auth/admin/users/search` | `{ role?, email?, signedUpAfter?, signedUpBefore?, pending?, limit?, cursor? }` → `{ users: [{ id, email, name, emailVerified, claims, methods, signedUpAt, pending }], cursor? }`, for admins; 400 `invalid_search`, `invalid_email`. See [Searching users](#searching-users). |
 | `POST /auth/admin/claims/get` | `{ email }` → `{ email, userId, claims }`, for users with the role `admin`; 401 `no_session`, 403 `forbidden`, 400 `invalid_email`, 404 `user_not_found`. See [Claims](#claims). |
 | `POST /auth/admin/claims/set` | `{ email, claims }` → `{ email, userId, claims }`: replaces the claims of the user (a session within two minutes of its sign-in, else 401 `reauth_required`; an API key with the scope needs none, as for every admin change but the providers'); also 400 `invalid_claims`, 403 `own_admin_role` (it would take the role `admin` from the caller, see [The first admin](#the-first-admin)) |
@@ -1202,6 +1327,8 @@ What ends the tokens is what ends the code flow's.
 | `POST /auth/admin/providers/remove` | `{ id }` → `{ provider, usersWithoutSignIn }`: removes a provider, its users' accounts stay; like `update`. With `dryRun: true` → `{ provider, usersWithoutSignIn, dryRun: true }`: only counts, like `list` (no recent sign-in needed); 400 `invalid_options` for a `dryRun` that is no boolean |
 | `POST /auth/admin/sign-in/reset` | `{ email }` → `{ email, userId }` (a session within two minutes of its sign-in, else 401 `reauth_required`): removes all of the user's sign-in methods and second factors, ends their sessions and marks the address unconfirmed, for admins; they sign up again. See [Resetting a user's sign-in](#resetting-a-users-sign-in). |
 | `POST /auth/admin/users/delete` | `{ email }` → `{ email, userId }` (a session within two minutes of its sign-in, else 401 `reauth_required`; an API key with the scope `madauth:users:delete` needs none): deletes the user with all their sign-in methods, claims, API keys and pending links, for admins; the address can sign up again as a new user. 400 `invalid_email`, 404 `user_not_found`, 403 `forbidden` (the user has the role `admin`), `own_admin_role` (the caller). See [Deleting a user](#deleting-a-user). |
+| `POST /auth/admin/sessions/list` | `{ userId }` → `{ email, userId, sessions }`: the user's [sessions](#ending-a-users-sessions) (`current` marks the admin's own); 404 `user_not_found`. API keys need `madauth:sessions:read`. |
+| `POST /auth/admin/sessions/end` | `{ userId, id }`, `id` a session's or `"all"` (which also raises the session version) → `{ email, userId, ended }`; needs a recent sign-in (API keys: `madauth:sessions:end`); 400 `invalid_options`, 404 `user_not_found` or `session_not_found` |
 | `POST /auth/admin/api-keys/list` | `{ email }` → `{ email, userId, apiKeys }`: the user's [API keys](api-keys.md), for admins with a session (an API key gets 403 `forbidden`) |
 | `POST /auth/admin/api-keys/revoke` | `{ email, id }` → `{ email, userId }`; 404 `api_key_not_found` |
 | `POST /auth/account/delete` | Deletes the account of the user signed in within two minutes (else 401 `reauth_required`) and clears the session cookie; `200 { googleSub }` if they had a Google account, otherwise `204`; with an authenticator app `{ code }` or `{ recoveryCode }` is needed (401 `code_required`, `code_invalid`); 401 `no_session`, 403 `own_admin_role` (the user has the role `admin`). See [Deleting an account](#deleting-an-account). |

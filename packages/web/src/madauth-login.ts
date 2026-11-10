@@ -15,8 +15,9 @@ import {
 } from './madauth.js';
 import { isBuiltInMethodId, loginMethods, type LoginMethod, type LoginMethodId } from './methods.js';
 import type { SignInMethodInfo } from './scopes/methods.js';
-import type { NewProvider, ProviderChanges, ProviderInfo, ProviderKind, Settings } from './scopes/admin.js';
+import type { NewProvider, OidcPreset, ProviderChanges, ProviderInfo, ProviderKind, Settings } from './scopes/admin.js';
 import type { ApiKeyInfo, ApiKeyScope } from './scopes/api-keys.js';
+import type { SessionInfo } from './scopes/sessions.js';
 import type { DeviceRequest } from './scopes/device.js';
 import type { PasskeyInfo } from './scopes/passkey.js';
 import { pendingStepOf, secondStepOf, type PendingStep, type SecondFactorPolicy } from './providers/provider.js';
@@ -174,15 +175,23 @@ const tenantOf = (d: ProviderDraft): string => (d.tenantChoice === 'single' ? d.
 const tenantChoiceOf = (tenant: string | undefined): Pick<ProviderDraft, 'tenantChoice' | 'tenantId'> =>
   !tenant ? { tenantChoice: '', tenantId: '' } : tenant === 'common' || tenant === 'organizations' || tenant === 'consumers' ? { tenantChoice: tenant, tenantId: '' } : { tenantChoice: 'single', tenantId: tenant };
 
-/** The provider form: a new provider of `kind`, or `provider` being changed, with what is typed. */
+/** The provider form: a new provider of `kind` (an OpenID Connect provider maybe of a `preset`), or `provider` being changed, with what is typed. */
 interface ProviderForm {
   kind: ProviderKind;
+  preset?: OidcPreset;
   provider?: ProviderInfo;
   draft: ProviderDraft;
 }
 
-/** What `addProvider` takes for a new provider of `kind`, from the form. */
-function newProviderOf(kind: ProviderKind, d: ProviderDraft): NewProvider {
+/** What the admin dialog offers to add: a kind, or a preset of the OpenID Connect providers. */
+type ProviderChoice = ProviderKind | OidcPreset;
+const PRESETS: readonly OidcPreset[] = ['gitlab', 'linkedin', 'slack'];
+const isPreset = (choice: ProviderChoice): choice is OidcPreset => (PRESETS as readonly string[]).includes(choice);
+/** The issuer a preset's form starts with: only GitLab's can be another (a self-hosted instance). */
+const GITLAB_ISSUER = 'https://gitlab.com';
+
+/** What `addProvider` takes for a new provider of `kind` (of `preset`), from the form. */
+function newProviderOf(kind: ProviderKind, d: ProviderDraft, preset?: OidcPreset): NewProvider {
   const name = d.name.trim();
   const shared = { clientId: d.clientId.trim(), ...(d.clientSecret ? { clientSecret: d.clientSecret } : {}) };
   if (kind === 'microsoft') return { kind, clientId: shared.clientId, clientSecret: d.clientSecret, tenant: tenantOf(d), ...(name ? { name } : {}) };
@@ -190,8 +199,24 @@ function newProviderOf(kind: ProviderKind, d: ProviderDraft): NewProvider {
     const bundleIds = d.bundleIds.trim();
     return { kind, clientId: shared.clientId, clientSecret: d.clientSecret, teamId: d.teamId.trim(), keyId: d.keyId.trim(), ...(bundleIds ? { bundleIds } : {}), ...(name ? { name } : {}) };
   }
+  if (kind === 'facebook' || kind === 'x') return { kind, clientId: shared.clientId, clientSecret: d.clientSecret, ...(name ? { name } : {}) };
   if (kind !== 'oidc') return { kind, ...shared, ...(name ? { name } : {}) };
   const scopes = d.scopes.trim();
+  if (preset) {
+    const id = d.id.trim();
+    const issuer = preset === 'gitlab' ? d.issuer.trim() : '';
+    return {
+      kind,
+      preset,
+      ...(id ? { id } : {}),
+      ...(name ? { name } : {}),
+      ...(issuer ? { issuer } : {}),
+      clientId: shared.clientId,
+      clientSecret: d.clientSecret,
+      trustEmail: d.trustEmail,
+      ...(scopes ? { scopes } : {}),
+    };
+  }
   return { kind, id: d.id.trim(), name, issuer: d.issuer.trim(), clientId: shared.clientId, clientSecret: d.clientSecret, trustEmail: d.trustEmail, ...(scopes ? { scopes } : {}) };
 }
 
@@ -377,6 +402,7 @@ export class MadauthLogin extends LitElement {
     factors: { state: true },
     passwordScore: { state: true },
     methodList: { state: true },
+    sessionList: { state: true },
     secondFactors: { state: true },
     preferredFactor: { state: true },
     appStatus: { state: true },
@@ -464,6 +490,10 @@ export class MadauthLogin extends LitElement {
   private setupFactors?: SecondFactor[];
   /** The signed-in user's methods, in the methods view; undefined while they load. */
   private methodList?: SignInMethodInfo[];
+  /** The signed-in user's sessions, under the methods; undefined while they load. */
+  private sessionList?: SessionInfo[];
+  /** Whether the error shown came from ending a session, whose `reauth_required` says so. */
+  private sessionError = false;
   /** The user's second factors in the order a sign-in asks for them, and the one they prefer; with the list. */
   private secondFactors?: SecondFactor[];
   private preferredFactor?: SecondFactor | null;
@@ -819,6 +849,7 @@ export class MadauthLogin extends LitElement {
     this.smsCodePurpose = 'signin';
     this.setupFactors = undefined;
     this.methodList = undefined;
+    this.sessionList = undefined;
     this.secondFactors = undefined;
     this.preferredFactor = undefined;
     this.apiKeyList = undefined;
@@ -911,6 +942,7 @@ export class MadauthLogin extends LitElement {
 
   private showError(error: MadauthError, method?: LoginMethodId): void {
     this.notice = undefined;
+    this.sessionError = false;
     this.error = { ...error, method };
     const detail: ErrorDetail = { ...error, method };
     this.dispatchEvent(new CustomEvent('madauth-error', { detail, bubbles: true, composed: true }));
@@ -1127,7 +1159,7 @@ export class MadauthLogin extends LitElement {
       case 'admin-add':
         return s.adminView.add;
       case 'admin-provider':
-        return this.providerForm?.provider?.name ?? s.adminView.addHeading(s.adminView.kinds[this.providerForm?.kind ?? 'oidc']);
+        return this.providerForm?.provider?.name ?? s.adminView.addHeading(s.adminView.kinds[this.providerForm?.preset ?? this.providerForm?.kind ?? 'oidc']);
       case 'admin-remove':
         return s.adminView.removeHeading(this.removal?.provider.name ?? '');
       case 'api-keys':
@@ -1188,6 +1220,7 @@ export class MadauthLogin extends LitElement {
     }
     if (error.code === 'email_unverified' && error.method === 'password') return s.confirmEmailFirst;
     if (error.code === 'reauth_required' && this.view === 'api-key-create') return s.apiKeyCreate.reauth;
+    if (error.code === 'reauth_required' && this.view === 'methods' && this.sessionError) return s.methodsView.sessions.reauth;
     if (error.code === 'reauth_required' && this.view.startsWith('admin-')) return s.adminView.reauth;
     // What the server found wrong with a provider or the settings, for the admin: its message says what to change.
     if ((error.code === 'invalid_provider' || error.code === 'invalid_settings') && this.view.startsWith('admin-')) return error.message;
@@ -2021,9 +2054,9 @@ export class MadauthLogin extends LitElement {
     void this.loadMethods();
   }
 
-  /** Loads the user's methods into the list. */
+  /** Loads the user's methods into the list, and their sessions into theirs. */
   private async loadMethods(): Promise<void> {
-    const result = await Madauth.methods.list();
+    const [result] = await Promise.all([Madauth.methods.list(), this.loadSessions()]);
     if (!result.isSuccess) {
       this.showError(result.error);
       return;
@@ -2031,6 +2064,80 @@ export class MadauthLogin extends LitElement {
     this.methodList = result.methods;
     this.secondFactors = result.secondFactors;
     this.preferredFactor = result.preferredSecondFactor;
+  }
+
+  /** Loads the user's sessions; a server without them (before madAuth 0.7.5) shows no section. */
+  private async loadSessions(): Promise<void> {
+    const result = await Madauth.sessions.list();
+    this.sessionList = result.isSuccess ? result.sessions : [];
+  }
+
+  /** A date with its time, as the user's language writes it, e.g. "3 Oct 2026, 14:05". */
+  private dateTime(ms: number): string {
+    return new Date(ms).toLocaleString(currentLocale(), { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  /** The sessions at the bottom of the methods view: the current one marked, the others each with a button that ends it. */
+  private renderSessions() {
+    const list = this.sessionList;
+    if (!list?.length) return null;
+    const v = this.strings.methodsView.sessions;
+    const others = list.filter((session) => !session.current);
+    return html`
+      <section class="sessions">
+        <h3>${v.heading}</h3>
+        <p class="hint">${v.lead}</p>
+        <ul class="method-list">
+          ${list.map((session) => {
+            const device = v.device(session.browser, session.os);
+            const details = [session.current ? v.current : undefined, session.ip ?? undefined, v.lastActive(this.dateTime(session.lastActiveAt))].filter(Boolean);
+            return html`
+              <li class="method session" part="session" data-session=${session.id} ?data-current=${session.current}>
+                <span class="method-text">
+                  <span class="label">${device}</span>
+                  <span class="hint">${details.join(' · ')}</span>
+                </span>
+                ${session.current
+                  ? null
+                  : html`<button class="link" part="link" type="button" data-action="end-session" aria-label=${v.endLabel(device)} ?disabled=${this.busy}
+                      @click=${() => this.onEndSession(session)}>${v.end}</button>`}
+              </li>
+            `;
+          })}
+        </ul>
+        ${others.length > 1
+          ? html`<p class="links">
+              <button class="link" part="link" type="button" data-action="end-other-sessions" ?disabled=${this.busy} @click=${() => this.onEndOtherSessions()}>${v.endOthers}</button>
+            </p>`
+          : null}
+      </section>
+    `;
+  }
+
+  private async onEndSession(session: SessionInfo): Promise<void> {
+    const result = await this.run(() => Madauth.sessions.end(session.id));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      this.sessionError = true;
+      if (result.error.code === 'session_not_found') void this.loadSessions();
+      return;
+    }
+    this.notice = (strings) => strings.methodsView.sessions.ended;
+    void this.loadSessions();
+  }
+
+  private async onEndOtherSessions(): Promise<void> {
+    const result = await this.run(() => Madauth.sessions.endOthers());
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      this.sessionError = true;
+      return;
+    }
+    const { ended } = result;
+    this.notice = (strings) => strings.methodsView.sessions.othersEnded(ended);
+    void this.loadSessions();
   }
 
   /** The second factors the user has, when there is a choice: which one a sign-in asks for first. */
@@ -2151,6 +2258,7 @@ export class MadauthLogin extends LitElement {
                   </div>`
                 : null}
             </section>
+            ${this.renderSessions()}
           `
         : null}
       <p class="links">
@@ -2707,7 +2815,7 @@ export class MadauthLogin extends LitElement {
     const v = this.strings.adminView;
     const setting = this.adminSettings?.[provider.id];
     const state = setting ? (setting.enabled ? v.on(v.policies[setting.secondFactor]) : v.off) : undefined;
-    const details = [provider.kind === 'oidc' ? `${v.kinds.oidc} · ${provider.id}` : v.kinds[provider.kind], state].filter(Boolean);
+    const details = [provider.kind === 'oidc' ? `${v.kinds[provider.preset ?? 'oidc']} · ${provider.id}` : v.kinds[provider.kind], state].filter(Boolean);
     return html`
       <button part="method" class="row detailed" type="button" data-provider=${provider.id} ?disabled=${this.busy} @click=${() => this.editProvider(provider)}>
         <span class="method-text">
@@ -2719,12 +2827,16 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
-  /** Which kind of provider to add: Google, GitHub, Microsoft and Apple once each, OpenID Connect providers as many as needed. */
+  /**
+   * Which kind of provider to add: Google, GitHub, Microsoft, Apple, Facebook and X once each, OpenID Connect
+   * providers as many as needed, of a preset (GitLab, LinkedIn, Slack) or not.
+   */
   private renderAdminAdd() {
     const s = this.strings;
     const v = s.adminView;
     const has = (kind: ProviderKind) => !!this.adminProviders?.some((provider) => provider.id === kind);
-    const kinds = (['google', 'github', 'microsoft', 'apple', 'oidc'] as const).filter((kind) => kind === 'oidc' || !has(kind));
+    const choices: ProviderChoice[] = ['google', 'github', 'microsoft', 'apple', 'facebook', 'x', ...PRESETS, 'oidc'];
+    const kinds = choices.filter((kind) => kind === 'oidc' || isPreset(kind) || !has(kind));
     return html`
       <p class="lead">${v.chooseKind}</p>
       <ul>
@@ -2748,8 +2860,13 @@ export class MadauthLogin extends LitElement {
     `;
   }
 
-  private newProvider(kind: ProviderKind): void {
-    this.providerForm = { kind, draft: EMPTY_DRAFT };
+  private newProvider(choice: ProviderChoice): void {
+    // A preset's form starts with its id and, for GitLab, gitlab.com's issuer; both can be changed for a second
+    // instance. A preset's id already taken (a second GitLab) is left for the admin to give.
+    const taken = (id: string) => !!this.adminProviders?.some((provider) => provider.id === id);
+    this.providerForm = isPreset(choice)
+      ? { kind: 'oidc', preset: choice, draft: { ...EMPTY_DRAFT, id: taken(choice) ? '' : choice, issuer: choice === 'gitlab' ? GITLAB_ISSUER : '' } }
+      : { kind: choice, draft: EMPTY_DRAFT };
     this.goTo('admin-provider');
   }
 
@@ -2758,6 +2875,7 @@ export class MadauthLogin extends LitElement {
     const on = !!setting?.enabled;
     this.providerForm = {
       kind: provider.kind,
+      ...(provider.preset ? { preset: provider.preset } : {}),
       provider,
       draft: {
         ...EMPTY_DRAFT,
@@ -2791,6 +2909,12 @@ export class MadauthLogin extends LitElement {
     const d = form.draft;
     const editing = !!form.provider;
     const oidc = form.kind === 'oidc';
+    const preset = form.preset;
+    /** What the form calls the provider: its preset's or its kind's name. */
+    const kindName = v.kinds[preset ?? form.kind];
+    // A preset knows the name and the issuer; only GitLab's issuer is asked for (a self-hosted instance).
+    const nameRequired = oidc && !preset;
+    const asksIssuer = oidc && (!preset || preset === 'gitlab');
     const id = oidc ? d.id.trim() : form.kind;
     const callbackUrl = form.provider?.callbackUrl ?? (this.callbackBase ? `${this.callbackBase}${id || '<id>'}/callback` : undefined);
     // A new GitHub or OpenID Connect provider needs its secret: they only have the server's code exchange.
@@ -2819,12 +2943,12 @@ export class MadauthLogin extends LitElement {
             </div>`
           : null}
         <div class="field">
-          <label for="provider-name">${v.name} ${oidc ? null : html`<span class="optional">${s.optional}</span>`}</label>
-          <input part="input" id="provider-name" name="name" type="text" autocomplete="off" maxlength="64" ?required=${oidc}
-            placeholder=${oidc ? '' : v.kinds[form.kind]} .value=${d.name} />
+          <label for="provider-name">${v.name} ${nameRequired ? null : html`<span class="optional">${s.optional}</span>`}</label>
+          <input part="input" id="provider-name" name="name" type="text" autocomplete="off" maxlength="64" ?required=${nameRequired}
+            placeholder=${nameRequired ? '' : kindName} .value=${d.name} />
           <p class="hint">${v.nameHint}</p>
         </div>
-        ${oidc
+        ${asksIssuer || (oidc && editing)
           ? editing
             ? html`<div class="field">
                 <span class="field-label" id="issuer-label">${v.issuer}</span>
@@ -2833,7 +2957,7 @@ export class MadauthLogin extends LitElement {
             : html`<div class="field">
                 <label for="provider-issuer">${v.issuer}</label>
                 <input part="input" id="provider-issuer" name="issuer" type="url" autocomplete="off" spellcheck="false" required .value=${d.issuer} />
-                <p class="hint">${v.issuerHint}</p>
+                <p class="hint">${preset === 'gitlab' ? v.gitlabIssuerHint : v.issuerHint}</p>
               </div>`
           : null}
         <div class="field">
@@ -2882,7 +3006,7 @@ export class MadauthLogin extends LitElement {
             </div>`
           : null}
         <button part="method" class="submit" type="submit" ?disabled=${this.busy}>
-          <span class="label">${editing ? v.save : v.addHeading(oidc ? d.name.trim() || v.kinds.oidc : v.kinds[form.kind])}</span>
+          <span class="label">${editing ? v.save : v.addHeading(nameRequired ? d.name.trim() || v.kinds.oidc : kindName)}</span>
         </button>
       </form>
       <p class="links">
@@ -2982,7 +3106,7 @@ export class MadauthLogin extends LitElement {
 
   /** Adds or changes the provider, then switches it on or off as the form says. */
   private async saveProvider(form: ProviderForm): Promise<Result> {
-    const saved = form.provider ? await this.changeProvider(form.provider, form.draft) : await Madauth.admin.addProvider(newProviderOf(form.kind, form.draft));
+    const saved = form.provider ? await this.changeProvider(form.provider, form.draft) : await Madauth.admin.addProvider(newProviderOf(form.kind, form.draft, form.preset));
     if (!saved.isSuccess) return saved;
     // From now on the form changes it, also when switching it on fails below; the secret is sent once.
     this.providerForm = { ...form, provider: saved.provider, draft: { ...form.draft, clientSecret: '', removeSecret: false } };

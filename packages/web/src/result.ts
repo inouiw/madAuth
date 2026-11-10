@@ -14,6 +14,11 @@ export interface MadauthUser {
    * user that comes with a session.
    */
   amr?: string[];
+  /**
+   * The id of the session (`ses_…`), as `Madauth.sessions.list()` and the `user.session_ended` webhook name it.
+   * Present on a user that comes with a session, except one from before madAuth 0.7.5.
+   */
+  sessionId?: string;
 }
 
 /** The second factors, in the order a sign-in offers them: a passkey, a code from the authenticator app, one sent by SMS. */
@@ -86,6 +91,7 @@ const errorCodes = [
   'scope_not_allowed',
   'too_many_api_keys',
   'api_key_not_found',
+  'session_not_found',
   'unknown',
 ] as const;
 

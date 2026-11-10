@@ -35,6 +35,7 @@ describe('@madauth/web', () => {
         'provider',
         'secondFactor',
         'sessionReady',
+        'sessions',
         'setLocale',
         'showAdminDialog',
         'showDeviceApprovalDialog',

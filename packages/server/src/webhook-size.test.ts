@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { MAX_API_KEY_NAME, MAX_API_KEY_SCOPES } from './api-keys.js';
+import { MAX_IP_LENGTH, normalizeIp, parseUserAgent } from './device.js';
 import { MAX_RAW_MESSAGE } from './aws-kms.js';
 import { MAX_CLAIMS_BYTES, parseClaims } from './claims.js';
 import { isValidEmail } from './password.js';
@@ -60,8 +61,11 @@ const PROVIDER = {
   issuer: `https://${'"'.repeat(248)}`,
   scopes: Array.from({ length: 20 }, (_, i) => `s${i}`.padEnd(24, 's')),
   trustEmail: true,
+  preset: 'linkedin',
 };
 const BY_ADMIN = { by: EMAIL, byApiKey: BY_API_KEY };
+/** A session as `user.signed_in` names it: browser and system from madAuth's short lists, an IPv6 address of 45 characters. */
+const SESSION = { id: ID, browser: 'Samsung Internet', os: 'ChromeOS', ip: `ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255` };
 
 const LARGEST: Record<WebhookType, Record<string, unknown>> = {
   'email.send_verification': MAIL,
@@ -75,7 +79,8 @@ const LARGEST: Record<WebhookType, Record<string, unknown>> = {
   'user.email_verified': { user: USER, method: METHOD, via: 'link' },
   'user.password_reset': { user: USER },
   'user.password_changed': { user: USER },
-  'user.signed_in': { user: USER, method: METHOD, secondFactor: 'recovery_code' },
+  'user.signed_in': { user: USER, method: METHOD, secondFactor: 'recovery_code', session: SESSION },
+  'user.session_ended': { user: USER, session: { id: ID }, reason: 'signed_out', ...BY_ADMIN },
   'user.deleted': { user: USER, ...BY_ADMIN },
   // The claims twice: the largest call of all.
   'user.claims_changed': { user: USER, claims: CLAIMS, ...BY_ADMIN },
@@ -107,6 +112,11 @@ describe('the size of the webhook calls', () => {
     expect(LINK.split('#')[0]).toHaveLength(MAX_REDIRECT_BYTES);
     expect(PROVIDER.issuer).toHaveLength(256);
     expect(PROVIDER.scopes.join(' ').length).toBeLessThanOrEqual(512);
+    expect(SESSION.ip).toHaveLength(MAX_IP_LENGTH);
+    expect(normalizeIp(SESSION.ip)).toBe(SESSION.ip);
+    expect(normalizeIp(`fe80::1%${'e'.repeat(60)}`)).toBeNull();
+    // The longest names on madAuth's lists of browsers and systems.
+    expect(parseUserAgent('Mozilla/5.0 (X11; CrOS x86_64) SamsungBrowser/1.0')).toEqual({ browser: 'Samsung Internet', os: 'ChromeOS' });
   });
 
   it.each(WEBHOOK_TYPES)('W2: the largest %s call fits what AWS KMS signs with Ed25519, with room to spare', (type) => {

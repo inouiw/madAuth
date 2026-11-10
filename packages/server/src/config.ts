@@ -33,6 +33,12 @@ export interface MadauthConfig {
   renewalTtlSeconds: number;
   /** Cookie domain, e.g. `.example.com` (COOKIE_DOMAIN). */
   cookieDomain?: string;
+  /**
+   * The request header that holds the browser's IP address, set by the proxy in front of madAuth, e.g.
+   * `x-forwarded-for` (CLIENT_IP_HEADER; lower case). Its last entry counts, the one the nearest proxy added.
+   * Default: the address the runtime reports (the socket's on Node, the source IP on AWS Lambda).
+   */
+  clientIpHeader?: string;
   /** The name authenticator apps show next to the account (AUTHENTICATOR_ISSUER). Default: the host of the app that asked for the setup. */
   authenticatorIssuer?: string;
   /**
@@ -138,6 +144,7 @@ export const envVars = {
   SESSION_TTL: false,
   SESSION_RENEWAL_TTL: false,
   COOKIE_DOMAIN: false,
+  CLIENT_IP_HEADER: false,
 } as const;
 
 /** Instead of environment variables: your own store adapter. */
@@ -267,6 +274,11 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
     );
   }
 
+  const clientIpHeader = read('CLIENT_IP_HEADER')?.toLowerCase();
+  if (clientIpHeader && !/^[a-z0-9-]+$/.test(clientIpHeader)) {
+    throw new ConfigError(`CLIENT_IP_HEADER must be the name of a request header, e.g. x-forwarded-for, but is "${clientIpHeader}".`);
+  }
+
   const initialAdminEmail = read('INITIAL_ADMIN_EMAIL');
   if (initialAdminEmail && !isValidEmail(initialAdminEmail)) {
     throw new ConfigError(`INITIAL_ADMIN_EMAIL must be an e-mail address, e.g. you@example.com, but is "${initialAdminEmail}".`);
@@ -313,6 +325,7 @@ export async function loadConfig(env: Record<string, string | undefined>, overri
     sessionTtlSeconds,
     renewalTtlSeconds,
     cookieDomain: read('COOKIE_DOMAIN'),
+    clientIpHeader,
     authenticatorIssuer: read('AUTHENTICATOR_ISSUER'),
     google: clientId ? { clientId, clientSecret: read('GOOGLE_CLIENT_SECRET') } : undefined,
     github: githubClientId && githubClientSecret ? { clientId: githubClientId, clientSecret: githubClientSecret } : undefined,

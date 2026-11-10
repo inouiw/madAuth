@@ -49,7 +49,7 @@ describe('Google users', () => {
     expect(await store.findMany('account', {})).toEqual([
       expect.objectContaining({ userId: user.id, key: 'google:1001', secret: null, email: 'ada@example.com' }),
     ]);
-    expect((await res.json()).user).toEqual({ id: user.id, email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://example.com/ada.png', amr: ['google'] });
+    expect((await res.json()).user).toEqual({ id: user.id, email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://example.com/ada.png', amr: ['google'], sessionId: expect.stringMatching(/^ses_/) });
   });
 
   it('a returning Google account is known by its sub, even when its address changed', async () => {

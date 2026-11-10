@@ -300,7 +300,7 @@ With `purpose: 'link'` it says "Connect GitHub" and adds GitHub to the signed-in
 
 ## Any provider: `Madauth.provider(id)`
 
-Every provider the server offers, by its id: [Microsoft](server.md#microsoft-setup) (`microsoft`), [Apple](server.md#apple-setup) (`apple`, also as `Madauth.apple`, see below), the [OpenID Connect providers](server.md#openid-connect-provider-setup) an admin added (e.g. `gitlab`), and Google and GitHub too. madAuth registers them by itself, so `initialize` needs nothing for them (Google's One Tap aside: `new GoogleFedcm()`).
+Every provider the server offers, by its id: [Microsoft](server.md#microsoft-setup) (`microsoft`), [Apple](server.md#apple-setup) (`apple`, also as `Madauth.apple`, see below), [Facebook](server.md#facebook-setup) (`facebook`), [X](server.md#x-setup) (`x`), the [OpenID Connect providers](server.md#openid-connect-provider-setup) an admin added (e.g. `gitlab`), and Google and GitHub too. madAuth registers them by itself, so `initialize` needs nothing for them (Google's One Tap aside: `new GoogleFedcm()`).
 
 ```ts
 const result = Madauth.provider('gitlab').renderButton(document.querySelector('#gitlab-button')!, { theme: 'auto' });
@@ -308,11 +308,11 @@ const result = Madauth.provider('gitlab').renderButton(document.querySelector('#
 await Madauth.provider('gitlab').signIn(); // the browser goes to the provider and back
 ```
 
-- `renderButton(container, options?)` renders a "Continue with <name>" button, with the name an admin gave the provider, in the dialog's colours with a neutral sign-in mark (nothing is loaded from the provider). Google's and GitHub's buttons are the ones of `Madauth.google` and `Madauth.github`; Microsoft's has its four squares in Microsoft's colours, Apple's the Apple logo on black (white on a dark theme), as Apple's guidelines have it. It takes the same options, and can be called before `initialize` has finished: when the server turns out not to offer the provider, `onResult` gets `flow_not_enabled`.
+- `renderButton(container, options?)` renders a "Continue with <name>" button, with the name an admin gave the provider, in the dialog's colours with a neutral sign-in mark (nothing is loaded from the provider). Google's and GitHub's buttons are the ones of `Madauth.google` and `Madauth.github`; Microsoft's has its four squares in Microsoft's colours, Apple's the Apple logo on black (white on a dark theme), as Apple's guidelines have it. Facebook's is Facebook blue, X's black (white on a dark theme), and a preset's provider has its logo: GitLab's tanuki, LinkedIn's blue button, Slack's mark; the marks are inline SVG, nothing is loaded. It takes the same options, and can be called before `initialize` has finished: when the server turns out not to offer the provider, `onResult` gets `flow_not_enabled`.
 - `signIn({ purpose? })` starts the redirect without a button of madAuth's. It fails with `flow_not_enabled` when the server doesn't offer the provider, or when it signs in without a redirect here (Google with `GoogleFedcm`).
 - Like GitHub's, the result arrives after the return: the user through `onAuthStateChanged`, a failure (e.g. `cancelled`, `email_unverified`, `other_method`) from `initialize`, a second step in `Madauth.authenticator.pendingStep` with the provider's id as `method`.
 - An OpenID Connect provider that doesn't vouch for the address comes back with the pending step `{ step: 'email', method: '<id>', email: 'l•••@example.com' }`: the confirmation e-mail went to that (masked) address. Ask for the code from it and call `Madauth.provider(id).verifyEmail({ code })`, which resolves like a sign-in (the browser's cookie says whose sign-up it is); `sendVerificationEmail()` sends it again. The link in the e-mail works on its own.
-- A provider that told no address (Microsoft, or an OpenID Connect provider: a personal account made with a phone number, say) comes back with the pending step `{ step: 'email-address', method: '<id>' }`: ask for the address, filled in with what `Madauth.provider(id).addressSuggestion()` resolves to (`{ suggestion }`, the provider's hint or null), and send it with `submitAddress({ email })`. The confirmation e-mail goes to it (the answer is the same for every address: an address that signs in already gets an e-mail saying so instead); then `verifyEmail({ code, email })` finishes the sign-up, and `sendVerificationEmail({ email })` sends it again. Both of the first two fail with `challenge_expired` more than ten minutes after the sign-in started: start it again.
+- A provider that told no address (Microsoft, Facebook, X, or an OpenID Connect provider: a personal account made with a phone number, say) comes back with the pending step `{ step: 'email-address', method: '<id>' }`: ask for the address, filled in with what `Madauth.provider(id).addressSuggestion()` resolves to (`{ suggestion }`, the provider's hint or null), and send it with `submitAddress({ email })`. The confirmation e-mail goes to it (the answer is the same for every address: an address that signs in already gets an e-mail saying so instead); then `verifyEmail({ code, email })` finishes the sign-up, and `sendVerificationEmail({ email })` sends it again. Both of the first two fail with `challenge_expired` more than ten minutes after the sign-in started: start it again.
 - With `purpose: 'link'` it adds the provider to the signed-in user's methods, and the page comes back with `linked: '<id>'`.
 
 The ids the server offers, with their names, are in `GET /auth/config` (`providers`). The method of an OpenID Connect provider is its id: in `amr`, in the user's [methods](#a-users-sign-in-methods-madauthmethods) and in the TypeScript type `LoginMethodId`, which is any string besides madAuth's own ids (`BuiltInMethodId`).
@@ -389,6 +389,18 @@ A user's keys for programs that call your API, or madAuth's admin API, in their 
 | `revoke(id)` | — | `api_key_not_found`, `no_session` |
 
 Making a key needs a sign-in within the last two minutes, like adding a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. Offer only the scopes with `allowed`; the server refuses the others. `Madauth.admin.listApiKeys(email)` and `revokeApiKey(email, id)` let an admin revoke a user's key.
+
+## Sessions: `Madauth.sessions`
+
+Where the signed-in user is signed in, and ending a session. See [Seeing and ending sessions](server.md#seeing-and-ending-sessions).
+
+| Method | Resolves to | Errors |
+| --- | --- | --- |
+| `list()` | `{ sessions: [{ id, current, browser, os, ip, signedInAt, amr, createdAt, lastActiveAt, expiresAt }] }`: the current session first (`current: true`), then by the latest activity; `browser`, `os` and `ip` are null when unknown | `no_session` |
+| `end(id)` | — (ending the current session signs this browser out) | `session_not_found`, `reauth_required`, `no_session` |
+| `endOthers()` | `{ ended }`: how many sessions ended. It raises the session version too: this browser stays signed in (new cookies), every other session ends, also one from before madAuth 0.7.5, and so do the user's OpenID Connect refresh tokens | `reauth_required`, `no_session` |
+
+Ending needs a sign-in within the last two minutes, like removing a sign-in method: otherwise it fails with `reauth_required`, and the user signs in again first. An ended session stops at its next renewal, within the session lifetime (`SESSION_TTL`, 8 hours by default). A user has at most 50 sessions: a new one beyond them ends the one with the oldest activity. `Madauth.admin.sessions.list(userId)` and `end(userId, id | 'all')` let an admin do the same for a user.
 
 ## A device's sign-in: `Madauth.device`
 

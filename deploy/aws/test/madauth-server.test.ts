@@ -201,3 +201,8 @@ test('an AWS_IAM receiver needs an installed server that knows WEBHOOK_AUTH', ()
   // Without AWS IAM, any version does.
   assert.doesNotThrow(() => synth(undefined, null));
 });
+
+test('the table deletes the items of expired sessions by their `ttl`', () => {
+  const { template } = synth();
+  template.hasResourceProperties('AWS::DynamoDB::Table', { TimeToLiveSpecification: { AttributeName: 'ttl', Enabled: true } });
+});

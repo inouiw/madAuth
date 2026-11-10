@@ -1,6 +1,7 @@
 import type { SecondFactorPolicy } from '../providers/provider.js';
 import type { Result } from '../result.js';
 import type { ApiKeyInfo } from './api-keys.js';
+import type { SessionInfo } from './sessions.js';
 import type { Core } from './core.js';
 
 /** What admins attach to a user, e.g. `{ roles: ['admin'], plan: 'pro' }`. See "Claims" in docs/server.md. */
@@ -60,10 +61,17 @@ export interface Settings {
 export type MethodsToSet = Partial<Record<MethodId, MethodToSet>>;
 
 /**
- * The kinds of sign-in providers. Google, GitHub, Microsoft and Apple exist once each, with the kind as the id;
- * `oidc`, an OpenID Connect provider (e.g. GitLab, Keycloak, Okta), as often as needed, each with an id of its own.
+ * The kinds of sign-in providers. Google, GitHub, Microsoft, Apple, Facebook and X exist once each, with the kind
+ * as the id; `oidc`, an OpenID Connect provider (e.g. Keycloak, Okta, or a preset: GitLab, LinkedIn, Slack), as
+ * often as needed, each with an id of its own.
  */
-export type ProviderKind = 'google' | 'github' | 'microsoft' | 'apple' | 'oidc';
+export type ProviderKind = 'google' | 'github' | 'microsoft' | 'apple' | 'facebook' | 'x' | 'oidc';
+
+/**
+ * The presets of the OpenID Connect providers: the issuer (GitLab's can be the operator's own instance), the
+ * name, the button's logo, and how the provider departs from the generic flow are known.
+ */
+export type OidcPreset = 'gitlab' | 'linkedin' | 'slack';
 
 /** A sign-in provider as the admin API answers it: never its secret, only whether it has one. */
 export interface ProviderInfo {
@@ -84,6 +92,8 @@ export interface ProviderInfo {
   scopes?: string[];
   /** OpenID Connect: whether its addresses count as verified without `email_verified`. */
   trustEmail?: boolean;
+  /** OpenID Connect: the preset it was added with, if any. */
+  preset?: OidcPreset;
   /** Microsoft: whose accounts sign in, `common`, `organizations`, `consumers` or one tenant's id. */
   tenant?: string;
   /** Apple: the Team ID of the developer account. */
@@ -124,13 +134,17 @@ export interface ProviderChanges {
 
 /**
  * A new provider: Google or GitHub by its kind, Microsoft with its tenant, Apple with its Services ID (`clientId`),
- * Team ID, Key ID and key (`clientSecret`), an OpenID Connect provider with its id, name and issuer.
+ * Team ID, Key ID and key (`clientSecret`), Facebook with its App ID and App Secret, X with its OAuth 2.0 Client ID
+ * and Client Secret, an OpenID Connect provider with its id, name and issuer, or with a `preset`, which gives the
+ * id, the name and the issuer unless they are given (only GitLab's issuer can be another: a self-hosted GitLab).
  */
 export type NewProvider = (
   | { kind: 'google' | 'github' }
   | { kind: 'microsoft'; clientId: string; clientSecret: string; tenant: string }
   | { kind: 'apple'; clientId: string; clientSecret: string; teamId: string; keyId: string }
+  | { kind: 'facebook' | 'x'; clientId: string; clientSecret: string }
   | { kind: 'oidc'; id: string; name: string; issuer: string; clientId: string; clientSecret: string }
+  | { kind: 'oidc'; preset: OidcPreset; id?: string; name?: string; issuer?: string; clientId: string; clientSecret: string }
 ) &
   ProviderChanges;
 
@@ -287,9 +301,10 @@ export interface AdminApi {
    */
   listProviders(): Promise<Result<{ providers: ProviderInfo[]; callbackBase?: string }>>;
   /**
-   * Adds a sign-in provider: Google (its client ID; a client secret for the redirect sign-in), GitHub (its client
-   * ID and secret), or an OpenID Connect provider (an id of its own, e.g. `gitlab`, which becomes its method's;
-   * its name, issuer, client ID and secret). The server reads an OpenID Connect provider's discovery document
+   * Adds a sign-in provider: Google (its client ID; a client secret for the redirect sign-in), GitHub, Microsoft,
+   * Apple, Facebook or X (see {@link NewProvider}), or an OpenID Connect provider (an id of its own, e.g. `okta`,
+   * which becomes its method's; its name, issuer, client ID and secret; or a `preset`, GitLab, LinkedIn or Slack,
+   * with its client ID and secret). The server reads an OpenID Connect provider's discovery document
    * first, and refuses it with `invalid_provider` when that fails. A provider is off until switched on with
    * `setSettings`. Needs a sign-in within the last two minutes. Fails with `forbidden`, `reauth_required`,
    * `invalid_provider` or `provider_exists`.
@@ -322,6 +337,26 @@ export interface AdminApi {
   updateClient(id: string, changes: ClientChanges & { newSecret?: boolean }): Promise<Result<{ client: ClientInfo; clientSecret?: string }>>;
   /** Removes an application and ends its refresh tokens. Needs a recent sign-in. Fails with `forbidden`, `reauth_required` or `client_not_found`. */
   removeClient(id: string): Promise<Result<{ client: ClientInfo }>>;
+  /** A user's sessions, by the user's id (e.g. from {@link AdminApi.searchUsers}), to sign them out everywhere without resetting their methods. */
+  sessions: AdminSessionsApi;
+}
+
+/**
+ * A user's sessions. An ended session stops at its next renewal, within the session lifetime (8 hours by default);
+ * the `user.session_ended` webhook (with `by`, the admin's address) tells backends that want it sooner.
+ */
+export interface AdminSessionsApi {
+  /**
+   * The user's sessions, the latest activity first; `current` marks the admin's own. Fails with `forbidden` or
+   * `user_not_found`.
+   */
+  list(userId: string): Promise<Result<{ email: string; sessions: SessionInfo[] }>>;
+  /**
+   * Ends one session of the user, or with `'all'` every one (raising their session version, which also ends their
+   * OpenID Connect refresh tokens); `ended` says how many. Needs a recent sign-in. Fails
+   * with `forbidden`, `reauth_required`, `user_not_found` or `session_not_found`.
+   */
+  end(userId: string, id: string | 'all'): Promise<Result<{ ended: number }>>;
 }
 
 export function createAdminApi(core: Core): AdminApi {
@@ -360,5 +395,9 @@ export function createAdminApi(core: Core): AdminApi {
     addClient: (value) => call('clients/add', { ...value }, client),
     updateClient: (id, changes) => call('clients/update', { id, ...changes }, client),
     removeClient: (id) => call('clients/remove', { id }, (data: { client: ClientInfo }) => ({ client: data.client })),
+    sessions: {
+      list: (userId) => call('sessions/list', { userId }, (data: { email: string; sessions: SessionInfo[] }) => ({ email: data.email, sessions: data.sessions })),
+      end: (userId, id) => call('sessions/end', { userId, id }, (data: { ended: number }) => ({ ended: data.ended })),
+    },
   };
 }

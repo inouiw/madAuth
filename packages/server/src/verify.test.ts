@@ -19,7 +19,7 @@ describe('createSessionVerifier', () => {
     const token = await signIn(app);
 
     // With `amr`: how the session was authenticated, so a backend can ask for the authenticator app.
-    const expected = { ...ada, amr: ['google'] };
+    const expected = { ...ada, amr: ['google'], sessionId: expect.stringMatching(/^ses_/) };
     expect(await verifySession(new Request('https://api.example.com', { headers: { Cookie: `a=1; madauth_session=${token}` } }))).toEqual(expected);
     expect(await verifySession(new Request('https://api.example.com', { headers: { Authorization: `Bearer ${token}` } }))).toEqual(expected);
     expect(await verifySession(`theme=dark; madauth_session=${token}`)).toEqual(expected);

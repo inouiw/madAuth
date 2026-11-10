@@ -1,6 +1,6 @@
 // Small helpers the route modules share: reading the body, the shape of errors, and common answers.
 import type { Context } from 'hono';
-import type { AppContext, SignInStep } from '../app.js';
+import type { AppContext, SignIn, SignInStep } from '../app.js';
 import { MAX_NAME_LENGTH, cutName } from '../user.js';
 import type { StoredUser } from '../users.js';
 import type { NextStep } from './challenge.js';
@@ -46,12 +46,21 @@ export const noSession = (c: Context): Response => error(c, 401, 'no_session', '
  */
 export const RECENT_SIGN_IN_MS = 2 * 60 * 1000;
 
-/** The signed-in user as stored, and whether they signed in within RECENT_SIGN_IN_MS (renewals don't count); null without a session. */
+/**
+ * Whether a sign-in was within RECENT_SIGN_IN_MS (renewals don't count), and its session still goes: one that was
+ * ended meanwhile (its record is gone) makes no sensitive change, although its token is valid until its renewal.
+ */
+export async function isRecent(ctx: AppContext, signIn: SignIn): Promise<boolean> {
+  const { signedInAt, sessionId } = signIn;
+  if (signedInAt === null || Date.now() - signedInAt > RECENT_SIGN_IN_MS) return false;
+  return sessionId === null || ctx.sessions.exists(signIn.user.id, sessionId);
+}
+
+/** The signed-in user as stored, and whether their sign-in is recent ({@link isRecent}); null without a session. */
 export async function signedInUser(c: Context, ctx: AppContext): Promise<{ user: StoredUser; recent: boolean } | null> {
   const signIn = await ctx.currentSignIn(c);
   if (!signIn) return null;
-  const { stored: user, signedInAt } = signIn;
-  return { user, recent: signedInAt !== null && Date.now() - signedInAt <= RECENT_SIGN_IN_MS };
+  return { user: signIn.stored, recent: await isRecent(ctx, signIn) };
 }
 
 /** The signed-in user if they signed in recently, else why not: for the routes of a sensitive change. */

@@ -1,4 +1,5 @@
 import { fail, ok, type Result } from '../result.js';
+import { BRANDS } from './brands.js';
 import type { ButtonOptions, ProviderContext, SignInProvider } from './provider.js';
 import { renderRedirectButton, startRedirect } from './redirect.js';
 
@@ -12,21 +13,26 @@ const buttonColors = {
 };
 
 /**
- * Sign-in with an OpenID Connect provider an admin added (`Madauth.admin.addProvider` with the kind `oidc`):
- * the redirect to the provider and back, as with GitHub. madAuth adds one for every such provider the server
- * offers, so the app passes none; `Madauth.provider(id)` renders its button in a custom login screen.
+ * Sign-in with an OpenID Connect provider an admin added (`Madauth.admin.addProvider` with the kind `oidc`), or
+ * with Facebook or X (the kinds `facebook` and `x`): the redirect to the provider and back, as with GitHub. madAuth
+ * adds one for every such provider the server offers, so the app passes none; `Madauth.provider(id)` renders its
+ * button in a custom login screen. A preset's provider (GitLab, LinkedIn, Slack), Facebook and X show their logo.
  */
 export class OpenIdConnect implements SignInProvider {
   #ctx?: ProviderContext;
+  #brand?: string;
 
-  /** `method` is the provider's id. */
-  constructor(readonly method: string) {}
+  /** `method` is the provider's id; `kind` the provider's kind, `facebook` and `x` have their kind as their id. */
+  constructor(
+    readonly method: string,
+    private readonly kind: 'oidc' | 'facebook' | 'x' = 'oidc',
+  ) {}
 
   async setup(ctx: ProviderContext): Promise<Result> {
     this.#ctx = ctx;
-    if (!ctx.config.providers?.some((p) => p.id === this.method && p.kind === 'oidc')) {
-      return fail('flow_not_enabled', `The madAuth server offers no OpenID Connect provider "${this.method}".`);
-    }
+    const offered = ctx.config.providers?.find((p) => p.id === this.method && p.kind === this.kind);
+    if (!offered) return fail('flow_not_enabled', `The madAuth server offers no ${this.kind === 'oidc' ? 'OpenID Connect provider' : 'provider'} "${this.method}".`);
+    this.#brand = offered.preset ?? (this.kind === 'oidc' ? undefined : this.kind);
     return ok();
   }
 
@@ -35,7 +41,7 @@ export class OpenIdConnect implements SignInProvider {
     return renderRedirectButton(container, options, {
       ctx: this.#ctx!,
       method: this.method,
-      style: { logo: SIGN_IN_MARK, colors: buttonColors, font: "500 14px/20px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" },
+      style: (this.#brand && BRANDS[this.#brand]) || { logo: SIGN_IN_MARK, colors: buttonColors, font: "500 14px/20px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" },
     });
   }
 

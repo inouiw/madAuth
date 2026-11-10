@@ -3,6 +3,7 @@ import { resetGisForTests, type GoogleAccountsId } from '@madauth/google-identit
 import { resetMadauthForTests } from './madauth.js';
 import type { SecondFactorPolicy } from './providers/provider.js';
 import type { MadauthUser } from './result.js';
+import type { SessionInfo } from './scopes/sessions.js';
 
 export const SERVER = 'https://auth.example.com';
 export const CLIENT_ID = 'cid.apps.googleusercontent.com';
@@ -106,8 +107,10 @@ export interface FakeServer {
     name: string;
     secondFactor: SecondFactorPolicy;
     on?: boolean;
-    /** `microsoft` for Microsoft's provider (its id is `microsoft`), with its tenant; `apple` for Apple's, with its ids; default `oidc`. */
-    kind?: 'oidc' | 'microsoft' | 'apple';
+    /** `microsoft` for Microsoft's provider (its id is `microsoft`), with its tenant; `apple` for Apple's, with its ids; `facebook`, `x`; default `oidc`. */
+    kind?: 'oidc' | 'microsoft' | 'apple' | 'facebook' | 'x';
+    /** An OpenID Connect provider's preset. */
+    preset?: 'gitlab' | 'linkedin' | 'slack';
     tenant?: string;
     teamId?: string;
     keyId?: string;
@@ -150,6 +153,8 @@ export interface FakeServer {
   apiScopes: { name: string; description: string; role: string | null; endpoints: string[] }[];
   /** The API keys the users made, with the key and whose it is. */
   apiKeys: { id: string; email: string; key: string; name: string; scopes: string[]; createdAt: number; expiresAt: number | null; lastUsedAt: number }[];
+  /** The users' sessions, with whose they are (by address); `current` is the session of this browser. */
+  sessions: (SessionInfo & { email: string })[];
   /** The app's login page an admin set; null: `/`. */
   loginUrl: string | null;
   /** The OpenID Connect clients an admin registered. */
@@ -218,6 +223,7 @@ export function fakeServer(): FakeServer {
       { name: 'orders:refund', description: 'Refund orders', role: 'staff', endpoints: [] },
     ],
     apiKeys: [],
+    sessions: [],
     loginUrl: null,
     clients: [],
     devices: [],
@@ -327,7 +333,7 @@ export function fakeServer(): FakeServer {
           passkey: server.passkey ? { signUp: false, ...server.passkey } : null,
           providers: [
             ...(['google', 'github'] as const).filter((kind) => server[kind] && server.methods[kind]).map((kind) => ({ id: kind, kind, name: server.providerNames[kind], secondFactor: server.policy[kind] })),
-            ...server.oidc.filter((provider) => provider.on !== false).map(({ id, name, secondFactor, kind }) => ({ id, name, secondFactor, kind: kind ?? 'oidc' })),
+            ...server.oidc.filter((provider) => provider.on !== false).map(({ id, name, secondFactor, kind, preset }) => ({ id, name, secondFactor, kind: kind ?? 'oidc', ...(preset ? { preset } : {}) })),
           ],
         });
       // --- Passkeys ---
@@ -431,6 +437,27 @@ export function fakeServer(): FakeServer {
         if (index < 0) return json({ error: 'api_key_not_found', message: 'gone' }, 404);
         server.apiKeys.splice(index, 1);
         return json({});
+      }
+      // --- The user's sessions ---
+      case 'GET /auth/sessions': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        return json({ sessions: server.sessions.filter((session) => session.email === user).map(({ email: _, ...info }) => info) });
+      }
+      case 'POST /auth/sessions/end':
+      case 'POST /auth/sessions/end-others': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        if (url.pathname.endsWith('/end-others')) {
+          const others = server.sessions.filter((session) => session.email === user && !session.current);
+          server.sessions = server.sessions.filter((session) => !others.includes(session));
+          return json({ ended: others.length });
+        }
+        const index = server.sessions.findIndex((session) => session.id === (body as { id?: string }).id && session.email === user);
+        if (index < 0) return json({ error: 'session_not_found', message: 'gone' }, 404);
+        server.sessions.splice(index, 1);
+        return new Response(null, { status: 204 });
       }
       // --- The user's methods ---
       case 'GET /auth/methods': {
@@ -878,6 +905,22 @@ export function fakeServer(): FakeServer {
         server.apiKeys.splice(index, 1);
         return json({ email, userId });
       }
+      case 'POST /auth/admin/sessions/list':
+      case 'POST /auth/admin/sessions/end': {
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        const of = [...server.accounts.keys()].find((address) => userFor(address).id === (body as { userId?: string }).userId);
+        if (!of) return json({ error: 'user_not_found', message: 'no user' }, 404);
+        const userId = userFor(of).id;
+        const theirs = server.sessions.filter((session) => session.email === of);
+        if (url.pathname.endsWith('/list')) return json({ email: of, userId, sessions: theirs.map(({ email: _, ...info }) => info) });
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        const id = (body as { id?: string }).id;
+        const ended = id === 'all' ? theirs : theirs.filter((session) => session.id === id);
+        if (!ended.length && id !== 'all') return json({ error: 'session_not_found', message: 'gone' }, 404);
+        server.sessions = server.sessions.filter((session) => !ended.includes(session));
+        return json({ email: of, userId, ended: ended.length });
+      }
       // The OpenID Connect provider's token exchange for native apps: a nonce, then tokens for a Google ID token.
       case 'POST /auth/oidc/nonce':
       case 'POST /auth/oidc/token': {
@@ -946,7 +989,7 @@ export function fakeServer(): FakeServer {
       case 'POST /auth/admin/providers/remove': {
         if (!server.user) return json({ error: 'no_session' }, 401);
         if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
-        const data = body as unknown as { id?: string; kind?: string; name?: string; clientId?: string; clientSecret?: string | null; issuer?: string; scopes?: string; trustEmail?: boolean; tenant?: string; teamId?: string; keyId?: string; bundleIds?: string; dryRun?: boolean };
+        const data = body as unknown as { id?: string; kind?: string; preset?: 'gitlab' | 'linkedin' | 'slack'; name?: string; clientId?: string; clientSecret?: string | null; issuer?: string; scopes?: string; trustEmail?: boolean; tenant?: string; teamId?: string; keyId?: string; bundleIds?: string; dryRun?: boolean };
         const action = url.pathname.split('/').at(-1);
         const callbackUrl = (id: string) => `${SERVER}/auth/providers/${id}/callback`;
         const builtIn = (kind: 'google' | 'github') => ({ id: kind, kind, name: server.providerNames[kind], clientId: `${kind}-client`, hasClientSecret: true, callbackUrl: callbackUrl(kind), createdAt: 1, updatedAt: 1 });
@@ -956,7 +999,9 @@ export function fakeServer(): FakeServer {
             ? { tenant: p.tenant }
             : p.kind === 'apple'
               ? { teamId: p.teamId, keyId: p.keyId, bundleIds: p.bundleIds ?? [] }
-              : { issuer: p.issuer ?? `https://${p.id}.example.com`, scopes: p.scopes ?? [], trustEmail: p.trustEmail ?? false }),
+              : p.kind === 'facebook' || p.kind === 'x'
+                ? {}
+                : { issuer: p.issuer ?? `https://${p.id}.example.com`, scopes: p.scopes ?? [], trustEmail: p.trustEmail ?? false, ...(p.preset ? { preset: p.preset } : {}) }),
         });
         const bundleIdsOf = (value: string) => value.split(/[\s,]+/).filter(Boolean);
         if (action === 'list') {
@@ -965,7 +1010,7 @@ export function fakeServer(): FakeServer {
         }
         const dryRun = action === 'remove' && data.dryRun === true;
         if (server.staleSignIn && !dryRun) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
-        const id = action === 'add' ? (data.kind === 'oidc' ? data.id : data.kind) : data.id;
+        const id = action === 'add' ? (data.kind === 'oidc' ? (data.id ?? data.preset) : data.kind) : data.id;
         const oidc = server.oidc.find((p) => p.id === id);
         if (action === 'add' && data.kind === 'microsoft') {
           if (!data.tenant) return json({ error: 'invalid_provider', message: 'tenant must be given.' }, 400);
@@ -982,10 +1027,31 @@ export function fakeServer(): FakeServer {
           server.oidc.push(added);
           return json({ provider: oidcInfo(added) });
         }
-        if (action === 'add' && data.kind === 'oidc') {
-          if (!id || !data.issuer?.startsWith('https://')) return json({ error: 'invalid_provider', message: 'The issuer must be an https URL.' }, 400);
+        if (action === 'add' && (data.kind === 'facebook' || data.kind === 'x')) {
+          if (!data.clientSecret) return json({ error: 'invalid_provider', message: 'clientSecret must be given.' }, 400);
           if (oidc) return json({ error: 'provider_exists', message: 'exists' }, 409);
-          const added = { id, name: data.name ?? id, secondFactor: 'none' as const, on: false, issuer: data.issuer, clientId: data.clientId, scopes: data.scopes?.split(' ').filter(Boolean) ?? [], trustEmail: !!data.trustEmail };
+          const kind: 'facebook' | 'x' = data.kind;
+          const added = { id: kind, kind, name: data.name ?? (kind === 'x' ? 'X' : 'Facebook'), secondFactor: 'none' as const, on: false, clientId: data.clientId };
+          server.oidc.push(added);
+          return json({ provider: oidcInfo(added) });
+        }
+        if (action === 'add' && data.kind === 'oidc') {
+          const presetIssuers = { gitlab: 'https://gitlab.com', linkedin: 'https://www.linkedin.com/oauth', slack: 'https://slack.com' };
+          const issuer = data.issuer ?? (data.preset ? presetIssuers[data.preset] : undefined);
+          if (!id || !issuer?.startsWith('https://')) return json({ error: 'invalid_provider', message: 'The issuer must be an https URL.' }, 400);
+          if (oidc) return json({ error: 'provider_exists', message: 'exists' }, 409);
+          const presetNames = { gitlab: 'GitLab', linkedin: 'LinkedIn', slack: 'Slack' };
+          const added = {
+            id,
+            name: data.name ?? (data.preset ? presetNames[data.preset] : id),
+            secondFactor: 'none' as const,
+            on: false,
+            issuer,
+            clientId: data.clientId,
+            scopes: data.scopes?.split(' ').filter(Boolean) ?? [],
+            trustEmail: !!data.trustEmail,
+            ...(data.preset ? { preset: data.preset } : {}),
+          };
           server.oidc.push(added);
           return json({ provider: oidcInfo(added) });
         }
