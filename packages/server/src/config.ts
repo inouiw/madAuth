@@ -169,6 +169,9 @@ export class ConfigError extends Error {
   override name = 'ConfigError';
 }
 
+/** The longest host name of the DNS. */
+const MAX_HOST_LENGTH = 253;
+
 function parseOrigin(name: string, value: string): string {
   let url: URL;
   try {
@@ -179,6 +182,9 @@ function parseOrigin(name: string, value: string): string {
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
     throw new ConfigError(`${name}: "${value}" must be an http(s) URL.`);
   }
+  // A domain name has at most 253 characters; the e-mails' `site` is the host, and every webhook call must fit what
+  // AWS KMS signs (see webhook-size.test.ts).
+  if (url.hostname.length > MAX_HOST_LENGTH) throw new ConfigError(`${name}: the host of "${value}" is longer than ${MAX_HOST_LENGTH} characters.`);
   return url.origin;
 }
 

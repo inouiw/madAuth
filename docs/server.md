@@ -151,7 +151,7 @@ Rotating the RS256 key works like the ES256 keys': in `MADAUTH_SIGNING_KEY`, put
 The webhook calls are signed with an Ed25519 key of the key service (Standard Webhooks' asymmetric signature `v1a`, see [Signatures](#signatures)). Receivers check them with its public key alone, which madAuth publishes at `/.well-known/webhook-keys.json`: nobody but the key service can sign a call the receiver accepts, and the receiver holds nothing secret. madAuth signs with it whenever the key service has one when the server starts.
 
 - **`MADAUTH_KEY_SERVICE=local`:** an Ed25519 JWK in the set of `MADAUTH_SIGNING_KEY`, after the ES256 keys: `{"keys":[<ES256 key>,<Ed25519 key>]}`. `init` writes one, and the error message for a missing `MADAUTH_SIGNING_KEY` contains one; otherwise generate it with `npx @madauth/server generate-key --ed25519`. It signs nothing else, and nothing is derived from it.
-- **`MADAUTH_KEY_SERVICE=aws-kms`:** the KMS key under `alias/madauth/<deployment>/webhook` (`ECC_NIST_EDWARDS25519`), which signs with `ED25519_SHA_512` and `MessageType` `RAW`, so the private key never leaves KMS. `kms-setup` creates it (unless `--no-webhook`), and the [AWS template](../deploy/aws/README.md) does for a webhook receiver without AWS IAM; the server's role needs only the `kms:Sign` and `kms:GetPublicKey` it already has on its deployment's keys. KMS signs Ed25519 only as the message is, at most 4096 bytes: a call longer than that (`<id>.<timestamp>.<body>`, e.g. `user.claims_changed` of a user with claims near their 2048-character limit) can't get a `v1a` signature. madAuth then sends it with its `v1` signatures alone, if `WEBHOOK_SECRET` is set, and otherwise not at all (logged like a failed call).
+- **`MADAUTH_KEY_SERVICE=aws-kms`:** the KMS key under `alias/madauth/<deployment>/webhook` (`ECC_NIST_EDWARDS25519`), which signs with `ED25519_SHA_512` and `MessageType` `RAW`, so the private key never leaves KMS. `kms-setup` creates it (unless `--no-webhook`), and the [AWS template](../deploy/aws/README.md) does for a webhook receiver without AWS IAM; the server's role needs only the `kms:Sign` and `kms:GetPublicKey` it already has on its deployment's keys. KMS signs Ed25519 only as the message is, at most 4096 bytes of `<id>.<timestamp>.<body>`, so madAuth keeps every call below that (see [The size of a call](#the-size-of-a-call)). Only data stored before those limits (claims over 1024 bytes, see [Claims](#claims)) can still make a longer call: madAuth then sends it with its `v1` signatures alone, if `WEBHOOK_SECRET` is set, and otherwise not at all (logged like a failed call), until the data is changed.
 - **Another cloud's key service** (a [key service of your own](#key-service)) implements `webhookKeys()` and `signWebhook()`. Google Cloud KMS signs pure Ed25519 (`EC_SIGN_ED25519`); Azure Key Vault has no Ed25519 keys (only the NIST curves and P-256K), so there the webhook key stays a local one, or the receiver checks `WEBHOOK_SECRET` or AWS IAM instead.
 
 **Several keys.** Every Ed25519 key in the set is published, and the first one signs; each call carries one `v1a` signature, by that key alone. Receivers fetch the list again when a call's signature matches none of the keys they have (`verifyWebhook` does, at most every 30 seconds), so a new key is accepted as soon as it signs. Still, a cache in between (`Cache-Control: max-age=300`) may answer the old list for five minutes, so rotate in two steps:
@@ -549,11 +549,25 @@ Each call is a `POST` with a JSON body `{ "type": "…", "data": { … } }`:
 | `provider.added`, `provider.changed`, `provider.removed` | An admin, or the [setup token](#first-setup), added, changed or removed a [sign-in provider](#providers) | `provider { id, kind, name, clientId, hasClientSecret, callbackUrl, createdAt, updatedAt }` (never its secret), `by` (the admin's address; null for the setup token, with `bySetupToken: true`) | the same | the same |
 
 - The prefix says what a call is: `email.send_*` and `sms.send_*` hand over a message for you to send, `user.signing_up` asks you to decide, and the other `user.*` types tell you what happened.
+- `user` in an event is `{ id, email, name, claims }` (`name` and `claims` when there are any): never the provider's `picture`, which the session's user has, nor how the session was authenticated (`amr`).
 - A user signs up with one method and can [add more](sign-in-methods.md) while signed in (`user.method_added`). The authenticator app and SMS codes are told as second factors (`user.second_factor_*`), whether or not the app also signs in on its own; setting up or replacing the app a user signed up with is part of their sign-up (`user.signed_up`), so no `user.second_factor_*` is sent for it, nor `user.method_added` for the passkey a user signs up with.
 - `link` already contains the token: send it as it is. `code` is the 6-digit code, `site` the app's host (e.g. `app.example.com`), `locale` the user's language (e.g. `de-CH`) if known: the `locale` your app passed to `Madauth.initialize`, else the page's or the browser's language.
 - Only the types in `WEBHOOK_EVENTS` are sent, so list what your receiver handles. E-mail & password sign-in is on when `email.send_verification` and `email.send_password_reset` are in the list, the e-mail link when `email.send_signin_link` is, SMS codes when `sms.send_code` is; a receiver that only wants events (e.g. `user.signed_in`) is fine on a Google-only server.
 - Without `email.send_already_registered` in the list, a sign-up with an address that already has a confirmed account is answered like any other and no e-mail is sent; the same goes for `email.send_password_reset_no_password` and "Forgot password?" for a user without a password. Keep both in the list unless your receiver can't send them: without them the answer comes faster for such an address, see [Password security](password-security.md#no-account-enumeration). Without `user.signing_up`, every sign-up is allowed.
 - madAuth waits for each call before it answers the browser, because AWS Lambda stops a function as soon as it has answered. Keep receivers fast.
+
+### The size of a call
+
+Every call, `<webhook-id>.<webhook-timestamp>.<body>`, is at most 4096 bytes, the most AWS KMS signs with Ed25519, so the `v1a` signature is never missing. The limits that keep it so (a test builds the largest call of each type from them):
+
+- claims: 1024 bytes as JSON (see [Claims](#claims));
+- names, typed or from a provider (Google, GitHub, Microsoft, Apple, an OpenID Connect provider): cut to 100 characters, without control characters;
+- e-mail addresses: 254 bytes in UTF-8, without quotes, backslashes or control characters; a provider's address that isn't one doesn't sign in (`email_unverified`);
+- `redirectTo`, of which the e-mail links are made: 1024 bytes as a URL (`400 invalid_options`);
+- an API key: at most 20 scopes;
+- providers: at most 20; an OpenID Connect provider's issuer 256 characters, its extra scopes 512 characters in all, Apple's bundle ids 512 characters in all;
+- the hosts of `MADAUTH_ISSUER` and `ALLOWED_ORIGINS`: 253 characters, as any domain name;
+- no `picture` in a call.
 
 ### Signatures
 
@@ -673,7 +687,7 @@ Claims are what admins attach to a user, as a JSON object, e.g. `{ "roles": ["ad
 
 - Claims belong to the **user**, whichever way they sign in: with Google as well as with a password.
 - The session carries them as `claims` (a `claims` claim in the JWT). `createSessionVerifier` returns them as `user.claims`, and the web library as `Madauth.currentUser.claims`. A user without claims has no `claims` field.
-- A claims object has at most 2048 characters as JSON. Its keys are names: letters, digits and `_`, starting with a letter, at most 64 characters. `roles`, if present, is a list of role names: lower-case letters, digits, `-` and `_`, starting with a letter, at most 32 characters, at most 20 of them. Other values can be anything JSON carries.
+- A claims object has at most 1024 bytes as JSON, in UTF-8 (so a character such as "é" counts twice, "€" three times): claims travel in every session and twice in the webhook call `user.claims_changed`, which must fit what AWS KMS signs (see [The size of a call](#the-size-of-a-call)). Claims stored under the former limit of 2048 characters stay as they are, in the sessions too; setting them again takes the new limit. Its keys are names: letters, digits and `_`, starting with a letter, at most 64 characters. `roles`, if present, is a list of role names: lower-case letters, digits, `-` and `_`, starting with a letter, at most 32 characters, at most 20 of them. Other values can be anything JSON carries.
 
 **Admins manage claims** from your app with the web library, or with the HTTP API:
 

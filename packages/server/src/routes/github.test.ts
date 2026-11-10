@@ -163,7 +163,8 @@ describe('GitHub sign-in', () => {
     // The sign-up is complete with the first session, so user.signed_up comes with it.
     expect(hook.types()).toEqual(['user.signing_up', 'user.signed_up', 'user.signed_in']);
     expect(hook.calls[0].data).toEqual({ email: 'ada@example.com', name: 'Ada Lovelace', method: 'github' });
-    const signedIn = { user: { id: user.id, email: 'ada@example.com', name: 'Ada Lovelace', picture: 'https://avatars.githubusercontent.com/u/7001' }, method: 'github' };
+    // The picture is in the session's user, never in a webhook call.
+    const signedIn = { user: { id: user.id, email: 'ada@example.com', name: 'Ada Lovelace' }, method: 'github' };
     expect(hook.calls[1].data).toEqual(signedIn);
     expect(hook.calls[2].data).toEqual(signedIn);
   });

@@ -4,6 +4,7 @@
 import type { Context } from 'hono';
 import type { AppContext } from '../app.js';
 import { isValidEmail, normalizeEmail } from '../password.js';
+import { cutName } from '../user.js';
 import { signInPredicate } from '../settings.js';
 import type { CodeResult, StoredUser, Users, VerificationPurpose } from '../users.js';
 import { WEBHOOK_TIMEOUT_MS, type WebhookClient, type WebhookType } from '../webhooks.js';
@@ -58,7 +59,7 @@ export interface Emails {
 export function createEmails(ctx: AppContext, users: Users, webhook: WebhookClient): Emails {
   const sendEmail: Emails['sendEmail'] = async (user, type, data) => {
     if (Date.now() - user.lastMailAt < MAIL_INTERVAL_MS) return true;
-    const result = await webhook.call(type, { to: user.email, user: { id: user.id, name: user.name ?? undefined }, ...data }, WEBHOOK_TIMEOUT_MS);
+    const result = await webhook.call(type, { to: user.email, user: { id: user.id, name: cutName(user.name) }, ...data }, WEBHOOK_TIMEOUT_MS);
     if (!result.ok) {
       console.error(`[madauth] Webhook "${type}" for ${user.email} failed: ${result.reason}`);
       return false;

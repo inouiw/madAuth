@@ -55,7 +55,7 @@ export class Admins {
     if (!user || user.emailNormalized !== value || !user.emailVerified) return null;
     // Checked before the value counts as applied: claims without room for the role leave it for a later sign-in.
     if (!withAdminRole(claimsFromJson(user.claims))) {
-      console.error(`[madauth] INITIAL_ADMIN_EMAIL: the claims of ${value} have no room for the role "${ADMIN_ROLE}" (at most 20 roles, 2048 characters).`);
+      console.error(`[madauth] INITIAL_ADMIN_EMAIL: the claims of ${value} have no room for the role "${ADMIN_ROLE}" (at most 20 roles, 1024 bytes as JSON).`);
       return null;
     }
     const entry: AppliedInitialAdmin = { email: value, userId: user.id };

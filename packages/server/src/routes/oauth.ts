@@ -5,7 +5,7 @@ import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { base64url } from 'jose';
 import type { AppContext } from '../app.js';
-import { normalizeEmail } from '../password.js';
+import { isValidEmail, normalizeEmail } from '../password.js';
 import { nameOfMethod } from '../providers.js';
 import { signInPredicate, type SecondFactor, type SignInMethod } from '../settings.js';
 import { randomString, readToken, signToken } from '../tokens.js';
@@ -207,6 +207,7 @@ export async function resolveProviderUser(
   profile: ProviderProfile,
   locale: string | undefined,
 ): Promise<SignInResult> {
+  if (!isValidEmail(profile.email)) return unusableAddress(provider);
   const { users } = ctx;
   const { key } = profile;
   const emailNormalized = normalizeEmail(profile.email);
@@ -299,6 +300,7 @@ export async function resolveUnconfirmedProviderUser(
   profile: ProviderProfile,
   locale: string | undefined,
 ): Promise<SignInResult | { ok: 'confirm'; user: StoredUser }> {
+  if (!isValidEmail(profile.email)) return unusableAddress(provider);
   const { users } = ctx;
   const { key } = profile;
   const confirm = (user: StoredUser) => ({ ok: 'confirm' as const, user });
@@ -360,11 +362,23 @@ export type LinkResult = { ok: true } | { ok: false; error: 'account_taken'; mes
 export type LinkedProfile = Omit<ProviderProfile, 'email'> & { email?: string };
 
 /**
+ * A provider's address that is no e-mail address madAuth takes (at most 254 characters, as for a password sign-up):
+ * no sign-in with it, as if the provider had verified none. Keeps every webhook call within what AWS KMS signs.
+ */
+const unusableAddress = (provider: OAuthProvider): SignInResult => ({
+  ok: false,
+  error: 'email_unverified',
+  message: `${provider.name} gave an e-mail address madAuth can't use (more than 254 characters, or not an address).`,
+});
+
+/**
  * Adds a verified provider account to the methods of `user`, who signed in recently: from then on it signs
  * them in too, whatever address it has. An account that belongs to another user stays theirs. Emits
  * `user.method_added`.
  */
-export async function linkProviderAccount(ctx: AppContext, provider: OAuthProvider, user: StoredUser, profile: LinkedProfile): Promise<LinkResult> {
+export async function linkProviderAccount(ctx: AppContext, provider: OAuthProvider, user: StoredUser, given: LinkedProfile): Promise<LinkResult> {
+  // An address that is none (e.g. longer than 254 characters) is not kept: the account links without one.
+  const profile = given.email !== undefined && !isValidEmail(given.email) ? { ...given, email: undefined } : given;
   const { users } = ctx;
   const taken: LinkResult = { ok: false, error: 'account_taken', message: `This ${provider.name} account signs in another user. Use another one.` };
   const existing = await users.findAccountByKey(profile.key);

@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { cutName } from './user.js';
 
 /** What a verified Google ID token says about its account. */
 export interface GoogleProfile {
@@ -52,7 +53,8 @@ export async function verifyGoogleIdToken(
     return { ok: false, error: 'email_unverified', reason: 'e-mail address not verified' };
   }
   const profile: GoogleProfile = { sub: payload.sub, email: payload.email };
-  if (typeof payload.name === 'string') profile.name = payload.name;
+  const name = cutName(payload.name);
+  if (name) profile.name = name;
   if (typeof payload.picture === 'string') profile.picture = payload.picture;
   return { ok: true, profile };
 }

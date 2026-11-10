@@ -2,6 +2,7 @@
 // discovery document, exchanging the code, checking the ID token, and reading the address. See "Providers" in
 // docs/server.md.
 import { createRemoteJWKSet, customFetch, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
+import { cutName } from './user.js';
 
 /** What madAuth uses of a provider's discovery document (`<issuer>/.well-known/openid-configuration`). */
 export interface OidcEndpoints {
@@ -175,7 +176,7 @@ export async function addressOf(
 ): Promise<{ email: string; name?: string; verified: boolean } | { error: 'email_unverified' | 'verification_failed' }> {
   const read = (source: Record<string, unknown>) => {
     if (typeof source.email !== 'string' || !source.email) return null;
-    const name = typeof source.name === 'string' && source.name ? source.name : typeof claims.name === 'string' ? claims.name : undefined;
+    const name = cutName(source.name) ?? cutName(claims.name);
     return { email: source.email, ...(name ? { name } : {}), verified: from.trustEmail || isVerified(source.email_verified) };
   };
   const inToken = read(claims);

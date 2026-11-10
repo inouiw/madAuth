@@ -6,7 +6,7 @@ import { ApiKeys, MADAUTH_SCOPES, ScopeCatalog, apiKeyInfo, grantedScopes, type 
 import { ADMIN_ROLE, claimsFromJson, isAdmin, parseClaims, sameClaims } from './claims.js';
 import { methodConfig, sendsVerificationEmails, type MadauthConfig } from './config.js';
 import { importAppleKey } from './apple.js';
-import { Providers, importProviders, isProviderMethodKind, parseProviderFields, parseProviderKind, providerOf, type ProviderKind, type StoredProvider } from './providers.js';
+import { MAX_PROVIDERS, Providers, importProviders, isProviderMethodKind, parseProviderFields, parseProviderKind, providerOf, type ProviderKind, type StoredProvider } from './providers.js';
 import { SETUP_TOKEN_PREFIX, Setup } from './setup.js';
 import { discover, keysCache } from './oidc.js';
 import type { JWTVerifyGetKey } from 'jose';
@@ -493,9 +493,10 @@ export function createApp(config: MadauthConfig): Hono {
     },
     async emit(type, data) {
       if (!this.webhook?.wants(type)) return;
-      // The user in an event is the user, not their session: `amr` (how the session was authenticated) stays out.
+      // The user in an event is the user, not their session: `amr` (how the session was authenticated) stays out. So does
+      // the provider's `picture`, a URL of any length: every call must fit what AWS KMS signs (see webhook-size.test.ts).
       const user = data.user;
-      const payload = user && typeof user === 'object' && 'amr' in user ? { ...data, user: { ...(user as object), amr: undefined } } : data;
+      const payload = user && typeof user === 'object' ? { ...data, user: { ...(user as object), amr: undefined, picture: undefined } } : data;
       const result = await this.webhook.call(type, payload, EVENT_TIMEOUT_MS);
       if (!result.ok) console.error(`[madauth] Webhook "${type}" failed: ${result.reason}`);
     },
@@ -785,7 +786,7 @@ export function createApp(config: MadauthConfig): Hono {
         {
           error: 'invalid_claims',
           message:
-            'claims must be a JSON object of at most 2048 characters whose keys are names (letters, digits and "_", ' +
+            'claims must be a JSON object of at most 1024 bytes as JSON (UTF-8) whose keys are names (letters, digits and "_", ' +
             'starting with a letter). "roles" must be a list of names of lower-case letters, digits, "-" and "_".',
         },
         400,
@@ -966,6 +967,9 @@ export function createApp(config: MadauthConfig): Hono {
     const added = await providers.add(kind, id, fields, caller.by);
     if ('error' in added && added.error === 'issuer_bound') {
       return c.json({ error: 'invalid_provider', message: `The id "${id}" belongs to the issuer "${added.issuer}", whose users' accounts it has: give this provider another id.` }, 400);
+    }
+    if ('error' in added && added.error === 'too_many_providers') {
+      return c.json({ error: 'invalid_provider', message: `There are ${MAX_PROVIDERS} providers, the most madAuth keeps: remove one first.` }, 400);
     }
     if ('error' in added) return c.json({ error: added.error, message: `There is a provider "${id}" already: change it with providers/update.` }, 409);
     await ctx.emit('provider.added', { provider: providerInfo(added.provider), ...changedBy(caller) });

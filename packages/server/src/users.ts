@@ -6,7 +6,7 @@ import { isProviderMethod } from './providers.js';
 import { codeHash, codeHashes, generateCode, generateLinkToken, hashLinkToken, safeEqual } from './password.js';
 import { ALWAYS_SIGN_IN, FORMER_AUTHENTICATOR_ID, SIGN_IN_METHODS, type SecondFactor } from './settings.js';
 import type { Row, StoreAdapter, Where } from './store/schema.js';
-import type { MadauthUser } from './user.js';
+import { cutName, type MadauthUser } from './user.js';
 
 export interface StoredUser {
   id: string;
@@ -272,7 +272,8 @@ export function lastWayIn(accounts: StoredAccount[], signsIn: (method: string) =
  */
 export function toMadauthUser(user: StoredUser, profile: { name?: string; picture?: string } = {}): MadauthUser {
   const result: MadauthUser = { id: user.id, email: user.email };
-  const name = user.name ?? profile.name;
+  // Cut here too: a name stored before madAuth cut provider names may be longer.
+  const name = cutName(user.name ?? profile.name);
   if (name) result.name = name;
   if (profile.picture) result.picture = profile.picture;
   const claims = claimsFromJson(user.claims);

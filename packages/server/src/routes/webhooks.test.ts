@@ -228,8 +228,9 @@ describe('events', () => {
     await verify(app, await googleIdToken({ nonce: first.nonce }), first.cookie);
     expect(hook.calls).toEqual([
       { type: 'user.signing_up', data: { email: 'ada@example.com', name: 'Ada Lovelace', method: 'google' } },
-      { type: 'user.signed_up', data: { user: { ...user, picture: 'https://example.com/ada.png' }, method: 'google' } },
-      { type: 'user.signed_in', data: { user: { ...user, picture: 'https://example.com/ada.png' }, method: 'google' } },
+      // Google's picture is in the session's user, never in a webhook call.
+      { type: 'user.signed_up', data: { user, method: 'google' } },
+      { type: 'user.signed_in', data: { user, method: 'google' } },
     ]);
 
     hook.calls.length = 0;

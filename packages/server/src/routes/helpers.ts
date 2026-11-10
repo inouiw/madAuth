@@ -1,6 +1,7 @@
 // Small helpers the route modules share: reading the body, the shape of errors, and common answers.
 import type { Context } from 'hono';
 import type { AppContext, SignInStep } from '../app.js';
+import { MAX_NAME_LENGTH, cutName } from '../user.js';
 import type { StoredUser } from '../users.js';
 import type { NextStep } from './challenge.js';
 
@@ -70,16 +71,24 @@ export async function recentUser(c: Context, ctx: AppContext): Promise<StoredUse
 export const reauthRequired = (c: Context): Response =>
   error(c, 401, 'reauth_required', 'For your security, sign in again to make this change: it takes a sign-in within the last two minutes.');
 
+/**
+ * The longest `redirectTo`, in bytes as madAuth writes the URL (percent-encoded, so ASCII): the e-mail links are made
+ * of it, and every webhook call must fit what AWS KMS signs (see webhook-size.test.ts).
+ */
+export const MAX_REDIRECT_BYTES = 1024;
+
 export function redirectTarget(ctx: AppContext, c: Context, value: unknown): URL | Response {
+  const tooLong = () => error(c, 400, 'invalid_options', `redirectTo must be at most ${MAX_REDIRECT_BYTES} bytes long as a URL: the e-mail links are made of it.`);
+  // A value far too long isn't even parsed.
+  if (typeof value === 'string' && value.length > 4 * MAX_REDIRECT_BYTES) return tooLong();
   const url = ctx.allowedUrl(value);
-  return url ?? error(c, 400, 'invalid_options', 'redirectTo must be an absolute URL whose origin is in ALLOWED_ORIGINS.');
+  if (!url) return error(c, 400, 'invalid_options', 'redirectTo must be an absolute URL whose origin is in ALLOWED_ORIGINS.');
+  return url.href.length > MAX_REDIRECT_BYTES ? tooLong() : url;
 }
 
-const MAX_NAME_LENGTH = 100;
-
-/** A name as given, e.g. at sign-up: trimmed and cut to `maxLength`, or null if there is none. */
+/** A name as given, e.g. at sign-up: trimmed and cut to `maxLength` (default {@link MAX_NAME_LENGTH}), or null if there is none. */
 export function nameOf(value: unknown, maxLength = MAX_NAME_LENGTH): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim().slice(0, maxLength) : null;
+  return cutName(value, maxLength) ?? null;
 }
 
 /**

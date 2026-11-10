@@ -68,13 +68,17 @@ describe('parseClaims', () => {
     expect(JSON.stringify(parseClaims({ b: 1, a: 2 }))).toBe('{"a":2,"b":1}');
   });
 
-  it('refuses what is not an object, bad names, bad roles, and more than 2048 characters', () => {
+  it('refuses what is not an object, bad names, bad roles, and more than 1024 bytes as JSON in UTF-8', () => {
     for (const bad of [null, undefined, 'admin', ['admin'], 7, { '1st': true }, { 'with space': 1 }, { 'a-b': 1 }, { roles: ['Admin'] }, { roles: 'admin' }]) {
       expect(parseClaims(bad)).toBeNull();
     }
     expect(parseClaims({ ['k'.repeat(65)]: 1 })).toBeNull();
-    expect(parseClaims({ big: 'x'.repeat(2040) })).toBeNull();
-    expect(parseClaims({ big: 'x'.repeat(2000) })).not.toBeNull();
+    // {"big":"…"} is 10 bytes around the value.
+    expect(parseClaims({ big: 'x'.repeat(1014) })).not.toBeNull();
+    expect(parseClaims({ big: 'x'.repeat(1015) })).toBeNull();
+    // Bytes, not characters: "€" is 3 bytes in UTF-8.
+    expect(parseClaims({ big: '€'.repeat(338) })).not.toBeNull();
+    expect(parseClaims({ big: '€'.repeat(339) })).toBeNull();
     // Values JSON can't carry would change on the way.
     expect(parseClaims({ when: () => 1 })).toBeNull();
     expect(parseClaims({ n: Number.NaN })).toBeNull();

@@ -7,6 +7,15 @@
 - **New deployments sign with the webhook key alone:** `init` writes `MADAUTH_SIGNING_KEY` as a set with an Ed25519 key and no `WEBHOOK_SECRET` (the development receiver of [madAuth-webhooks](https://github.com/inouiw/madAuth-webhooks) fetches the key from `WEBHOOK_KEYS_URL`), and `generate-key --ed25519` makes such a key. `WEBHOOK_SECRET` is needed only when the key service has no webhook key. `kms-setup` creates the KMS key `alias/madauth/<deployment>/webhook` (`ECC_NIST_EDWARDS25519`) unless `--no-webhook`, and `kms-rotate` rotates it once it exists; a KMS deployment pays for one more key, and every webhook call is one more KMS request.
 - **The AWS template creates the webhook key** for a webhook receiver without AWS IAM, also for a deployment from before at its next deploy, and the server signs `v1a` from then on, next to `v1` while `<secretsPath>/WEBHOOK_SECRET` exists. `scripts/bootstrap-secrets.sh` no longer creates `WEBHOOK_SECRET` unless you answer yes. See [Moving the receiver to v1a](../deploy/aws/README.md#moving-the-receiver-to-v1a).
 - **A key service of your own** may implement `webhookKeys()` and `signWebhook()` (both optional); without them, nothing changes.
+- **Smaller limits, so every webhook call fits the 4096 bytes AWS KMS signs with Ed25519** (see [The size of a call](server.md#the-size-of-a-call)):
+  - **Claims: at most 1024 bytes as JSON, in UTF-8**, instead of 2048 characters. Setting larger claims is refused with `400 invalid_claims`. Claims stored before stay as they are and keep working in the sessions; their next change takes the new limit. Until then, a webhook call with them may exceed 4096 bytes and go without its `v1a` signature (with `v1` alone if `WEBHOOK_SECRET` is set, otherwise not at all, logged).
+  - **Webhook calls no longer carry `picture`** in `user` (it was in `user.signed_up` and `user.signed_in` after a Google or GitHub sign-in). A receiver that read it gets it from your app instead, e.g. from the session's user. The receivers of madAuth-webhooks don't use it.
+  - **Names from a provider are cut to 100 characters**, like names typed at sign-up, and control characters are removed from names.
+  - **E-mail addresses:** at most 254 bytes in UTF-8 (was 254 characters), and without `"`, `\` or control characters; a provider's address that isn't one no longer signs in (`email_unverified`).
+  - **`redirectTo` of more than 1024 bytes** (as a URL) is refused with `400 invalid_options`.
+  - **An API key has at most 20 scopes**: creating one with more is refused with `400 invalid_options`. Existing keys keep theirs.
+  - **At most 20 providers**: adding one more is refused with `400 invalid_provider`. An OpenID Connect provider's issuer has at most 256 characters, its extra `scopes` 512 characters in all, Apple's `bundleIds` 512 characters in all. Existing providers keep working.
+  - **The hosts of `MADAUTH_ISSUER` and `ALLOWED_ORIGINS`** have at most 253 characters, as any domain name; a longer one stops the server at start.
 
 ## To 0.7.4
 

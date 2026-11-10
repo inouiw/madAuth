@@ -11,8 +11,12 @@ export const ADMIN_ROLE = 'admin';
 
 /** Roles one user can hold. */
 export const MAX_ROLES = 20;
-/** Length of the claims as JSON: they travel in every session token and cookie. */
-export const MAX_CLAIMS_LENGTH = 2048;
+/**
+ * Size of the claims as JSON, in UTF-8 bytes: they travel in every session token and cookie, and twice in the
+ * webhook call `user.claims_changed`, which must fit the 4096 bytes AWS KMS signs with Ed25519 (see webhook-size.test.ts).
+ * Claims stored under an older, larger limit are still read; they are refused at their next change.
+ */
+export const MAX_CLAIMS_BYTES = 1024;
 
 const ROLE_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const CLAIM_NAME = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
@@ -32,7 +36,7 @@ export function parseRoles(input: unknown): string[] | null {
  * Checks a claims object and returns it in canonical form (keys sorted, `roles` sorted and without
  * duplicates), or null if `input` is not one: a JSON object whose keys are names (letters, digits and `_`,
  * starting with a letter, at most 64 characters), whose `roles`, if any, is a valid list of role names,
- * and which is at most {@link MAX_CLAIMS_LENGTH} characters as JSON.
+ * and which is at most {@link MAX_CLAIMS_BYTES} bytes as JSON in UTF-8.
  */
 export function parseClaims(input: unknown): Claims | null {
   if (!isJsonObject(input)) return null;
@@ -48,7 +52,7 @@ export function parseClaims(input: unknown): Claims | null {
       claims[key] = value;
     }
   }
-  return JSON.stringify(claims).length <= MAX_CLAIMS_LENGTH ? claims : null;
+  return Buffer.byteLength(JSON.stringify(claims), 'utf8') <= MAX_CLAIMS_BYTES ? claims : null;
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
