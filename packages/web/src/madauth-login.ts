@@ -17,6 +17,7 @@ import { isBuiltInMethodId, loginMethods, type LoginMethod, type LoginMethodId }
 import type { SignInMethodInfo } from './scopes/methods.js';
 import type { NewProvider, OidcPreset, ProviderChanges, ProviderInfo, ProviderKind, Settings } from './scopes/admin.js';
 import type { ApiKeyInfo, ApiKeyScope } from './scopes/api-keys.js';
+import type { SessionInfo } from './scopes/sessions.js';
 import type { DeviceRequest } from './scopes/device.js';
 import type { PasskeyInfo } from './scopes/passkey.js';
 import { pendingStepOf, secondStepOf, type PendingStep, type SecondFactorPolicy } from './providers/provider.js';
@@ -401,6 +402,7 @@ export class MadauthLogin extends LitElement {
     factors: { state: true },
     passwordScore: { state: true },
     methodList: { state: true },
+    sessionList: { state: true },
     secondFactors: { state: true },
     preferredFactor: { state: true },
     appStatus: { state: true },
@@ -488,6 +490,10 @@ export class MadauthLogin extends LitElement {
   private setupFactors?: SecondFactor[];
   /** The signed-in user's methods, in the methods view; undefined while they load. */
   private methodList?: SignInMethodInfo[];
+  /** The signed-in user's sessions, under the methods; undefined while they load. */
+  private sessionList?: SessionInfo[];
+  /** Whether the error shown came from ending a session, whose `reauth_required` says so. */
+  private sessionError = false;
   /** The user's second factors in the order a sign-in asks for them, and the one they prefer; with the list. */
   private secondFactors?: SecondFactor[];
   private preferredFactor?: SecondFactor | null;
@@ -843,6 +849,7 @@ export class MadauthLogin extends LitElement {
     this.smsCodePurpose = 'signin';
     this.setupFactors = undefined;
     this.methodList = undefined;
+    this.sessionList = undefined;
     this.secondFactors = undefined;
     this.preferredFactor = undefined;
     this.apiKeyList = undefined;
@@ -935,6 +942,7 @@ export class MadauthLogin extends LitElement {
 
   private showError(error: MadauthError, method?: LoginMethodId): void {
     this.notice = undefined;
+    this.sessionError = false;
     this.error = { ...error, method };
     const detail: ErrorDetail = { ...error, method };
     this.dispatchEvent(new CustomEvent('madauth-error', { detail, bubbles: true, composed: true }));
@@ -1212,6 +1220,7 @@ export class MadauthLogin extends LitElement {
     }
     if (error.code === 'email_unverified' && error.method === 'password') return s.confirmEmailFirst;
     if (error.code === 'reauth_required' && this.view === 'api-key-create') return s.apiKeyCreate.reauth;
+    if (error.code === 'reauth_required' && this.view === 'methods' && this.sessionError) return s.methodsView.sessions.reauth;
     if (error.code === 'reauth_required' && this.view.startsWith('admin-')) return s.adminView.reauth;
     // What the server found wrong with a provider or the settings, for the admin: its message says what to change.
     if ((error.code === 'invalid_provider' || error.code === 'invalid_settings') && this.view.startsWith('admin-')) return error.message;
@@ -2045,9 +2054,9 @@ export class MadauthLogin extends LitElement {
     void this.loadMethods();
   }
 
-  /** Loads the user's methods into the list. */
+  /** Loads the user's methods into the list, and their sessions into theirs. */
   private async loadMethods(): Promise<void> {
-    const result = await Madauth.methods.list();
+    const [result] = await Promise.all([Madauth.methods.list(), this.loadSessions()]);
     if (!result.isSuccess) {
       this.showError(result.error);
       return;
@@ -2055,6 +2064,80 @@ export class MadauthLogin extends LitElement {
     this.methodList = result.methods;
     this.secondFactors = result.secondFactors;
     this.preferredFactor = result.preferredSecondFactor;
+  }
+
+  /** Loads the user's sessions; a server without them (before madAuth 0.7.5) shows no section. */
+  private async loadSessions(): Promise<void> {
+    const result = await Madauth.sessions.list();
+    this.sessionList = result.isSuccess ? result.sessions : [];
+  }
+
+  /** A date with its time, as the user's language writes it, e.g. "3 Oct 2026, 14:05". */
+  private dateTime(ms: number): string {
+    return new Date(ms).toLocaleString(currentLocale(), { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  /** The sessions at the bottom of the methods view: the current one marked, the others each with a button that ends it. */
+  private renderSessions() {
+    const list = this.sessionList;
+    if (!list?.length) return null;
+    const v = this.strings.methodsView.sessions;
+    const others = list.filter((session) => !session.current);
+    return html`
+      <section class="sessions">
+        <h3>${v.heading}</h3>
+        <p class="hint">${v.lead}</p>
+        <ul class="method-list">
+          ${list.map((session) => {
+            const device = v.device(session.browser, session.os);
+            const details = [session.current ? v.current : undefined, session.ip ?? undefined, v.lastActive(this.dateTime(session.lastActiveAt))].filter(Boolean);
+            return html`
+              <li class="method session" part="session" data-session=${session.id} ?data-current=${session.current}>
+                <span class="method-text">
+                  <span class="label">${device}</span>
+                  <span class="hint">${details.join(' · ')}</span>
+                </span>
+                ${session.current
+                  ? null
+                  : html`<button class="link" part="link" type="button" data-action="end-session" aria-label=${v.endLabel(device)} ?disabled=${this.busy}
+                      @click=${() => this.onEndSession(session)}>${v.end}</button>`}
+              </li>
+            `;
+          })}
+        </ul>
+        ${others.length > 1
+          ? html`<p class="links">
+              <button class="link" part="link" type="button" data-action="end-other-sessions" ?disabled=${this.busy} @click=${() => this.onEndOtherSessions()}>${v.endOthers}</button>
+            </p>`
+          : null}
+      </section>
+    `;
+  }
+
+  private async onEndSession(session: SessionInfo): Promise<void> {
+    const result = await this.run(() => Madauth.sessions.end(session.id));
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      this.sessionError = true;
+      if (result.error.code === 'session_not_found') void this.loadSessions();
+      return;
+    }
+    this.notice = (strings) => strings.methodsView.sessions.ended;
+    void this.loadSessions();
+  }
+
+  private async onEndOtherSessions(): Promise<void> {
+    const result = await this.run(() => Madauth.sessions.endOthers());
+    if (!result) return;
+    if (!result.isSuccess) {
+      this.showError(result.error);
+      this.sessionError = true;
+      return;
+    }
+    const { ended } = result;
+    this.notice = (strings) => strings.methodsView.sessions.othersEnded(ended);
+    void this.loadSessions();
   }
 
   /** The second factors the user has, when there is a choice: which one a sign-in asks for first. */
@@ -2175,6 +2258,7 @@ export class MadauthLogin extends LitElement {
                   </div>`
                 : null}
             </section>
+            ${this.renderSessions()}
           `
         : null}
       <p class="links">

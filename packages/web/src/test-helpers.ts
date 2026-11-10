@@ -3,6 +3,7 @@ import { resetGisForTests, type GoogleAccountsId } from '@madauth/google-identit
 import { resetMadauthForTests } from './madauth.js';
 import type { SecondFactorPolicy } from './providers/provider.js';
 import type { MadauthUser } from './result.js';
+import type { SessionInfo } from './scopes/sessions.js';
 
 export const SERVER = 'https://auth.example.com';
 export const CLIENT_ID = 'cid.apps.googleusercontent.com';
@@ -152,6 +153,8 @@ export interface FakeServer {
   apiScopes: { name: string; description: string; role: string | null; endpoints: string[] }[];
   /** The API keys the users made, with the key and whose it is. */
   apiKeys: { id: string; email: string; key: string; name: string; scopes: string[]; createdAt: number; expiresAt: number | null; lastUsedAt: number }[];
+  /** The users' sessions, with whose they are (by address); `current` is the session of this browser. */
+  sessions: (SessionInfo & { email: string })[];
   /** The app's login page an admin set; null: `/`. */
   loginUrl: string | null;
   /** The OpenID Connect clients an admin registered. */
@@ -220,6 +223,7 @@ export function fakeServer(): FakeServer {
       { name: 'orders:refund', description: 'Refund orders', role: 'staff', endpoints: [] },
     ],
     apiKeys: [],
+    sessions: [],
     loginUrl: null,
     clients: [],
     devices: [],
@@ -433,6 +437,27 @@ export function fakeServer(): FakeServer {
         if (index < 0) return json({ error: 'api_key_not_found', message: 'gone' }, 404);
         server.apiKeys.splice(index, 1);
         return json({});
+      }
+      // --- The user's sessions ---
+      case 'GET /auth/sessions': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        return json({ sessions: server.sessions.filter((session) => session.email === user).map(({ email: _, ...info }) => info) });
+      }
+      case 'POST /auth/sessions/end':
+      case 'POST /auth/sessions/end-others': {
+        const user = server.user?.email;
+        if (!user) return json({ error: 'no_session', message: 'sign in' }, 401);
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        if (url.pathname.endsWith('/end-others')) {
+          const others = server.sessions.filter((session) => session.email === user && !session.current);
+          server.sessions = server.sessions.filter((session) => !others.includes(session));
+          return json({ ended: others.length });
+        }
+        const index = server.sessions.findIndex((session) => session.id === (body as { id?: string }).id && session.email === user);
+        if (index < 0) return json({ error: 'session_not_found', message: 'gone' }, 404);
+        server.sessions.splice(index, 1);
+        return new Response(null, { status: 204 });
       }
       // --- The user's methods ---
       case 'GET /auth/methods': {
@@ -879,6 +904,22 @@ export function fakeServer(): FakeServer {
         if (index < 0) return json({ error: 'api_key_not_found', message: 'gone' }, 404);
         server.apiKeys.splice(index, 1);
         return json({ email, userId });
+      }
+      case 'POST /auth/admin/sessions/list':
+      case 'POST /auth/admin/sessions/end': {
+        if (!server.user) return json({ error: 'no_session' }, 401);
+        if (!isAdmin()) return json({ error: 'forbidden', message: 'admins only' }, 403);
+        const of = [...server.accounts.keys()].find((address) => userFor(address).id === (body as { userId?: string }).userId);
+        if (!of) return json({ error: 'user_not_found', message: 'no user' }, 404);
+        const userId = userFor(of).id;
+        const theirs = server.sessions.filter((session) => session.email === of);
+        if (url.pathname.endsWith('/list')) return json({ email: of, userId, sessions: theirs.map(({ email: _, ...info }) => info) });
+        if (server.staleSignIn) return json({ error: 'reauth_required', message: 'sign in again' }, 401);
+        const id = (body as { id?: string }).id;
+        const ended = id === 'all' ? theirs : theirs.filter((session) => session.id === id);
+        if (!ended.length && id !== 'all') return json({ error: 'session_not_found', message: 'gone' }, 404);
+        server.sessions = server.sessions.filter((session) => !ended.includes(session));
+        return json({ email: of, userId, ended: ended.length });
       }
       // The OpenID Connect provider's token exchange for native apps: a nonce, then tokens for a Google ID token.
       case 'POST /auth/oidc/nonce':

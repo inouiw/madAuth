@@ -192,6 +192,8 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     await users.updateUser(user.id, { sessionVersion });
     // A reset link or code sent before would otherwise still set a password, as after a reset.
     await users.clearVerifications(user.id);
+    // The other sessions' records go with them (no `user.session_ended`: `user.password_changed` says it).
+    await ctx.sessions.endAll(user.id, null, signedIn.sessionId);
     await ctx.continueSession(c, signedIn, sessionVersion);
     await ctx.emit('user.password_changed', { user: toMadauthUser({ ...user, sessionVersion }) });
     return c.json({});
@@ -235,6 +237,8 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     await users.updateUser(user.id, { emailVerified: true, sessionVersion, wrongCodes: 0 });
     // An unused confirmation link would otherwise still sign in.
     await users.clearVerifications(user.id);
+    // The sessions' records go with them (no `user.session_ended`: `user.password_reset` says it).
+    await ctx.sessions.endAll(user.id, null);
     // A reset can finish an unconfirmed sign-up: one from before `user.signed_up` existed gets it too.
     const reset = { ...(user.emailVerified ? user : await users.reopenSignUp(user)), emailVerified: true, sessionVersion, wrongCodes: 0 };
     await ctx.emit('user.password_reset', { user: toMadauthUser(reset) });

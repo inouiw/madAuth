@@ -35,7 +35,7 @@ describe('Google ID token verification (shared by both flows)', () => {
     const res = await verify(app, await googleIdToken({ nonce }), cookie);
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ user: { ...ada, amr: ['google'] } });
+    expect(await res.json()).toEqual({ user: { ...ada, amr: ['google'], sessionId: expect.stringMatching(/^ses_/) } });
     expect(cookies(res).madauth_session.value).toBeTruthy();
   });
 
@@ -319,7 +319,7 @@ describe('session', () => {
 
     const ok = await get(`madauth_session=${session}`);
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ user: { ...ada, amr: ['google'] } });
+    expect(await ok.json()).toEqual({ user: { ...ada, amr: ['google'], sessionId: expect.stringMatching(/^ses_/) } });
     expect((await get()).status).toBe(401);
     expect((await get(`madauth_session=${tamperedToken(session)}`)).status).toBe(401);
   });

@@ -22,6 +22,7 @@ import { FACTOR_STEPS, pendingStepOf, type DeletedAccount, type PendingStep, typ
 import { fail, isSecondFactor, ok, toErrorCode, type MadauthError, type MadauthUser, type Result } from './result.js';
 import type { Core } from './scopes/core.js';
 import { createAdminApi } from './scopes/admin.js';
+import { createSessionsApi } from './scopes/sessions.js';
 import { createDeviceApi } from './scopes/device.js';
 import { createTokensApi } from './scopes/tokens.js';
 import { createEmailLinkApi } from './scopes/email-link.js';
@@ -791,6 +792,9 @@ export const Madauth = {
 
   /** The signed-in user's API keys, for programs that call your app's API or madAuth's admin API: making, listing and revoking them. */
   apiKeys: createApiKeysApi(core),
+
+  /** The signed-in user's sessions: where they are signed in, and ending one or all others. */
+  sessions: createSessionsApi(core),
 
   /** Reading and setting claims and settings, for users with the role `admin`. */
   admin: createAdminApi(core),

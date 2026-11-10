@@ -243,7 +243,7 @@ export function authenticatorRoutes(app: Hono, ctx: AppContext): void {
     const via = await checkCode(c, ctx, user, account, data, wrong);
     if (via instanceof Response) return via;
     const result = await ctx.startSession(c, toMadauthUser(user), ['otp'], { method: 'authenticator', signedUpAt: user.signedUpAt }, { sv: user.sessionVersion });
-    await ctx.emit('user.signed_in', { user: result, method: 'authenticator' });
+    await ctx.signedIn(c, result, { method: 'authenticator' });
     return c.json({ user: result });
   });
 

@@ -290,5 +290,33 @@ export function storeAdapterContract(t: ContractRunner, createAdapter: () => Sto
 
       expect(await store.scan('user', { after: String(gone.id), limit: 1 })).toEqual(next);
     });
+
+    it('moves the expiry of a record that has one, and finds it by its indexed field after', async () => {
+      const store = await createAdapter();
+      const session = testSession(unique('usr_contract'), 1_700_000_000_000);
+      await store.create('session', session);
+
+      expect(await store.update('session', { id: session.id, userId: session.userId }, { renewedAt: 2, expiresAt: 4_000_000_000_000 })).toBe(1);
+      expect(await store.findMany('session', { userId: session.userId })).toEqual([{ ...session, renewedAt: 2, expiresAt: 4_000_000_000_000 }]);
+      expect(await store.delete('session', { userId: session.userId })).toBe(1);
+    });
+
+    it('deletes the expired records of a model, if it has deleteExpired, and only those', async () => {
+      const store = await createAdapter();
+      if (!store.deleteExpired) return;
+      const userId = unique('usr_contract');
+      const now = Date.now();
+      const expired = testSession(userId, now - 1);
+      const going = testSession(userId, now + 60_000);
+      await store.create('session', expired);
+      await store.create('session', going);
+
+      expect((await store.deleteExpired('session', now)) >= 1).toBe(true);
+      expect(await store.findMany('session', { userId })).toEqual([going]);
+    });
   });
+}
+
+function testSession(userId: string, expiresAt: number): Row {
+  return { id: unique('ses'), userId, sessionVersion: 0, authTime: 1_700_000_000, amr: 'pwd', ip: null, browser: null, os: null, createdAt: 1, renewedAt: 1, expiresAt };
 }

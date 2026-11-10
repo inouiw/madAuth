@@ -210,7 +210,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
       if (prompts.includes('none')) return fail('login_required', 'The user is not signed in.');
       // A sign-in that has to be new ends the one there is: the login page then shows the dialog, and the user
       // who comes back has just signed in. The way back asks for no new sign-in again.
-      if (signIn) ctx.signOut(c);
+      if (signIn) await ctx.signOut(c);
       const returnTo = new URL(endpoint('authorize'));
       for (const [key, value] of Object.entries(params)) if (key !== 'max_age' && key !== 'prompt') returnTo.searchParams.set(key, value);
       const otherPrompts = prompts.filter((prompt) => prompt !== 'login');
@@ -571,7 +571,7 @@ export function oidcEndpoints(app: Hono, ctx: AppContext, clients: OidcClients):
     }
     // The session ends if it is the user's the ID token names; the client's refresh tokens of them in any case.
     const signIn = await ctx.currentSignIn(c);
-    if (signIn?.user.id === hint.sub) ctx.signOut(c);
+    if (signIn?.user.id === hint.sub) await ctx.signOut(c);
     await clients.endRefreshChains(hint.sub, client.id);
     const url = new URL(target ?? `${issuer}/`);
     if (target !== undefined && params.state !== undefined) url.searchParams.set('state', params.state);

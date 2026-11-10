@@ -116,7 +116,7 @@ describe('claims in the session', () => {
     const { app, hook } = passwordApp();
     const cookie = await signUpVerified(app, hook);
 
-    expect((await (await session(app, cookie)).json()).user).toEqual({ id: expect.any(String), email: 'grace@example.com', name: 'Grace Hopper', amr: ['pwd'] });
+    expect((await (await session(app, cookie)).json()).user).toEqual({ id: expect.any(String), email: 'grace@example.com', name: 'Grace Hopper', amr: ['pwd'], sessionId: expect.stringMatching(/^ses_/) });
   });
 
   it('a change shows the next time the app checks the session, which gets a new session token', async () => {

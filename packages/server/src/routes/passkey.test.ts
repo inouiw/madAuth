@@ -334,12 +334,12 @@ describe('signing up with a passkey alone', () => {
 
     expect(res.status).toBe(200);
     const graceUser = { id: user.id, email: grace.email, name: 'Grace Hopper' };
-    expect(await res.json()).toEqual({ passkey: expect.objectContaining({ name: 'Laptop' }), user: { ...graceUser, amr: ['passkey'] } });
+    expect(await res.json()).toEqual({ passkey: expect.objectContaining({ name: 'Laptop' }), user: { ...graceUser, amr: ['passkey'], sessionId: expect.stringMatching(/^ses_/) } });
     expect((await sessionClaims(res))?.amr).toEqual(['passkey']);
     // The passkey is how she signs up, not a method she added: her sign-up is complete, and she is in.
     expect(hook.calls).toEqual([
       { type: 'user.signed_up', data: { user: graceUser, method: 'passkey' } },
-      { type: 'user.signed_in', data: { user: graceUser, method: 'passkey' } },
+      { type: 'user.signed_in', data: { user: graceUser, method: 'passkey', session: expect.objectContaining({ id: expect.stringMatching(/^ses_/) }) } },
     ]);
     expect(await store.findMany('account', { userId: user.id })).toEqual([expect.objectContaining({ primaryUserId: user.id, credentialId: passkey.id })]);
     // It is her only way in: it can't be removed.

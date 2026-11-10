@@ -219,7 +219,10 @@ describe('X', () => {
     expect(authorize.origin + authorize.pathname).toBe('https://x.com/i/oauth2/authorize');
     expect(Object.fromEntries(authorize.searchParams)).toMatchObject({ client_id: X_CLIENT_ID, scope: 'tweet.read users.read users.email', code_challenge_method: 'S256', response_type: 'code' });
     expect(location).toBe(`${APP}/page`);
-    expect(await userOf(made, session)).toMatchObject({ email: 'ada.x@example.com', name: 'Ada', picture: 'https://pbs.twimg.com/ada.jpg', amr: ['x'] });
+    const user = (await userOf(made, session)) as { id: string; sessionId: string };
+    expect(user).toMatchObject({ email: 'ada.x@example.com', name: 'Ada', picture: 'https://pbs.twimg.com/ada.jpg', amr: ['x'] });
+    // Like every sign-in, it starts a session with its record.
+    expect(await made.store.findOne('session', { id: user.sessionId })).toMatchObject({ userId: user.id, amr: 'x' });
     expect(await accountKeys(made)).toContain('x:1500000000000000001');
     const exchange = social.calls.find((call) => call.url === 'https://api.x.com/2/oauth2/token')!;
     expect(exchange.authorization).toMatch(/^Basic /);

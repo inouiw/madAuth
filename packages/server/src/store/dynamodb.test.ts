@@ -182,6 +182,42 @@ describe('DynamoDB adapter', () => {
     ]);
   });
 
+  it('gives an expiring record, its index entries and their updates the `ttl` that DynamoDB deletes them by', async () => {
+    const session = { id: 'ses_1', userId: 'usr_1', sessionVersion: 0, authTime: 1, amr: 'pwd', ip: null, browser: null, os: null, createdAt: 1, renewedAt: 1, expiresAt: 1_700_000_000_500 };
+    const sessionItem = { pk: { S: 'r|session|ses_1' }, sk: { S: '#' }, ttl: { N: '1700000001' }, ...Object.fromEntries(Object.entries(session).map(([k, v]) => [k, v === null ? { NULL: true } : typeof v === 'number' ? { N: String(v) } : { S: v }])) };
+    const { client, sent } = scriptedClient([{}, { Item: sessionItem }, {}]);
+    const store = createDynamoDbAdapter({ tableName: 'madauth', client });
+
+    expect(await store.create('session', session)).toBe(true);
+    expect(sent[0].input.TransactItems.map((item: any) => [item.Put.Item.pk.S, item.Put.Item.ttl])).toEqual([
+      ['r|session|ses_1', { N: '1700000001' }],
+      ['i|session|userId|usr_1', { N: '1700000001' }],
+    ]);
+
+    expect(await store.update('session', { id: 'ses_1', userId: 'usr_1' }, { renewedAt: 2, expiresAt: 1_800_000_000_000 })).toBe(1);
+    // The record is read first, for the keys of its index entries.
+    expect(sent.map((s) => s.command)).toEqual(['TransactWriteItemsCommand', 'GetItemCommand', 'TransactWriteItemsCommand']);
+    expect(sent[2].input.TransactItems).toEqual([
+      {
+        Update: expect.objectContaining({
+          Key: { pk: { S: 'r|session|ses_1' }, sk: { S: '#' } },
+          UpdateExpression: 'SET #p0 = :p0, #p1 = :p1, #ttl = :ttl',
+          ExpressionAttributeNames: expect.objectContaining({ '#ttl': 'ttl' }),
+          ExpressionAttributeValues: expect.objectContaining({ ':ttl': { N: '1800000000' } }),
+        }),
+      },
+      {
+        Update: {
+          TableName: 'madauth',
+          Key: { pk: { S: 'i|session|userId|usr_1' }, sk: { S: 'ses_1' } },
+          UpdateExpression: 'SET #ttl = :ttl',
+          ExpressionAttributeNames: { '#ttl': 'ttl' },
+          ExpressionAttributeValues: { ':ttl': { N: '1800000000' } },
+        },
+      },
+    ]);
+  });
+
   it('a duplicate is refused without trying again', async () => {
     const { client, sent } = scriptedClient([awsError('TransactionCanceledException', ['None', 'ConditionalCheckFailed'])]);
     const store = createDynamoDbAdapter({ tableName: 'madauth', client });

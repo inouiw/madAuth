@@ -228,6 +228,23 @@ export const en = {
     appReplaced: 'The new authenticator app is set up. The old one no longer works.',
     done: 'Done',
     loading: 'Loading…',
+    /** The section at the bottom: where the user is signed in. */
+    sessions: {
+      heading: 'Sessions',
+      lead: 'Where you are signed in. Ending a session signs that device out the next time it checks in, within hours at most.',
+      /** A session's browser and system, either of which may be unknown (null). */
+      device: (browser: string | null, os: string | null) => (browser && os ? `${browser} on ${os}` : (browser ?? os ?? 'Unknown device')),
+      /** Next to the session of the browser the dialog is in. */
+      current: 'This browser',
+      lastActive: (date: string) => `Last active ${date}`,
+      end: 'End',
+      endLabel: (device: string) => `End the session on ${device}`,
+      endOthers: 'End all other sessions',
+      ended: 'Session ended.',
+      othersEnded: (count: number) => (count === 1 ? '1 other session ended.' : `${count} other sessions ended.`),
+      /** `reauth_required` of ending a session. */
+      reauth: 'For your security, sign in again to end a session.',
+    },
   },
   addPassword: {
     heading: 'Add a password',
@@ -443,6 +460,7 @@ export const en = {
     too_many_api_keys: 'You have as many API keys as you can have. Revoke one first.',
     device_code_invalid: 'This code is unknown, has expired or was used already. Check it on the device.',
     api_key_not_found: 'This API key is gone already.',
+    session_not_found: 'This session has ended already.',
     invalid_scopes: 'Something this key should do does not exist any more. Please try again.',
   } satisfies Partial<Record<MadauthErrorCode, string>>,
   /** For every other error code. */
@@ -641,6 +659,19 @@ export const de: Strings = {
     appReplaced: 'Die neue Authentifizierungs-App ist eingerichtet. Die alte funktioniert nicht mehr.',
     done: 'Fertig',
     loading: 'Wird geladen …',
+    sessions: {
+      heading: 'Sitzungen',
+      lead: 'Hier sind Sie angemeldet. Eine beendete Sitzung meldet das Gerät ab, sobald es sich das nächste Mal meldet, spätestens nach einigen Stunden.',
+      device: (browser, os) => (browser && os ? `${browser} unter ${os}` : (browser ?? os ?? 'Unbekanntes Gerät')),
+      current: 'Dieser Browser',
+      lastActive: (date) => `Zuletzt aktiv am ${date}`,
+      end: 'Beenden',
+      endLabel: (device) => `Sitzung (${device}) beenden`,
+      endOthers: 'Alle anderen Sitzungen beenden',
+      ended: 'Sitzung beendet.',
+      othersEnded: (count) => (count === 1 ? '1 andere Sitzung beendet.' : `${count} andere Sitzungen beendet.`),
+      reauth: 'Melden Sie sich zu Ihrer Sicherheit erneut an, um eine Sitzung zu beenden.',
+    },
   },
   addPassword: {
     heading: 'Passwort hinzufügen',
@@ -840,6 +871,7 @@ export const de: Strings = {
     too_many_api_keys: 'Sie haben so viele API-Schlüssel, wie möglich sind. Widerrufen Sie zuerst einen.',
     device_code_invalid: 'Dieser Code ist unbekannt, abgelaufen oder wurde schon verwendet. Prüfen Sie ihn auf dem Gerät.',
     api_key_not_found: 'Dieser API-Schlüssel ist bereits entfernt.',
+    session_not_found: 'Diese Sitzung ist bereits beendet.',
     invalid_scopes: 'Etwas, was dieser Schlüssel dürfen soll, gibt es nicht mehr. Bitte versuchen Sie es erneut.',
   },
   errorFallback: 'Die Anmeldung ist derzeit nicht möglich.',

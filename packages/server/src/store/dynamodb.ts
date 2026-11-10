@@ -8,11 +8,15 @@
 //   unique value  pk = u|<model>|<field>|<value>    sk = #      ref = <id>
 //   index entry   pk = i|<model>|<field>|<value>    sk = <id>
 //
+// The records of a model with an `expiry` field (the sessions), and their unique values and index entries, carry
+// the attribute `ttl`: that time in seconds, so DynamoDB's TTL deletes them once it is past, when it is turned on
+// for the table with the attribute `ttl`.
+//
 // A record and its unique values and index entries are always written in one transaction, and every read is
 // strongly consistent. So a record can be read right after it was written, which a global secondary index
 // would not guarantee. Only `scan` reads the whole table, for admins (e.g. to search users).
 import type { AttributeValue, DynamoDBClient, TransactWriteItem } from '@aws-sdk/client-dynamodb';
-import { madauthSchema, type FieldDef, type Row, type StoreAdapter, type Value, type Where } from './schema.js';
+import { expiryField, madauthSchema, type FieldDef, type Row, type StoreAdapter, type Value, type Where } from './schema.js';
 
 export interface DynamoDbAdapterOptions {
   /** The table, with the partition key `pk` and the sort key `sk` (both strings). */
@@ -33,6 +37,8 @@ interface Expression {
 }
 
 const SORT_KEY = '#';
+/** The attribute DynamoDB's TTL reads: when an item can go, in seconds since 1970. */
+export const TTL_ATTRIBUTE = 'ttl';
 /** How often a write is sent again when another write on the same record was in the way. */
 const MAX_RETRIES = 8;
 /** Why DynamoDB cancels a transaction although nothing is wrong with it; such a transaction is sent again. */
@@ -76,6 +82,13 @@ function checkFields(fields: Fields, names: string[]): void {
 
 function primaryKeyOf(fields: Fields): string {
   return Object.keys(fields).find((name) => fields[name].primaryKey)!;
+}
+
+/** The `ttl` of a record with these fields and values: its expiry field in seconds; undefined if it has none. */
+function ttlOf(fields: Fields, row: Row): Item | undefined {
+  const field = expiryField(fields);
+  const value = field === undefined ? undefined : row[field];
+  return typeof value === 'number' ? { [TTL_ATTRIBUTE]: { N: String(Math.ceil(value / 1000)) } } : undefined;
 }
 
 function toRow(fields: Fields, item: Item): Row {
@@ -229,16 +242,18 @@ export function createDynamoDbAdapter(options: DynamoDbAdapterOptions): StoreAda
       const id = data[primaryKey];
       if (typeof id !== 'string' || !id) throw new Error(`A "${model}" record needs a "${primaryKey}"`);
 
-      const record: Item = { ...recordKey(model, id) };
+      const ttl = ttlOf(fields, data) ?? {};
+      const record: Item = { ...recordKey(model, id), ...ttl };
       for (const [field, value] of Object.entries(data)) record[field] = toAttribute(value);
       const unused = 'attribute_not_exists(pk)';
       return transact([
         { Put: { TableName: tableName, Item: record, ConditionExpression: unused } },
         ...derivedKeys(model, fields, data, id).map((key) =>
-          // A unique value refers to its record and may not be taken yet; an index entry is only a key.
+          // A unique value refers to its record and may not be taken yet; an index entry is only a key. Both
+          // expire with the record.
           key.pk.S!.startsWith('u|')
-            ? { Put: { TableName: tableName, Item: { ...key, ref: { S: id } }, ConditionExpression: unused } }
-            : { Put: { TableName: tableName, Item: key } },
+            ? { Put: { TableName: tableName, Item: { ...key, ref: { S: id }, ...ttl }, ConditionExpression: unused } }
+            : { Put: { TableName: tableName, Item: { ...key, ...ttl } } },
         ),
       ]);
     },
@@ -272,27 +287,45 @@ export function createDynamoDbAdapter(options: DynamoDbAdapterOptions): StoreAda
         values[`:p${i}`] = toAttribute(value);
         return `#p${i} = :p${i}`;
       });
-      // With the id in the filter, the condition alone decides; there is nothing to look up first.
+      // A new expiry moves the `ttl` of the record, its unique values and its index entries along.
+      const expiry = expiryField(fields);
+      const ttl = expiry !== undefined && expiry in patch ? (ttlOf(fields, patch) ?? null) : undefined;
+      if (ttl !== undefined) names['#ttl'] = TTL_ATTRIBUTE;
+      if (ttl) values[':ttl'] = ttl[TTL_ATTRIBUTE];
+      const ttlChange = ttl === undefined ? '' : ttl ? ', #ttl = :ttl' : ' REMOVE #ttl';
+      // With the id in the filter, the condition alone decides; there is nothing to look up first, unless the
+      // keys of the record's unique values and index entries are needed for their `ttl`.
       const byId = where[primaryKey];
-      const ids =
+      const rows: { id: string; row: Row | null }[] =
         byId !== undefined && byId !== null
-          ? [String(byId)]
-          : (await find(model, where)).map((row) => String(row[primaryKey]));
+          ? [{ id: String(byId), row: ttl === undefined ? null : await getRecord(model, fields, String(byId)) }]
+          : (await find(model, where)).map((row) => ({ id: String(row[primaryKey]), row }));
       // A transaction, not an UpdateItem: its idempotency token makes the SDK's retry after a lost response
       // succeed again instead of failing its own condition, so the count stays exact.
       const written = await Promise.all(
-        ids.map((id) =>
+        rows.map(({ id, row }) =>
           transact([
             {
               Update: {
                 TableName: tableName,
                 Key: recordKey(model, id),
-                UpdateExpression: `SET ${assignments.join(', ')}`,
+                UpdateExpression: `SET ${assignments.join(', ')}${ttlChange}`,
                 ConditionExpression: condition.text,
                 ExpressionAttributeNames: names,
                 ExpressionAttributeValues: values,
               },
             },
+            ...(ttl !== undefined && row
+              ? derivedKeys(model, fields, row, id).map((key) => ({
+                  Update: {
+                    TableName: tableName,
+                    Key: key,
+                    UpdateExpression: ttl ? 'SET #ttl = :ttl' : 'REMOVE #ttl',
+                    ExpressionAttributeNames: { '#ttl': TTL_ATTRIBUTE },
+                    ...(ttl ? { ExpressionAttributeValues: { ':ttl': ttl[TTL_ATTRIBUTE] } } : {}),
+                  },
+                }))
+              : []),
           ]),
         ),
       );

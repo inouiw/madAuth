@@ -213,7 +213,7 @@ describe('events', () => {
     const user = { id: expect.stringMatching(/^usr_/), email: 'grace@example.com', name: 'Grace Hopper' };
     expect(hook.calls.find((c) => c.type === 'user.email_verified')!.data).toEqual({ user, method: 'password', via: 'link' });
     expect(hook.calls.find((c) => c.type === 'user.signed_up')!.data).toEqual({ user, method: 'password' });
-    expect(hook.calls.find((c) => c.type === 'user.signed_in')!.data).toEqual({ user, method: 'password' });
+    expect(hook.calls.find((c) => c.type === 'user.signed_in')!.data).toEqual({ user, method: 'password', session: { id: expect.stringMatching(/^ses_/), ip: null, browser: null, os: null } });
   });
 
   it('K5: reports Google sign-ins, and the first one as a sign-up', async () => {
@@ -225,7 +225,7 @@ describe('events', () => {
     expect(hook.calls).toEqual([
       { type: 'user.signing_up', data: { email: 'ada@example.com', name: 'Ada Lovelace', method: 'google' } },
       { type: 'user.signed_up', data: { user: { ...user, picture: 'https://example.com/ada.png' }, method: 'google' } },
-      { type: 'user.signed_in', data: { user: { ...user, picture: 'https://example.com/ada.png' }, method: 'google' } },
+      { type: 'user.signed_in', data: { user: { ...user, picture: 'https://example.com/ada.png' }, method: 'google', session: { id: expect.stringMatching(/^ses_/), ip: null, browser: null, os: null } } },
     ]);
 
     hook.calls.length = 0;
@@ -366,7 +366,7 @@ describe('user.signed_up', () => {
     expect((await post(app, '/auth/password/signin', grace)).status).toBe(200);
     expect(hook.calls).toEqual([
       { type: 'user.signed_up', data: { user: expect.objectContaining({ email: grace.email }), method: 'password' } },
-      { type: 'user.signed_in', data: { user: expect.objectContaining({ email: grace.email }), method: 'password' } },
+      { type: 'user.signed_in', data: { user: expect.objectContaining({ email: grace.email }), method: 'password', session: { id: expect.stringMatching(/^ses_/), ip: null, browser: null, os: null } } },
     ]);
   });
 

@@ -12,6 +12,11 @@ export interface MadauthUser {
    * authenticator app, on its own or as the second factor), e.g. `['pwd', 'otp']`. Present on a user that comes with a session.
    */
   amr?: string[];
+  /**
+   * The id of this session (`ses_…`), as the `user.session_ended` webhook names it: a backend that keeps a list of
+   * ended sessions checks it. Present on a user that comes with a session, except one from before madAuth 0.7.5.
+   */
+  sessionId?: string;
 }
 
 /** The start of every API key, so a leaked one is recognisable, e.g. by secret scanning. */
