@@ -578,13 +578,14 @@ export class MadauthLogin extends LitElement {
   async open(options: SignInOptions = {}): Promise<void> {
     const email = typeof options.email === 'string' ? options.email.trim() : '';
     if (email) this.email = email;
-    const ready = await this.show();
-    if (ready.isSuccess && Madauth.password.pendingReset) this.view = 'reset';
-    else if (ready.isSuccess && options.view === 'signup' && this.view === 'signin') {
-      // Asked for the "Create account" form: the one the sign-in view's link opens, if any method makes accounts here.
+    // Asked for the "Create account" form: the one the sign-in view's link opens, if any method makes accounts here.
+    // Chosen before the first render, so the sign-in view doesn't flash and its passkey autofill doesn't start.
+    const ready = await this.show(() => {
+      if (options.view !== 'signup' || this.view !== 'signin' || Madauth.password.pendingReset) return;
       const method = this.signUpMethod;
       if (method) this.startSignUp(method);
-    }
+    });
+    if (ready.isSuccess && Madauth.password.pendingReset) this.view = 'reset';
     // A sign-in that started outside the dialog (the redirect flow, an e-mail link) goes on with the app.
     const pending = ready.isSuccess ? takePendingStep() : undefined;
     if (pending) this.continueWith(pending);
@@ -615,9 +616,11 @@ export class MadauthLogin extends LitElement {
    * Waits for madAuth, then shows the dialog: it opens with the methods the server offers already in place
    * instead of filling in while it is open.
    */
-  private async show(): Promise<Result> {
+  /** Opens the dialog once madAuth is ready; `beforeRender` may pick the view, knowing what the dialog can offer. */
+  private async show(beforeRender?: () => void): Promise<Result> {
     const ready = await readyForDialog();
     this.usable = ready.isSuccess;
+    if (ready.isSuccess) beforeRender?.();
     // What the views show depends on the providers and the server's settings, which a new initialize may have changed.
     this.requestUpdate();
     await this.updateComplete;

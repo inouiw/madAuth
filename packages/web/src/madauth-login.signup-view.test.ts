@@ -32,6 +32,17 @@ async function openDialog(options: SignInOptions, providers: SignInProvider[] = 
   await settle();
 }
 
+/** The view the dialog shows at the moment it opens. */
+function viewWhenOpened(): { view?: string } {
+  const seen: { view?: string } = {};
+  const showModal = HTMLDialogElement.prototype.showModal;
+  vi.spyOn(HTMLDialogElement.prototype, 'showModal').mockImplementation(function (this: HTMLDialogElement) {
+    seen.view = this.getRootNode() instanceof ShadowRoot ? ((this.getRootNode() as ShadowRoot).host as unknown as { view: string }).view : undefined;
+    showModal.call(this);
+  });
+  return seen;
+}
+
 describe("showSignInDialog's view", () => {
   it("opens on the sign-in view by default and with 'signin'", async () => {
     fakeServer();
@@ -54,6 +65,13 @@ describe("showSignInDialog's view", () => {
     expect($<HTMLInputElement>('form.signup input[name="email"]')!.value).toBe('new@example.com');
     // The way back to the sign-in view is there, as after the link.
     expect($('[data-action="back"]')).not.toBeNull();
+  });
+
+  it('renders the "Create account" form first, without the sign-in view before it', async () => {
+    fakeServer();
+    const seen = viewWhenOpened();
+    await openDialog({ view: 'signup' });
+    expect(seen.view).toBe('signup');
   });
 
   it('opens on the sign-in view again when reopened without the view', async () => {
