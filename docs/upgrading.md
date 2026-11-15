@@ -1,5 +1,15 @@
 # Upgrading
 
+## To 0.7.6
+
+0.7.5 was released without the review fixes of the new social providers; 0.7.6 adds them.
+
+- **`trustEmail: true` is refused for the GitLab, LinkedIn and Slack presets at their public issuer** (`400 invalid_provider`): anyone can sign up at gitlab.com, LinkedIn or Slack with an address they don't own, so only the provider's own `email_verified` counts. A self-hosted GitLab may still set it. The admin dialog no longer shows the checkbox for them. **A provider added with 0.7.5 keeps the setting:** check `listProviders()` and switch it off with `updateProvider(id, { trustEmail: false })`.
+- **Facebook:** the App Secret is sent in a POST form instead of the query string, the `#_=_` Facebook adds to the way back is removed, and the profile picture (a link that expires within days) is no longer kept.
+- **X:** the profile picture is the 400×400 one instead of the 48×48 `_normal` one.
+- **`@madauth/web`:** `Madauth.authenticator.policy.secondFactorFor(method)` answers for Microsoft, Apple, Facebook and X sign-ins too, not only for OpenID Connect providers.
+- **Docs:** each new provider has its own security notes ([Facebook](facebook-security.md), [X](x-security.md), [GitLab](gitlab-security.md), [LinkedIn](linkedin-security.md), [Slack](slack-security.md)) instead of the shared `social-security.md`.
+
 ## To 0.7.5
 
 - **New: Facebook and X sign-in.** An admin adds them with `addProvider({ kind: 'facebook', clientId, clientSecret })` (the Meta app's App ID and App Secret) or `addProvider({ kind: 'x', clientId, clientSecret })` (the X app's OAuth 2.0 Client ID and Secret) and switches on the method `facebook` or `x`; the dialog then shows the button by itself. Facebook's address is confirmed by e-mail once; X's confirmed address signs in at once, and an account without one types it. See [Facebook setup](server.md#facebook-setup), [X setup](server.md#x-setup), [Facebook security](facebook-security.md) and [X security](x-security.md).
