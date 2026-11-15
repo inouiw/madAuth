@@ -2,7 +2,7 @@
 // Slack speak OpenID Connect, so a preset only fills in what an admin would otherwise type (the issuer, the name)
 // and says where the provider departs from the generic flow (no PKCE, no nonce in the ID token, the secret in the
 // form). The button's logo and colours are the web library's. See "GitLab setup", "LinkedIn setup" and "Slack
-// setup" in docs/server.md, and docs/social-security.md.
+// setup" in docs/server.md, and docs/gitlab-security.md, linkedin-security.md and slack-security.md.
 
 export const OIDC_PRESETS = ['gitlab', 'linkedin', 'slack'] as const;
 export type OidcPreset = (typeof OIDC_PRESETS)[number];

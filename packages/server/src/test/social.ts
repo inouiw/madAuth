@@ -31,7 +31,9 @@ export function fakeSocial() {
     const bearer = headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
     calls.push({ url: url.href, method: init.method ?? 'GET', body: typeof init.body === 'string' ? init.body : undefined, authorization: headers.get('authorization') });
     if (url.origin + url.pathname === 'https://graph.facebook.com/v26.0/oauth/access_token') {
-      const q = url.searchParams;
+      // As a form, which keeps the secret out of the URL.
+      if (init.method !== 'POST' || url.search) return json({ error: { type: 'OAuthException' } }, 400);
+      const q = new URLSearchParams(String(init.body));
       if (q.get('client_id') !== FACEBOOK_APP_ID || q.get('client_secret') !== FACEBOOK_APP_SECRET) return json({ error: { type: 'OAuthException' } }, 400);
       const done = issue(q.get('code'), q.get('redirect_uri'));
       return done ? json({ access_token: done.token, token_type: 'bearer', expires_in: 5183944 }) : json({ error: { type: 'OAuthException' } }, 400);

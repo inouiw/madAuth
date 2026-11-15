@@ -1085,7 +1085,7 @@ export function createApp(config: MadauthConfig): Hono {
     const current = (await ctx.methods(c)).providers.find((provider) => provider.id === id);
     if (!current) return providerNotFound(c);
     if (data.kind !== undefined && data.kind !== current.kind) return c.json({ error: 'invalid_provider', message: "A provider's kind can't change: add a new one." }, 400);
-    const fields = parseProviderFields(current.kind, data, false);
+    const fields = parseProviderFields(current.kind, data, false, current);
     if ('error' in fields) return c.json(fields, 400);
     const wrongKey = await checkAppleKey(c, current.kind, fields);
     if (wrongKey) return wrongKey;

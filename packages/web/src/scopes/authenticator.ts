@@ -191,7 +191,8 @@ export function createAuthenticatorApi(core: Core): AuthenticatorApi {
       if (config.google && config.google.secondFactor !== 'none') secondFactorFor.push('google');
       if (config.github && config.github.secondFactor !== 'none') secondFactorFor.push('github');
       for (const provider of config.providers ?? []) {
-        if (provider.kind === 'oidc' && provider.secondFactor && provider.secondFactor !== 'none') secondFactorFor.push(provider.id);
+        // Google's and GitHub's policies are above; every other provider's (Microsoft, Apple, Facebook, X, OpenID Connect) is here.
+        if (provider.kind !== 'google' && provider.kind !== 'github' && provider.secondFactor && provider.secondFactor !== 'none') secondFactorFor.push(provider.id);
       }
       if (config.password && config.password.secondFactor !== 'none') secondFactorFor.push('password');
       if (config.emailLink && config.emailLink.secondFactor !== 'none') secondFactorFor.push('email-link');
