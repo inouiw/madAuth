@@ -18,7 +18,7 @@ Code: `PRESET_RULES.gitlab` in [`oidc-presets.ts`](../packages/server/src/oidc-p
 
 ## Only an address GitLab vouches for
 
-The address counts as verified when GitLab's claims say `email_verified: true`. GitLab may leave the address out unless the user has a public one; then the user types it. On a self-hosted instance, GitLab's admins can give a user any address, so `email_verified` is as good as they are; `trustEmail: true` trusts every address, for an instance whose admins check them. For gitlab.com the admin API refuses `trustEmail: true` (`invalid_provider`): anyone can make an account there with an address they don't own.
+The address counts as verified when GitLab's claims say `email_verified: true`. GitLab may leave the address out unless the user has a public one; then the user types it. On a self-hosted instance, GitLab's admins can give a user any address, so `email_verified` is as good as they are; `trustEmail: true` trusts every address, for an instance whose admins check them. For gitlab.com the admin API refuses `trustEmail: true` (`invalid_provider`), with the preset or without: anyone can make an account there with an address they don't own. A gitlab.com provider stored by 0.7.5 with it reads as `false`.
 
 Code: `addressOf` in [`oidc.ts`](../packages/server/src/oidc.ts), the `trustEmail` check in `parseProviderFields` in [`providers.ts`](../packages/server/src/providers.ts).
 

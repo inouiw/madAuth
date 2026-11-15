@@ -190,11 +190,19 @@ const isPreset = (choice: ProviderChoice): choice is OidcPreset => (PRESETS as r
 /** The issuer a preset's form starts with: only GitLab's can be another (a self-hosted instance). */
 const GITLAB_ISSUER = 'https://gitlab.com';
 
+/** The issuers where anyone signs up with an address they don't own: gitlab.com's, LinkedIn's and Slack's. */
+const PUBLIC_ISSUERS = [GITLAB_ISSUER, 'https://www.linkedin.com/oauth', 'https://slack.com'];
+const comparableIssuer = (issuer: string): string => issuer.trim().replace(/\/+$/, '').toLowerCase();
+
 /**
- * Whether an admin may mark a provider's addresses as verified: not those of gitlab.com, LinkedIn or Slack, where
- * anyone signs up (the server refuses it), only a self-hosted GitLab's or another OpenID Connect provider's.
+ * Whether an admin may mark a provider's addresses as verified: not those of gitlab.com, LinkedIn or Slack, with a
+ * preset or without (the server refuses it), only a self-hosted GitLab's or another OpenID Connect provider's.
  */
-const canTrustEmail = (preset: OidcPreset | undefined, issuer: string | undefined): boolean => !preset || (preset === 'gitlab' && !!issuer && issuer !== GITLAB_ISSUER);
+const canTrustEmail = (preset: OidcPreset | undefined, issuer: string | undefined): boolean => {
+  if (preset === 'linkedin' || preset === 'slack') return false;
+  const effective = comparableIssuer(issuer || (preset === 'gitlab' ? GITLAB_ISSUER : ''));
+  return !PUBLIC_ISSUERS.some((known) => comparableIssuer(known) === effective);
+};
 
 /** What `addProvider` takes for a new provider of `kind` (of `preset`), from the form. */
 function newProviderOf(kind: ProviderKind, d: ProviderDraft, preset?: OidcPreset): NewProvider {
@@ -223,7 +231,16 @@ function newProviderOf(kind: ProviderKind, d: ProviderDraft, preset?: OidcPreset
       ...(scopes ? { scopes } : {}),
     };
   }
-  return { kind, id: d.id.trim(), name, issuer: d.issuer.trim(), clientId: shared.clientId, clientSecret: d.clientSecret, trustEmail: d.trustEmail, ...(scopes ? { scopes } : {}) };
+  return {
+    kind,
+    id: d.id.trim(),
+    name,
+    issuer: d.issuer.trim(),
+    clientId: shared.clientId,
+    clientSecret: d.clientSecret,
+    ...(canTrustEmail(undefined, d.issuer) ? { trustEmail: d.trustEmail } : {}),
+    ...(scopes ? { scopes } : {}),
+  };
 }
 
 /** What `updateProvider` takes to make `provider` what the form says: only what differs. */
@@ -236,7 +253,8 @@ function changesOf(provider: ProviderInfo, d: ProviderDraft): ProviderChanges {
     ...(clientId && clientId !== provider.clientId ? { clientId } : {}),
     ...(d.clientSecret ? { clientSecret: d.clientSecret } : d.removeSecret ? { clientSecret: null } : {}),
     ...(provider.kind === 'oidc' && scopes !== (provider.scopes ?? []).join(' ') ? { scopes } : {}),
-    ...(provider.kind === 'oidc' && d.trustEmail !== !!provider.trustEmail ? { trustEmail: d.trustEmail } : {}),
+    // Only while the form shows the box: without it, the form's false says nothing.
+    ...(provider.kind === 'oidc' && canTrustEmail(provider.preset, provider.issuer) && d.trustEmail !== !!provider.trustEmail ? { trustEmail: d.trustEmail } : {}),
     ...(provider.kind === 'microsoft' && tenantOf(d) !== provider.tenant ? { tenant: tenantOf(d) } : {}),
     ...(provider.kind === 'apple' && d.teamId.trim() && d.teamId.trim() !== provider.teamId ? { teamId: d.teamId.trim() } : {}),
     ...(provider.kind === 'apple' && d.keyId.trim() && d.keyId.trim() !== provider.keyId ? { keyId: d.keyId.trim() } : {}),

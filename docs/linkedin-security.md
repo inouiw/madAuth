@@ -25,7 +25,7 @@ Code: `PRESET_RULES.linkedin` in [`oidc-presets.ts`](../packages/server/src/oidc
 
 ## Only an address LinkedIn vouches for
 
-The address counts as verified when LinkedIn says `email_verified: true`, which LinkedIn may leave out. Anyone can make a LinkedIn account with an address they don't own, so the admin API refuses `trustEmail: true` (`invalid_provider`).
+The address counts as verified when LinkedIn says `email_verified: true`, which LinkedIn may leave out. Anyone can make a LinkedIn account with an address they don't own, so the admin API refuses `trustEmail: true` (`invalid_provider`) for its issuer, with the preset or without; one stored by 0.7.5 reads as `false`.
 
 Code: `addressOf` in [`oidc.ts`](../packages/server/src/oidc.ts), the `trustEmail` check in `parseProviderFields` in [`providers.ts`](../packages/server/src/providers.ts).
 

@@ -2,7 +2,9 @@
 // docs/gitlab-security.md, linkedin-security.md, slack-security.md, facebook-security.md and x-security.md.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PRESET_RULES } from './oidc-presets.js';
-import { parseProviderFields, parseProviderKind } from './providers.js';
+import { Providers, parseProviderFields, parseProviderKind, publicIssuerOf, type StoredProvider } from './providers.js';
+import type { KeyService } from './key-service.js';
+import type { Settings } from './settings.js';
 import { passwordApp, post, setClaims, signUpVerified } from './test/helpers.js';
 import { fakeOidcProvider, type FakeOidcProvider, type FakeSignIn } from './test/oidc.js';
 import { FACEBOOK_APP_ID, FACEBOOK_APP_SECRET, X_CLIENT_ID, X_CLIENT_SECRET, fakeSocial, type FakeProfile } from './test/social.js';
@@ -36,8 +38,23 @@ describe('what an admin sends for a preset, Facebook or X', () => {
     expect(parseProviderFields('oidc', { trustEmail: true }, false, { preset: 'slack', issuer: 'https://slack.com' })).toMatchObject({ message: expect.stringContaining('trustEmail') });
     expect(parseProviderFields('oidc', { ...secret, preset: 'gitlab', issuer: 'https://gitlab.example.com', trustEmail: true }, true)).toMatchObject({ trustEmail: true });
     expect(parseProviderFields('oidc', { trustEmail: true }, false, { preset: 'gitlab', issuer: 'https://gitlab.example.com' })).toEqual({ trustEmail: true });
+    // The issuer decides, not the preset: a provider added without one, or another spelling of the issuer, is refused too.
+    expect(parseProviderFields('oidc', { ...secret, name: 'GitLab', issuer: 'https://gitlab.com', trustEmail: true }, true)).toMatchObject({ message: expect.stringContaining('GitLab at https://gitlab.com') });
+    expect(parseProviderFields('oidc', { ...secret, name: 'Slack', issuer: 'https://Slack.com/', trustEmail: true }, true)).toMatchObject({ message: expect.stringContaining('Slack') });
+    expect(parseProviderFields('oidc', { ...secret, preset: 'gitlab', issuer: 'https://gitlab.com/', trustEmail: true }, true)).toMatchObject({ message: expect.stringContaining('trustEmail') });
+    expect(parseProviderFields('oidc', { trustEmail: true }, false, { issuer: 'https://www.linkedin.com/oauth' })).toMatchObject({ message: expect.stringContaining('LinkedIn') });
+    expect(publicIssuerOf('https://gitlab.example.com')).toBeUndefined();
+    expect(publicIssuerOf('not a url')).toBeUndefined();
     // Without a preset, the name and the issuer are still needed.
     expect(parseProviderFields('oidc', { ...secret, issuer: 'https://idp.example.com' }, true)).toMatchObject({ error: 'invalid_provider' });
+  });
+
+  it('SP1b: a provider stored by 0.7.5 with trustEmail at a public issuer reads with it off; a self-hosted one keeps it', async () => {
+    const stored = (id: string, issuer: string): StoredProvider =>
+      ({ kind: 'oidc', id, name: id, clientId: 'c', secret: null, issuer, scopes: [], trustEmail: true, createdAt: 1, updatedAt: 1 }) as StoredProvider;
+    const settings = { get: async () => [stored('linkedin', 'https://www.linkedin.com/oauth'), stored('gl', 'https://gitlab.com/'), stored('corp', 'https://gitlab.example.com')] } as unknown as Settings;
+    const list = await new Providers(settings, {} as KeyService).list();
+    expect(list.map((provider) => [provider.id, provider.trustEmail])).toEqual([['linkedin', false], ['gl', false], ['corp', true]]);
   });
 
   it('SP2: Facebook and X have their kind as their id, need a client ID of their form and the secret', () => {

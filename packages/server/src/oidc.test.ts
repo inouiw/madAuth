@@ -33,7 +33,13 @@ describe('what an admin sends for an OpenID Connect provider', () => {
     }
 
     const fields = { name: 'GitLab', clientId: 'abc', clientSecret: 's', issuer: 'https://gitlab.com' };
-    expect(parseProviderFields('oidc', { ...fields, scopes: 'read_user openid  read_user', trustEmail: true }, true)).toEqual({ ...fields, scopes: ['read_user'], trustEmail: true });
+    // A self-hosted instance's operator may vouch for its addresses (gitlab.com's can't be, see SP1).
+    expect(parseProviderFields('oidc', { ...fields, issuer: 'https://gitlab.example.com', scopes: 'read_user openid  read_user', trustEmail: true }, true)).toEqual({
+      ...fields,
+      issuer: 'https://gitlab.example.com',
+      scopes: ['read_user'],
+      trustEmail: true,
+    });
     expect(parseProviderFields('oidc', { ...fields, issuer: 'http://localhost:9000/realms/dev' }, true)).toMatchObject({ issuer: 'http://localhost:9000/realms/dev' });
     for (const wrong of [
       { ...fields, name: undefined },

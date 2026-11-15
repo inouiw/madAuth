@@ -4,7 +4,7 @@
 
 0.7.5 was released without the review fixes of the new social providers; 0.7.6 adds them.
 
-- **`trustEmail: true` is refused for the GitLab, LinkedIn and Slack presets at their public issuer** (`400 invalid_provider`): anyone can sign up at gitlab.com, LinkedIn or Slack with an address they don't own, so only the provider's own `email_verified` counts. A self-hosted GitLab may still set it. The admin dialog no longer shows the checkbox for them. **A provider added with 0.7.5 keeps the setting:** check `listProviders()` and switch it off with `updateProvider(id, { trustEmail: false })`.
+- **`trustEmail: true` is refused at gitlab.com, LinkedIn and Slack** (`400 invalid_provider`), whether the provider was added with the preset or as a plain OpenID Connect provider with their issuer: anyone can sign up there with an address they don't own, so only the provider's own `email_verified` counts. A self-hosted GitLab may still set it. The admin dialog no longer shows the checkbox for them. **A provider stored by 0.7.5 with it reads as `false`:** its users' unverified addresses are confirmed by e-mail once from now on, and `listProviders()` answers `trustEmail: false` for it.
 - **Facebook:** the App Secret is sent in a POST form instead of the query string, the `#_=_` Facebook adds to the way back is removed, and the profile picture (a link that expires within days) is no longer kept.
 - **X:** the profile picture is the 400×400 one instead of the 48×48 `_normal` one.
 - **`@madauth/web`:** `Madauth.authenticator.policy.secondFactorFor(method)` answers for Microsoft, Apple, Facebook and X sign-ins too, not only for OpenID Connect providers.

@@ -263,10 +263,11 @@ export function parseProviderFields(
   }
   if (trustEmail !== undefined && typeof trustEmail !== 'boolean') return problem('trustEmail must be true or false.');
   // Anyone can make an account at gitlab.com, LinkedIn or Slack with an address they don't own: only the
-  // provider's own `email_verified` counts there. A self-hosted GitLab's operator may vouch for its addresses.
-  const presetNow = isOidcPreset(preset) ? preset : current?.preset;
-  if (trustEmail === true && presetNow && (issuer ?? current?.issuer) === PRESET_RULES[presetNow].issuer) {
-    return problem(`trustEmail can't be true for ${PRESET_RULES[presetNow].name} at ${PRESET_RULES[presetNow].issuer}: anyone can sign up there, so only its email_verified counts.`);
+  // provider's own `email_verified` counts there, with a preset or without. A self-hosted GitLab's operator may
+  // vouch for its addresses.
+  const publicOne = trustEmail === true ? publicIssuerOf(issuer ?? current?.issuer) : undefined;
+  if (publicOne) {
+    return problem(`trustEmail can't be true for ${publicOne.name} at ${publicOne.issuer}: anyone can sign up there, so only its email_verified counts.`);
   }
   if (apple && (teamId === undefined ? adding : !isAppleId(teamId))) return problem('teamId must be the Team ID of the Apple developer account: 10 letters and digits.');
   if (apple && (keyId === undefined ? adding : !isAppleId(keyId))) return problem('keyId must be the Key ID of the Sign in with Apple key: 10 letters and digits.');
@@ -299,6 +300,29 @@ export const nameOfMethod = (names: Partial<Record<string, string>>, providers: 
 /** The provider with the id `id` among `providers` (e.g. a request's, see `MethodsNow`), or undefined; a built-in kind's id is its kind. */
 export const providerOf = (from: { providers: StoredProvider[] }, id: string): StoredProvider | undefined =>
   from.providers.find((provider) => provider.id === id);
+
+/** An issuer as compared with the presets': the host in lower case (as `URL` gives it), no trailing slash. */
+const comparableIssuer = (issuer: string): string => {
+  const url = new URL(issuer);
+  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`;
+};
+
+/**
+ * The preset whose issuer `issuer` is, if it is one where anyone signs up with an address they don't own
+ * (gitlab.com, LinkedIn, Slack), whether the provider was added with the preset or not; a self-hosted GitLab is none.
+ */
+export function publicIssuerOf(issuer: unknown): { name: string; issuer: string } | undefined {
+  if (typeof issuer !== 'string' || !URL.canParse(issuer)) return undefined;
+  const wanted = comparableIssuer(issuer);
+  return OIDC_PRESETS.map((preset) => PRESET_RULES[preset]).find((rules) => comparableIssuer(rules.issuer) === wanted);
+}
+
+/**
+ * A stored provider as madAuth uses it: `trustEmail` reads as off at a public issuer, where 0.7.5 still let an
+ * admin set it, so its unverified addresses are confirmed by e-mail like any other provider's.
+ */
+const effective = (provider: StoredProvider): StoredProvider =>
+  provider.kind === 'oidc' && provider.trustEmail && publicIssuerOf(provider.issuer) ? { ...provider, trustEmail: false } : provider;
 
 /** Whether a stored value is a provider this version knows; others are left out. */
 function isStoredProvider(value: unknown): value is StoredProvider {
@@ -339,7 +363,7 @@ export class Providers {
 
   private parse(value: unknown): StoredProvider[] {
     const stored = Array.isArray(value) ? value : [];
-    const known = stored.filter(isStoredProvider);
+    const known = stored.filter(isStoredProvider).map(effective);
     if ((known.length !== stored.length || (value !== undefined && !Array.isArray(value))) && !this.warned) {
       this.warned = true;
       console.warn('[madauth] Some stored sign-in providers are not in the form this version expects and are left out. An admin adds them again.');

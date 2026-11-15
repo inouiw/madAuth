@@ -18,7 +18,7 @@ Code: `PRESET_RULES.slack` in [`oidc-presets.ts`](../packages/server/src/oidc-pr
 
 ## Only an address Slack vouches for
 
-The address counts as verified when Slack says `email_verified: true`. Slack doesn't document what `email_verified` means, and a workspace's admins manage its members' accounts (on Enterprise Grid, also through SCIM), so a verified address is only as good as the workspace that vouches for it. An address that already signs in another way is never joined, whatever Slack says (see below); what remains is a new sign-up with an address its owner never used here. Use Slack where its workspaces are your users' own, e.g. an app for your workspace. The admin API refuses `trustEmail: true` (`invalid_provider`).
+The address counts as verified when Slack says `email_verified: true`. Slack doesn't document what `email_verified` means, and a workspace's admins manage its members' accounts (on Enterprise Grid, also through SCIM), so a verified address is only as good as the workspace that vouches for it. An address that already signs in another way is never joined, whatever Slack says (see below); what remains is a new sign-up with an address its owner never used here. Use Slack where its workspaces are your users' own, e.g. an app for your workspace. The admin API refuses `trustEmail: true` (`invalid_provider`) for its issuer, with the preset or without; one stored by 0.7.5 reads as `false`.
 
 Code: `addressOf` in [`oidc.ts`](../packages/server/src/oidc.ts), the `trustEmail` check in `parseProviderFields` in [`providers.ts`](../packages/server/src/providers.ts).
 

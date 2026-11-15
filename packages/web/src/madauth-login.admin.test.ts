@@ -85,6 +85,8 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     expect(text('.callback-url')).toBe(`${SERVER}/auth/providers/gitlab/callback`);
     await type('name', 'GitLab');
     await type('issuer', 'https://gitlab.com');
+    // Anyone signs up at gitlab.com, with a preset or without: its addresses can't be marked as verified.
+    expect($('input[name="trustEmail"]')).toBeNull();
     await type('clientId', 'gl-client');
     await type('clientSecret', 'gl-secret');
     await type('scopes', 'read_user');
@@ -99,7 +101,7 @@ describe('<madauth-login> for admins: the sign-in providers', () => {
     expect(text('.notice')).toBe('Added.');
     expect(rows()).toEqual(['Google Google · On, no second factor', 'GitLab OpenID Connect · gitlab · On, second factor optional']);
     expect(sent(server, '/auth/admin/providers/add')).toEqual([
-      { kind: 'oidc', id: 'gitlab', name: 'GitLab', issuer: 'https://gitlab.com', clientId: 'gl-client', clientSecret: 'gl-secret', scopes: 'read_user', trustEmail: false },
+      { kind: 'oidc', id: 'gitlab', name: 'GitLab', issuer: 'https://gitlab.com', clientId: 'gl-client', clientSecret: 'gl-secret', scopes: 'read_user' },
     ]);
     // Only its entry of the settings: the server changes it in the stored list.
     expect(sent(server, '/auth/admin/settings/method')).toEqual([{ method: 'gitlab', setting: { allowAsSignInMethod: true, secondFactor: 'optional' } }]);
