@@ -42,7 +42,7 @@ Der Server verschlüsselt den Inhalt der Benachrichtigung mit einem Schlüssel, 
 
 Auf dem Smartphone entschlüsselt die Extension `sealed` und ersetzt den Platzhalter durch den echten Text. Schlägt das Entschlüsseln fehl, sieht der Nutzer „Neue Nachricht“. Apples eigene Dokumentation der Extension verwendet genau dieses Beispiel.
 
-Der Schlüssel kommt von der App: Beim ersten Start erzeugt sie ein Schlüsselpaar, legt den privaten Schlüssel im Schlüsselbund ab (in einer Zugriffsgruppe, die sie mit der Extension teilt) und schickt den öffentlichen Schlüssel zusammen mit dem Geräte-Token an Ihren Server. Der Server verschlüsselt jede Push-Nachricht für diesen öffentlichen Schlüssel:
+Der Schlüssel kommt von der App: Beim ersten Start erzeugt sie ein Schlüsselpaar, legt den privaten Schlüssel im Schlüsselbund ab und schickt den öffentlichen Schlüssel zusammen mit dem Geräte-Token an Ihren Server. Der Eintrag im Schlüsselbund braucht zwei Einstellungen: eine Zugriffsgruppe, die die App mit der Extension teilt, und die Zugreifbarkeit `kSecAttrAccessibleAfterFirstUnlock`. Mit der Voreinstellung kann die Extension den Schlüssel nicht lesen, solange das Smartphone gesperrt ist, und jede Push-Nachricht auf einem gesperrten Gerät zeigt den Platzhalter. Der Server verschlüsselt jede Push-Nachricht für diesen öffentlichen Schlüssel:
 
 ```ts
 import { createCipheriv, createECDH, hkdfSync, randomBytes } from 'node:crypto';
@@ -82,6 +82,8 @@ Wer es so macht:
 - **Proton Mail.** Bei jeder Anmeldung erzeugt die App ein Schlüsselpaar und schickt den öffentlichen Schlüssel an Protons Push-Server, der jede Push-Nachricht damit verschlüsselt; die Extension entschlüsselt mit dem privaten Schlüssel aus dem Schlüsselbund ([Protons Beschreibung](https://proton.me/blog/ios-security-model)).
 - **Threema**, zum Teil. Die Push-Nachricht enthält eine verschlüsselte Nutzlast mit ID und Nickname des Absenders und der ID der Nachricht, unter einem Schlüssel, den Apple nicht kennt. Die Nachricht selbst steht nicht darin, auch nicht verschlüsselt: Die App lädt sie anschließend herunter ([Threemas FAQ](https://threema.com/en/faq/privacy-push)). Threema verbindet also beide Ansätze.
 
+Nehmen Sie die ID der Nachricht in den verschlüsselten Text auf, damit die App einen Geheimtext ignorieren kann, den sie schon angezeigt hat: Sonst hindert nichts jemanden, der eine alte Push-Nachricht besitzt, daran, sie erneut zu senden.
+
 Der Preis: ein Schlüssel pro Gerät, der registriert und bei erneuter Anmeldung ersetzt werden muss, und eine Größengrenze, denn APNs lehnt Nutzlasten [über 4 KB](https://developer.apple.com/documentation/usernotifications/generating-a-remote-notification) ab, und Base64 macht den Geheimtext um ein Drittel größer. Dafür kommt der Ansatz ohne zweite Netzwerkanfrage aus, die Benachrichtigung erscheint also auch bei schlechter Verbindung.
 
 ## Ansatz 2: ein Weck-Push, dann die Nachricht abholen
@@ -99,45 +101,54 @@ Mit der ID holt die Extension die Nachricht von Ihrem eigenen Server ab, über I
 
 ```swift
 class NotificationService: UNNotificationServiceExtension {
+  private let lock = NSLock()
   private var contentHandler: ((UNNotificationContent) -> Void)?
-  private var content: UNMutableNotificationContent?
+  private var placeholder: UNNotificationContent?
 
   override func didReceive(
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
-    let content = request.content.mutableCopy() as! UNMutableNotificationContent
     self.contentHandler = contentHandler
-    self.content = content
-    guard let id = content.userInfo["id"] as? String else { return contentHandler(content) }
+    placeholder = request.content
+    guard let id = request.content.userInfo["id"] as? String else { return finish(request.content) }
     Task {
       // Ihre API, aufgerufen mit dem Token des Nutzers aus dem geteilten Schlüsselbund.
-      if let message = try? await fetchMessage(id) {
-        content.title = message.sender
-        content.body = message.text
-      }
-      contentHandler(content)
+      guard let message = try? await fetchMessage(id) else { return finish(request.content) }
+      let content = request.content.mutableCopy() as! UNMutableNotificationContent
+      content.title = message.sender
+      content.body = message.text
+      finish(content)
     }
   }
 
   // Zeit abgelaufen: den Platzhalter anzeigen, mit dem die Push-Nachricht kam.
   override func serviceExtensionTimeWillExpire() {
-    if let content { contentHandler?(content) }
+    finish(placeholder)
+  }
+
+  // Ruft den Handler einmal auf, je nachdem, was zuerst kommt: die abgeholte Nachricht oder der Zeitablauf.
+  private func finish(_ content: UNNotificationContent?) {
+    lock.lock()
+    let handler = contentHandler
+    contentHandler = nil
+    lock.unlock()
+    if let content { handler?(content) }
   }
 }
 ```
 
 Wer es so macht:
 
-- **Signal.** Die Push-Nachrichten sind nur ein Signal, das die App aufweckt, und verraten nicht, wer geschrieben hat, so die [Präsidentin von Signal](https://mastodon.world/@Mer__edith/111563866152334347). Die App holt die verschlüsselte Nachricht ab und entschlüsselt sie auf dem Gerät.
-- **Matrix-Clients wie Element.** Ein Matrix-Server kann im Format `event_id_only` pushen: Die Push-Nachricht enthält die IDs des Ereignisses und des Raums sowie die Zahl der ungelesenen Nachrichten, [sonst nichts](https://spec.matrix.org/latest/push-gateway-api/). Die App holt das Ereignis von ihrem Homeserver.
+- **Signal.** Die Push-Nachrichten sind nur ein Ping, der die App aufweckt, und verraten nicht, wer geschrieben hat, so die [Präsidentin von Signal](https://mastodon.world/@Mer__edith/111563866152334347). Die App holt die verschlüsselte Nachricht ab und entschlüsselt sie auf dem Gerät.
+- **Matrix-Clients wie Element.** Ein Matrix-Server kann im Format `event_id_only` pushen: Die Push-Nachricht enthält die IDs des Ereignisses und des Raums, die Zahl der ungelesenen Nachrichten und den Push-Schlüssel des Geräts, aber [nichts vom Inhalt](https://spec.matrix.org/latest/push-gateway-api/). Die App holt das Ereignis von ihrem Homeserver.
 - **Threema auf Android**, wo die FCM-Nutzlast leer ist.
 
 Auch WhatsApp verschlüsselt Nachrichten Ende-zu-Ende. Wir haben aber keine öffentliche Beschreibung gefunden, was seine Push-Nachrichten enthalten, deshalb steht es auf keiner der beiden Listen.
 
-Der Preis: Die Extension braucht innerhalb ihrer 30 Sekunden eine Netzwerkverbindung und eine gültige Anmeldung, und jede Benachrichtigung ist eine weitere Anfrage an Ihren Server. Dafür gibt es keinen Schlüssel zu verwalten und keine Größengrenze.
+Der Preis: Die Extension braucht innerhalb ihrer 30 Sekunden eine Netzwerkverbindung und eine gültige Anmeldung (das Access-Token im Schlüsselbund braucht dieselben zwei Einstellungen wie der Schlüssel in Ansatz 1), und jede Benachrichtigung ist eine weitere Anfrage an Ihren Server. Dafür gibt es keinen Schlüssel zu verwalten und keine Größengrenze.
 
-Warum kein stiller *Background Push* (`content-available`), der die ganze App weckt? Weil iOS ihn mit niedriger Priorität behandelt: Laut Apples Dokumentation sollten es nicht mehr als [zwei oder drei pro Stunde](https://developer.apple.com/documentation/usernotifications/pushing-background-updates-to-your-app) sein, und die Zustellung ist nicht garantiert. Eine sichtbare Push-Nachricht mit Extension wird sofort zugestellt. Der Preis ist, dass immer eine Benachrichtigung erscheint, auch wenn das Abholen nichts Anzeigbares ergibt; sie zu unterdrücken erfordert ein [Entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.usernotifications.filtering), das Apple auf Antrag vergibt.
+Warum kein stiller *Background Push* (`content-available`), der die ganze App weckt? Weil iOS ihn mit niedriger Priorität behandelt: Laut Apples Dokumentation sollten es nicht mehr als [zwei oder drei pro Stunde](https://developer.apple.com/documentation/usernotifications/pushing-background-updates-to-your-app) sein, und die Zustellung ist nicht garantiert. Eine sichtbare Push-Nachricht mit Extension wird nicht auf diese Weise zurückgehalten. Der Preis ist, dass immer eine Benachrichtigung erscheint, auch wenn das Abholen nichts Anzeigbares ergibt; sie zu unterdrücken erfordert ein [Entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.usernotifications.filtering), das Apple auf Antrag vergibt.
 
 ## Welcher Ansatz passt
 
@@ -145,7 +156,7 @@ Warum kein stiller *Background Push* (`content-available`), der die ganze App we
 | --- | --- | --- |
 | Apple sieht | Geheimtext, Metadaten | höchstens eine ID, Metadaten |
 | Schlüssel | ein Schlüsselpaar pro Gerät | keine |
-| Größengrenze | 4 KB einschließlich Verschlüsselung | keine |
+| Größengrenze | 4 KB, die Verschlüsselung zählt mit | keine |
 | Braucht bei Ankunft eine Verbindung | nein | ja |
 | Last auf Ihrem Server | nur die Push-Nachricht | die Push-Nachricht und eine Anfrage pro Benachrichtigung |
 
@@ -155,11 +166,11 @@ Wenn auf den Geräten noch keine Schlüssel liegen, beginnen Sie mit Wecken und 
 
 - **Die Metadaten.** Apple weiß weiterhin, dass Ihre App diesem Gerät in diesem Moment eine Push-Nachricht geschickt hat. Dagegen helfen nur Push-Nachrichten zu zufälligen Zeiten als Attrappen, und das macht fast niemand.
 - **Ihr eigener Server.** In beiden Beispielen kennt der Server den Text, weil er ihn verschlüsselt oder ausliefert. Dritte bleiben damit außen vor, und darum geht es hier. Soll auch Ihr Server die Nachrichten nicht lesen können, muss das Gerät des Absenders sie verschlüsseln, wie bei Signal: Der Aufbau der Push-Nachricht bleibt derselbe, und die Extension entschlüsselt, was sie abgeholt hat.
-- **Die Benachrichtigung auf dem Smartphone.** Sobald der Text angezeigt wird, speichert iOS ihn. Im April 2026 wurde [berichtet](https://andreafortuna.org/2026/04/11/signal-fbi-iphone-notifications-forensics/), dass Ermittler Signal-Nachrichten aus der Benachrichtigungsdatenbank eines iPhones wiederhergestellt haben, nachdem die App entfernt worden war. Bieten Sie eine Einstellung an, die den Inhalt aus Benachrichtigungen heraushält, wie Signal es tut.
+- **Die Benachrichtigung auf dem Smartphone.** Sobald der Text angezeigt wird, liegt er auf dem Smartphone außerhalb der Kontrolle Ihrer App. Im April 2026 wurde [berichtet](https://andreafortuna.org/2026/04/11/signal-fbi-iphone-notifications-forensics/), dass Ermittler eingegangene Signal-Nachrichten, deren Text in Benachrichtigungen angezeigt worden war, aus der Benachrichtigungsdatenbank eines iPhones wiederhergestellt haben, nachdem die App entfernt worden war. Bieten Sie eine Einstellung an, die den Inhalt aus Benachrichtigungen heraushält, wie Signal es tut.
 
 ## Amazon SNS brauchen Sie dafür nicht
 
-Cloud-Anbieter verkaufen Push als Produkt: Amazon SNS (Simple Notification Service) mit seiner Funktion [Mobile Push](https://docs.aws.amazon.com/sns/latest/dg/sns-mobile-application-as-subscriber.html), AWS End User Messaging (der Push-Kanal des früheren Amazon Pinpoint), Azure Notification Hubs. Sie stellen selbst nichts zu. Sie nehmen Ihre Nachricht entgegen und rufen APNs oder FCM auf, wie Ihr Server es auch könnte. Was sie hinzufügen, ist eine API für mehrere Plattformen und das Verteilen an viele Geräte. Was sie außerdem hinzufügen, ist ein weiteres Unternehmen, durch dessen Hände jede Nutzlast und jedes Geräte-Token geht.
+Cloud-Anbieter verkaufen Push als Produkt: Amazon SNS (Simple Notification Service) mit seiner Funktion [Mobile Push](https://docs.aws.amazon.com/sns/latest/dg/sns-mobile-application-as-subscriber.html), AWS End User Messaging (das den Push-Kanal des früheren Amazon Pinpoint übernommen hat), Azure Notification Hubs. Sie stellen selbst nichts zu. Sie nehmen Ihre Nachricht entgegen und rufen APNs oder FCM auf, wie Ihr Server es auch könnte. Was sie hinzufügen, ist eine API für mehrere Plattformen und das Verteilen an viele Geräte. Was sie außerdem hinzufügen, ist ein weiteres Unternehmen, durch dessen Hände jede Nutzlast und jedes Geräte-Token geht.
 
 Direkt an APNs zu senden ist eine HTTP/2-Anfrage: ein `POST` an `https://api.push.apple.com/3/device/<Geräte-Token>` mit der Nutzlast als JSON und einem signierten Token im Header `authorization`. Das Token ist ein JWT, signiert mit einer Schlüsseldatei (`.p8`) aus Ihrem Apple-Entwicklerkonto. Das kann jeder Server mit Internetzugang.
 
@@ -171,9 +182,9 @@ import apn from '@parse/node-apn';
 // Ein Provider pro Prozess: Er hält die Verbindung zu Apple offen.
 const provider = new apn.Provider({
   token: {
-    key: process.env.APNS_KEY, // der Inhalt der .p8-Datei
-    keyId: process.env.APNS_KEY_ID,
-    teamId: process.env.APNS_TEAM_ID,
+    key: process.env.APNS_KEY!, // der Inhalt der .p8-Datei
+    keyId: process.env.APNS_KEY_ID!,
+    teamId: process.env.APNS_TEAM_ID!,
   },
   production: true,
 });

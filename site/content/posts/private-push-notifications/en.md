@@ -41,7 +41,7 @@ The server encrypts the notification's content with a key that only the device c
 
 On the phone, the extension decrypts `sealed` and replaces the placeholder with the real text. If decryption fails, the user sees "New message". Apple's own documentation for the extension uses exactly this as its example.
 
-The key comes from the app: on first start it makes a key pair, keeps the private key in the keychain (in an access group the extension shares) and sends the public key to your server together with the device token. The server encrypts each push to that public key:
+The key comes from the app: on first start it makes a key pair, keeps the private key in the keychain and sends the public key to your server together with the device token. The keychain item needs two settings: an access group that the extension shares, and the accessibility `kSecAttrAccessibleAfterFirstUnlock`. With the default, the extension can't read the key while the phone is locked, and every push on a locked phone shows the placeholder. The server encrypts each push to that public key:
 
 ```ts
 import { createCipheriv, createECDH, hkdfSync, randomBytes } from 'node:crypto';
@@ -81,6 +81,8 @@ Who does it this way:
 - **Proton Mail.** On each login the app makes a key pair and sends the public key to Proton's push server, which encrypts every push with it; the extension decrypts with the private key from the keychain ([Proton's description](https://proton.me/blog/ios-security-model)).
 - **Threema**, in part. Its push carries an encrypted payload with the sender's ID and nickname and the message's ID, under a key Apple doesn't know. The message itself is not in it, not even encrypted: the app downloads it afterwards ([Threema's FAQ](https://threema.com/en/faq/privacy-push)). So Threema combines both approaches.
 
+Put the message's id inside the encrypted text, so the app can ignore a ciphertext it has already shown: nothing else stops someone who holds an old push from sending it again.
+
 What it costs: a key per device to register and to replace when the user signs in again, and a size limit, since APNs refuses payloads [over 4 KB](https://developer.apple.com/documentation/usernotifications/generating-a-remote-notification) and base64 makes the ciphertext a third larger. In return it works without a second network request, so the notification appears even on a bad connection.
 
 ## Approach 2: a wake-up push, then fetch the message
@@ -98,30 +100,39 @@ The extension uses the id to fetch the message from your own server, over your o
 
 ```swift
 class NotificationService: UNNotificationServiceExtension {
+  private let lock = NSLock()
   private var contentHandler: ((UNNotificationContent) -> Void)?
-  private var content: UNMutableNotificationContent?
+  private var placeholder: UNNotificationContent?
 
   override func didReceive(
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
-    let content = request.content.mutableCopy() as! UNMutableNotificationContent
     self.contentHandler = contentHandler
-    self.content = content
-    guard let id = content.userInfo["id"] as? String else { return contentHandler(content) }
+    placeholder = request.content
+    guard let id = request.content.userInfo["id"] as? String else { return finish(request.content) }
     Task {
       // Your API, called with the user's token from the shared keychain.
-      if let message = try? await fetchMessage(id) {
-        content.title = message.sender
-        content.body = message.text
-      }
-      contentHandler(content)
+      guard let message = try? await fetchMessage(id) else { return finish(request.content) }
+      let content = request.content.mutableCopy() as! UNMutableNotificationContent
+      content.title = message.sender
+      content.body = message.text
+      finish(content)
     }
   }
 
   // Out of time: show the placeholder the push came with.
   override func serviceExtensionTimeWillExpire() {
-    if let content { contentHandler?(content) }
+    finish(placeholder)
+  }
+
+  // Calls the handler once, whichever comes first: the fetched message or the timeout.
+  private func finish(_ content: UNNotificationContent?) {
+    lock.lock()
+    let handler = contentHandler
+    contentHandler = nil
+    lock.unlock()
+    if let content { handler?(content) }
   }
 }
 ```
@@ -129,14 +140,14 @@ class NotificationService: UNNotificationServiceExtension {
 Who does it this way:
 
 - **Signal.** Its pushes "simply act as a ping that tells the app to wake up" and don't reveal who sent a message, in the words of [Signal's president](https://mastodon.world/@Mer__edith/111563866152334347). The app fetches the encrypted message and decrypts it on the device.
-- **Matrix clients such as Element.** A Matrix server can push in the format `event_id_only`: the push holds the ids of the event and the room and the unread counts, [nothing else](https://spec.matrix.org/latest/push-gateway-api/). The app fetches the event from its homeserver.
+- **Matrix clients such as Element.** A Matrix server can push in the format `event_id_only`: the push holds the ids of the event and the room, the unread counts and the device's push key, and [nothing about the content](https://spec.matrix.org/latest/push-gateway-api/). The app fetches the event from its homeserver.
 - **Threema on Android**, where the FCM payload is empty.
 
 WhatsApp's messages are end-to-end encrypted too, but we found no public description of what its pushes carry, so it is not on either list.
 
-What it costs: the extension needs a network connection and a valid sign-in within its 30 seconds, and every notification is one more request to your server. In return there is no key to manage and no size limit.
+What it costs: the extension needs a network connection and a valid sign-in within its 30 seconds (the access token in the keychain needs the same two settings as the key in approach 1), and every notification is one more request to your server. In return there is no key to manage and no size limit.
 
-Why not a silent *background push* (`content-available`) that wakes the whole app? Because iOS treats those as low priority: Apple's documentation says not to send more than [two or three per hour](https://developer.apple.com/documentation/usernotifications/pushing-background-updates-to-your-app), and delivery isn't guaranteed. A visible push with an extension is delivered at once. The price is that a notification always appears, even if the fetch finds nothing to show; hiding it needs an [entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.usernotifications.filtering) that Apple grants on request.
+Why not a silent *background push* (`content-available`) that wakes the whole app? Because iOS treats those as low priority: Apple's documentation says not to send more than [two or three per hour](https://developer.apple.com/documentation/usernotifications/pushing-background-updates-to-your-app), and delivery isn't guaranteed. A visible push with an extension is not held back in this way. The price is that a notification always appears, even if the fetch finds nothing to show; hiding it needs an [entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.usernotifications.filtering) that Apple grants on request.
 
 ## Which one to choose
 
@@ -154,11 +165,11 @@ If you have no keys on the devices yet, start with wake-up and fetch: it is a fe
 
 - **The metadata.** Apple still knows that your app sent this device a push at this moment. Sending pushes at random times as decoys is the only countermeasure, and almost nobody does it.
 - **Your own server.** In both examples above the server knows the text, because it encrypts or serves it. That keeps third parties out, which is the goal here. If your server must not read messages either, the sender's device has to encrypt them, as in Signal: the push design stays the same, and the extension decrypts what it fetched.
-- **The notification on the phone.** Once the text is shown, iOS stores it. In April 2026 it was [reported](https://andreafortuna.org/2026/04/11/signal-fbi-iphone-notifications-forensics/) that investigators recovered Signal messages from an iPhone's notification database after the app had been removed. Offer a setting that keeps the content out of notifications, as Signal does.
+- **The notification on the phone.** Once the text is shown, it is on the phone outside your app's control. In April 2026 it was [reported](https://andreafortuna.org/2026/04/11/signal-fbi-iphone-notifications-forensics/) that investigators recovered incoming Signal messages, whose text had been shown in notifications, from an iPhone's notification database after the app had been removed. Offer a setting that keeps the content out of notifications, as Signal does.
 
 ## You don't need Amazon SNS for this
 
-Cloud providers sell push as a product: Amazon SNS (Simple Notification Service) with its [mobile push](https://docs.aws.amazon.com/sns/latest/dg/sns-mobile-application-as-subscriber.html) feature, AWS End User Messaging (the push channel of the former Amazon Pinpoint), Azure Notification Hubs. They don't deliver anything themselves. They take your message and call APNs or FCM, as your server could. What they add is one API for several platforms and fan-out to many devices. What they also add is one more company that handles every payload and every device token.
+Cloud providers sell push as a product: Amazon SNS (Simple Notification Service) with its [mobile push](https://docs.aws.amazon.com/sns/latest/dg/sns-mobile-application-as-subscriber.html) feature, AWS End User Messaging (which took over the push channel of the former Amazon Pinpoint), Azure Notification Hubs. They don't deliver anything themselves. They take your message and call APNs or FCM, as your server could. What they add is one API for several platforms and fan-out to many devices. What they also add is one more company that handles every payload and every device token.
 
 Sending to APNs directly is one HTTP/2 request: a `POST` to `https://api.push.apple.com/3/device/<device token>` with the payload as JSON and a signed token in the `authorization` header. The token is a JWT signed with a key file (`.p8`) from your Apple developer account. Any server with internet access can do that.
 
@@ -170,9 +181,9 @@ import apn from '@parse/node-apn';
 // One provider per process: it keeps the connection to Apple open.
 const provider = new apn.Provider({
   token: {
-    key: process.env.APNS_KEY, // the content of the .p8 file
-    keyId: process.env.APNS_KEY_ID,
-    teamId: process.env.APNS_TEAM_ID,
+    key: process.env.APNS_KEY!, // the content of the .p8 file
+    keyId: process.env.APNS_KEY_ID!,
+    teamId: process.env.APNS_TEAM_ID!,
   },
   production: true,
 });
