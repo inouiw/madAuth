@@ -94,6 +94,9 @@ article td {
   text-align: left;
   vertical-align: top;
   border-bottom: 1px solid var(--border);
+  /* Long words (German compounds) break, so a table fits a phone's width. */
+  overflow-wrap: anywhere;
+  hyphens: auto;
 }
 
 article blockquote {
