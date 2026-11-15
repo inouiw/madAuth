@@ -580,6 +580,11 @@ export class MadauthLogin extends LitElement {
     if (email) this.email = email;
     const ready = await this.show();
     if (ready.isSuccess && Madauth.password.pendingReset) this.view = 'reset';
+    else if (ready.isSuccess && options.view === 'signup' && this.view === 'signin') {
+      // Asked for the "Create account" form: the one the sign-in view's link opens, if any method makes accounts here.
+      const method = this.signUpMethod;
+      if (method) this.startSignUp(method);
+    }
     // A sign-in that started outside the dialog (the redirect flow, an e-mail link) goes on with the app.
     const pending = ready.isSuccess ? takePendingStep() : undefined;
     if (pending) this.continueWith(pending);
@@ -993,6 +998,17 @@ export class MadauthLogin extends LitElement {
 
   private get passwordAvailable(): boolean {
     return this.usable && !!providerFor('password');
+  }
+
+  /**
+   * How the "Create account" form signs people up here, as the sign-in view's "Create account" link would:
+   * a password, else a passkey, else the authenticator app; undefined when only a provider's button makes accounts.
+   */
+  private get signUpMethod(): 'password' | 'passkey' | 'authenticator' | undefined {
+    if (this.passwordAvailable) return 'password';
+    if (this.passkeySignUpAvailable) return 'passkey';
+    if (this.authenticatorAvailable && Madauth.authenticator.policy?.signUp) return 'authenticator';
+    return undefined;
   }
 
   /** Whether the authenticator app signs in on its own here (the e-mail address and a code). */
