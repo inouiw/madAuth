@@ -115,6 +115,23 @@ describe("<madauth-login> with emailTexts: 'code-only'", () => {
     expect(text('p.lead')).toBe('We sent an email to grace@example.com. Open the link in it, or enter the 6-digit code from the email.');
   });
 
+  it('points to the reset link when the reset codes are locked', async () => {
+    const server = fakeServer();
+    void openDialog('code-only');
+    await settle();
+    await click('[data-action="forgot"]');
+    fill({ email: 'grace@example.com' });
+    await submit('forgot');
+    server.locked = true;
+    fill({ code: CODE });
+    await submit('code');
+    fill({ password: 'brand new password' });
+    await submit('reset');
+
+    expect($('[part="error"]')!.dataset.code).toBe('codes_locked');
+    expect($('[part="error"]')!.textContent).toContain('Please use the link in the email to choose a new password.');
+  });
+
   it('has the code-only texts in German', async () => {
     const server = fakeServer();
     server.methods['email-link'] = true;

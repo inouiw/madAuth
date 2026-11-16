@@ -473,6 +473,8 @@ export const en = {
   errorFallback: 'Sign-in is not available right now.',
   /** `email_unverified` after signing in with a password. */
   confirmEmailFirst: 'Please confirm your email address first: open the link in the email we sent you.',
+  /** `codes_locked` in a password reset, whose e-mail keeps its link with `emailTexts: 'code-only'` too. */
+  resetCodesLocked: 'Too many wrong codes. Please use the link in the email to choose a new password.',
   /** `temporarily_unavailable` when creating an account, and when asking for an e-mail. */
   signUpUnavailable: 'Email & password sign-up is not available right now. Please try again later.',
   emailsUnavailable: 'Sending emails is not available right now. Please try again later.',
@@ -887,6 +889,7 @@ export const de: Strings = {
   errorFallback: 'Die Anmeldung ist derzeit nicht möglich.',
   confirmEmailFirst:
     'Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse: Öffnen Sie den Link in der E-Mail, die wir Ihnen gesendet haben.',
+  resetCodesLocked: 'Zu viele falsche Bestätigungscodes. Bitte öffnen Sie den Link in der E-Mail, um ein neues Passwort zu wählen.',
   signUpUnavailable:
     'Derzeit kann kein Konto mit E-Mail-Adresse und Passwort erstellt werden. Bitte versuchen Sie es später erneut.',
   emailsUnavailable: 'Derzeit können keine E-Mails gesendet werden. Bitte versuchen Sie es später erneut.',

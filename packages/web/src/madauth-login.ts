@@ -1263,6 +1263,7 @@ export class MadauthLogin extends LitElement {
       return this.view === 'signup' ? s.signUpUnavailable : this.view.startsWith('sms') ? s.smsUnavailable : s.emailsUnavailable;
     }
     if (error.code === 'email_unverified' && error.method === 'password') return s.confirmEmailFirst;
+    if (error.code === 'codes_locked' && this.inboxPurpose === 'reset') return s.resetCodesLocked;
     if (error.code === 'reauth_required' && this.view === 'api-key-create') return s.apiKeyCreate.reauth;
     if (error.code === 'reauth_required' && this.view === 'methods' && this.sessionError) return s.methodsView.sessions.reauth;
     if (error.code === 'reauth_required' && this.view.startsWith('admin-')) return s.adminView.reauth;

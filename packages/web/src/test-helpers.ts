@@ -624,6 +624,7 @@ export function fakeServer(): FakeServer {
       }
       case 'POST /auth/password/reset': {
         if (weakPassword(body.password)) return weakPassword(body.password)!;
+        if (server.locked && !body.token) return json({ error: 'codes_locked', message: 'locked' }, 429);
         const target = body.token === RESET_TOKEN ? (lastMailTo('reset') ?? grace.email) : body.code === CODE ? email : undefined;
         const account = target && server.accounts.get(target);
         if (!account) {

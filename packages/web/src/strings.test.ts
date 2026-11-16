@@ -60,6 +60,7 @@ describe('strings', () => {
       // The password reset's e-mail keeps its link, and so do its texts.
       expect(codeOnly.resetInboxLead).toBe(base.resetInboxLead);
       expect(codeOnly.forgotLead).toBe(base.forgotLead);
+      expect(codeOnly.resetCodesLocked).toBe(base.resetCodesLocked);
       expect(codeOnly.errors.link_invalid).toBe(base.errors.link_invalid);
       const baseTexts = texts(base);
       const changed = texts(codeOnly).filter((text, i) => text !== baseTexts[i]);
