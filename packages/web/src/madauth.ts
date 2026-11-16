@@ -64,6 +64,13 @@ export interface MadauthOptions {
 export interface SignInOptions {
   /** Fills the dialog's e-mail field, e.g. with the address from a link to your page. */
   email?: string;
+  /**
+   * The view the dialog opens on: `'signin'` (default) or `'signup'`, the "Create account" form, e.g. behind a
+   * "Create a free account" button. `'signup'` opens the form the sign-in view's "Create account" link opens
+   * (a password, else a passkey, else the authenticator app, as the server allows); where none of them signs
+   * people up, only a provider's button (Google, GitHub) does, and the dialog opens on the sign-in view.
+   */
+  view?: 'signin' | 'signup';
 }
 
 /** A current code from the authenticator app, or a recovery code: needed once the app is set up. */
@@ -511,9 +518,13 @@ export const Madauth = {
    * Opens the sign-in dialog (creating a `<madauth-login>` if the page has none) and resolves with the
    * signed-in user, or fails with `cancelled` when the dialog is closed. With `GoogleRedirect` the page
    * navigates to Google; the user then arrives through {@link Madauth.onAuthStateChanged}.
-   * `email` fills the e-mail field, so the user only has to type the password.
+   * `email` fills the e-mail field, so the user only has to type the password; `view: 'signup'` opens it on
+   * the "Create account" form.
    */
   async showSignInDialog(options: SignInOptions = {}): Promise<Result<{ user: MadauthUser }>> {
+    if (options.view !== undefined && options.view !== 'signin' && options.view !== 'signup') {
+      return fail('invalid_options', `view must be 'signin' or 'signup' but is "${String(options.view)}".`);
+    }
     const ready = await dialogReady('showSignInDialog');
     if (!ready.isSuccess) return ready;
     return dialogFlow<Result<{ user: MadauthUser }>>(

@@ -1,5 +1,9 @@
 # Upgrading
 
+## To 0.7.7
+
+- **New: `Madauth.showSignInDialog({ view: 'signup' })`** opens the dialog on the "Create account" form instead of the sign-in view, e.g. behind a "Create a free account" button: the form the sign-in view's "Create account" link opens (a password, else a passkey, else the authenticator app, as the server allows). Where none of them signs people up, only a provider's button (Google, GitHub) does, and the dialog opens on the sign-in view. Without `view`, or with `'signin'`, nothing changes; another value fails with `invalid_options`.
+
 ## To 0.7.6
 
 0.7.5 was released without the review fixes of the new social providers; 0.7.6 adds them.

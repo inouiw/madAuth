@@ -573,12 +573,19 @@ export class MadauthLogin extends LitElement {
 
   /**
    * Opens the dialog as a modal. Opens on the "new password" form when the page came from a reset link.
-   * `email` fills the e-mail field.
+   * `email` fills the e-mail field; `view: 'signup'` opens the "Create account" form, unless a reset link or a
+   * pending second step takes precedence or no method makes accounts here.
    */
   async open(options: SignInOptions = {}): Promise<void> {
     const email = typeof options.email === 'string' ? options.email.trim() : '';
     if (email) this.email = email;
-    const ready = await this.show();
+    // Asked for the "Create account" form: the one the sign-in view's link opens, if any method makes accounts here.
+    // Chosen before the first render, so the sign-in view doesn't flash and its passkey autofill doesn't start.
+    const ready = await this.show(() => {
+      if (options.view !== 'signup' || this.view !== 'signin' || Madauth.password.pendingReset) return;
+      const method = this.signUpMethod;
+      if (method) this.startSignUp(method);
+    });
     if (ready.isSuccess && Madauth.password.pendingReset) this.view = 'reset';
     // A sign-in that started outside the dialog (the redirect flow, an e-mail link) goes on with the app.
     const pending = ready.isSuccess ? takePendingStep() : undefined;
@@ -608,11 +615,12 @@ export class MadauthLogin extends LitElement {
 
   /**
    * Waits for madAuth, then shows the dialog: it opens with the methods the server offers already in place
-   * instead of filling in while it is open.
+   * instead of filling in while it is open. `beforeRender` may pick the view, knowing what the dialog can offer.
    */
-  private async show(): Promise<Result> {
+  private async show(beforeRender?: () => void): Promise<Result> {
     const ready = await readyForDialog();
     this.usable = ready.isSuccess;
+    if (ready.isSuccess) beforeRender?.();
     // What the views show depends on the providers and the server's settings, which a new initialize may have changed.
     this.requestUpdate();
     await this.updateComplete;
@@ -785,7 +793,7 @@ export class MadauthLogin extends LitElement {
   private prefill(email: string): void {
     const field = this.renderRoot.querySelector<HTMLInputElement>('input[name="email"]');
     if (field) field.value = email;
-    if (this.passwordAvailable) this.renderRoot.querySelector<HTMLInputElement>('form.signin input[name="password"]')?.focus();
+    if (this.passwordAvailable) this.renderRoot.querySelector<HTMLInputElement>('form.signin input[name="password"], form.signup input[name="password"]')?.focus();
   }
 
   /** Closes the dialog without firing `madauth-cancel`. */
@@ -993,6 +1001,17 @@ export class MadauthLogin extends LitElement {
 
   private get passwordAvailable(): boolean {
     return this.usable && !!providerFor('password');
+  }
+
+  /**
+   * How the "Create account" form signs people up here, as the sign-in view's "Create account" link would:
+   * a password, else a passkey, else the authenticator app; undefined when only a provider's button makes accounts.
+   */
+  private get signUpMethod(): 'password' | 'passkey' | 'authenticator' | undefined {
+    if (this.passwordAvailable) return 'password';
+    if (this.passkeySignUpAvailable) return 'passkey';
+    if (this.authenticatorAvailable && Madauth.authenticator.policy?.signUp) return 'authenticator';
+    return undefined;
   }
 
   /** Whether the authenticator app signs in on its own here (the e-mail address and a code). */
