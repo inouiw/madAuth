@@ -63,6 +63,8 @@ describe("showSignInDialog's view", () => {
     expect(text('h2')).toBe('Create account');
     expect($('form.signup #new-password')).not.toBeNull();
     expect($<HTMLInputElement>('form.signup input[name="email"]')!.value).toBe('new@example.com');
+    // The address is there, so the user goes on with the password.
+    expect(login().shadowRoot!.activeElement).toBe($('form.signup #new-password'));
     // The way back to the sign-in view is there, as after the link.
     expect($('[data-action="back"]')).not.toBeNull();
   });

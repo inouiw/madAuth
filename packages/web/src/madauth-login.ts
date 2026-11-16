@@ -573,7 +573,8 @@ export class MadauthLogin extends LitElement {
 
   /**
    * Opens the dialog as a modal. Opens on the "new password" form when the page came from a reset link.
-   * `email` fills the e-mail field.
+   * `email` fills the e-mail field; `view: 'signup'` opens the "Create account" form, unless a reset link or a
+   * pending second step takes precedence or no method makes accounts here.
    */
   async open(options: SignInOptions = {}): Promise<void> {
     const email = typeof options.email === 'string' ? options.email.trim() : '';
@@ -614,9 +615,8 @@ export class MadauthLogin extends LitElement {
 
   /**
    * Waits for madAuth, then shows the dialog: it opens with the methods the server offers already in place
-   * instead of filling in while it is open.
+   * instead of filling in while it is open. `beforeRender` may pick the view, knowing what the dialog can offer.
    */
-  /** Opens the dialog once madAuth is ready; `beforeRender` may pick the view, knowing what the dialog can offer. */
   private async show(beforeRender?: () => void): Promise<Result> {
     const ready = await readyForDialog();
     this.usable = ready.isSuccess;
@@ -793,7 +793,7 @@ export class MadauthLogin extends LitElement {
   private prefill(email: string): void {
     const field = this.renderRoot.querySelector<HTMLInputElement>('input[name="email"]');
     if (field) field.value = email;
-    if (this.passwordAvailable) this.renderRoot.querySelector<HTMLInputElement>('form.signin input[name="password"]')?.focus();
+    if (this.passwordAvailable) this.renderRoot.querySelector<HTMLInputElement>('form.signin input[name="password"], form.signup input[name="password"]')?.focus();
   }
 
   /** Closes the dialog without firing `madauth-cancel`. */
