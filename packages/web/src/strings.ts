@@ -1,3 +1,4 @@
+import type { EmailTexts } from './madauth.js';
 import type { BuiltInMethodId } from './methods.js';
 import type { MadauthErrorCode, SecondFactor } from './result.js';
 import { coreDe, coreEn, languageOf, methodTexts } from './strings-core.js';
@@ -63,8 +64,13 @@ export const en = {
   /** Under that lead when a provider (Google, GitHub) is one of the methods: its users have no password to reset. `names` is e.g. "Google or GitHub". */
   forgotProviderHint: (names: string) => `Signed up with ${names}? There is no password to reset: use that button instead.`,
   checkInbox: 'Check your inbox',
-  /** The e-mail address is shown between the two parts. */
+  /** The check-inbox lead after a confirmation e-mail; the e-mail address is shown between the two parts. */
   inboxLead: {
+    before: 'We sent an email to ',
+    after: '. Open the link in it, or enter the 6-digit code from the email.',
+  },
+  /** The same after a password reset e-mail, which keeps its link with `emailTexts: 'code-only'` too. */
+  resetInboxLead: {
     before: 'We sent an email to ',
     after: '. Open the link in it, or enter the 6-digit code from the email.',
   },
@@ -467,6 +473,8 @@ export const en = {
   errorFallback: 'Sign-in is not available right now.',
   /** `email_unverified` after signing in with a password. */
   confirmEmailFirst: 'Please confirm your email address first: open the link in the email we sent you.',
+  /** `codes_locked` in a password reset, whose e-mail keeps its link with `emailTexts: 'code-only'` too. */
+  resetCodesLocked: 'Too many wrong codes. Please use the link in the email to choose a new password.',
   /** `temporarily_unavailable` when creating an account, and when asking for an e-mail. */
   signUpUnavailable: 'Email & password sign-up is not available right now. Please try again later.',
   emailsUnavailable: 'Sending emails is not available right now. Please try again later.',
@@ -531,6 +539,10 @@ export const de: Strings = {
   forgotProviderHint: (names) => `Mit ${names} registriert? Es gibt kein Passwort zum Zurücksetzen: Verwenden Sie stattdessen den entsprechenden Button.`,
   checkInbox: 'Posteingang prüfen',
   inboxLead: {
+    before: 'Wir haben eine E-Mail an ',
+    after: ' gesendet. Öffnen Sie den Link darin oder geben Sie den 6-stelligen Bestätigungscode aus der E-Mail ein.',
+  },
+  resetInboxLead: {
     before: 'Wir haben eine E-Mail an ',
     after: ' gesendet. Öffnen Sie den Link darin oder geben Sie den 6-stelligen Bestätigungscode aus der E-Mail ein.',
   },
@@ -877,6 +889,7 @@ export const de: Strings = {
   errorFallback: 'Die Anmeldung ist derzeit nicht möglich.',
   confirmEmailFirst:
     'Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse: Öffnen Sie den Link in der E-Mail, die wir Ihnen gesendet haben.',
+  resetCodesLocked: 'Zu viele falsche Bestätigungscodes. Bitte öffnen Sie den Link in der E-Mail, um ein neues Passwort zu wählen.',
   signUpUnavailable:
     'Derzeit kann kein Konto mit E-Mail-Adresse und Passwort erstellt werden. Bitte versuchen Sie es später erneut.',
   emailsUnavailable: 'Derzeit können keine E-Mails gesendet werden. Bitte versuchen Sie es später erneut.',
@@ -890,9 +903,86 @@ export const de: Strings = {
   tooManyAttempts: () => 'Zu viele Versuche. Bitte warten Sie einen Moment und versuchen Sie es erneut.',
 };
 
-const languages = { en, de };
+/**
+ * The texts that `emailTexts: 'code-only'` replaces: the confirmation and e-mail sign-in e-mails carry only the
+ * code, so none of these mentions a link. The password reset's texts stay, as its e-mail keeps the link.
+ */
+interface CodeOnlyTexts {
+  inboxLead: Strings['inboxLead'];
+  signInInboxLead: Strings['signInInboxLead'];
+  addressLead: Strings['addressStep']['lead'];
+  emailLink: Strings['emailLink'];
+  confirmEmailFirst: string;
+  /** The e-mail sign-in method: its button, its name in a sentence, its row and its button in the user's methods. */
+  method: Strings['methods']['email-link'];
+  methodName: string;
+  methodLabel: string;
+  addMethod: string;
+  /** `codes_locked`: without a link to unlock them, the codes work again after a while (the server's lock grows from an hour to a day). */
+  codesLocked: string;
+}
 
-/** The dialog's texts in the language of `locale` (`languageOf`). */
-export function stringsFor(locale: string | undefined): Strings {
-  return languages[languageOf(locale)];
+export const codeOnlyEn: CodeOnlyTexts = {
+  inboxLead: { before: 'We sent an email to ', after: '. Enter the 6-digit code from the email.' },
+  signInInboxLead: { before: 'We sent an email to ', after: '. Enter the 6-digit code from the email to sign in.' },
+  addressLead: (name) => `${name} didn’t tell us your email address. Enter it, and we’ll send you a code to confirm it.`,
+  emailLink: {
+    heading: 'Sign in with an email code',
+    lead: 'We’ll email you a code to sign in. New here? The code creates your account.',
+    codeHint: 'Keep this window open: you enter the code here.',
+    send: 'Send code',
+  },
+  confirmEmailFirst: 'Please confirm your email address first: enter the code from the email we sent you.',
+  method: { label: 'Email code', description: 'Passwordless sign-in with a code by email' },
+  methodName: 'an email code',
+  methodLabel: 'Email code',
+  addMethod: 'Sign in with email codes',
+  codesLocked: 'Too many wrong codes. For your security, codes are paused for a while. Please ask for a new email later.',
+};
+
+export const codeOnlyDe: CodeOnlyTexts = {
+  inboxLead: { before: 'Wir haben eine E-Mail an ', after: ' gesendet. Geben Sie den 6-stelligen Bestätigungscode aus der E-Mail ein.' },
+  signInInboxLead: {
+    before: 'Wir haben eine E-Mail an ',
+    after: ' gesendet. Geben Sie den 6-stelligen Bestätigungscode aus der E-Mail ein, um sich anzumelden.',
+  },
+  addressLead: (name) => `${name} hat uns Ihre E-Mail-Adresse nicht mitgeteilt. Geben Sie sie ein, und wir senden Ihnen einen Code, um sie zu bestätigen.`,
+  emailLink: {
+    heading: 'Mit E-Mail-Code anmelden',
+    lead: 'Wir senden Ihnen einen Code zum Anmelden per E-Mail. Neu hier? Der Code erstellt Ihr Konto.',
+    codeHint: 'Lassen Sie dieses Fenster geöffnet: Sie geben den Code hier ein.',
+    send: 'Code senden',
+  },
+  confirmEmailFirst: 'Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse: Geben Sie den Bestätigungscode aus der E-Mail ein, die wir Ihnen gesendet haben.',
+  method: { label: 'E-Mail-Code', description: 'Ohne Passwort mit einem Code per E-Mail anmelden' },
+  methodName: 'einem E-Mail-Code',
+  methodLabel: 'E-Mail-Code',
+  addMethod: 'Mit E-Mail-Codes anmelden',
+  codesLocked:
+    'Zu viele falsche Bestätigungscodes. Zu Ihrer Sicherheit sind Codes für eine Weile gesperrt. Bitte fordern Sie später eine neue E-Mail an.',
+};
+
+function withCodeOnly(s: Strings, c: CodeOnlyTexts): Strings {
+  return {
+    ...s,
+    inboxLead: c.inboxLead,
+    signInInboxLead: c.signInInboxLead,
+    addressStep: { ...s.addressStep, lead: c.addressLead },
+    emailLink: c.emailLink,
+    confirmEmailFirst: c.confirmEmailFirst,
+    methods: { ...s.methods, 'email-link': c.method },
+    methodNames: { ...s.methodNames, 'email-link': c.methodName },
+    methodsView: { ...s.methodsView, labels: { ...s.methodsView.labels, 'email-link': c.methodLabel }, addEmailLink: c.addMethod },
+    errors: { ...s.errors, codes_locked: c.codesLocked },
+  };
+}
+
+const tables: Record<EmailTexts, { en: Strings; de: Strings }> = {
+  'link-and-code': { en, de },
+  'code-only': { en: withCodeOnly(en, codeOnlyEn), de: withCodeOnly(de, codeOnlyDe) },
+};
+
+/** The dialog's texts in the language of `locale` (`languageOf`), for e-mails as `emailTexts` describes them. */
+export function stringsFor(locale: string | undefined, emailTexts: EmailTexts = 'link-and-code'): Strings {
+  return tables[emailTexts][languageOf(locale)];
 }

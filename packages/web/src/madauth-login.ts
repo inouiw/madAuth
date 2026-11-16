@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing, type PropertyValues, type TemplateResul
 import { live } from 'lit/directives/live.js';
 import {
   Madauth,
+  currentEmailTexts,
   currentLocale,
   isProviderMethod,
   nameOfMethod,
@@ -806,10 +807,10 @@ export class MadauthLogin extends LitElement {
   }
 
   /** The texts in the dialog's language, looked up once per update. */
-  private strings: Strings = stringsFor(currentLocale());
+  private strings: Strings = stringsFor(currentLocale(), currentEmailTexts());
 
   override willUpdate(): void {
-    this.strings = stringsFor(currentLocale());
+    this.strings = stringsFor(currentLocale(), currentEmailTexts());
   }
 
   override updated(changed: PropertyValues): void {
@@ -1262,6 +1263,7 @@ export class MadauthLogin extends LitElement {
       return this.view === 'signup' ? s.signUpUnavailable : this.view.startsWith('sms') ? s.smsUnavailable : s.emailsUnavailable;
     }
     if (error.code === 'email_unverified' && error.method === 'password') return s.confirmEmailFirst;
+    if (error.code === 'codes_locked' && this.inboxPurpose === 'reset') return s.resetCodesLocked;
     if (error.code === 'reauth_required' && this.view === 'api-key-create') return s.apiKeyCreate.reauth;
     if (error.code === 'reauth_required' && this.view === 'methods' && this.sessionError) return s.methodsView.sessions.reauth;
     if (error.code === 'reauth_required' && this.view.startsWith('admin-')) return s.adminView.reauth;
@@ -3306,7 +3308,7 @@ export class MadauthLogin extends LitElement {
 
   private renderCheckInbox() {
     const s = this.strings;
-    const lead = this.inboxPurpose === 'signin' ? s.signInInboxLead : s.inboxLead;
+    const lead = this.inboxPurpose === 'signin' ? s.signInInboxLead : this.inboxPurpose === 'reset' ? s.resetInboxLead : s.inboxLead;
     return html`
       <p class="lead">${lead.before}<strong>${this.email}</strong>${lead.after}</p>
       ${this.inboxPurpose === 'confirm' || this.inboxPurpose === 'address' ? html`<p class="hint">${s.confirmProviderAddress(nameOfMethod(this.primary, s))}</p>` : null}

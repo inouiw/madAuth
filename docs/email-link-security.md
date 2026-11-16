@@ -6,7 +6,7 @@ The e-mail link is the sign-in method `email-link` (`new EmailLink()` in the web
 
 ## Links and codes
 
-The sign-in e-mail uses the same record as the confirmation and reset e-mails of e-mail & password sign-in, with the same rules (see [Password security](password-security.md#links-and-codes-in-e-mails)): the link token is 32 random bytes of which only the SHA-256 is stored, the code is kept as a keyed hash, both work once (the delete count decides), 5 wrong codes delete the record, and 10 wrong codes in a row lock the account's codes (`429 codes_locked`) until a link is used. A sign-in link lives **15 minutes**, like a reset link rather than a confirmation link: it lets whoever has it in.
+The sign-in e-mail uses the same record as the confirmation and reset e-mails of e-mail & password sign-in, with the same rules (see [Password security](password-security.md#links-and-codes-in-e-mails)): the link token is 32 random bytes of which only the SHA-256 is stored, the code is kept as a keyed hash, both work once (the delete count decides), 5 wrong codes delete the record, and 10 wrong codes in a row lock the account's codes (`429 codes_locked`) until a link is used, or for an hour that doubles with each further lock, up to a day. A sign-in link lives **15 minutes**, like a reset link rather than a confirmation link: it lets whoever has it in.
 
 The link points to the app page that asked for it (`redirectTo`, an origin in `ALLOWED_ORIGINS`), with the token in the URL's hash (`#madauth_signin=…`), which browsers never send to servers; `Madauth.initialize` removes it from the address bar right away. A new e-mail replaces the previous one.
 

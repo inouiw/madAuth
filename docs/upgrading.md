@@ -1,5 +1,11 @@
 # Upgrading
 
+## To 0.7.8
+
+- **New: `emailTexts: 'code-only'`** for `Madauth.initialize`, when your webhook receiver leaves the link out of the confirmation e-mail (`email.send_verification`) and the e-mail sign-in (`email.send_signin_link`) and sends only the 6-digit code. The dialog's texts then ask for the code without mentioning a link, and the e-mail sign-in is called "Email code". It only changes texts; the password reset's keep mentioning the link. Without it nothing changes; another value fails with `invalid_options`. See [E-mails without a link](styling.md#e-mails-without-a-link).
+- **The lock after 10 wrong e-mail codes lifts by itself:** after an hour, then two, four, … up to a day for each further lock, and a link or a right code starts over at an hour. Until now only a link lifted it. A user locked by an older madAuth gets new guesses at once. The `message` of `codes_locked` changed.
+- **Schema version 17:** `user.codesLockedUntil` and `user.codeLocks`. SQLite and Postgres upgrade themselves, DynamoDB needs nothing; for your own SQL tables run `npx @madauth/server schema --dialect <yours> --from 16` and apply it before you deploy.
+
 ## To 0.7.7
 
 - **New: `Madauth.showSignInDialog({ view: 'signup' })`** opens the dialog on the "Create account" form instead of the sign-in view, e.g. behind a "Create a free account" button: the form the sign-in view's "Create account" link opens (a password, else a passkey, else the authenticator app, as the server allows). Where none of them signs people up, only a provider's button (Google, GitHub) does, and the dialog opens on the sign-in view. Without `view`, or with `'signin'`, nothing changes; another value fails with `invalid_options`.

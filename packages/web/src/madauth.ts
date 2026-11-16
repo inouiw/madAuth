@@ -59,7 +59,20 @@ export interface MadauthOptions {
    * the browser's language. Change it later with `Madauth.setLocale`.
    */
   locale?: string;
+  /**
+   * How the dialog describes the confirmation e-mail (`email.send_verification`) and the e-mail sign-in
+   * (`email.send_signin_link`). It only changes the dialog's texts: madAuth still hands your webhook receiver
+   * both the link and the code, and the receiver decides what the e-mail contains.
+   * - `'link-and-code'` (default): the texts say to open the link in the e-mail or to enter its 6-digit code.
+   * - `'code-only'`: for a receiver that leaves the link out and sends only the code, e.g. so that the user stays
+   *   in the tab they started in. No text mentions a link, and the e-mail sign-in method is called "Email code".
+   * The password reset's texts stay the same either way: they keep mentioning its link.
+   */
+  emailTexts?: EmailTexts;
 }
+
+/** How the dialog describes the e-mails that confirm an address or sign in, see {@link MadauthOptions.emailTexts}. */
+export type EmailTexts = 'link-and-code' | 'code-only';
 
 export interface SignInOptions {
   /** Fills the dialog's e-mail field, e.g. with the address from a link to your page. */
@@ -92,6 +105,7 @@ interface State {
   serverUrl: string;
   providers: Map<LoginMethodId, SignInProvider>;
   ui: 'dialog' | 'custom';
+  emailTexts: EmailTexts;
   /** The server's public settings, once fetched. */
   config?: ServerConfig;
   /** Settles when `initialize` is done; a failure here means madAuth is not usable. */
@@ -202,7 +216,7 @@ function stepPending(pending: PendingStep | null): void {
 
 function validate(
   options: MadauthOptions | undefined,
-): Result<{ serverUrl: string; providers: Map<LoginMethodId, SignInProvider>; ui: 'dialog' | 'custom'; locale?: string }> {
+): Result<{ serverUrl: string; providers: Map<LoginMethodId, SignInProvider>; ui: 'dialog' | 'custom'; emailTexts: EmailTexts; locale?: string }> {
   if (!options || !Array.isArray(options.providers)) {
     return fail('invalid_options', 'Madauth.initialize needs { providers: [...] }, e.g. [new GoogleFedcm()].');
   }
@@ -212,6 +226,10 @@ function validate(
   }
   if (options.locale !== undefined && typeof options.locale !== 'string') {
     return fail('invalid_options', `locale must be a language tag such as 'de' or 'de-CH' but is "${String(options.locale)}".`);
+  }
+  const emailTexts = options.emailTexts ?? 'link-and-code';
+  if (emailTexts !== 'link-and-code' && emailTexts !== 'code-only') {
+    return fail('invalid_options', `emailTexts must be 'link-and-code' or 'code-only' but is "${String(options.emailTexts)}".`);
   }
   let serverUrl = location.origin;
   if (options.serverUrl !== undefined) {
@@ -236,7 +254,7 @@ function validate(
     }
     providers.set(provider.method, provider);
   }
-  return ok({ serverUrl, providers, ui, locale: options.locale });
+  return ok({ serverUrl, providers, ui, emailTexts, locale: options.locale });
 }
 
 /**
@@ -500,11 +518,11 @@ export const Madauth = {
     const valid = validate(options);
     changeLocale(valid.isSuccess ? valid.locale : undefined);
     if (!valid.isSuccess) {
-      state = { serverUrl: '', providers: new Map(), ui: 'dialog', ready: Promise.resolve(valid) };
+      state = { serverUrl: '', providers: new Map(), ui: 'dialog', emailTexts: 'link-and-code', ready: Promise.resolve(valid) };
       logError(valid);
       return Promise.resolve({ ...valid, leftOut: [] });
     }
-    const next: State = { serverUrl: valid.serverUrl, providers: valid.providers, ui: valid.ui, ready: Promise.resolve(ok()) };
+    const next: State = { serverUrl: valid.serverUrl, providers: valid.providers, ui: valid.ui, emailTexts: valid.emailTexts, ready: Promise.resolve(ok()) };
     state = next;
     const done = initialize(next, run);
     next.ready = done.then((d) => d.ready);
@@ -861,6 +879,11 @@ export function readyForDialog(): Promise<Result> {
 /** The locale of the dialog's texts and of the e-mails: the configured one, else the page's, else the browser's. */
 export function currentLocale(): string | undefined {
   return configuredLocale || document.documentElement.lang || navigator.language || undefined;
+}
+
+/** How the dialog describes the e-mails that confirm an address or sign in (`MadauthOptions.emailTexts`). */
+export function currentEmailTexts(): EmailTexts {
+  return state?.emailTexts ?? 'link-and-code';
 }
 
 /** Calls `listener` when the configured locale changes. Returns a function that unsubscribes. */

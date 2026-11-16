@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { coreDe, coreEn, coreStringsFor, languageOf, methodTexts } from './strings-core.js';
-import { de, en, stringsFor } from './strings.js';
+import { codeOnlyDe, codeOnlyEn, de, en, stringsFor } from './strings.js';
 
 /** The keys of a string table, with the type of each text. */
 function shape(value: unknown): unknown {
@@ -47,8 +47,30 @@ describe('strings', () => {
     expect(en.methods).toBe(methodTexts);
   });
 
+  it("has the code-only texts in both languages, and none of them mentions a link", () => {
+    expect(shape(codeOnlyDe)).toEqual(shape(codeOnlyEn));
+    for (const table of [codeOnlyEn, codeOnlyDe]) expect(texts(table).filter((text) => /link/i.test(text) || !text.trim())).toEqual([]);
+  });
+
+  it("swaps only the texts about the confirmation and sign-in e-mails with emailTexts: 'code-only'", () => {
+    for (const [locale, base] of [['en', en], ['de', de]] as const) {
+      const codeOnly = stringsFor(locale, 'code-only');
+      expect(shape(codeOnly)).toEqual(shape(base));
+      expect(stringsFor(locale, 'link-and-code')).toBe(base);
+      // The password reset's e-mail keeps its link, and so do its texts.
+      expect(codeOnly.resetInboxLead).toBe(base.resetInboxLead);
+      expect(codeOnly.forgotLead).toBe(base.forgotLead);
+      expect(codeOnly.resetCodesLocked).toBe(base.resetCodesLocked);
+      expect(codeOnly.errors.link_invalid).toBe(base.errors.link_invalid);
+      const baseTexts = texts(base);
+      const changed = texts(codeOnly).filter((text, i) => text !== baseTexts[i]);
+      expect(changed.filter((text) => /link/i.test(text))).toEqual([]);
+    }
+    expect(stringsFor('de-CH', 'code-only').inboxLead).toEqual(codeOnlyDe.inboxLead);
+  });
+
   it('addresses the user formally in German', () => {
-    const informal = texts(de).filter((text) => /\b(du|dich|dir|dein\w*|euch|euer\w*)\b/i.test(text));
+    const informal = [...texts(de), ...texts(codeOnlyDe)].filter((text) => /\b(du|dich|dir|dein\w*|euch|euer\w*)\b/i.test(text));
 
     expect(informal).toEqual([]);
     expect(texts(de).join(' ')).toMatch(/\bSie\b/);
