@@ -102,7 +102,7 @@ export function createEmails(ctx: AppContext, users: Users, webhook: WebhookClie
 
     invalidVerification(c, { via, locked }) {
       if (locked) {
-        return error(c, 429, 'codes_locked', 'Too many wrong codes. Please ask for a new e-mail and use the link in it.');
+        return error(c, 429, 'codes_locked', 'Too many wrong codes. Use the link in an e-mail, or ask for a new e-mail later: the codes work again after a while.');
       }
       return via === 'link'
         ? error(c, 400, 'link_invalid', 'The link is invalid, expired or was already used.')

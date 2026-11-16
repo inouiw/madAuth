@@ -20,6 +20,10 @@ export interface StoredUser {
   lastSmsAt: number | null;
   /** Wrong e-mail codes in a row. Empty in records that a store keeps from before schema version 2. */
   wrongCodes: number | null;
+  /** When the lock on the user's e-mail codes lifts (see {@link codeLockMs}). Empty before the first lock, and in records from before schema version 17. */
+  codesLockedUntil: number | null;
+  /** The locks on the user's e-mail codes since a link or a right code was used. Empty like `codesLockedUntil`. */
+  codeLocks: number | null;
   /** The user's claims as JSON. Empty without claims, and in records from before schema version 4. */
   claims: string | null;
   /**
@@ -124,10 +128,27 @@ export type UnprovenMethod = 'password' | 'email-link';
 export const MAX_CODE_ATTEMPTS = 5;
 /**
  * Wrong codes in a row allowed per user, counted across e-mails. After that the user's codes stop working
- * until one of their e-mail links is used. Without this limit, asking for a new e-mail every minute would
- * buy five new guesses each time.
+ * for a while ({@link codeLockMs}), or until one of their e-mail links is used. Without this limit, asking for a
+ * new e-mail every minute would buy five new guesses each time.
  */
 export const MAX_WRONG_CODES = 10;
+
+const HOUR_MS = 60 * 60_000;
+
+/**
+ * How long the `lock`th lock on a user's e-mail codes lasts: an hour, twice as long with each lock since a link
+ * or a right code was used, at most a day. So someone who mistyped waits an hour, while guessing goes on at
+ * about 10 codes a day: a 6-digit code is guessed with a chance of about 0.4 % in a year. The lock lifts by
+ * itself, because an app whose e-mails carry only the code has no link to lift it.
+ */
+export function codeLockMs(lock: number): number {
+  return Math.min(HOUR_MS * 2 ** (Math.max(lock, 1) - 1), 24 * HOUR_MS);
+}
+
+/** Whether the user's e-mail codes are locked at `now`: 10 wrong codes in a row, and the lock has not lifted yet. */
+export function codesLocked(user: StoredUser, now: number): boolean {
+  return (user.wrongCodes ?? 0) >= MAX_WRONG_CODES && (user.codesLockedUntil ?? 0) > now;
+}
 
 /** How often a write that compares what it read is tried again when another request changed it in between. */
 const MAX_TRIES = 3;
@@ -507,6 +528,8 @@ export class Users {
       lastMailAt: 0,
       lastSmsAt: 0,
       wrongCodes: 0,
+      codesLockedUntil: null,
+      codeLocks: null,
       claims: null,
       signedUpAt: 0,
       signUpMethod: data.signUpMethod ?? null,
@@ -553,7 +576,7 @@ export class Users {
     if (user.emailVerified) return;
     await this.dropUnprovenAccounts(user.id, proven);
     await this.clearVerifications(user.id);
-    await this.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
+    await this.updateUser(user.id, { emailVerified: true, wrongCodes: 0, codeLocks: 0 });
   }
 
   /** Removes an account record, e.g. one left behind by a deletion that did not finish. */
@@ -600,7 +623,7 @@ export class Users {
    */
   private async endSignIns(userId: string): Promise<void> {
     const user = await this.findById(userId);
-    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0, signUpMethod: null, preferredSecondFactor: null });
+    if (user) await this.updateUser(userId, { emailVerified: false, sessionVersion: user.sessionVersion + 1, wrongCodes: 0, codeLocks: 0, signUpMethod: null, preferredSecondFactor: null });
   }
 
   /**
@@ -833,15 +856,16 @@ export class Users {
 
   /**
    * Uses up the user's verification if `code` matches. Too many wrong codes delete it, and after
-   * MAX_WRONG_CODES wrong e-mail codes in a row the user's codes stop working until an e-mail link is used.
-   * SMS codes are not counted that way: that lock is only lifted by an e-mail link or a password reset, which
-   * a Google user with a phone never has. Their record's attempts, one SMS per minute and the lock on the
+   * MAX_WRONG_CODES wrong e-mail codes in a row the user's codes stop working for a while ({@link codeLockMs}),
+   * or until an e-mail link is used.
+   * SMS codes are not counted that way: that lock lasts up to a day, and only an e-mail link or a password reset
+   * lifts it sooner, which a Google user with a phone never has. Their record's attempts, one SMS per minute and the lock on the
    * sms account (routes/lockout.ts) are their limits.
    */
   async consumeCode(user: StoredUser, purpose: VerificationPurpose, code: string): Promise<CodeResult> {
     const counted = purpose !== 'sms';
     // A locked user's verification is left alone, so the link in the e-mail keeps working.
-    if (counted && (user.wrongCodes ?? 0) >= MAX_WRONG_CODES) return { userId: null, locked: true };
+    if (counted && codesLocked(user, Date.now())) return { userId: null, locked: true };
     const record = (await this.store.findOne('verification', { userId: user.id, purpose })) as StoredVerification | null;
     if (!record) return { userId: null, locked: false };
     // The attempt is counted before the code is compared, and only if no other request counted one
@@ -866,12 +890,22 @@ export class Users {
     return { userId: await this.consume(record), locked: false };
   }
 
-  /** Counts a code for the user and resolves to the new count; null if other requests kept changing it. */
+  /**
+   * Counts a code for the user and resolves to the new count; null if other requests kept changing it. After a
+   * lock lifted, the count starts again. The code that reaches MAX_WRONG_CODES locks the codes, in the same
+   * write, so no other request sees the count without the lock; while they are locked, the count is
+   * MAX_WRONG_CODES + 1 and nothing is written.
+   */
   private async countWrongCode(user: StoredUser): Promise<number | null> {
     let current: StoredUser | null = user;
     for (let attempt = 0; attempt < MAX_TRIES && current; attempt++) {
-      const wrongCodes = (current.wrongCodes ?? 0) + 1;
-      if ((await this.store.update('user', { id: user.id, wrongCodes: current.wrongCodes ?? null }, { wrongCodes })) === 1) {
+      const now = Date.now();
+      if (codesLocked(current, now)) return MAX_WRONG_CODES + 1;
+      const before = current.wrongCodes ?? 0;
+      const wrongCodes = (before >= MAX_WRONG_CODES ? 0 : before) + 1;
+      const codeLocks = (current.codeLocks ?? 0) + 1;
+      const patch: Row = wrongCodes === MAX_WRONG_CODES ? { wrongCodes, codesLockedUntil: now + codeLockMs(codeLocks), codeLocks } : { wrongCodes };
+      if ((await this.store.update('user', { id: user.id, wrongCodes: current.wrongCodes ?? null }, patch)) === 1) {
         return wrongCodes;
       }
       current = await this.findById(user.id);

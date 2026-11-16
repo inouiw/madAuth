@@ -88,7 +88,7 @@ export function emailLinkRoutes(app: Hono, ctx: AppContext, users: Users, webhoo
       await ctx.emit('user.email_verified', { user: toMadauthUser({ ...user, emailVerified: true }), method: 'email-link', via: consumed.via });
     } else {
       // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.
-      await users.updateUser(user.id, { wrongCodes: 0 });
+      await users.updateUser(user.id, { wrongCodes: 0, codeLocks: 0 });
     }
     const verified = { ...user, emailVerified: true, wrongCodes: 0 };
     // The authenticator app, if the policy asks for it, is still needed: the inbox alone does not sign in.

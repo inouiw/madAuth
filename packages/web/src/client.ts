@@ -4,6 +4,7 @@ export {
   Madauth,
   type AuthStateListener,
   type DeleteAccountOptions,
+  type EmailTexts,
   type InitializeResult,
   type MadauthOptions,
   type SignInOptions,

@@ -114,6 +114,8 @@ const user = {
   preferredSecondFactor: null,
   wrongDeviceCodes: null,
   wrongDeviceCodeAt: null,
+  codesLockedUntil: null,
+  codeLocks: null,
   createdAt: 1,
 };
 
@@ -135,6 +137,8 @@ const userItem = {
   preferredSecondFactor: { NULL: true },
   wrongDeviceCodes: { NULL: true },
   wrongDeviceCodeAt: { NULL: true },
+  codesLockedUntil: { NULL: true },
+  codeLocks: { NULL: true },
   createdAt: { N: '1' },
 };
 

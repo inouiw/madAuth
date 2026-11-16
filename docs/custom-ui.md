@@ -46,7 +46,7 @@ Needs `new Password()` in `initialize`, and `DATABASE_URL` and `WEBHOOK_URL` on 
 
 `too_many_attempts`, `weak_password` and `signup_rejected` come with a `message` written for the user: the wait time, which password rule was broken, or the reason your sign-up check gave. The first two are in English; for another language, write your own texts: a `weak_password` error has `error.minLength` when the password is too short and `error.minScore` when it is too easy to guess. For the other codes, write your own texts.
 
-`codes_locked` means that too many wrong codes were entered for this account, across e-mails: its codes no longer work until one of its e-mail links is used. Tell the user to ask for a new e-mail and to open the link in it.
+`codes_locked` means that too many wrong codes were entered for this account, across e-mails: its codes no longer work for a while (an hour, twice as long with each further lock, at most a day), or until one of its e-mail links is used. Tell the user to open the link in an e-mail, or, if your e-mails carry only the code, to ask for a new e-mail later.
 
 `temporarily_unavailable` means the server's [webhook](server.md#webhooks) did not take over the e-mail, or did not answer the sign-up check. Show something like "E-mail & password sign-up is not available right now. Please try again later." The user's locale is sent along (`locale`), so your receiver can write the e-mail in it. See [Language](#language).
 

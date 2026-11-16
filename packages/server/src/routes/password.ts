@@ -234,7 +234,7 @@ export function passwordRoutes(app: Hono, ctx: AppContext, users: Users, webhook
     if (!(await users.updateAccount(account.id, { secret, failedAttempts: 0, lockedUntil: 0 }))) return emails.invalidVerification(c, consumed);
     // The reset proves access to the inbox, and the new session version ends all older sessions.
     const sessionVersion = user.sessionVersion + 1;
-    await users.updateUser(user.id, { emailVerified: true, sessionVersion, wrongCodes: 0 });
+    await users.updateUser(user.id, { emailVerified: true, sessionVersion, wrongCodes: 0, codeLocks: 0 });
     // An unused confirmation link would otherwise still sign in.
     await users.clearVerifications(user.id);
     // The sessions' records go with them (no `user.session_ended`: `user.password_reset` says it).

@@ -70,7 +70,7 @@ export interface Schema {
 
 /** The records madAuth stores. Timestamps are milliseconds since 1970. */
 export const madauthSchema = {
-  version: 16,
+  version: 17,
   models: {
     /** Someone who signed in, whichever way: the e-mail address is the identity shared by the sign-in methods. */
     user: {
@@ -87,6 +87,13 @@ export const madauthSchema = {
         lastSmsAt: { type: 'number', nullable: true },
         /** Wrong e-mail codes in a row, counted across e-mails (since version 2). */
         wrongCodes: { type: 'number' },
+        /**
+         * When the lock that 10 wrong e-mail codes in a row put on the user's codes lifts, and how many such locks
+         * there were since a link or a right code was last used: each lasts twice as long as the one before, from
+         * an hour up to a day. Empty in records from before version 17, and for a user never locked (since version 17).
+         */
+        codesLockedUntil: { type: 'number', nullable: true },
+        codeLocks: { type: 'number', nullable: true },
         /** What admins attached to the user, as JSON, e.g. `{"roles":["admin"]}` (since version 4). */
         claims: { type: 'string', nullable: true },
         /**

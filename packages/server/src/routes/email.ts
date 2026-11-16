@@ -153,7 +153,7 @@ export function emailRoutes(app: Hono, ctx: AppContext, users: Users, webhook: W
     if (!user.emailVerified) await users.dropUnprovenAccounts(user.id, method);
     deleteCookie(c, CONFIRMATION_COOKIE, confirmationCookie(ctx.secure));
     // Using a link or a code proves access to the inbox, so wrong codes are counted from zero again.
-    await users.updateUser(user.id, { emailVerified: true, wrongCodes: 0 });
+    await users.updateUser(user.id, { emailVerified: true, wrongCodes: 0, codeLocks: 0 });
     // Confirming finishes a sign-up: one from before `user.signed_up` existed gets it too.
     const verified = { ...(user.emailVerified ? user : await users.reopenSignUp(user)), emailVerified: true, wrongCodes: 0 };
     await ctx.emit('user.email_verified', { user: toMadauthUser(verified), method, via });

@@ -160,6 +160,15 @@ const upgrades: { version: number; sql: (dialect: SqlDialect) => string }[] = [
     version: 16,
     sql: (dialect) => createTablesSql(dialect, { version: 16, models: { session: madauthSchema.models.session } }),
   },
+  {
+    // The lock on a user's e-mail codes lifts by itself, after an hour that doubles with each lock up to a day.
+    version: 17,
+    sql: (dialect) =>
+      [
+        `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('codesLockedUntil')} ${columnType(dialect, madauthSchema.models.user.fields.codesLockedUntil)};`,
+        `ALTER TABLE ${tableName('user')} ADD COLUMN ${columnName('codeLocks')} ${columnType(dialect, madauthSchema.models.user.fields.codeLocks)};`,
+      ].join('\n'),
+  },
 ];
 
 /**

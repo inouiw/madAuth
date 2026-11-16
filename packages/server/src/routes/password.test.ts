@@ -447,7 +447,7 @@ describe('password reset', () => {
     const third = await newResetMail();
     const locked = await tryCode(third.code);
     expect(locked.status).toBe(429);
-    expect(await locked.json()).toEqual({ error: 'codes_locked', message: expect.stringContaining('use the link') });
+    expect(await locked.json()).toEqual({ error: 'codes_locked', message: expect.stringContaining('Use the link') });
 
     // The link of that e-mail still works, and using it lets codes work again.
     expect((await post(app, '/auth/password/reset', { token: third.token, password: 'new teapot sky!' })).status).toBe(200);
@@ -478,6 +478,49 @@ describe('password reset', () => {
     expect((await post(app, '/auth/email/verify', { token })).status).toBe(200);
     expect((await store.findOne('user', { emailNormalized: grace.email }))?.wrongCodes).toBe(0);
     expect((await signIn(app)).status).toBe(200);
+  });
+
+  it('the lock lifts after an hour, the next one after two, and a right code starts over at an hour', async () => {
+    const { app, hook, store } = passwordApp();
+    await signUpVerified(app, hook);
+    const user = async () => (await store.findOne('user', { emailNormalized: grace.email }))!;
+    const newResetMail = async () => {
+      advance(61_000);
+      await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
+      return linkAndCode(hook.lastEmail()).code;
+    };
+    const tryCode = async (code: string) => (await post(app, '/auth/password/reset', { email: grace.email, code, password: 'new teapot sky!' })).status;
+    const tenWrong = async () => {
+      for (let mail = 0; mail < 2; mail++) {
+        const code = await newResetMail();
+        for (let i = 0; i < 5; i++) await tryCode(code === '000000' ? '111111' : '000000');
+      }
+    };
+
+    await tenWrong();
+    expect(await user()).toMatchObject({ wrongCodes: 10, codeLocks: 1, codesLockedUntil: Date.now() + 60 * 60_000 });
+    advance(58 * 60_000);
+    expect(await tryCode(await newResetMail())).toBe(429);
+    advance(60_000);
+    // An hour after the tenth wrong code, ten more guesses; the next lock lasts two hours.
+    await tenWrong();
+    expect(await user()).toMatchObject({ wrongCodes: 10, codeLocks: 2, codesLockedUntil: Date.now() + 2 * 60 * 60_000 });
+    advance(60 * 60_000);
+    expect(await tryCode(await newResetMail())).toBe(429);
+    advance(60 * 60_000);
+    expect(await tryCode(await newResetMail())).toBe(200);
+    expect(await user()).toMatchObject({ wrongCodes: 0, codeLocks: 0 });
+  });
+
+  it('a user locked before schema version 17 gets new guesses', async () => {
+    const { app, hook, store } = passwordApp();
+    await signUpVerified(app, hook);
+    await store.update('user', { emailNormalized: grace.email }, { wrongCodes: 10, codesLockedUntil: null, codeLocks: null });
+    advance(61_000);
+    await post(app, '/auth/password/send-reset', { email: grace.email, redirectTo: REDIRECT_TO });
+    const { code } = linkAndCode(hook.lastEmail());
+
+    expect((await post(app, '/auth/password/reset', { email: grace.email, code, password: 'new teapot sky!' })).status).toBe(200);
   });
 
   it('a right code sets the count of wrong codes back', async () => {

@@ -31,6 +31,8 @@ function testUser(overrides: Row = {}): Row {
     preferredSecondFactor: null,
     wrongDeviceCodes: null,
     wrongDeviceCodeAt: null,
+    codesLockedUntil: null,
+    codeLocks: null,
     createdAt: 1_700_000_000_000,
     ...overrides,
   };

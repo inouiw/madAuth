@@ -205,7 +205,8 @@ describe('deployment entry points', () => {
     const fromFour = await runCli(['schema', '--from', '4']);
     expect(fromFour.output).toMatch(/^ALTER TABLE madauth_account ADD COLUMN last_used_step DOUBLE PRECISION NOT NULL DEFAULT 0;/);
     expect(fromFour.output).toContain('CREATE TABLE madauth_recovery_code (');
-    const V16 = 'CREATE TABLE madauth_session (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  session_version DOUBLE PRECISION NOT NULL,\n  auth_time DOUBLE PRECISION,\n  amr TEXT NOT NULL,\n  ip TEXT,\n  browser TEXT,\n  os TEXT,\n  created_at DOUBLE PRECISION NOT NULL,\n  renewed_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_session_user_id ON madauth_session (user_id);';
+    const V17 = 'ALTER TABLE madauth_user ADD COLUMN codes_locked_until DOUBLE PRECISION;\nALTER TABLE madauth_user ADD COLUMN code_locks DOUBLE PRECISION;';
+    const V16 = 'CREATE TABLE madauth_session (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL,\n  session_version DOUBLE PRECISION NOT NULL,\n  auth_time DOUBLE PRECISION,\n  amr TEXT NOT NULL,\n  ip TEXT,\n  browser TEXT,\n  os TEXT,\n  created_at DOUBLE PRECISION NOT NULL,\n  renewed_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_session_user_id ON madauth_session (user_id);\n' + V17;
     const V15 = 'ALTER TABLE madauth_oidc_client ADD COLUMN id_token_alg TEXT;\n' + V16;
     const V14 = 'ALTER TABLE madauth_oidc_client ADD COLUMN token_exchange BOOLEAN;\nCREATE TABLE madauth_oidc_nonce (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_oidc_nonce_client_id ON madauth_oidc_nonce (client_id);\n' + V15;
     const V13 = "ALTER TABLE madauth_oidc_client ADD COLUMN device_flow BOOLEAN;\nALTER TABLE madauth_user ADD COLUMN wrong_device_codes DOUBLE PRECISION;\nALTER TABLE madauth_user ADD COLUMN wrong_device_code_at DOUBLE PRECISION;\nCREATE TABLE madauth_oidc_device_code (\n  id TEXT PRIMARY KEY,\n  user_code TEXT NOT NULL UNIQUE,\n  client_id TEXT NOT NULL,\n  scope TEXT NOT NULL,\n  status TEXT NOT NULL,\n  user_id TEXT,\n  auth_time DOUBLE PRECISION,\n  amr TEXT,\n  session_version DOUBLE PRECISION,\n  created_at DOUBLE PRECISION NOT NULL,\n  expires_at DOUBLE PRECISION NOT NULL,\n  last_polled_at DOUBLE PRECISION NOT NULL\n);\nCREATE INDEX madauth_oidc_device_code_client_id ON madauth_oidc_device_code (client_id);\nCREATE INDEX madauth_oidc_device_code_user_id ON madauth_oidc_device_code (user_id);\n" + V14;
@@ -229,10 +230,11 @@ describe('deployment entry points', () => {
     expect(await runCli(['schema', '--from', '13'])).toEqual({ exitCode: 0, output: V14 });
     expect(await runCli(['schema', '--from', '14'])).toEqual({ exitCode: 0, output: V15 });
     expect(await runCli(['schema', '--from', '15'])).toEqual({ exitCode: 0, output: V16 });
-    expect(await runCli(['schema', '--from', '16'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
+    expect(await runCli(['schema', '--from', '16'])).toEqual({ exitCode: 0, output: V17 });
+    expect(await runCli(['schema', '--from', '17'])).toEqual({ exitCode: 0, output: '-- The tables are up to date.' });
     expect(await runCli(['schema', '--from', 'x'])).toMatchObject({ exitCode: 1 });
     // A version this madAuth does not know yet.
-    expect(await runCli(['schema', '--from', '17'])).toMatchObject({ exitCode: 1 });
+    expect(await runCli(['schema', '--from', '18'])).toMatchObject({ exitCode: 1 });
   });
 
   it('generate-webhook-secret prints a usable secret', async () => {

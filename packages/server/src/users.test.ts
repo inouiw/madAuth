@@ -18,6 +18,7 @@ import {
   verify,
   linkGoogleAsBefore,
 } from './test/helpers.js';
+import { codeLockMs } from './users.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -231,5 +232,12 @@ describe('Google users', () => {
 
     expect(res.status).toBe(200);
     expect((await res.json()).user).toMatchObject({ id: expect.stringMatching(/^usr_/), email: 'ada@example.com' });
+  });
+});
+
+describe('codeLockMs', () => {
+  it('lasts an hour, doubles with each lock, and stops at a day', () => {
+    const hours = [1, 2, 3, 4, 5, 6, 7, 20].map((lock) => codeLockMs(lock) / (60 * 60_000));
+    expect(hours).toEqual([1, 2, 4, 8, 16, 24, 24, 24]);
   });
 });

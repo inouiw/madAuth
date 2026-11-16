@@ -110,3 +110,15 @@ Madauth.setLocale('en'); // an open dialog changes at once
 ```
 
 Google's own button (with `GoogleFedcm`) is not affected: Google picks its language.
+
+## E-mails without a link
+
+madAuth hands your webhook receiver both a link and a 6-digit code for the confirmation e-mail (`email.send_verification`) and the e-mail sign-in (`email.send_signin_link`), and the dialog tells people to open the link or to enter the code. A receiver may leave the link out and send only the code, e.g. so that people stay in the tab they started in, where your page may have remembered something. Then tell the dialog, so its texts don't mention a link:
+
+```ts
+Madauth.initialize({ providers: [new Password(), new EmailLink()], emailTexts: 'code-only' });
+```
+
+It only changes the dialog's texts, in English and German: the inbox view asks for the code, a password sign-in of an unconfirmed address says to enter the code, the e-mail sign-in is called "Email code" ("E-Mail-Code") with a "Send code" button, and `codes_locked` says to ask for a new e-mail later. The server still makes the link, and it still works when someone has it. The password reset's texts stay the same: they keep mentioning the link, so keep it in `email.send_password_reset`. Without the option, or with `'link-and-code'`, the texts mention both.
+
+Without a link, nothing lifts the lock that 10 wrong codes in a row put on a user's codes except time: an hour, twice as long with each further lock, at most a day (see [Password security](password-security.md#links-and-codes-in-e-mails)).
